@@ -20,7 +20,7 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 - [[Craftax Baselines]]: the official baselines repository, protocol and published scores.
 - [[Existing Implementations]]: every known Craftax agent with results and training cost; the table to benchmark against.
-- [[Candidate Algorithms]]: simple, not-yet-tried algorithm ideas for Craftax, with a top-3 recommendation.
+- [[Candidate Algorithms]]: simple, not-yet-tried algorithm ideas for Craftax, with the top 5 recommendations.
 - [[Sutton & Barto - Reinforcement learning, an introduction (2nd ed draft)]]: RL textbook notes and notebooks.
 
 ## Packages

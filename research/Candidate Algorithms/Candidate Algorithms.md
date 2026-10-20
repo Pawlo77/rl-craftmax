@@ -13,9 +13,20 @@ created: 2026-10-20
 
 Algorithms the project could try on Craftax beyond the published agents in [[Existing Implementations]]. Each builds on the PPO or PPO-RNN baseline ([[Craftax Baselines]]) and on textbook ideas from [[Sutton & Barto - Reinforcement learning, an introduction (2nd ed draft)]]. Novelty was checked on 2026-10-20 (method at the end).
 
-## Top 3 recommendations
+## Top 5 recommendations
 
 For a one-semester student project: a small team, a Mac plus maybe one GPU, building on PPO-RNN.
+
+- Why 5: each pick attacks a different Craftax difficulty (exploration, rare successes, sparse crafting chain, partial observability, the floor wall), so together they cover every truly promising direction without overlap.
+- Left out: [[Per-Achievement Value Heads]] (cheap and novel, but a smaller critic tweak; next in line), [[Bandit-Tuned Exploration]] and [[Population-Based Training]] (tune other methods rather than add an idea), and the suggested-by notes that are taken or beyond student level.
+
+| # | Candidate | Craftax difficulty it attacks | Lines of code | First experiment | Success means |
+|---|---|---|---|---|---|
+| 1 | [[Count-Based Progress Bonus]] | Exploration bonuses that chase new scenery | 60-100 | Craftax-1M on the Mac, 5 seeds | Above RND/E3B (2.2%) at 1M |
+| 2 | [[Self-Imitation Learning]] | Rare one-time successes | 120-180 | Craftax-Classic, then Craftax-1M, 5 seeds | Above PPO-RNN (2.3%) at 1M |
+| 3 | [[Tech-Tree Potential-Based Reward Shaping]] | Long reward-free crafting chain | 80-120 | Craftax-1M on the Mac, 5 seeds | Above PPO-RNN (2.3%) at 1M on native reward |
+| 4 | [[Explicit Map Memory]] | Seeing 4% of the floor; dark floors | 130-180 | Craftax-1M on the Mac, 5 seeds | Above PPO-RNN (2.3%) at 1M, fair-position variant |
+| 5 | [[Go-Explore with Achievement Cells]] | No agent passes the floor-2 wall | 150-250 | 200M steps on one GPU | Repeatable `ENTER_GNOMISH_MINES`; above 15.3% at 1B |
 
 ### 1. [[Count-Based Progress Bonus]]
 
@@ -31,10 +42,24 @@ For a one-semester student project: a small team, a Mac plus maybe one GPU, buil
 - Minimal first experiment: feed-forward PPO plus SIL on Craftax-Classic (fast) and then Craftax-1M, 5 seeds, buffer of 50k steps in `float16`.
 - Success: higher reward than PPO-RNN at 1M (above 2.3%), and higher success on rare achievements (`MAKE_IRON_PICKAXE`, `ENTER_DUNGEON`) without losing `DEFEAT_ZOMBIE`.
 
-### 3. [[Go-Explore with Achievement Cells]]
+### 3. [[Tech-Tree Potential-Based Reward Shaping]]
+
+- Most interesting: the crafting chain (wood, table, pickaxes, furnace, iron, diamonds) pays nothing between achievements; a potential computed from the recipe table fills those gaps, and the potential form cannot be farmed in a loop, unlike the hand-made bonuses agents exploited before.
+- Feasible: a reward wrapper of about 80-120 lines, PPO unchanged, negligible compute; a textbook idea (policy-invariant shaping).
+- Minimal first experiment: Craftax-1M on the Mac, potential scale in {0.1, 0.3, 1.0}, 5 seeds; ablate depth-only versus full tech-tree potential versus none.
+- Success: native (unshaped) reward above PPO-RNN (2.3%) at 1M and higher success along `MAKE_STONE_PICKAXE`, `MAKE_IRON_PICKAXE`, `MAKE_DIAMOND_PICKAXE`; the only prior use (maskedPPO-RS) mixed it with masking and extra rewards, so an isolated effect is new.
+
+### 4. [[Explicit Map Memory]]
+
+- Most interesting: the agent sees a 9 x 11 window of a 48 x 48 floor and dark floors blank unlit tiles; a hand-written map gives long spatial memory (water, table, ladder) without a transformer. Not found on Craftax.
+- Feasible: a wrapper of about 100-150 lines plus a small CNN of about 30 lines; about 21 MB of map memory for 1024 environments.
+- Minimal first experiment: Craftax-1M on the Mac, 5 seeds, crop-only versus pooled-map versus both; run the dead-reckoning (non-privileged) position variant for the fair comparison.
+- Success: above PPO-RNN (2.3%) at 1M with the fair variant, fewer deaths from thirst, higher `ENTER_DUNGEON` success; privileged-position results reported separately.
+
+### 5. [[Go-Explore with Achievement Cells]]
 
 - Most interesting: it attacks the floor wall (no 1B agent reliably reaches the Gnomish Mines) and uses Craftax's unique feature: the whole game state is one JAX object you can save and reload.
-- Feasible: the change sits in the reset wrapper, about 150-250 lines; it reuses the progress key of the count bonus.
+- Feasible: the change sits in the reset wrapper, about 150-250 lines; it reuses the progress key of the count bonus. The most ambitious pick: do it last.
 - Minimal first experiment: PPO-RNN with reset probability $p = 0.25$ to archived cells, 200M steps on one GPU (or Craftax-Classic on the Mac); evaluate on normal resets only.
 - Success: non-zero, repeatable `ENTER_GNOMISH_MINES` success on normal resets and reward above PPO-RNN's 15.3% at 1B (block A); stretch goal: above PPO-GTrXL's 18.3%.
 
