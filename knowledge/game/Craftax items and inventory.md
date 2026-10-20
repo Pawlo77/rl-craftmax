@@ -2,7 +2,7 @@
 title: "Craftax items and inventory"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, inventory, items]
 created: 2026-10-20
 updated: 2026-10-20

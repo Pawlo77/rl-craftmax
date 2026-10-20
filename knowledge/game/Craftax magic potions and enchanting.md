@@ -2,7 +2,7 @@
 title: "Craftax magic potions and enchanting"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, magic, potions, enchanting]
 created: 2026-10-20
 updated: 2026-10-20

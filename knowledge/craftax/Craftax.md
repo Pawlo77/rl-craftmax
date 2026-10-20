@@ -41,7 +41,7 @@ Craftax is an open-ended RL benchmark written entirely in JAX: a 2D, top-down, p
 
 ## The game in brief
 
-Full rules, numbers and sources: [[Craftax game rules]].
+Full rules, numbers and sources: [[Game]].
 
 - The player moves on a grid, one tile per step, and acts on the tile it faces with `DO` (mine, attack, drink, eat, open a chest).
 - Health, food, drink and energy start at 9 and must stay above 0: food, drink and energy fall slowly, and any of them at 0 drains health ([[Craftax survival stats]]).
@@ -65,7 +65,7 @@ Full rules, numbers and sources: [[Craftax game rules]].
 - [[Craftax environments]]: variants, registered names, classes, params.
 - [[Craftax API and wrappers]]: install, `reset`/`step`, `jit`/`vmap`, wrappers, play scripts, rendering.
 - [[Craftax observations and actions]]: symbolic and pixel layouts, all actions.
-- [[Craftax game rules]]: the full game rules of Craftax and Craftax-Classic, one note per topic, plus a state-space complexity estimate.
+- [[Game]]: the full game rules of Craftax and Craftax-Classic, one note per topic, plus a state-space complexity estimate.
 - [[Craftax scoring and evaluation]]: reward, % of 226, Craftax-1B/1M, scoreboard, logging.
 - [[Craftax world generation]]: what `reset` builds, seeding, UED hooks.
 - [[Craftax performance]]: reported throughput and hardware.

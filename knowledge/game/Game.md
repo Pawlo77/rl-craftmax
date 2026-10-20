@@ -1,5 +1,5 @@
 ---
-title: "Craftax game rules"
+title: "Game"
 type: concept
 domain: craftax
 parent: "[[Craftax]]"
@@ -7,7 +7,7 @@ tags: [craftax, concept, game-mechanics, index]
 created: 2026-10-20
 updated: 2026-10-20
 ---
-# Craftax game rules
+# Game
 
 The complete rules of Craftax and Craftax-Classic, one note per topic, read from the game code at commit [`c3c2e0d`](https://github.com/MichaelTMatthews/Craftax/tree/c3c2e0d038c4e641f9481320c158f457f30c28f3) (same code as craftax 1.6.1). The paper ([arXiv 2402.16801v2](https://arxiv.org/html/2402.16801v2)) and [tutorial.md](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/tutorial.md) are secondary; where they disagree with the code the code wins and the difference is listed below.
 

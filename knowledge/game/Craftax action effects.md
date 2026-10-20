@@ -2,7 +2,7 @@
 title: "Craftax action effects"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, action-space]
 created: 2026-10-20
 updated: 2026-10-20

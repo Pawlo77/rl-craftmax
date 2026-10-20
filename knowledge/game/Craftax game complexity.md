@@ -2,7 +2,7 @@
 title: "Craftax game complexity"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, state-space, complexity, reinforcement-learning]
 created: 2026-10-20
 updated: 2026-10-20
@@ -27,7 +27,7 @@ How big a problem Craftax is for reinforcement learning (RL), measured the way g
 
 1. **List what a state contains.** Take the state class from the code: [`EnvState`](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/craftax_state.py#L39) for Craftax and its [Classic counterpart](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax_classic/envs/craftax_state.py#L34). Each field is one "part".
 2. **Drop parts that are computed from other parts.** The creature occupancy map follows from creature positions, ladder positions from the item map, the light map from the world and the placed torches, and `light_level` from the time step. The random-number key is skipped because it only drives rendering noise.
-3. **Count the values each part can take**, using the game's constants: 9 floors of 48 x 48 tiles, 37 block types, 5 item types, inventory cap 99, stat maxima, 3 melee + 3 passive + 2 ranged creature slots per floor, and so on ([[Craftax game rules]] lists them).
+3. **Count the values each part can take**, using the game's constants: 9 floors of 48 x 48 tiles, 37 block types, 5 item types, inventory cap 99, stat maxima, 3 melee + 3 passive + 2 ranged creature slots per floor, and so on ([[Game]] lists them).
 4. **Make continuous values countable.** Health and the hidden counters are decimals; we count them in fixed small steps (health in steps of 0.1, food counters in steps of 0.0625). This is an assumption; it changes the total by only a few orders of magnitude.
 5. **Multiply all parts.** Independent parts multiply: 2 choices x 3 choices = 6 combinations. In powers of ten we add the exponents.
 6. **Read the result as an upper bound.** The product includes impossible combinations: a map with no trees but 0 wood, 99 diamonds on step 0, a creature inside a wall. The true number of reachable states is smaller, but nobody knows by how much.

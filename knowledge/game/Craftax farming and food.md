@@ -2,7 +2,7 @@
 title: "Craftax farming and food"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, food, farming]
 created: 2026-10-20
 updated: 2026-10-20

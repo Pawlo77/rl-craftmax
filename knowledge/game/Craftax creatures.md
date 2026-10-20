@@ -2,7 +2,7 @@
 title: "Craftax creatures"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, creatures, ai]
 created: 2026-10-20
 updated: 2026-10-20
@@ -45,7 +45,7 @@ Damage is physical + fire + ice; defence is the fraction of each damage type rem
 
 - Movement types: land = ground tiles only; amphibian = ground and water; aquatic = water only; flying = ground, water and lava. Solid blocks, creatures and the player block everyone.
 - Floor 7 maps its passive type to the bat, but its passive spawn chance is 0.0, so no bats appear there.
-- The paper's Table 3 differs for 7 values ([[Craftax game rules#Source disagreements]]).
+- The paper's Table 3 differs for 7 values ([[Game#Source disagreements]]).
 - The necromancer is a block, not a creature ([[Craftax boss fight]]).
 
 ## Melee AI

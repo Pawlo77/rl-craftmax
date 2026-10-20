@@ -2,7 +2,7 @@
 title: "Craftax achievements"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, achievements, reward]
 created: 2026-10-20
 updated: 2026-10-20

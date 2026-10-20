@@ -2,7 +2,7 @@
 title: "Craftax survival stats"
 type: concept
 domain: craftax
-parent: "[[Craftax game rules]]"
+parent: "[[Game]]"
 tags: [craftax, concept, game-mechanics, intrinsics, attributes]
 created: 2026-10-20
 updated: 2026-10-20
