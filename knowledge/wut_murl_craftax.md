@@ -32,6 +32,7 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 | Package | Responsibility |
 |---|---|
+| [[orchestration]] | fast JAX runtime (compile cache, CPU shards, device roles, textures), run snapshots, MLflow tracking |
 
 ## Concepts
 

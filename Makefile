@@ -14,10 +14,13 @@ SKILLS_TESTS := tests/hooks/test_skill_frontmatter.py
 
 include kit.mk
 
-.PHONY: coverage datasets mlflow mlflow-stop
+.PHONY: coverage datasets mlflow mlflow-stop warm
 
 coverage: ## Run tests with coverage report
 	uv run pytest --cov=./src/wut_murl_craftax --cov-report=term-missing tests/
+
+warm: ## Build the Craftax texture caches and print the actor/learner devices
+	uv run python -m wut_murl_craftax.orchestration.runtime
 
 datasets: ## Download or build datasets (project-specific)
 	@echo "Not implemented: add dataset targets for your experiment."

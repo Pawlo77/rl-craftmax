@@ -70,6 +70,8 @@ Full rules, numbers and sources: [[Game]].
 - [[Craftax world generation]]: what `reset` builds, seeding, UED hooks.
 - [[Craftax performance]]: reported throughput and hardware.
 - [[Craftax on Apple GPU]]: running Craftax on Apple silicon.
+- [[Craftax CPU vs GPU performance]]: which device to use for rollouts, updates and end-to-end training.
+- [[Craftax runtime setup]]: the fastest tested setup in this repo (textures, compile cache, CPU shards, device roles).
 - [[Craftax versions and dependencies]]: releases, dependency lists, Python support.
 - [[Craftax known issues]]: open bugs, errata, gotchas.
 

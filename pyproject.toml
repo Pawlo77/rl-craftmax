@@ -130,7 +130,7 @@ no_implicit_reexport = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ['mlflow', 'mlflow.*', 'yaml', 'yaml.*']
+module = ['craftax', 'craftax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*']
 ignore_missing_imports = true
 
 [tool.bandit]

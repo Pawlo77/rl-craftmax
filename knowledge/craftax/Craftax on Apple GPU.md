@@ -11,6 +11,8 @@ updated: 2026-10-20
 
 ## Steps
 
+In this repository the steps below are already applied; use [[Craftax runtime setup]].
+
 1. Keep plain CPU JAX as the default backend: `craftax==1.6.1`, `jax==0.11.2`, `jaxlib==0.11.2`, `flax==0.12.10`, `optax==0.2.8`; no `[tool.uv]` overrides are needed.
 2. For an opt-in GPU backend, add `metaljax==0.11.9` with marker `sys_platform == 'darwin' and platform_machine == 'arm64'` in a separate dependency group (it needs `jax<0.12`).
 3. Select the GPU per run with `JAX_PLATFORMS=metal`; with the variable unset, metaljax leaves CPU as the default backend.
