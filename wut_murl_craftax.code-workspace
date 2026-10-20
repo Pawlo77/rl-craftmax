@@ -1,0 +1,15 @@
+{
+  // Workspace of the repository; add sibling repositories as extra folders.
+  "folders": [
+    {
+      "name": "wut_murl_craftax",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:wut_murl_craftax}/.venv/bin/python",
+    "files.exclude": {
+      "**/__pycache__": true
+    }
+  }
+}
