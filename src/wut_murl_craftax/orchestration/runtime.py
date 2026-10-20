@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import cast
 
 import jax
+from craftax.craftax import constants as craftax_constants
+from craftax.craftax_classic import constants as classic_constants
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 DEFAULT_CACHE_DIR = Path(".cache/jax")
@@ -89,9 +91,6 @@ def warm_texture_cache() -> list[Path]:
     Craftax builds them on the first pixel render and stores them inside the
     installed package, so a fresh virtual environment starts without them.
     """
-    from craftax.craftax import constants as craftax_constants
-    from craftax.craftax_classic import constants as classic_constants
-
     for module in (craftax_constants, classic_constants):
         module.load_all_textures()
     return [

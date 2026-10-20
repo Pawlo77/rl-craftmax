@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Reinforcement learning on Craftax"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-license = "Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE"]
 
 authors = [
@@ -130,7 +130,7 @@ no_implicit_reexport = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ['craftax', 'craftax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*']
+module = ['craftax', 'craftax.*', 'optax', 'optax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*']
 ignore_missing_imports = true
 
 [tool.bandit]

@@ -18,9 +18,27 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/models/__init__.py]] | Model definitions for experiments. | 3 |  |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration utilities: fast JAX runtime, experiment runs and MLflow tracking. | 25 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 115 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 114 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 142 | [[orchestration]] |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training loops and evaluation. | 3 |  |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training loops and their records: baseline PPO, checkpoints, metrics, episodes. | 33 | [[training]] |
+| [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced checkpoint schedule and params-only checkpoints with an index file. | 58 | [[training]] |
+| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 321 | [[training]] |
+| [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 172 | [[training]] |
+| [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 57 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/curves.py]] | Animated training curves: % of max reward, achievements unlocked, success rates. | 151 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/cuts.py]] | Cuts from the reviewed CSV: clips, cards, 3-min (16:9, Short) and 12-min cuts, GIFs. | 410 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed eval rollouts of every checkpoint, stored as replayable trajectories. | 262 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/ffmpeg.py]] | Typed ffmpeg/ffprobe wrappers: argument lists only, never a shell string. | 452 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/grid.py]] | Checkpoint comparison grid: one eval seed played by four checkpoints, 2x2, synced. | 151 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/highlights.py]] | Highlight detection: features -> events -> scored windows -> ranked candidates. | 336 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/montage.py]] | Learning-process composites: the long-cut montage and the Short (grid over curves). | 158 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/overlay.py]] | Agent internals overlay: game frame \| observation, action probabilities, value. | 348 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/render.py]] | Render rollouts to lossless RGB masters (one step per frame) or final-size windows. | 136 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/review.py]] | Review: keep/drop CSV (source of truth), previews, contact sheet, one static page. | 173 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/rollout.py]] | Rollout record (seed, key scheme, actions, per-step features), policies, replay. | 699 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/text.py]] | Pillow text overlays (captions, banners, cards, labels): ffmpeg lacks drawtext. | 144 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/timeline.py]] | Achievement timeline: animated heatmap of success per achievement over training. | 125 | [[visualisation]] |
 
 ## Modules no architecture note lists
 
@@ -28,4 +46,3 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/config.py]]
 - [[src/wut_murl_craftax/dataset/__init__.py]]
 - [[src/wut_murl_craftax/models/__init__.py]]
-- [[src/wut_murl_craftax/training/__init__.py]]

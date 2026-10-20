@@ -37,6 +37,8 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 | Package | Responsibility |
 |---|---|
+| [[training]] | baseline PPO, checkpoints, training records |
+| [[visualisation]] | gameplay highlights and learning-process videos, GIFs, ffmpeg cuts |
 | [[orchestration]] | fast JAX runtime (compile cache, CPU shards, device roles, textures), run snapshots, MLflow tracking |
 
 ## Concepts

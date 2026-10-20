@@ -6,68 +6,68 @@ parent: "[[Visualisation]]"
 tags: [handbook, visualisation, highlights, review]
 created: 2026-10-20
 updated: 2026-10-20
+related-code:
+  - "[[src/wut_murl_craftax/visualisation/review.py]]"
+  - "[[tests/visualisation/test_review.py]]"
 ---
 # Highlight review workflow
 
-Automatic ranking from [[Highlight detection]], then a person picks clips on one HTML page and downloads `review.csv`; the cut step reads only that file ([[Assembling the 3 and 12 minute cuts]]).
+Automatic ranking from [[Highlight detection]], then one reviewer picks clips on one static page and downloads `review.csv`; every later step reads only that CSV ([[Assembling the 3 and 12 minute cuts]]).
 
 ```mermaid
 flowchart LR
-  A[candidates.csv] --> B[bin/review.sh: strips, thumbs, previews]
+  A[candidates.csv] --> B[review: strips, thumbs, previews]
   B --> C[review.html + contact_sheet.png]
   C -->|keep / drop, caption, speed| D[review.csv]
-  D --> E[bin/cut.sh]
+  D --> E[render --kept, cuts]
 ```
 
 ## Steps
 
-1. Build the review material for the top 60 candidates:
+1. Build the review material next to the CSV:
 
    ```bash
-   bin/review.sh review/candidates.csv
+   uv run python -m wut_murl_craftax.visualisation.review outputs/visualisation/review/candidates.csv
    ```
 
-   Per candidate, from the 16 px master (CSV rows split on `\x1f` by a one-line Python `csv` reader, because a tab `IFS` collapses empty fields):
+   Per candidate, from its 16 px master (`build_assets`): a 4-frame strip (start, mid, peak, end), the peak thumbnail and an exact-frame 2x preview MP4:
+
+   ```text
+   select='eq(n,start)+eq(n,mid)+eq(n,peak)+eq(n,end)',scale=iw*2:ih*2:flags=neighbor,tile=4x1:padding=4:color=white
+   trim=start_frame=start:end_frame=end+1,setpts=PTS-STARTPTS,scale=iw*2:ih*2:flags=neighbor,format=yuv420p
+   ```
+
+2. `contact_sheet.png` (`contact_sheet`, Pillow): peak thumbnails 6 per row with id, score, type, caption, rollout and time range.
+
+3. `review.html` (`write_page`): a copy of the one static template shipped in the package, `src/wut_murl_craftax/visualisation/review_template.html`, with the candidates embedded once as JSON; the browser builds one row per candidate (strip, events, preview `<video>` with the peak as poster, editable caption, speed 0.5 to 8, keep / drop), shows kept count and kept seconds (seconds / speed), and offers "Keep top 10" and "Download review.csv"; choices persist in `localStorage`.
+
+4. Open it over HTTP so the previews play:
 
    ```bash
-   mid=$(( (start + peak) / 2 ))
-   ffmpeg -i "$M" -vf "select='eq(n,$start)+eq(n,$mid)+eq(n,$peak)+eq(n,$end)',scale=iw*2:ih*2:flags=neighbor,tile=4x1:padding=4:color=white" -frames:v 1 strips/$id.png
-   ffmpeg -i "$M" -vf "select='eq(n,$peak)',scale=iw*2:ih*2:flags=neighbor" -frames:v 1 thumbs/$id.png
-   ffmpeg -i "$M" -vf "trim=start_frame=$start:end_frame=$((end + 1)),setpts=PTS-STARTPTS,scale=iw*2:ih*2:flags=neighbor,format=yuv420p" \
-          -c:v libx264 -crf 20 -preset veryfast -movflags +faststart previews/$id.mp4
+   uv run python -m http.server 8765 --bind 127.0.0.1 --directory outputs/visualisation/review
    ```
 
-2. `review_page.py` (Pillow) writes:
-   - `contact_sheet.png`: peak thumbnails 6 per row with id, score, type, caption, rollout and time range under each; for a quick look or to paste in chat.
-   - `review.html`: one row per candidate with the 4-frame strip, the event list, a preview `<video>` (poster = peak frame, loads on play), an editable caption, a speed select (0.5, 1, 2, 4, 8) and keep / drop radios; header shows kept count and kept seconds (seconds / speed); "Keep top 10" and "Download review.csv" buttons; choices persist in `localStorage` per page; narrow screens get one block per candidate.
+5. Mark keep / drop, fix captions, set speeds, press "Download review.csv" and save it next to `candidates.csv`. The CSV is the source of truth: `read_rows`, `write_rows` and `kept` (rows with `keep == keep`, in score order) are what `render --kept` and `cuts` use. Without a browser, edit the `keep`, `caption` and `speed` columns in any spreadsheet.
 
-3. Open the page over HTTP so the previews play:
-
-   ```bash
-   cd review && python -m http.server 8765 --bind 127.0.0.1   # then http://127.0.0.1:8765/review.html
-   ```
-
-4. Mark keep / drop, fix captions, set speed, press "Download review.csv". The file has the same columns as `candidates.csv`; `keep` is `keep`, `drop` or empty; `bin/cut.sh` and `bin/make_short.sh` take rows with `keep == keep` in file order (score order).
-
-5. Without a browser: edit the `keep`, `caption` and `speed` columns of `candidates.csv` in any spreadsheet and save as CSV.
+Columns (`review.COLUMNS`; new ones go at the end): `id, keep, score, type, caption, rollout, game, policy, label, start, end, peak, seconds, speed, events`.
 
 ## Results
 
 | Measurement | Result |
 |---|---|
-| Strips + thumbnails + preview MP4s for 60 candidates | 33.2 s; 7.0 MB, 2.1 MB and 29 MB |
-| `contact_sheet.png` | 2160 x 4700 px, 2.2 MB |
-| `review.html` | 82 KB, no external scripts |
-| Browser test (Claude Browser pane, served on 127.0.0.1) | "Keep top 10", then drop c002, speed 2 on c001: header showed 9 kept, 159.0 s; the CSV built by "Download review.csv" (Blob read in the page) had 61 lines, 9 `keep`, 1 `drop`, `speed` 2 on c001; a preview loaded as 352 x 416, 19.1 s |
-| Reviewed files used for the test cuts (marks applied by a script, same columns) | `review_short.csv` (12 kept, 198.8 s at the chosen speeds), `review_long.csv` (all 60 kept, 656.0 s) |
+| Strips + thumbnails + preview MP4s, 60 candidates (first scripts) | 33.2 s; 7.0 MB, 2.1 MB and 29 MB; contact sheet 2160 x 4700 px, 2.2 MB |
+| Same with the package, 30 candidates (repo smoke test) | 26 s including page and contact sheet; 3.7 MB, 1.1 MB, 12 MB; contact sheet 1.1 MB |
+| `review_template.html` / generated `review.html` | 4,186 bytes / 18,862 bytes for 30 candidates, no external scripts |
+| Browser test of the package page (Claude Browser pane, served on 127.0.0.1) | "Keep top 10", drop c002, speed 2 and a new caption on c001: header 9 kept, 115.0 s; the "Download review.csv" Blob had 31 lines (header + 30), 9 `keep`, 1 `drop`, the new caption, speed 2 and the `label` column |
+| CSV round trip (`test_csv_round_trip_and_kept`) | captions with commas and quotes survive write and read; `kept` returns only `keep` rows |
 
 ## Pitfalls
 
 - The Claude Browser pane shows a `file://` page only as a static snapshot (no clicks, no video); serve it over HTTP.
-- `trim=start_frame/end_frame` is frame-exact but decodes from frame 0; fine for masters of a few thousand frames, for 100,000-step episodes input seeking (`-ss` before `-i`) is the faster option, not tested here.
+- `trim=start_frame/end_frame` is frame-exact but decodes from frame 0; fine for masters of a few thousand frames; for 100,000-step episodes input seeking (`-ss` before `-i`) is the faster option, not tested here.
 - The CSV is the contract between steps: never rename columns; add new ones at the end.
+- JSON inside `<script>` must not contain `</`: `write_page` escapes it as `<\/`.
 
 ## Not tested
 
-- Several reviewers merging their choices (one CSV per person, majority vote).
 - Hosting the page as a shared artifact for remote review.

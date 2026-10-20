@@ -6,50 +6,31 @@ parent: "[[Visualisation]]"
 tags: [handbook, visualisation, matplotlib, achievements, heatmap]
 created: 2026-10-20
 updated: 2026-10-20
+related-code:
+  - "[[src/wut_murl_craftax/visualisation/timeline.py]]"
+  - "[[src/wut_murl_craftax/training/records.py]]"
+  - "[[tests/visualisation/test_timeline.py]]"
 ---
 # Achievement timeline
 
-An animated heatmap: one row per achievement (22 in Classic, 67 in Craftax; list in [[Craftax achievements]]), columns are PPO updates, colour is the success rate (% of training episodes), rows sorted by when the achievement was first unlocked, with a ring at the first unlock. The cursor sweeps left to right, a counter shows how many achievements have been unlocked at least once. Data: `metrics.npz` and `episodes.npz` from [[Recording training data]].
+An animated heatmap: one row per achievement (22 in Classic, 67 in Craftax; list in [[Craftax achievements]]), columns are PPO updates, colour is the success rate (% of training episodes), rows sorted by first unlock with a ring at the first unlock. The cursor sweeps left to right; a counter shows how many achievements have been unlocked at least once. Data: `metrics.npz` and `episodes.npz` from [[Recording training data]].
 
 ## Steps
 
-1. First unlock per achievement = first update in which any training episode earned it, from the bit-packed episode log:
+1. Render (default 1920 x 1080, 12 s sweep + 2 s hold at 30 fps; the last frame is also saved as PNG):
 
-   ```python
-   z = np.load("episodes.npz")
-   ach = np.unpackbits(z["ach"], axis=-1, count=len(names)).astype(bool)        # (episodes, achievements)
-   first = np.array([z["update"][np.nonzero(ach[:, i])[0][0]] if ach[:, i].any() else -1 for i in range(len(names))])
-   order = np.lexsort((np.arange(len(first)), np.where(first < 0, 1 << 30, first)))   # never-unlocked rows last
-   R = np.stack([ema(m.rates[:, i], 0.1) for i in range(len(names))])[order]        # (achievements, updates), %
+   ```bash
+   uv run python -m wut_murl_craftax.visualisation.timeline outputs/runs/classic [--logx] [--size 1920x1080]
    ```
 
-2. Draw once with `pcolormesh` on a sequential one-hue ramp from the surface colour to light blue and a square-root norm, so 1 to 5% rates are visible:
-
-   ```python
-   from matplotlib.colors import LinearSegmentedColormap, PowerNorm
-   cmap = LinearSegmentedColormap.from_list("seq", ["#1a1a19", "#104281", "#1c5cab", "#3987e5", "#86b6ef", "#cde2fb"])
-   edges = np.r_[x[0] - (x[1] - x[0]), x]                     # x = env steps (M) per update; log axis: np.r_[x[0] / 2, x]
-   mesh = ax.pcolormesh(edges, np.arange(nA + 1), np.ma.masked_all(R.shape), cmap=cmap,
-                        norm=PowerNorm(0.5, 0, 100), shading="flat")
-   dots = ax.scatter(fx, np.arange(nA) + 0.5, s=18, facecolors="none", edgecolors="#f0efec", linewidths=1.2)
-   ```
-
-3. Per frame mask the columns right of the cursor, show rings already passed, update title and counter, write RGB to the ffmpeg pipe (same pipe as [[Animated training curves]]):
-
-   ```python
-   for i in cur:                                               # linspace over updates, or geomspace for --logx
-       vis = R.copy(); vis[:, i + 1:] = np.nan
-       mesh.set_array(np.ma.masked_invalid(vis).ravel())
-       seen = (first[order] >= 0) & (first[order] <= i + 1)
-       dots.set_offsets(np.c_[np.where(seen, fx[order], np.nan), np.arange(nA) + 0.5])
-       count.set_text(f"unlocked at least once: {seen.sum()} / {nA}")
-       fig.canvas.draw(); pipe.stdin.write(np.asarray(fig.canvas.buffer_rgba())[..., :3].tobytes())
-   ```
-
-4. Hold the last frame 2 s and save it as a PNG thumbnail (`fig.savefig`).
-5. Encode the FFV1 master: `ffmpeg -y -i timeline.mkv -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart timeline.mp4`.
+2. First unlock = first update in which any training episode earned the achievement (`records.first_unlocks` on the unpacked episode bits); `first_unlock_order` sorts rows by it, never-unlocked rows last.
+3. Colour: one-hue ramp from the surface colour to light blue with `PowerNorm(0.5, 0, 100)`, so 1 to 5% rates are visible.
+4. Per frame the columns right of the cursor are masked and passed rings appear; `--logx` sweeps on a geometric schedule over a log axis.
+5. Encode the lossless output for sharing: `ffmpeg -i timeline.mkv -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart timeline.mp4`.
 
 ## Results
+
+Prototype runs:
 
 | Run | Rows | Frames, size | Render | x264 | MP4 size |
 |---|---|---|---|---|---|
@@ -57,22 +38,29 @@ An animated heatmap: one row per achievement (22 in Classic, 67 in Craftax; list
 | Same, log x | 22 | 180, 960 x 540 | 6.1 s | 0.21 s | 52,213 B |
 | Craftax-Symbolic, 213k steps, 13 updates | 67 | 120, 960 x 1080 | 9.2 s | 0.25 s | 38,304 B |
 
-- FFV1 masters: 7,806,434 B (Classic, linear) and 5,582,072 B (Craftax).
+Repo code:
+
+| Run | Rows | Command | Wall | Output |
+|---|---|---|---|---|
+| Classic, 0.5M steps, 30 updates | 22 | `timeline ... --seconds 6 --fps 15 --size 960x540` | 6.1 s | 120 frames, 108,551 B (lossless) |
+| Craftax-Symbolic, 8,192 steps, 8 updates | 67 | `timeline ... --seconds 2 --fps 10 --size 960x1080` | 4.8 s | |
+
 - Classic at 2M steps: 18 of 22 achievements unlocked at least once; never: collect iron, collect diamond, make iron pickaxe, make iron sword.
-- First unlocks in the Classic run were spread over 0 to 0.5M steps except eat plant at 1.3M; on a linear axis they crowd the left 25% of the plot, the log axis spreads them.
+- First unlocks in that run were spread over 0 to 0.5M steps except eat plant at 1.3M; on a linear axis they crowd the left 25%, the log axis spreads them.
 - Craftax at 213k steps: 13 of 67 unlocked, including enter dungeon.
 
 ## Pitfalls
 
 - A linear colour scale hides rare achievements (1 to 5%) in the near-black end; the square-root norm fixed it.
-- The first-unlock ring marks the right edge of the update's column; a single lucky episode creates it, so a ring can precede any visible colour.
-- At 67 rows a 5 pt label needs at least 1080 px height; a 16:9 frame fits 67 rows only with tiny labels.
-- Achievements that were never unlocked keep their rows (all empty); dropping them hides the size of what is left.
+- The first-unlock ring marks the right edge of the update's column; one lucky episode creates it, so a ring can precede visible colour.
+- At 67 rows labels need about 1080 px of height (font = height / 120).
+- Never-unlocked rows stay (empty); dropping them hides how much is left.
 - Training-episode rates count only episodes that finished in that update; see [[Recording training data]].
+- `first_unlocks` returns int32; the sort key casts to int64 before using `iinfo(int64).max` for "never" (an int32 overflow was caught by the test).
 
 ## Not tested
 
-- A long Craftax run (the 67-row test used 13 updates).
-- Grouping the 67 rows by floor or tier with separators ([[Game]] lists them).
+- A long Craftax run (the 67-row renders used 13 and 8 updates).
+- Grouping the 67 rows by floor or tier ([[Game]] lists them).
 - Eval-seed success rates per checkpoint instead of training episodes.
-- Syncing the timeline cursor to a gameplay clip (the cursor logic of [[Animated training curves]] applies unchanged).
+- A cursor synced to a gameplay clip (the cursors of [[Animated training curves]] would apply).
