@@ -12,6 +12,7 @@ origin: "Duan et al. RL²: Fast Reinforcement Learning via Slow Reinforcement Le
 suggested-by:
   - "[[PPO-RNN (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # In-Context Adaptation Memory
 
@@ -43,11 +44,11 @@ Builds on the Markov property and partial observability ([[03a MDP setting and r
 - Base: `ppo_rnn.py` ([[Craftax Baselines]]); PQN-RNN already feeds the last action ([[PQN-RNN (Gallici 2025)]]).
 - Changes: carry the previous action and previous stats in the rollout state; concatenate them in `ActorCriticRNN`. About 30-60 lines; the auxiliary head adds about 40 more.
 - Extra hyperparameters: which deltas to include, auxiliary loss weight.
-
-## Cost and risk
-
-- Compute: negligible. Fits a Mac at Craftax-1M scale; potion use matters mostly in long 1B runs, so a GPU is needed to see the full effect.
 - Student level: yes, low effort.
+
+## Risks
+
+- Risk: potion use matters mostly in long runs; at Craftax-1M agents rarely reach potions, so the full effect shows only at Craftax-1B.
 - Risk: potions are found in chests on deeper floors ([[Craftax items and inventory]]); if the agent rarely gets there, the effect is too rare to measure.
 - Risk: small overall gain; measure potion-specific metrics, not only total reward.
 
@@ -64,7 +65,7 @@ Builds on the Markov property and partial observability ([[03a MDP setting and r
 ## How to evaluate
 
 - Potion metrics: share of drinks that are the helpful colour after the first drink of each colour; health lost to bad potions.
-- Reward % of max on Craftax-1B against block A of the [[Existing Implementations]] table.
+- Reward % of max on Craftax-1B and Craftax-1M against blocks A and D of the [[Existing Implementations]] table (1M checks that the extra inputs do not slow early learning).
 - `DRINK_POTION` success rate against PPO-RNN.
 
 ## References

@@ -10,6 +10,7 @@ tags:
   - intrinsic-reward
 origin: "Badia et al. Agent57: Outperforming the Atari Human Benchmark. ICML 2020. https://arxiv.org/abs/2003.13350; Badia et al. Never Give Up. ICLR 2020. https://arxiv.org/abs/2002.06038"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Bandit-Tuned Exploration
 
@@ -45,9 +46,9 @@ Builds on upper-confidence-bound action selection and nonstationary bandits ([[0
 - Bandit statistics as small JAX arrays (sum and count per arm over a window), updated from finished episodes in each rollout.
 - Extra hyperparameters: arm values, UCB constant $c$, window $W$, whether arms also set γ (Agent57 pairs β with γ).
 
-## Cost and risk
+## Risks
 
-- Compute: almost none beyond the bonus itself. Fits a Mac at Craftax-1M scale.
+- Runtime: almost no overhead beyond the bonus itself.
 - Risk: a shared network may not learn very different behaviours for each arm; few arms (3-4) help.
 - Risk: the payoff is noisy and delayed (long episodes); short windows chase noise, long windows react slowly.
 - Risk: the bandit can settle on β = 0 early, before the bonus has had time to pay off. Force a minimum share per arm.

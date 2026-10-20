@@ -13,6 +13,7 @@ suggested-by:
   - "[[PPO (Matthews 2024)]]"
   - "[[PPO-RNN (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Plasticity-Preserving Training
 
@@ -43,11 +44,11 @@ Builds on the stability issues of bootstrapping with function approximation ([[0
 
 - Base: `ppo_rnn.py` ([[Craftax Baselines]]); a function on the parameter tree with `jax.tree_util.tree_map`, called inside the update loop with `jax.lax.cond`. About 30-50 lines.
 - Extra hyperparameters: interval $T$, shrink $\lambda$, noise $\sigma$, which layers.
-
-## Cost and risk
-
-- Compute: negligible. The effect shows only in long runs (1B+), so a GPU is needed; Craftax-Classic runs can show it on a Mac at smaller scale.
 - Student level: yes, low effort.
+
+## Risks
+
+- Risk: the effect is expected only in long runs (1B steps and beyond); short runs say little.
 - Risk: each reset causes a temporary drop in return; too frequent resets prevent learning.
 - Risk: plasticity loss may not be the bottleneck; exploration of the deep floors may be.
 
@@ -67,7 +68,7 @@ Builds on the stability issues of bootstrapping with function approximation ([[0
 
 ## How to evaluate
 
-- Reward % of max at 1B and beyond against blocks A and C of the [[Existing Implementations]] table.
+- Reward % of max at 1B and beyond (up to 10B, where PPO-RNN stalls) against blocks A and C of the [[Existing Implementations]] table; Craftax-Classic at 1B as a second environment (the Adam-Rel setting).
 - Learning-curve slope after 500M steps; dormant-unit fraction over training.
 
 ## References

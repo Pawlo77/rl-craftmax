@@ -13,6 +13,7 @@ suggested-by:
   - "[[PQN-RNN (Gallici 2025)]]"
   - "[[PPO-GTrXL (Hamon 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Population-Based Training
 
@@ -27,7 +28,7 @@ created: 2026-10-20
 
 - Craftax results depend strongly on hyperparameters. An autonomous tuning campaign raised PPO from 26.83 to 40.50 return at 1B through rollout length (128 steps), γ = 0.999, entropy annealing, a GRU and a CNN encoder ([auto-craftax report](https://github.com/roger-creus/auto-craftax/blob/main/report/report.md) §5).
 - The best settings change over training: early the agent needs a large entropy bonus and a short horizon; later, reaching floors needs a long horizon ([[Craftax floors and progression]]). A schedule found by PBT can follow this.
-- Craftax runs in JAX, so a population is just one more `vmap` axis on one GPU ([[Craftax Baselines compute and wall-clock]]: `--num_repeats` already vmaps seeds).
+- Craftax runs in JAX, so a population is just one more `vmap` axis in the same jitted program ([[Craftax Baselines compute and wall-clock]]: `--num_repeats` already vmaps seeds).
 - The Craftax-1B baselines were tuned one hyperparameter at a time with one seed ([[PPO (Matthews 2024)]]).
 
 ## How it works
@@ -59,9 +60,9 @@ for round in rounds:
 - Extra hyperparameters: population size $N$, interval $T$, perturbation factors, ranking window.
 - Fair budget: the benchmark counts all environment steps, so with $N$ members each member gets $1/N$ of the steps. Report both "per member" and "total" steps.
 
-## Cost and risk
+## Risks
 
-- Compute: $N$ times the cost of one run at the same per-member steps. On a Mac: Craftax-Classic or Craftax-1M scale with 4-8 members of 64-128 environments. Craftax-1B needs a GPU.
+- Runtime: $N$ times one run at the same per-member steps.
 - Risk: greedy selection. Craftax rewards short-term overworld play before deep play; members that explore deeper may look worse early and be killed. Use a long interval $T$.
 - Risk: noisy ranking from few finished episodes; average over a window.
 - Risk: under an equal total budget, each member trains less; PBT may lose on the 1B challenge but win at equal per-member steps.
@@ -80,7 +81,7 @@ for round in rounds:
 
 ## How to evaluate
 
-- Best member's reward % of max against blocks A and D of the [[Existing Implementations]] table, with the budget rule stated.
+- Best member's reward % of max on Craftax-1M and Craftax-1B against blocks D and A of the [[Existing Implementations]] table, with the budget rule stated.
 - Compare with the default PPO-RNN hyperparameters at the same per-member steps.
 - Plot the learned schedules (entropy coefficient, γ, learning rate over time); they are a result in themselves.
 

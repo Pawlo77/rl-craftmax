@@ -10,6 +10,7 @@ tags:
   - sparse-reward
 origin: "Oh, Guo, Singh, Lee. Self-Imitation Learning. ICML 2018. https://arxiv.org/abs/1806.05635"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Self-Imitation Learning
 
@@ -55,9 +56,9 @@ $$L_{\text{sil}} = -\log \pi(a_t \mid s_t)\,(R_t - V(s_t))_+ + \tfrac{\beta}{2}\
 - Memory: one symbolic observation is 8268 floats (33 KB). Store as `float16` or `uint8` (most channels are one-hot); 50k steps in `float16` is about 0.8 GB.
 - Extra hyperparameters: buffer size (20k-100k steps), SIL updates per PPO update (1-2), SIL minibatch size (512), value-loss weight β (0.01), window length per achievement (256-1024 steps).
 
-## Cost and risk
+## Risks
 
-- Compute: one extra forward and backward pass per update, about 10-30% slower. Craftax-1M and Craftax-Classic runs fit on a Mac; Craftax-1B needs a GPU ([[Craftax Baselines compute and wall-clock]]).
+- Runtime: one extra forward and backward pass per update, about 10-30% slower per update.
 - Risk: buffer memory. An autonomous agent's SIL attempt on Craftax crashed with CUDA out-of-memory ([auto-craftax report](https://github.com/roger-creus/auto-craftax/blob/main/report/report.md) §4.5). Keep the buffer small and compressed.
 - Risk: imitating lucky but unsafe behaviour (for example sleeping next to a zombie). Prefer recent entries and cap each episode's share of the buffer.
 - Risk: off-policy samples inside PPO. Keep the SIL step small (its own learning rate or weight).
@@ -73,7 +74,7 @@ $$L_{\text{sil}} = -\log \pi(a_t \mid s_t)\,(R_t - V(s_t))_+ + \tfrac{\beta}{2}\
 ## How to evaluate
 
 - Craftax-1M: reward as % of max (226) against [[PPO-RNN (Matthews 2024)]] 2.3% and [[PPO (Matthews 2024)]] 2.2% in the [[Existing Implementations]] table, block D.
-- Craftax-1B (GPU): against PPO-RNN 15.3% and [[PPO-GTrXL (Hamon 2024)]] 18.3%, block A.
+- Craftax-1B: against PPO-RNN 15.3% and [[PPO-GTrXL (Hamon 2024)]] 18.3%, block A.
 - Rerun our own PPO-RNN with the same seeds and budget; report the difference with 5+ seeds.
 - Achievement success rates: `ENTER_DUNGEON`, `ENTER_GNOMISH_MINES`, `MAKE_IRON_PICKAXE`, `DEFEAT_ZOMBIE` (forgetting check).
 

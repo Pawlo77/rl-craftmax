@@ -10,6 +10,7 @@ tags:
   - observation
 origin: "Parisotto, Salakhutdinov. Neural Map: Structured Memory for Deep Reinforcement Learning. ICLR 2018. https://arxiv.org/abs/1702.08360"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Explicit Map Memory
 
@@ -48,9 +49,9 @@ Builds on the Markov property and state construction ([[03a MDP setting and retu
 - Store block ids as `int8`: 9 floors x 48 x 48 = about 21 KB per environment, about 21 MB for 1024 environments.
 - Extra hyperparameters: crop size, pooled map size, which block types to keep (all 37 or a short list such as water, table, furnace, ladder, ores, lava).
 
-## Cost and risk
+## Risks
 
-- Compute: the CNN on a 15 x 15 crop is cheap; 10-30% slower overall. Fits a Mac for Craftax-1M.
+- Runtime: the CNN on a 15 x 15 crop adds about 10-30% per step.
 - Risk: privileged position. Results with `player_position` are not strictly comparable with the baselines; run the dead-reckoning variant for a fair comparison.
 - Risk: stale map. Mobs move and blocks change (mined, placed); store only static block types and the time since last seen.
 - Risk: more input dimensions slow early learning on Craftax-1M.

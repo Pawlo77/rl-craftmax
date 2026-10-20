@@ -12,6 +12,7 @@ origin: "Ecoffet, Huizinga, Lehman, Stanley, Clune. First return, then explore. 
 suggested-by:
   - "[[PPO (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Go-Explore with Achievement Cells
 
@@ -58,10 +59,9 @@ on reset(env i):
 - The saved state keeps its own timestep, so the 100,000-step cap still applies ([[Craftax episode and time]]).
 - Extra hyperparameters: $p$ (0.25-0.5), archive size, cell definition, whether returns from archived starts count toward the benchmark step budget (they should).
 
-## Cost and risk
+## Risks
 
-- Compute: env steps are unchanged; the archive costs memory. One `EnvState` holds all 9 floors of 48 x 48 tiles in several arrays; budget roughly 0.1-1 MB per slot, so 512 slots fit on a Mac and on a GPU.
-- Mac: fine for Craftax-Classic and Craftax-1M experiments; Craftax-1B needs a GPU.
+- Runtime: environment steps are unchanged; the archive costs memory. One `EnvState` holds all 9 floors of 48 x 48 tiles in several arrays; budget roughly 0.1-1 MB per slot, about 50-500 MB for 512 slots.
 - Risk: distribution shift. The agent sees deep states more often than in real play, and may play the early game worse. Keep $p \le 0.5$ and always evaluate on normal resets.
 - Risk: archived states are fragile (low health, night). Store the best state per cell, by return or health.
 - Risk: hidden-state mismatch: a GRU started at zero in the middle of a game lacks memory of what came before.
@@ -83,6 +83,7 @@ on reset(env i):
 ## How to evaluate
 
 - Main metric on normal resets: Craftax-1B reward % of max against block A of the [[Existing Implementations]] table (PPO-RNN 15.3%, PPO-GTrXL 18.3%).
+- Secondary: Craftax-1M against block D (PPO-RNN 2.3%), where the archive holds mostly overworld and floor-1 cells.
 - Success rates of `ENTER_GNOMISH_MINES`, `ENTER_SEWERS`, `DEFEAT_GNOME_WARRIOR`: these are near zero for every 1B baseline.
 - Archive growth: number of cells and deepest floor in the archive over training.
 - Ablation: $p = 0$ (plain PPO-RNN) versus $p = 0.25, 0.5$.

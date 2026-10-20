@@ -12,6 +12,7 @@ origin: "Matthews et al. Craftax, App. D.4 (text renderer). ICML 2024. https://a
 suggested-by:
   - "[[PPO (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Language-Conditioned Policy
 
@@ -42,11 +43,10 @@ Builds on function approximation with extra input features ([[09a Function appro
 
 - Base: `ppo_rnn.py`; an instruction wrapper with success tests, about 150-250 lines; an embedding layer, about 20 lines.
 - Extra hyperparameters: instruction list, sampling rule, mix of instruction reward and native reward.
-
-## Cost and risk
-
 - Student level: partly. A fixed instruction list is feasible; free-form language with a language model is beyond scope (the project excludes large foundation models as the core method).
-- Compute: like PPO-RNN; Mac for small tests, GPU for 1B runs.
+
+## Risks
+
 - Risk: this is close to goal-conditioned RL, which has been done on Craftax (see below); a new angle is needed.
 - Risk: the native score needs a fixed instruction schedule, which is hand design.
 
@@ -67,7 +67,7 @@ Builds on function approximation with extra input features ([[09a Function appro
 ## How to evaluate
 
 - Instruction success rate per instruction.
-- Native reward % of max with a tech-tree instruction schedule, against block A or D of the [[Existing Implementations]] table.
+- Native reward % of max with a tech-tree instruction schedule on Craftax-1M and Craftax-1B, against blocks D and A of the [[Existing Implementations]] table.
 
 ## References
 

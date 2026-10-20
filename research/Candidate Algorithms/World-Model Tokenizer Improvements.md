@@ -13,6 +13,7 @@ suggested-by:
   - "[[Simulus (Cohen 2025)]]"
   - "[[Efficient MBRL (Dedieu 2025)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # World-Model Tokenizer Improvements
 
@@ -42,11 +43,13 @@ Builds on model-based planning ([[08a Models, planning, Dyna]]).
 
 - Requires a full token-based world-model agent (Simulus or a reimplementation of Efficient MBRL); the tokenizer change itself is small (about 100 lines), but the surrounding system is large.
 - Extra hyperparameters: token vocabulary per field, sequence layout.
+- Student level: partly. The per-field integer tokenizer is about 100 lines inside the open Simulus code ([[Simulus (Cohen 2025)]]), but learning and debugging that large world-model agent is most of the work. Rebuilding Efficient MBRL is research-grade: its code is not released ([[Efficient MBRL (Dedieu 2025)]]). The pretrained-image-model variant uses a large foundation model as the core, which this project excludes.
 
-## Cost and risk
+## Risks
 
-- Student level: no. Simulus needs about 94 hours per Craftax-1M run on an RTX 4090; Efficient MBRL used 8 H100 GPUs ([[Existing Implementations]]). The pretrained-image-model variant uses a large foundation model as the core, which this project excludes.
-- Risk: gains are inside the world model and hard to see without many expensive runs.
+- Risk: gains are inside the world model and hard to isolate; change only the tokenizer and compare with Simulus over 5 seeds.
+- Risk: the repository default is now Simulus-A, untested on Craftax; reproducing the paper's numbers needs the original Simulus configuration ([[Simulus (Cohen 2025)]]).
+- Runtime: Simulus reports about 94 hours per Craftax-1M run on one RTX 4090; shorter token sequences should cut this, which is part of the result.
 
 ## Novelty check
 

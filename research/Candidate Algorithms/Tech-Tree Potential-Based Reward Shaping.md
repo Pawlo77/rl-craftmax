@@ -10,6 +10,7 @@ tags:
   - sparse-reward
 origin: "Ng, Harada, Russell. Policy invariance under reward transformations: Theory and application to reward shaping. ICML 1999. https://people.eecs.berkeley.edu/~pabbeel/cs287-fa09/readings/NgHaradaRussell-shaping-ICML1999.pdf"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Tech-Tree Potential-Based Reward Shaping
 
@@ -25,7 +26,7 @@ created: 2026-10-20
 
 - Craftax has an explicit dependency graph: wood, table, wood pickaxe, stone, stone pickaxe, furnace, coal and iron, iron pickaxe, diamonds ([[Craftax crafting and placing]], [[Craftax tools weapons and armour]]). Each step costs many actions with no reward until the achievement fires.
 - The deep floors add gates: 8 kills to open a ladder, then `DESCEND` ([[Craftax floors and progression]]).
-- Every recipe input and tool level is in the symbolic observation, so $\Phi$ is a cheap function of the observation ([[Craftax observations and actions]]).
+- Every recipe input and tool level is in the symbolic observation, so $\Phi$ is a simple function of the observation ([[Craftax observations and actions]]).
 - Hand-made dense bonuses on Craftax were exploited by the agent ("Agent exploits easy bonuses"; [auto-craftax report](https://github.com/roger-creus/auto-craftax/blob/main/report/report.md) §5). A pure potential cannot be farmed in a loop: going up and down returns the same total.
 
 ## How it works
@@ -47,9 +48,9 @@ Builds on reward design and returns ([[03a MDP setting and returns]]) and value 
 - PPO code unchanged; log the shaped and the native return separately.
 - Extra hyperparameters: scale of $\Phi$ (try 0.1, 0.3, 1.0), $w_{\text{floor}}$, which targets to include.
 
-## Cost and risk
+## Risks
 
-- Compute: negligible. Every scale fits Craftax-1M on a Mac; Craftax-1B needs a GPU.
+- Runtime: one potential per step in the wrapper; PPO unchanged.
 - Risk: mismatched $\gamma$ or a non-zero terminal potential breaks invariance and can reward suicide or stalling.
 - Risk: with $\gamma < 1$ a constant high $\Phi$ slowly "costs" reward each step ($\gamma\Phi - \Phi < 0$); keep the scale modest.
 - Risk: invariance holds for the optimum, not for what PPO learns in 1B steps; a bad $\Phi$ can still mislead a finite learner.

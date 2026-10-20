@@ -13,6 +13,7 @@ suggested-by:
   - "[[PQN-RNN (Gallici 2025)]]"
   - "[[PPO (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Count-Based Progress Bonus
 
@@ -54,9 +55,9 @@ bonus = beta / sqrt(N[key])
 - Extra hyperparameters: β (try 0.01, 0.03, 0.1), table size $K$, bucket rule, extrinsic/intrinsic value heads on or off.
 - Variant for PQN: replace ε-greedy exploration in PQN with this bonus (PQN's authors call ε-greedy too simple).
 
-## Cost and risk
+## Risks
 
-- Compute: negligible (one hash and one scatter-add per step). Craftax-1M runs on a Mac CPU in minutes to hours; Craftax-1B needs a GPU ([[Craftax Baselines compute and wall-clock]]).
+- Runtime: one hash and one scatter-add per step on top of PPO-RNN.
 - Risk: a bad key. Too fine (exact counts) and every state is new; too coarse and nothing is new. Start coarse and log how many distinct keys appear.
 - Risk: the bonus rewards hoarding (99 wood is a new bucket). Cap buckets at the amounts recipes need.
 - Risk: hash collisions with small $K$; check the fill rate.

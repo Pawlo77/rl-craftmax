@@ -12,6 +12,7 @@ origin: "Sutton, Precup, Singh. Between MDPs and semi-MDPs: A framework for temp
 suggested-by:
   - "[[PPO (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Achievement Skill Options
 
@@ -41,11 +42,10 @@ Builds on the MDP framework ([[03a MDP setting and returns]]) and the actor-crit
 
 - Base: `ppo_rnn.py` for both levels ([[Craftax Baselines]]); an option wrapper that runs the low-level policy until success or step limit. About 300-500 lines.
 - Extra hyperparameters: option list, step limits, low-level reward, how often the top level decides.
-
-## Cost and risk
-
 - Student level: partly. Hand-written options with hand-written success tests are feasible; learning the options or their definitions automatically (or with an LLM) is research-level.
-- Compute: two policies; Mac for Craftax-Classic tests, GPU for full Craftax.
+
+## Risks
+
 - Risk: a lot of hand design; options that fail silently (step limit) stall the top level.
 - Risk: the result depends on the option list more than on the algorithm.
 
@@ -65,7 +65,7 @@ Builds on the MDP framework ([[03a MDP setting and returns]]) and the actor-crit
 
 ## How to evaluate
 
-- Native reward % of max against block A of the [[Existing Implementations]] table.
+- Native reward % of max on Craftax-1M and Craftax-1B against blocks D and A of the [[Existing Implementations]] table; Craftax-Classic first to debug the option list.
 - Success rate per option; deepest floor reached.
 
 ## References

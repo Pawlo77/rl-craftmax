@@ -13,6 +13,7 @@ suggested-by:
   - "[[PLR (Matthews 2024)]]"
   - "[[Domain Randomisation (Matthews 2024)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # PLR with a Recurrent Policy
 
@@ -45,11 +46,11 @@ Builds on the actor-critic ([[11 Policy approximation (actor-critic)]]); the lev
 - Base: JaxUED `examples/craftax/craftax_plr.py` ([[PLR (Matthews 2024)]]), replacing its MLP actor-critic with the `ActorCriticRNN` of `ppo_rnn.py` ([[Craftax Baselines]]).
 - Main work: carry the GRU hidden state through JaxUED's rollout and scoring code (about 150-250 lines changed).
 - Extra hyperparameters: buffer size, replay probability, score temperature, staleness weight (JaxUED defaults), inner rollouts per level.
-
-## Cost and risk
-
-- Compute: like PPO-RNN plus scoring passes; the UED runs used 1B steps, so a GPU is needed for comparable numbers. Small tests (Craftax-1M scale) fit a Mac.
 - Student level: yes, but medium effort; most of the work is plumbing in an existing codebase.
+
+## Risks
+
+- Runtime: like PPO-RNN plus scoring passes.
 - Risk: curriculum-induced covariate shift: replay levels differ from normal levels ([[PLR (Matthews 2024)]]).
 - Risk: recurrent hidden states make the per-level rollout bookkeeping error-prone.
 
@@ -67,7 +68,7 @@ Builds on the actor-critic ([[11 Policy approximation (actor-critic)]]); the lev
 
 ## How to evaluate
 
-- On 20 normal levels, as in block B of the [[Existing Implementations]] table, and on a held-out seed set.
+- On 20 normal levels, as in block B of the [[Existing Implementations]] table, and on a held-out seed set; at 1B steps as in the Craftax UED runs, so numbers are comparable, and at Craftax-1M as a smaller-budget comparison.
 - Compare with PPO-RNN with plain randomisation at the same budget, and with feed-forward PLR.
 - Success rates of `ENTER_DUNGEON` and `ENTER_GNOMISH_MINES`.
 

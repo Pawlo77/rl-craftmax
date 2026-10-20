@@ -12,6 +12,7 @@ origin: "Dedieu et al. Improving Transformer World Models for Data-Efficient RL.
 suggested-by:
   - "[[Efficient MBRL (Dedieu 2025)]]"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Off-Policy Dyna with Imagined Data
 
@@ -43,10 +44,10 @@ Builds on Dyna ([[08a Models, planning, Dyna]]), Q-learning ([[06 Temporal-diffe
 - Not a small change: needs a world model (Efficient MBRL uses a transformer world model with a patch tokenizer) and an off-policy learner.
 - Student-scale variant: Craftax-Classic symbolic, a small MLP model that predicts the next inventory and nearby tiles, PQN as the learner. Still several hundred lines.
 - Extra hyperparameters: imagination horizon, ratio of imagined to real data, warm-up length, model-replay priority.
+- Student level: partly. The small-model variant is feasible: PQN exists in purejaxql and the model is a supervised MLP, but it is several hundred lines of new code with research-grade debugging (model errors, off-policy instability). A faithful version is not: Efficient MBRL's code is not released, so its transformer world model and patch tokenizer would have to be rebuilt from the paper ([[Efficient MBRL (Dedieu 2025)]]).
 
-## Cost and risk
+## Risks
 
-- Student level: no, as proposed. Efficient MBRL trained on 8 H100 GPUs; a faithful version is beyond a one-semester student project. The small-model variant is possible but research-grade.
 - Risk: model errors compound over imagined steps; Efficient MBRL saw collapse without warm-up.
 - Risk: off-policy learning on imagined data can diverge (the "deadly triad").
 
@@ -65,6 +66,7 @@ Builds on Dyna ([[08a Models, planning, Dyna]]), Q-learning ([[06 Temporal-diffe
 
 - Craftax-1M reward % of max against block D (symbolic) or E/F (pixels) of the [[Existing Implementations]] table.
 - Ablations: no imagination, imagination with separate updates (as in Efficient MBRL), mixed batches.
+- Optional: Craftax-1B, to see whether imagined data still helps when real data is plentiful.
 
 ## References
 

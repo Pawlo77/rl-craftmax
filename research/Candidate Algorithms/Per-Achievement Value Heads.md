@@ -10,6 +10,7 @@ tags:
   - critic
 origin: "van Seijen, Fatemi, Romoff, Laroche, Barnes, Tsang. Hybrid Reward Architecture for Reinforcement Learning. NeurIPS 2017. https://arxiv.org/abs/1706.04208"
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Per-Achievement Value Heads
 
@@ -46,9 +47,9 @@ Builds on value-function approximation ([[09a Function approximation and linear 
 - Critic head: `Dense(K)` instead of `Dense(1)`; GAE via `jax.vmap` over the head axis. About 40-60 lines.
 - Extra hyperparameters: $K$ (5 or 68), whether to add the unlocked-achievements vector, value-loss weight per head (start equal).
 
-## Cost and risk
+## Risks
 
-- Compute: a slightly wider output layer; under 5% slower. Fits a Mac for Craftax-1M and Craftax-Classic.
+- Runtime: a slightly wider output layer; under 5% slower.
 - Risk: the 68-head version may learn slowly for heads that never see reward; start with 5 tier heads.
 - Risk: adding the unlocked-achievements vector changes the observation; report it as a separate variant, since the baselines do not see it.
 - Risk: summed advantages have higher variance; keep advantage normalisation.
