@@ -20,6 +20,26 @@ Status: draft
 
 **Tech Stack:** scikit-learn (`DecisionTreeClassifier`, `export_text`, `permutation_importance`), numpy, pandas, matplotlib, JAX for rollouts through the trainer interface of [[2026-10-20-craftax-infrastructure]] (`policy(state) -> Policy`).
 
+Distillation loop per final seed:
+
+```mermaid
+flowchart LR
+  P["final policy (10 seeds)"] --> R["rollouts: train 30000+, val 10000+, test 20000+"]
+  R --> F["features.py: about 120 named features"]
+  F --> D["dataset.py: features, greedy action, probs"]
+  D --> G["distill.py: trees, 2 to 4096 leaves"]
+  G --> C["fidelity curve on test states"]
+  C --> L["L80, L90, L95, depth at L90"]
+  G --> TP["tree_policy.py: closed-loop score"]
+  G --> RU["rules.py: 16-leaf rules, importance"]
+  G -->|"optional DAgger round"| DG["play 256-leaf tree, relabel, refit"]
+  DG --> D
+  L --> OUT["complexity.csv, fidelity_vs_leaves"]
+  TP --> OUT
+  RU --> W["Decision-tree interpretation note, report section"]
+  OUT --> W
+```
+
 ## Feature set
 
 From the Craftax symbolic observation (8268 values); Classic uses the matching subset of its 1345 values.

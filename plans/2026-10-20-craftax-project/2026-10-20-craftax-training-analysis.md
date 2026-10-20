@@ -20,6 +20,25 @@ Status: draft
 
 **Tech Stack:** pandas, numpy, matplotlib, MLflow, `wut_murl_craftax.evaluation` (records, stability), `wut_murl_craftax.visualisation` (`eval_rollouts.as_rollout`, `render.render_master`, `cuts.gif`, `overlay.render_overlay`).
 
+Analysis pipeline per method and benchmark:
+
+```mermaid
+flowchart LR
+  EX["outputs/metrics/phase: runs, curves, episodes"] --> L["load.py"]
+  L --> H["hard.py: floors, achievements, deaths, stalls"]
+  L --> C["cases.py: case episodes"]
+  L --> O["obstacles.py: detectors"]
+  H --> P["hard/ tables + plots"]
+  C --> CE["replay, 16 px master, GIF, overlay clip"]
+  O --> OBT["obstacles.md table"]
+  P --> ML["MLflow: training-analysis-budget-method"]
+  CE --> ML
+  OBT --> ML
+  ML --> N["knowledge/results: Method training analysis"]
+  CE --> V["outputs/visualisation/runs/cases"]
+  N --> R["report Discussion, comparison and results"]
+```
+
 ## Questions answered per method
 
 - Which floors were never reached, and which were reached in fewer than 5% of final eval episodes ([[Craftax floors and progression]])?

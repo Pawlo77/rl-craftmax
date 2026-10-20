@@ -20,6 +20,24 @@ Status: draft
 
 **Tech Stack:** pandas, numpy, scipy, matplotlib (Agg, the dark palette of `visualisation.charts` for video, a light variant for the report), MLflow, `wut_murl_craftax.evaluation`.
 
+From exported runs to the report, the videos and the Space:
+
+```mermaid
+flowchart LR
+  EX["outputs/metrics/phase: runs, curves, episodes"] --> FS["final score per run (2% rule)"]
+  LIT["literature.py: blocks A, A2, D"] --> G
+  FS --> ST["IQM, mean, stratified bootstrap, PoI, Mann-Whitney + Holm"]
+  ST --> G{"reproduction gate: controls inside or above?"}
+  G -->|no| IS["issue note, stop comparison"]
+  G -->|yes| T["compare.py: tables T1 to T7"]
+  G -->|yes| F["figures.py, figures_game.py: F1 to F20"]
+  T --> LX["latex.py: report/tables, numbers.tex"]
+  F --> RF["report/figures (PDF)"]
+  T --> OUT["outputs/results + MLflow comparison-final"]
+  F --> OUT
+  OUT --> USE["videos, Hugging Face Space, Final results note"]
+```
+
 ## Comparison rules
 
 - "Method" includes the combination of the two best compatible methods ([[Experiment decisions]]); it gets its own row, colour and radar.

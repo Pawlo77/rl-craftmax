@@ -44,8 +44,9 @@ flowchart LR
 - Test: `tests/orchestration/test_queue.py`
 
 - [ ] **Step 1: Write the failing tests**: a phase YAML with 2 configs x 2 seeds expands to 4 runs; run names are stable across processes (`<method>-<budget>-<config hash 8>-s<seed>`); a grid entry overrides only its keys; unknown keys fail loudly.
-- [ ] **Step 2: Implement** `RunSpec` (frozen dataclass: method, budget, env, seed, config dict, config hash) and `expand_phase(path) -> list[RunSpec]`.
-- [ ] **Step 3: Run** `make tests`; expected: the new tests pass.
+- [ ] **Step 2: Implement** `RunSpec` (frozen dataclass: method, budget, env, seed, config dict, config hash) and `expand_phase(path) -> list[RunSpec]`; hook callables are excluded from the config hash.
+- [ ] **Step 3: Implement** `base_from: <method>.tuned` (start a method's fixed settings from a control's tuned config, read from the MLflow run tagged `best=true`) and `--expand-fine` (build the stage-2 grid around the best stage-1 config by each method's rule), both used by the method plans.
+- [ ] **Step 4: Run** `make tests`; expected: the new tests pass.
 
 ### Task 2: Resumable runner with MLflow bookkeeping
 

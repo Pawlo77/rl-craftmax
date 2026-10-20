@@ -20,6 +20,28 @@ Status: draft
 
 **Tech Stack:** JAX + craftax 1.6.1 renderers, Pillow, matplotlib, ffmpeg 9 CLI (no `drawtext`), PyYAML, existing modules `rollout`, `render`, `highlights`, `review`, `cuts`, `curves`, `grid`, `timeline`, `overlay`, `montage`, `ffmpeg`, `text`.
 
+Production pipeline from footage to upload:
+
+```mermaid
+flowchart LR
+  FY["configs/video/footage.yaml"] --> RO["footage.py: rollouts"]
+  CS["cases.csv, video = yes"] --> RO
+  RO --> MA["render.py: masters"]
+  MA --> HL["highlights.py: candidates.csv"]
+  HL --> RV["review page: the user keeps or drops"]
+  RV --> RC["review.csv"]
+  RC --> SB["storyboard.py: short.yaml, long.yaml"]
+  ST["result figures as stills"] --> SB
+  SB --> CU["cuts: clips, cards, grids, overlays"]
+  VO["voice takes per scene"] --> MX["mux_audio: ducked music, -14 LUFS"]
+  MU["music.yaml, hash checked"] --> MX
+  CU --> MX
+  MX --> EN["encode 1080p60, check_youtube"]
+  EN --> OK{"user approves?"}
+  OK -->|no| SB
+  OK -->|yes| UP["user uploads Unlisted, then Public"]
+```
+
 ## Footage
 
 | Kind | Which | Label on screen | Use |
@@ -57,6 +79,21 @@ Durations are on-screen seconds after crossfades; total 175 s, so the Short stay
 ## Storyboard: 12-minute video (16:9)
 
 Total 720 s; each chapter starts with a 3 s chapter card counted inside its first scene; chapters become YouTube chapters.
+
+Chapter timeline (start time, seconds):
+
+```mermaid
+flowchart LR
+  C0["0 Intro, 0:00, 20 s"] --> C1["1 What is Craftax, 0:20, 60 s"]
+  C1 --> C2["2 Warm-up on Classic, 1:20, 45 s"]
+  C2 --> C3["3 The contenders, 2:05, 120 s"]
+  C3 --> C4["4 How they learn, 4:05, 120 s"]
+  C4 --> C5["5 Results, 6:05, 110 s"]
+  C5 --> C6["6 Highlights, 7:55, 160 s"]
+  C6 --> C7["7 How they fail, 10:35, 35 s"]
+  C7 --> C8["8 What the agent learned, 11:10, 30 s"]
+  C8 --> C9["9 Outro, 11:40, 20 s"]
+```
 
 | Chapter | Scene | Seconds | Content | Source |
 |---|---|---|---|---|

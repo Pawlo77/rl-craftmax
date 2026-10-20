@@ -20,6 +20,26 @@ Status: draft
 
 **Tech Stack:** TeX Live (`latexmk`, `pdflatex`, BibTeX with `IEEEtran`), `report/Interspeech.cls`, generated tables and figures from `wut_murl_craftax.analysis`.
 
+Report build from the MLflow exports to the PDF:
+
+```mermaid
+flowchart LR
+  ML["MLflow store"] --> EX["outputs/metrics/phase exports"]
+  EX --> RS["analysis.results: figures and tables"]
+  INT["outputs/interpretation: complexity.csv, fidelity_vs_leaves"] --> LX
+  RS --> LX["analysis/latex.py"]
+  LX --> NU["report/numbers.tex (macros)"]
+  LX --> TB["report/tables/*.tex"]
+  LX --> FG["report/figures/*.pdf"]
+  NOTES["research notes frontmatter"] --> BIB["report/mybib.bib"]
+  TXT["report/report.tex (hand-written text)"] --> LM["make report: latexmk, pdflatex, BibTeX"]
+  NU --> LM
+  TB --> LM
+  FG --> LM
+  BIB --> LM
+  LM --> PDF["report/report.pdf, 4 pages + page 5"]
+```
+
 ## Page budget
 
 Interspeech regular papers allow 4 pages of content; references, the generative-AI disclosure and acknowledgements may use page 5 (`report/template.tex`, sections "Submissions" and "Acknowledgments").

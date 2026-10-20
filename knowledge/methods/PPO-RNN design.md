@@ -44,11 +44,12 @@ flowchart LR
 
 ## Extension hooks
 
-- One shared contract in `training/hooks.py`, the same for PQN-RNN; the method state lives in the train state and is checkpointed.
+- One shared contract in `training/hooks.py`, the same for PQN-RNN: hooks are fields of `PPORNNConfig` set by a method's factory (`PPORNNConfig(intrinsic_reward_fn=...)`); the method state lives in the train state and is checkpointed.
 - `intrinsic_reward_fn(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`: per env step; `r_int` is added to the reward before GAE; the score keeps the extrinsic reward.
 - `observe(state, traj) -> state`: once per rollout, before GAE.
-- `extra_loss_fn(params, state, key) -> (loss, metrics)` with `extra_steps = K` optimizer steps after the PPO epochs.
-- `init_state_fn`, `env_wrapper_fn` (observation or action wrappers), `metrics_fn` (logged as `hook/*`).
+- `extra_loss_fn(params, state, key) -> (loss, (state, metrics))` with `extra_steps = K` optimizer steps after the PPO epochs.
+- `init_state_fn`, `env_wrapper_fn` (observation or action wrappers), `metrics_fn` (logged as `hook/*`); `make_network` is public so an add-on loss can apply the network.
+- Users: [[2026-10-20-craftax-method-count-bonus]] (`intrinsic_reward_fn`), [[2026-10-20-craftax-method-sil]] (`observe`, `extra_loss_fn`, `extra_steps`).
 - Why hooks and not subclasses: one recurrent PPO implementation, add-ons as pure functions inside `jit`, and a bit-identity test proves that zero hooks leave the control unchanged.
 - Why extra steps after the epochs, not a term inside the PPO loss: self-imitation learning samples from its own buffer at its own batch size, and the PPO loss of the control stays untouched.
 

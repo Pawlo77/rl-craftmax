@@ -89,8 +89,14 @@ Consequences: [[2026-10-20-craftax-report]] and [[2026-10-20-craftax-huggingface
 
 ## 2026-10-20 - Method selection
 
-Decision: pending: 3-4 methods besides the PPO and PPO-RNN controls, mixing different algorithm families with PPO add-ons ([[Candidate Algorithms]]).
+Decision: three controls (PPO, PPO-RNN, PQN-RNN) and four methods: Count-Based Progress Bonus on PPO-RNN and on PQN-RNN, Self-Imitation Learning on PPO-RNN, SMDP Q-Learning over Hand-Defined Skills, and Dyna-Q over a Skill-Level Progress Model ([[Methods]]).
 
-Why: the first candidate search returned PPO add-ons only; the user wants truly different, textbook-level algorithms.
+Why: the first candidate search returned PPO add-ons only; the user asked for truly different, textbook-level algorithms, so a second search over algorithm families added hierarchical RL and model-based planning; the mix answers policy gradient vs value-based, base vs add-on, flat vs hierarchical and model-free vs planning ([[Candidate Algorithms]]).
 
-Consequences: each chosen method gets a design note in `knowledge/methods/` and a plan file in [[2026-10-20-craftax-project]].
+Consequences: one plan file and one design note per method; PQN-RNN joins the controls because the value-based comparison needs it; the skill methods use prior knowledge (hand-written skills) and are reported in their own block. Rejected: the five PPO add-ons alone; Actor-Critic with Eligibility Traces (kept as reserve); thirteen other families (verdicts in [[Candidate Algorithms]]).
+
+Decision: every add-on builds on the recurrent controls (PPO-RNN, PQN-RNN) through one hook contract: an intrinsic reward per step, an observe callback per rollout and an extra loss after the base update; empty hooks must leave the control bit-identical.
+
+Why: gains are measured against the stronger published bases, on the same code, settings and seeds.
+
+Consequences: `training/hooks.py`, shared by [[2026-10-20-craftax-method-ppo-rnn]] and [[2026-10-20-craftax-method-pqn-rnn]].

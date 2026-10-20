@@ -26,6 +26,7 @@ Status: draft
 
 | Area | File |
 |---|---|
+| One-page summary of the whole plan | [[2026-10-20-craftax-overview]] |
 | Infrastructure: runner, queue, MLflow, profiles | [[2026-10-20-craftax-infrastructure]] |
 | Metrics and evaluation protocol | [[2026-10-20-craftax-evaluation-and-metrics]] |
 | Control: PPO | [[2026-10-20-craftax-method-ppo]] |

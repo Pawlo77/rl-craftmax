@@ -16,7 +16,7 @@ Status: draft
 
 **Goal:** a recurrent PPO control that reproduces the published Craftax-Symbolic scores (2.3% at 1M, 15.3% at 1B, [[Craftax Baselines results]]) inside an acceptance band, is lightly tuned at 1M, and is the base module that the count-bonus, self-imitation and skill methods extend through named hooks.
 
-**Architecture:** new module `src/wut_murl_craftax/training/ppo_rnn.py` with `PPORNNConfig`, `ActorCriticRNN` (Dense 512 ReLU, GRU 512 reset on done, actor and critic heads 2 x Dense 512 ReLU) and `make_trainer(cfg, hooks_factory=None)`; it reuses GAE and `ppo_terms` (the loss math) from `training/ppo.py`. Extension points live in a new shared `src/wut_murl_craftax/training/hooks.py` (`Hooks`, also used by `training/pqn_rnn.py`): `init_state_fn`, `intrinsic_reward_fn`, `observe`, `extra_loss_fn` (with `extra_steps`), `env_wrapper_fn`, `metrics_fn`; the method state they share lives in the train state and is checkpointed. Registry entry `ppo-rnn` in `training/interface.py` ([[2026-10-20-craftax-infrastructure]] Task 3); config `configs/methods/ppo-rnn.yaml`. Design decisions: [[PPO-RNN design]].
+**Architecture:** new module `src/wut_murl_craftax/training/ppo_rnn.py` with `PPORNNConfig`, `ActorCriticRNN` (Dense 512 ReLU, GRU 512 reset on done, actor and critic heads 2 x Dense 512 ReLU) and `make_trainer(cfg)`; it reuses GAE and `ppo_terms` (the loss math) from `training/ppo.py`. Extension points are fields of `PPORNNConfig`, defined once in a new shared `src/wut_murl_craftax/training/hooks.py` (`HookFields`, also mixed into `PQNRNNConfig`): `init_state_fn`, `intrinsic_reward_fn`, `observe`, `extra_loss_fn` (with `extra_steps`), `env_wrapper_fn`, `metrics_fn`; a method sets them in its factory, for example `PPORNNConfig(intrinsic_reward_fn=..., ...)`; the method state they share lives in the train state and is checkpointed. Registry entry `ppo-rnn` in `training/interface.py` ([[2026-10-20-craftax-infrastructure]] Task 3); config `configs/methods/ppo-rnn.yaml`. Design decisions: [[PPO-RNN design]].
 
 **Tech Stack:** JAX 0.11, craftax 1.6.1, flax (`nn.GRUCell`, `nn.scan`), optax, MLflow, PyYAML, existing `training.ppo`, `training.records`, `training.checkpoints`, `orchestration`, `evaluation.reproduction` (from [[2026-10-20-craftax-method-ppo]] Task 4).
 
@@ -106,7 +106,7 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 - Create: `src/wut_murl_craftax/training/hooks.py`
 - Test: `tests/training/test_hooks.py`
 
-- [ ] **Step 1: Write the failing tests**: `Hooks()` has every field `None`; `resolve(hooks)` fills no-op defaults (zero reward, empty state, identity `observe` and wrapper, no extra steps) and reports `active` names; `metrics_fn` output `{"x": 1.0}` is logged as `hook/x`; a method state pytree survives a checkpoint round trip (`training/checkpoints.py`).
+- [ ] **Step 1: Write the failing tests**: a `HookFields` dataclass has every hook `None` and `extra_steps = 0`; callables are excluded from the YAML round trip and from the config hash of run names (the method name carries them); `resolve(cfg)` fills no-op defaults (zero reward, empty state, identity `observe` and wrapper, no extra steps) and reports `active` names; `metrics_fn` output `{"x": 1.0}` is logged as `hook/x`; a method state pytree survives a checkpoint round trip (`training/checkpoints.py`).
 - [ ] **Step 2: Implement** the frozen dataclass and its contract:
 
 | Hook | Called | Signature | Example user |
@@ -114,7 +114,7 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 | `init_state_fn` | once, in `init` | `(key, spec) -> state` | count table, SIL buffer |
 | `intrinsic_reward_fn` | every env step inside the rollout scan (actor device) | `(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)` | count-based progress bonus |
 | `observe` | once per rollout, before GAE (learner device) | `(state, traj) -> state` | SIL buffer insert, count update after the rollout |
-| `extra_loss_fn` | `extra_steps = K` optimizer steps after the PPO epochs | `(params, state, key) -> (loss, metrics)` | SIL loss on buffer samples |
+| `extra_loss_fn` | `extra_steps = K` optimizer steps after the PPO epochs | `(params, state, key) -> (loss, (state, metrics))` | SIL loss on buffer samples (may update priorities in `state`) |
 | `env_wrapper_fn` | once, when the env is built | `(env, env_params) -> (env, env_params)` | observation features, skill wrappers |
 | `metrics_fn` | once per update | `(state) -> dict` | buffer fill, count-table size |
 
@@ -122,7 +122,7 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 - `t` is the run's env-step counter at that step (int32); `traj` holds the rollout arrays `obs`, `action`, `reward` (extrinsic), `r_int`, `done`, `value`, `logp`, plus the start hidden state.
 - `extra_steps` is a `PPORNNConfig` field (default 0); the extra steps use the same Adam state; the learning-rate schedule is indexed by update, not by optimizer count, so K does not shift it.
 
-- [ ] **Step 3: Document** in the module docstring: env states give `achievements` and inventory ([[Craftax scoring and evaluation]]); `r_int` is added to the reward before GAE and the extrinsic reward is kept for the score; hooks are built by `hooks_factory(cfg, net, spec) -> Hooks`, so they close over the network and the method's own config; `None` hooks are skipped at trace time, so the control graph is unchanged; the same contract serves `training/pqn_rnn.py` (`r_int` enters the Q(lambda) targets).
+- [ ] **Step 3: Document** in the module docstring: env states give `achievements` and inventory ([[Craftax scoring and evaluation]]); `r_int` is added to the reward before GAE and the extrinsic reward is kept for the score; hook callables close over the method's own config (and the network via `make_network`, exposed by each base module); `None` hooks are skipped at trace time, so the control graph is unchanged; the same contract serves `training/pqn_rnn.py` (`r_int` enters the Q(lambda) targets).
 - [ ] **Step 4: Run** `uv run pytest tests/training/test_hooks.py -q`.
 
 ### Task 2: Recurrent network and trainer
@@ -136,7 +136,7 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 - [ ] **Step 2: Implement** `PPORNNConfig` (the `PPOConfig` fields plus `rnn_width: int = 512`, `activation: Literal["relu", "tanh"] = "relu"`, `extra_steps: int = 0`; `envs % minibatches == 0` checked), `ScannedGRU` (reset to zeros where `last_done`), `ActorCriticRNN`.
 - [ ] **Step 3: Implement** the rollout: carry `(hidden, obs, last_done, env_state, method_state, key)`; store `hidden` at the rollout start; call `intrinsic_reward_fn` per step; `observe` once on the finished trajectory; GAE via the shared function from `training/ppo.py`.
 - [ ] **Step 4: Implement** the update: permute envs (axis 1) once per epoch, split into `minibatches` groups of whole sequences, rerun the GRU from the stored start hidden, loss = `ppo_terms(...)`; then `extra_steps` Adam steps on `extra_loss_fn`.
-- [ ] **Step 5: Implement** `make_trainer(cfg, hooks_factory=None)` with `init`, `train_chunk`, `policy` (infrastructure Task 3), using `device_roles()`: rollout on the actor, update, `observe` and extra steps on the learner; the method state follows the step that uses it.
+- [ ] **Step 5: Implement** `make_network(cfg, n_actions, obs_dim)` (public, so add-ons can apply the network in their losses) and `make_trainer(cfg)` with `init`, `train_chunk`, `policy` (infrastructure Task 3), using `device_roles()`: rollout on the actor, update, `observe` and extra steps on the learner; the method state follows the step that uses it.
 - [ ] **Step 6: Run** `uv run pytest tests/training/test_ppo_rnn.py -q`, then `make tests`.
 
 ### Task 3: Correctness tests on tiny inputs

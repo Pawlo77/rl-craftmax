@@ -11,6 +11,11 @@ Reinforcement learning on Craftax
 
 Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
+## Plan
+
+- [[2026-10-20-craftax-project]]: the execution plan (phases, methods, metrics, videos, report, release).
+- [[Methods]]: the three controls and four methods with their design notes.
+
 ## Craftax
 
 - [[Craftax]]: the environment framework (API, observations, achievements, scoring, Apple GPU setup).

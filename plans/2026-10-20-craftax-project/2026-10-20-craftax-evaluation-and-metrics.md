@@ -20,6 +20,25 @@ Status: draft
 
 **Tech Stack:** JAX 0.11, craftax 1.6.1, numpy, pandas + pyarrow (parquet), scipy (Mann-Whitney U, trimmed mean), MLflow (SQLite store), mlflow-sysmetrics, existing `visualisation.rollout` (replay) and `visualisation.eval_rollouts` (stored eval episodes).
 
+Data flow from env states to tables (letters U, E, R, M as in "Metric definitions"):
+
+```mermaid
+flowchart LR
+  S["s, action, s2"] --> EV["events.py: StepEvents (jit)"]
+  EV --> U["episode_metrics.py: per-update sums (U)"]
+  U --> ML["MLflow store"]
+  EVAL["fixed-seed eval: actions, probs, obs (E)"] --> NPZ["eval/update.npz"]
+  NPZ --> ML
+  NPZ --> RP["rollout_metrics.py: replay from seed + actions"]
+  RP --> EV2["StepEvents + coverage"]
+  EV2 --> REC["episode_records.py: EpisodeRecord (R)"]
+  REC --> PQ["eval_update_mode.parquet"]
+  PQ --> ML
+  ML --> AN["stats, stability, hardware (M)"]
+  AN --> EX["export.py: runs, curves, eval_episodes"]
+  EX --> OUT["outputs/metrics/phase"]
+```
+
 ## Evaluation protocol
 
 - Benchmarks: Craftax-1M and Craftax-1B, both on `Craftax-Symbolic-v1`, budget = env steps summed over all parallel envs.

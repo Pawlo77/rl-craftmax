@@ -82,6 +82,24 @@ Status: draft
 - Gate 5: the user replies "make public" in chat; only then does `publish.py --make-public` run.
 - Each gate covers one action; an approval never carries over to a later run of the script.
 
+Release flow through the gates:
+
+```mermaid
+flowchart TD
+  P["preconditions: report approved, videos published, exports rebuilt"] --> S["scrub.py: publishable mlruns.db copy"]
+  S --> B["bundle.py: stage dataset and Space, manifest"]
+  B --> G1{"Gate 1: user reviews dry-run manifest"}
+  G1 -->|ok| G2["Gate 2: user logs in (agent never sees the token)"]
+  G2 --> G3{"Gate 3: user replies publish"}
+  G3 -->|yes| U["publish.py --upload: both repos private"]
+  U --> V{"verify against manifest (size, SHA-256)"}
+  V -->|mismatch| B
+  V -->|match| G4{"Gate 4: user checks private Space and dataset"}
+  G4 -->|fixes needed| B
+  G4 -->|ok| G5{"Gate 5: user replies make public"}
+  G5 -->|yes| M["publish.py --make-public"]
+```
+
 ---
 
 ### Task 1: Scrubbed MLflow copy
