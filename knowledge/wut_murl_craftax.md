@@ -16,6 +16,10 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 - [[Craftax]]: the environment framework (API, observations, achievements, scoring, Apple GPU setup).
 - [[Game]]: the full game: stats, resources, crafting, creatures, combat, magic, floors, boss, achievements, complexity.
 
+## Visualisation
+
+- [[Visualisation]]: tested pipeline for YouTube videos and GIFs of gameplay highlights and of the learning process.
+
 ## Research
 
 - [[Research]]: main note of the research folder.
