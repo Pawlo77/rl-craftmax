@@ -14,7 +14,7 @@ SKILLS_TESTS := tests/hooks/test_skill_frontmatter.py
 
 include kit.mk
 
-.PHONY: coverage datasets mlflow mlflow-stop train-ppo vis warm
+.PHONY: coverage mlflow mlflow-stop train-ppo vis warm
 
 coverage: ## Run tests with coverage report
 	uv run pytest --cov=./src/wut_murl_craftax --cov-report=term-missing tests/
@@ -27,9 +27,6 @@ train-ppo: ## Baseline PPO run: make train-ppo ARGS="--env Craftax-Classic-Symbo
 
 vis: ## Run one visualisation step: make vis STEP=review ARGS="outputs/visualisation/review/candidates.csv"
 	uv run python -m wut_murl_craftax.visualisation.$(STEP) $(ARGS)
-
-datasets: ## Download or build datasets (project-specific)
-	@echo "Not implemented: add dataset targets for your experiment."
 
 mlflow: ## Launch MLflow UI for local runs
 	@PORT="$(MLFLOW_PORT)"; \

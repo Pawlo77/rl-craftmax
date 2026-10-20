@@ -14,8 +14,6 @@ parent: "[[wut_murl_craftax]]"
 |---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. | 3 |  |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 147 |  |
-| [[src/wut_murl_craftax/dataset/__init__.py]] | Dataset loading and preprocessing. | 3 |  |
-| [[src/wut_murl_craftax/models/__init__.py]] | Model definitions for experiments. | 3 |  |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration utilities: fast JAX runtime, experiment runs and MLflow tracking. | 25 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 114 | [[orchestration]] |
@@ -44,5 +42,3 @@ parent: "[[wut_murl_craftax]]"
 
 - [[src/wut_murl_craftax/__init__.py]]
 - [[src/wut_murl_craftax/config.py]]
-- [[src/wut_murl_craftax/dataset/__init__.py]]
-- [[src/wut_murl_craftax/models/__init__.py]]

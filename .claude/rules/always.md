@@ -31,7 +31,7 @@ Chat replies only:
 
 # Experiment boundaries
 
-- Runnable code in `src/wut_murl_craftax/` — notebooks in `notebooks/`, paper in `report/`, configs in `configs/`
+- Runnable code in `src/wut_murl_craftax/` — paper in `report/`, configs in `configs/`, outputs in `outputs/` (git-ignored)
 - YAML experiment configs in `configs/`; load via `load_experiment_config` in `config.py`
 - Add modules only with real implementation, never empty package trees
 - Heavy optional dependencies → `[project.optional-dependencies]` extras when introduced

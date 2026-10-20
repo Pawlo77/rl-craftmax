@@ -15,7 +15,6 @@ def test_project_scaffold_layout() -> None:
     expected_paths = [
         root / "src" / "wut_murl_craftax",
         root / "tests",
-        root / "notebooks",
         root / "configs",
         root / "configs" / "experiment.yaml",
         root / "report",
