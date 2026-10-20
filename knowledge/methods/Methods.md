@@ -35,7 +35,7 @@ All methods are evaluated on the same environment reward, so extra reward terms 
 | PQN-RNN | observation + previous action + LSTM memory | none (logging only) | 43 actions, ε-greedy | $r$, Q(λ) with γ 0.99, λ 0.5 | same | none |
 | Count bonus (on PPO-RNN or PQN-RNN) | as its base | reward only (progress key; its fields are also in the observation) | 43 actions | $r + \beta_t / \sqrt{N[\text{key}]}$, 0 on done steps | same | progress-key design |
 | Self-Imitation Learning | as PPO-RNN | choice of training data only (`achievements` picks the stored windows) | 43 actions | $r$, plus an imitation loss on stored windows where the return beat the critic | same | achievement list as slot index |
-| SMDP skills | top: progress key + skill mask; skills: observation + previous action + skill id + step fraction + LSTM | acting via skill ends (`fight` kill counter, `unlock_any` achievements) and the skill reward | top: 25 options; skills: 43 actions | top: discounted $r$ over each skill (γ 0.995 or 0.999); skills: 1 on success | same | skills, start conditions, success tests, progress key |
+| SMDP skills | top: progress key + skill mask; skills: observation + previous action + skill id + step fraction + LSTM | logging only (key, mask and skill ends come from the observation and the reward) | top: 25 options; skills: 43 actions | top: discounted $r$ over each skill (γ 0.995 or 0.999); skills: 1 on success | same | skills, start conditions, success tests, progress key |
 | Dyna-Q skills | as SMDP skills | as SMDP skills | as SMDP skills | as SMDP skills, plus planning backups on stored skill outcomes (+ κ bonus on simulated ones only) | same | as SMDP skills |
 
 ## How the methods relate

@@ -3,42 +3,43 @@ title: "SMDP Q-Learning over Hand-Defined Skills implementation plan"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: draft
+status: ready
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 tags: [plan, method, hierarchical-rl, options, smdp, q-learning, pqn-rnn]
 ---
 # SMDP Q-Learning over Hand-Defined Skills implementation plan
 
-Status: draft
+Status: ready
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** a two-level value-based agent on Craftax: a tabular SMDP Q-learning top level over progress keys that picks one of 25 hand-written skills, and one shared PQN-RNN Q($\lambda$) network that learns all skills; tuned at Craftax-1M, run at 1M and 1B, and reported in its own "uses hand-written skills" block next to the flat PQN-RNN control.
 
-**Architecture:** `training/skills.py` holds the skill library (start conditions, success tests, step limits, pseudo-rewards, one `jax.lax.switch` per test); `training/smdp.py` holds the per-env skill state, the masked ε-greedy top level, the batched SMDP update of the table `Q_top[2^20, 25]` inside the rollout `scan`, and a trainer that reuses the network and learner update of `training/pqn_rnn.py` ([[2026-10-20-craftax-method-pqn-rnn]]); the progress key comes from `training/progress_key.py` ([[2026-10-20-craftax-method-count-bonus]] Task 1). Registry entry `smdp-skills`. Design decisions: [[SMDP Q-Learning over Hand-Defined Skills design]], [[Craftax skill library]].
+**Architecture:** `training/skills.py` holds the skill library: an observation decoder (`decode_obs`), the top-level key fields (`key_fields`), the achievement part of the reward, start conditions, success tests, step limits and pseudo-rewards, one `jax.lax.switch` per test; every decision reads only the observation and the reward, and privileged state (`EnvState`, `StepEvents`) is read for logging only. `training/smdp.py` holds the per-env skill state, the masked ε-greedy top level, the batched SMDP update of the table `Q_top[2^20, 25]` inside the rollout `scan`, and a trainer that reuses the network (`build_network`) and learner update (`learn`) of `training/pqn_rnn.py` ([[2026-10-20-craftax-method-pqn-rnn]]); `bucket` and `hash_fields` come from `training/progress_key.py` ([[2026-10-20-craftax-method-count-bonus]] Task 1). Registry entry `smdp-skills`, config `configs/methods/smdp-skills.yaml`. Design decisions: [[SMDP Q-Learning over Hand-Defined Skills design]], [[Craftax skill library]].
 
-**Tech Stack:** JAX 0.11, craftax 1.6.1, flax, optax, MLflow, the runner and queue of [[2026-10-20-craftax-infrastructure]], `evaluation/events.py` of [[2026-10-20-craftax-evaluation-and-metrics]].
+**Tech Stack:** JAX 0.11, craftax 1.6.1, flax, optax, MLflow, the runner and queue of [[2026-10-20-craftax-infrastructure]], `evaluation/events.py` of [[2026-10-20-craftax-evaluation-and-metrics]] (logging only).
 
 ---
 
 ## Design
 
 - Top level: $Q[k, o] \leftarrow Q[k, o] + \alpha\,\overline{(R + \gamma^\tau (1 - \text{done}) \max_{o' \in A(s')} Q[k', o'] - Q[k, o])}$ on the native reward, the semi-Markov backup of [[14.4 Elevator dispatching]]; the bar averages envs that end the same pair in the same step.
-- Key: progress fields (recipe or log2 buckets) plus 4 low-stat flags, hashed to $2^{20}$ rows; start conditions mask the 25 columns; optimistic $q_{\text{init}} = 10$.
+- Key: progress fields decoded from the observation (recipe or log2 buckets) plus 4 low-stat flags, hashed to $2^{20}$ rows; start conditions, read from the observation, mask the 25 columns; optimistic $q_{\text{init}} = 10$.
 - Skills: 23 learned skills and 2 one-step primitive options ([[Craftax skill library]]); one PQN-RNN network with the skill one-hot and the step-limit fraction as extra inputs, the skill pseudo-reward as reward and skill ends as dones.
+- No privileged state for acting: success tests use the decoded observation and the reward (`unlock_any`: achievement part of the reward > 0; `fight`: the attacked hostile creature gone from the 3 x 3 neighbourhood, or a kill achievement's reward); no test runs across a done step; `StepEvents` only feed `smdp/skill/<name>/test_agreement`.
 - Every primitive game step counts toward the budget; the skill method uses the PQN-RNN control's 1M and 1B settings for the skill network.
 - Prior knowledge (skills, start conditions, success tests, interruptions) puts the results in a separate block ([[Craftax skill library#Prior knowledge]]).
 - Ablations at `final-1m`: random top level, Monte Carlo top level, no low-stat flags.
 
 ```mermaid
 flowchart LR
-  S["EnvState"] --> K["progress key + low-stat flags"]
-  K --> Q["Q_top row, masked by start conditions"]
+  S["observation o, reward r"] --> K["key_fields + low-stat flags, hash_fields"]
+  K --> Q["Q_top row, masked by start conditions from o"]
   Q --> O["epsilon-greedy skill o"]
   O --> N["shared PQN-RNN skill network: action"]
   N --> E["env step: r native, r_o pseudo"]
-  E --> T{"skill ended?"}
+  E --> T{"skill ended? test on o and r"}
   T -- "no" --> N
   T -- "yes" --> U["SMDP update: R, gamma^tau, max over Q_top at new key"]
   U --> K
@@ -46,6 +47,8 @@ flowchart LR
 ```
 
 ## Hyperparameter grid
+
+Config file `configs/methods/smdp-skills.yaml` (the schema shared by every method, [[2026-10-20-craftax-infrastructure]] Task 1): `base:` (`base_from: pqn-rnn.tuned` for the skill network plus the fixed method settings), `grid.coarse:` the 48 stage-1 configs, `grid.fine:` the stage-2 rule as data (configs generated by `--expand-fine smdp-skills`, never written by hand), and `tuned:`, written by Task 8 with `mark_tuned`, which also sets the MLflow tag `best=true`; [[2026-10-20-craftax-method-dyna-q]] starts from it with `base_from: smdp-skills.tuned`.
 
 Stage 1 (coarse, Craftax-1M, 3 seeds, full factorial):
 
@@ -59,7 +62,7 @@ Stage 1 (coarse, Craftax-1M, 3 seeds, full factorial):
 
 - Configs: 2 x 2 x 2 x 3 x 2 = 48; 144 runs.
 
-Stage 2 (fine, Craftax-1M, 3 seeds):
+Stage 2 (fine, Craftax-1M, 3 seeds; `grid.fine`):
 
 - Knobs: the two numeric knobs (α, γ, ε decay fraction, timeout multiplier) with the largest stage-1 main effect (spread of the per-value mean final score); key granularity stays at its best value.
 - Values: best x {0.5, 1, 2}; γ is scaled through its horizon $1/(1 - \gamma)$ (for 0.999: 0.998, 0.999, 0.9995).
@@ -86,7 +89,8 @@ Fixed method settings:
 | $q_{\text{init}}$ | 10 | optimistic, above early returns |
 | Top-level ε end | 0.05 | top-level choices stay cheap to explore |
 | Low-stat flag threshold | stat <= 3 (food, drink, energy, health) | about 60-90 awake steps before 0 at dexterity 1 |
-| Skill death reward | 0 | success indicator only |
+| Skill death reward | 0 | success indicator only; also 0 on any done step |
+| Achievement-reward threshold | 0.5 on $r - \Delta h_{\text{obs}}$ | smallest achievement weight is 1 |
 | Per-skill `T_max` | 100-1000 by skill ([[Craftax skill library#Skill table]]) | scaled by the timeout multiplier |
 | Duplicate pairs in one step | mean TD error | test in Task 2 |
 | 1B finals | best 1M method knobs on the 1B skill-network settings | ε decay is a fraction of the budget, so it rescales |
@@ -94,8 +98,9 @@ Fixed method settings:
 ## Runs and laptop time estimate
 
 - Throughput: PQN-RNN 2,400 steps/s (shared assumption), Craftax-Classic RNN 8,000 steps/s (0.8 x 10,000).
-- Overhead factor 1.1 (estimate): per env step one key hash, a 25-branch success test (under `vmap` every branch is evaluated, all integer comparisons on the state and `StepEvents`), a masked argmax over one 25-wide table row and a scatter-add for the envs whose skill ended; the network grows by 26 inputs only.
-- Method throughput: 2,182 steps/s on Craftax, 7,273 steps/s on Craftax-Classic; +1 min compile per run.
+- Overhead factor 1.1 (estimate): per env step one observation decode, one key hash, a 25-branch success test (under `vmap` every branch is evaluated, all comparisons on the decoded observation and the reward), a masked argmax over one 25-wide table row and a scatter-add for the envs whose skill ended; the network grows by 26 inputs only.
+- Method throughput: 2,182 steps/s on Craftax, 7,273 steps/s on Craftax-Classic.
+- Laptop hours per run include the 1-minute compile; GPU hours exclude it (project convention, [[2026-10-20-craftax-compute-budget]]); fixed-seed evaluation is listed below the table.
 
 | Phase | Configs | Seeds | Steps per run | Runs | Est. steps/s | Est. hours (laptop, sequential) |
 |---|---|---|---|---|---|---|
@@ -103,11 +108,12 @@ Fixed method settings:
 | `tune-coarse` | 48 | 3 | 1M | 144 | 2,182 | 20.73 |
 | `tune-fine` | 8 new | 3 | 1M | 24 | 2,182 | 3.46 |
 | `final-1m` (best + 3 ablations) | 4 | 10 | 1M | 40 | 2,182 | 5.76 |
-| `final-1b` | 1 | 10 | 1B | 10 | 2,182 | 1,273.3 |
-| Total | | | | 220 | | 1,303.3 |
+| `final-1b` | 1 | 3 | 1B | 3 | 2,182 | 381.99 |
+| Total | | | | 213 | | 412.0 |
 
-- One 1M run: 0.144 h; one 1B run: 127.3 h.
-- 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.1 = 194,153 steps/s, 1.45 h per run, 14.5 h for 10 seeds.
+- One 1M run: 0.144 h; one 1B run: 127.3 h (both with compile).
+- 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.1 = 194,153 steps/s, 1.43 h per run excluding the 1-minute compile, 4.3 h for 3 seeds.
+- Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; 128,000 eval steps per tuning or smoke run, 1,664,000 per `final-1m` run, 13,312,000 per `final-1b` run, at the method throughput above): smoke 0.01 h, tune-coarse 2.35 h, tune-fine 0.39 h, `final-1m` 8.47 h, `final-1b` 5.08 h (1.69 h per run, counted at the laptop rate wherever the run trained); 16.3 h in total, 11.2 h of it up to `final-1m`.
 - Measured throughput replaces these numbers in [[2026-10-20-craftax-compute-budget]] after the smoke phase.
 
 ### Task 1: Skill library
@@ -116,20 +122,24 @@ Fixed method settings:
 - Create: `src/wut_murl_craftax/training/skills.py`
 - Test: `tests/training/test_skills.py`
 
-- [ ] **Step 1: Write the failing tests** on scripted Craftax states (`env.reset`, then `.replace(...)` of inventory, map, position and stats, the pattern of the runtime checks in [[Game]]), one step each:
+- [ ] **Step 1: Write the failing tests** on scripted Craftax states (`env.reset`, then `.replace(...)` of inventory, map, position and stats, the pattern of the runtime checks in [[Game]]), rendered to symbolic observations by the env's renderer; every skill function receives only decoded observations, the action and the reward, one step each:
+  - `decode_obs(obs)`: inventory counts, tool levels, armour, enchantments, stats, floor, ladder-open flag, sleeping flag, the facing tile (block, item, creature) and the 8 tiles around the player equal the `EnvState` values on 100 random states (counts exact after `round(100 x^2)`).
+  - `key_fields(decode_obs(obs), g)` equals `progress_key.fields(progress_key.unwrap(state), g)` for `g` in `recipe`, `log2` on the same states: the top-level key holds nothing the observation lacks.
+  - `achievement_reward(r, view, view2)`: an unlock of weight 1 with a health drop of 2 ($r$ = 0.8) gives 1.0; health regeneration alone ($r$ = 0.1) gives 0.
   - `collect_wood`: tree on the facing tile, `DO`, wood 0 to 1: success under `recipe`; wood 1 to 2 under `log2` (bucket 1 to 1): no success; wood at the recipe cap 4: unavailable.
   - `make_wood_pickaxe`: 1 wood with a table on a diagonal tile, `MAKE_WOOD_PICKAXE`: success; same state without a table: no success, `steps_in_skill` + 1.
-  - `place_furnace`: success only when a table is among the 8 tiles around the player after the placement.
-  - `descend`: on the down ladder with 8 kills on floor 1: success; with 7 kills: unavailable; floor 0 with no kills: available.
-  - `drink`: drink 8 to 9 = max: success; 7 to 8: not yet; `sleep`: woken at max energy: success; woken by a zombie hit: failure.
-  - `fight`: a zombie killed by `DO` (via `StepEvents` kills): success; a cow killed: no success; floor 8 boss progress + 1: success.
-  - `open_chest`: facing tile chest to path: success; `enchant`: sword enchantment 0 to 1 at the floor-4 table: success.
-  - `unlock_any`: any new unlock bit: success.
-  - Common ends: step limit reached; death; floor change during `collect_stone`; food falling to 3 during `collect_iron` (interrupt) but not during `eat`.
+  - `place_furnace`: success only when a table is among the 8 tiles around the player in the next observation.
+  - `descend`: on the down ladder with the ladder-open flag set on floor 1: success; flag not set: unavailable; floor 0: available.
+  - `drink`: drink 8 to 9 = max: success; 7 to 8: not yet; `sleep`: sleeping flag 1 to 0 at max energy: success; 1 to 0 with energy below max (woken by a hit): failure.
+  - `fight`: `DO` with a zombie on the facing tile and no zombie in the 3 x 3 neighbourhood of the next observation: success; a cow killed the same way: no success (passive class); `DO` with a zombie that is still adjacent: no success; achievement part of the reward 1 on an attack step: success.
+  - `open_chest`: facing tile chest to path: success; `enchant`: sword enchantment channel 0 to 1 at the floor-4 table: success.
+  - `unlock_any`: achievement part of the reward > 0: success; $r$ = 0.1 from regeneration: no success.
+  - Common ends: step limit reached; a done step ends the skill with reason `episode_end` and pseudo-reward 0 even when the reset observation shows more wood (no test across the reset); floor change during `collect_stone`; food falling to 3 during `collect_iron` (interrupt) but not during `eat`.
   - Primitive options: `read_book` and `level_up` return a fixed action; `level_up` picks the lowest attribute with ties dexterity, strength, intelligence.
-  - Masks: `make_iron_pickaxe` unavailable without coal; `fight` and `unlock_any` always available; the mask of a Craftax-Classic state has 16 true-capable skills and 9 always false.
-  - `jax.vmap` of `skill_step` over 8 states equals a Python loop; `jit` compiles once for all skill ids.
-- [ ] **Step 2: Implement** `SKILLS` (name, `T_max`, kind learned or primitive), `available(state) -> bool[25]`, `skill_step(skill, s, action, s2, events, steps_in_skill, timeout_mult) -> (success, ended, reason)` with `jax.lax.switch` over the 25 success tests, `primitive_action(skill, s)`, and the Classic adapter.
+  - Masks: `make_iron_pickaxe` unavailable without coal; `fight` and `unlock_any` always available; the mask of a Craftax-Classic observation has 16 true-capable skills and 9 always false.
+  - No privileged input: `available`, `skill_step` and `primitive_action` take no `EnvState` argument; `test_agreement(skill, success, events)` compares an observation test with the `StepEvents` result and is the only function that reads events.
+  - `jax.vmap` of `skill_step` over 8 observations equals a Python loop; `jit` compiles once for all skill ids.
+- [ ] **Step 2: Implement** `SKILLS` (name, `T_max`, kind learned or primitive), `decode_obs(obs) -> ObsView`, `key_fields(view, granularity) -> int32[F]` (using `progress_key.bucket`), `achievement_reward(r, view, view2)`, `available(view) -> bool[25]`, `skill_step(skill, view, action, r, view2, done, steps_in_skill, timeout_mult) -> (success, ended, reason)` with `jax.lax.switch` over the 25 success tests, `primitive_action(skill, view)`, `test_agreement(skill, success, events)` and the Classic decoder.
 - [ ] **Step 3: Run** `uv run pytest tests/training/test_skills.py -q`; expected: all pass.
 
 ### Task 2: Top-level SMDP update
@@ -155,22 +165,27 @@ Fixed method settings:
 - Modify: `src/wut_murl_craftax/training/smdp.py` (per-env skill state and rollout step)
 - Test: `tests/training/test_smdp.py`
 
-- [ ] **Step 1: Write the failing tests**: `SkillState` (skill, `k_start`, `R`, `disc`, `steps_in_skill`) accumulates $R$ and `disc` over a scripted 3-step skill exactly as in Task 2; after a skill end the next skill is chosen from the new state in the same step and the counters reset; an episode end resets the skill state and bootstraps 0; a primitive option ends after one step and its step carries `loss_mask = 0`; the extra network input is the skill one-hot and `steps_in_skill / T_max`; two runs with the same key give identical skill sequences (determinism).
-- [ ] **Step 2: Implement** `rollout_step(carry, env, network)` for one `scan` step over all envs: key, mask, network action (or primitive action), env step, `StepEvents`, success test, accumulator, top-level update and re-decision; outputs the skill-network transition (obs, extra input, action, $r^o$, skill-end done, `loss_mask`).
+- [ ] **Step 1: Write the failing tests**: `SkillState` (skill, `k_start`, `R`, `disc`, `steps_in_skill`) accumulates $R$ and `disc` over a scripted 3-step skill exactly as in Task 2; after a skill end the next skill is chosen from the new observation in the same step and the counters reset; an episode end resets the skill state, bootstraps 0 and runs no success test; a primitive option ends after one step and its step carries `loss_mask = 0`; the extra network input is the skill one-hot and `steps_in_skill / T_max`; key, mask and skill end come from `skills` functions that receive only decoded observations, the action, the reward and `done` (the `StepEvents` of the step reach only `test_agreement`); two runs with the same key give identical skill sequences (determinism); an optional `intrinsic_reward_fn` with the hook signature of `training/hooks.py` adds its $r^+$ to the native reward accumulated into $R$ (never to the skill pseudo-reward), and `None` leaves the rollout bit-identical (the combination hook, [[#Combination with other methods]]).
+- [ ] **Step 2: Implement** `rollout_step(carry, env, network, intrinsic_reward_fn=None)` for one `scan` step over all envs: decode the observation, key, mask, network action (or primitive action), env step (observation, reward, done and `StepEvents` from the wrapper), success test on the observations and the reward, accumulator, top-level update and re-decision, `test_agreement` counters from the events; outputs the skill-network transition (obs, extra input, action, $r^o$, skill-end done, `loss_mask`).
 - [ ] **Step 3: Run** `uv run pytest tests/training/test_smdp.py -q`.
 
 ### Task 4: Trainer, registry entry and config
 
 **Files:**
 - Modify: `src/wut_murl_craftax/training/smdp.py` (trainer), `src/wut_murl_craftax/training/interface.py` (entry `smdp-skills`)
-- Create: `configs/methods/smdp-skills.yaml` (base config, `grid_stage1`, `grid_stage2` rule, `ablations`)
+- Create: `configs/methods/smdp-skills.yaml` (`base` with `base_from: pqn-rnn.tuned`, `grid.coarse`, `grid.fine` rule, `tuned: null`)
 - Test: `tests/training/test_smdp_trainer.py`
 
-- [ ] **Step 1: Check** the contract with [[2026-10-20-craftax-method-pqn-rnn]]: `PQNRNNConfig.extra_obs_dim`, the network constructor, the backward Q($\lambda$) target and the learner update with a per-transition `loss_mask` are callable from another rollout; `intrinsic_reward_fn` and `extra_loss_fn` are not used (the skill reward replaces the reward); any missing piece is added in that plan's module in the same change.
-- [ ] **Step 2: Write the failing tests**: 2 updates on Craftax-Classic pass the interface test of [[2026-10-20-craftax-infrastructure]] Task 3; the Q($\lambda$) target on a 1-env, 4-step batch with a skill end at step 2 equals a hand-computed one (γ 0.99, λ 0.5; no value crosses the skill end); `Q_top` and the skill state are in the checkpoint and a resumed run equals an uninterrupted one; `policy(state)` returns both levels for eval.
-- [ ] **Step 3: Implement** `init`, `train_chunk` (rollout `scan` of Task 3, then the PQN-RNN learner update on the skill transitions) and `policy`; device roles from `orchestration.device_roles()`.
-- [ ] **Step 4: Write** `configs/methods/smdp-skills.yaml`; `uv run python -m wut_murl_craftax.orchestration.queue --phase configs/phases/tune-coarse.yaml --method smdp-skills --dry-run` lists 144 runs.
-- [ ] **Step 5: Run** `make tests`.
+- [ ] **Step 1: Check** the contract with [[2026-10-20-craftax-method-pqn-rnn]]: `PQNRNNConfig.extra_obs_dim`, `build_network(cfg, n_actions, obs_dim)`, the backward Q($\lambda$) target and `learn(train_state, traj, key, loss_mask)` are callable from another rollout; `HookFields` is not used (the skill reward replaces the reward and the rollout is this method's own; only the optional `intrinsic_reward_fn` of Task 3 exists for a combination); any missing piece is added in that plan's module in the same change.
+- [ ] **Step 2: Write the failing tests**:
+  - 2 updates on Craftax-Classic pass the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
+  - The Q($\lambda$) target on a 1-env, 4-step batch with a skill end at step 2 equals a hand-computed one (γ 0.99, λ 0.5; no value crosses the skill end).
+  - `Q_top` and the skill state are part of the trainer state written by `save_state`; a run restored with `load_state` equals an uninterrupted one (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
+  - `policy(state)` returns a `Policy` whose `init_carry(n)` holds the LSTM state and the skill state and whose `step` returns the primitive action and the running skill id, for `visualisation/eval_rollouts.py` ([[2026-10-20-craftax-evaluation-and-metrics]]).
+  - `configs/methods/smdp-skills.yaml` loads with `base.base_from == "pqn-rnn.tuned"`, 48 `grid.coarse` entries, a `grid.fine` rule over two numeric knobs, and `tuned: null`.
+- [ ] **Step 3: Implement** `init`, `train_chunk` (rollout `scan` of Task 3, then `learn` on the skill transitions) and `policy`; device roles from `orchestration.device_roles()`.
+- [ ] **Step 4: Write** `configs/methods/smdp-skills.yaml` with the grids above.
+- [ ] **Step 5: Run** `uv run pytest tests/training/test_smdp_trainer.py -q`, then `make tests`.
 
 ### Task 5: Method metrics and eval artifacts
 
@@ -178,13 +193,13 @@ Fixed method settings:
 - Modify: `src/wut_murl_craftax/training/smdp.py`
 - Test: `tests/training/test_smdp_trainer.py`
 
-- [ ] **Step 1: Write the failing test**: one update logs every metric below; per-skill success rates lie in [0, 1]; the eval artifact holds one skill id and one key per step.
-- [ ] **Step 2: Implement** per-update logging beyond [[2026-10-20-craftax-evaluation-and-metrics]]:
-  - per skill: `skill/<name>/chosen_share`, `skill/<name>/success_rate`, `skill/<name>/mean_len`, `skill/<name>/end/<reason>` (success, timeout, death, interrupt);
+- [ ] **Step 1: Write the failing test**: one update logs every metric below; every name starts with `smdp/`; per-skill success rates and test agreements lie in [0, 1]; the eval record holds one skill id per step.
+- [ ] **Step 2: Implement** per-update logging beyond [[2026-10-20-craftax-evaluation-and-metrics]], all fully qualified under `smdp/`:
+  - per skill: `smdp/skill/<name>/chosen_share`, `smdp/skill/<name>/success_rate`, `smdp/skill/<name>/mean_len`, `smdp/skill/<name>/end/<reason>` (success, timeout, episode_end, interrupt), `smdp/skill/<name>/test_agreement` (share of ends where the observation test agrees with `StepEvents`; logging only);
   - top level: `smdp/eps`, `smdp/td_abs_mean`, `smdp/decisions_per_episode`, `smdp/keys_visited`, `smdp/occupancy`, `smdp/collision_est`, `smdp/q_start` (masked max at the reset key), `smdp/q_max_updated`;
-  - low level: `low/loss`, `low/q_mean`, `low/eps`;
-  - cumulative `count/collect_diamond_episodes` (env steps of the first and tenth diamond episode, used by the Dyna comparison).
-- [ ] **Step 3: Implement** eval extras: per eval episode the arrays `skill[t]` and `key[t]` beside the stored actions (Task 5 of [[2026-10-20-craftax-infrastructure]]), and per checkpoint `smdp_greedy_table.parquet` (visited key, decoded fields, greedy skill, value) for [[2026-10-20-craftax-interpretation-and-ruleset]], where each visited key with its greedy skill is one rule.
+  - low level: `smdp/low/loss`, `smdp/low/q_mean`, `smdp/low/eps`;
+  - cumulative `smdp/diamond_episodes` (env steps of the first and tenth episode with `COLLECT_DIAMOND`, used by the Dyna comparison).
+- [ ] **Step 3: Implement** eval extras: the two-level `Policy.step` returns the running skill id beside the primitive action, and eval stores it (`uint8`) and the step count inside the running skill (`uint16`, the skill network's step-limit input) next to the actions in `eval/<mode>/<update>.npz` ([[2026-10-20-craftax-infrastructure]] Task 5); the key is recomputed from replayed observations; per checkpoint `smdp_greedy_table.parquet` in the run directory's `eval/` (visited key, decoded fields, greedy skill, value) for [[2026-10-20-craftax-interpretation-and-ruleset]], where each visited key with its greedy skill is one rule.
 - [ ] **Step 4: Run** `uv run pytest tests/training/test_smdp_trainer.py -q`.
 
 ### Task 6: Smoke run
@@ -192,56 +207,91 @@ Fixed method settings:
 **Files:**
 - Modify: `configs/phases/smoke.yaml` (smdp-skills: config A base; config B random top level; 1 seed, 200k steps, Craftax-Classic)
 
-- [ ] **Step 1: Run** `make queue PHASE=smoke METHOD=smdp-skills`; expected: 2 runs finish, `skill/collect_wood/success_rate` and `skill/place_table/success_rate` above 0, no NaN.
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes with the same `Q_top` (equal `smdp/keys_visited` at the checkpoint).
-- [ ] **Step 3: Record** measured steps/s in [[2026-10-20-craftax-compute-budget]].
+- [ ] **Step 1: Run** `make queue PHASE=smoke METHOD=smdp-skills`; expected: 2 runs finish, `smdp/skill/collect_wood/success_rate` and `smdp/skill/place_table/success_rate` above 0, `smdp/skill/fight/test_agreement` above 0.8, no NaN.
+- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same `Q_top` (equal `smdp/keys_visited` at the saved state).
+- [ ] **Step 3: Record** measured steps/s and the per-skill test agreements in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 7: Coarse tuning
 
-- [ ] **Step 1: Run** `make queue PHASE=tune-coarse METHOD=smdp-skills` (144 runs, resumable).
-- [ ] **Step 2: Check** `make status PHASE=tune-coarse`; expected: 144 finished for this method.
-- [ ] **Step 3: Write** the stage-1 table (config, mean final score, sd, keys visited, mean skill success) into this plan under a new section `## Results` and pick the stage-2 knobs by the main-effect rule.
+**Files:**
+- Modify: `configs/phases/tune-coarse.yaml` (add `smdp-skills`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
-### Task 8: Fine tuning
+- [ ] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=smdp-skills DRY_RUN=1`; expected: 144 runs.
+- [ ] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=smdp-skills` (144 runs, resumable).
+- [ ] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 144 finished for this method.
+- [ ] **Step 4: Write** the stage-1 table (config, mean final score, sd, keys visited, mean skill success) into this plan under a new section `## Results`.
 
-- [ ] **Step 1: Fill** `grid_stage2` in `configs/methods/smdp-skills.yaml` from Task 7.
-- [ ] **Step 2: Run** `make queue PHASE=tune-fine METHOD=smdp-skills` (24 new runs).
-- [ ] **Step 3: Tag** the best config `best=true` in MLflow; record it in `## Results` and [[Experiment decisions]]; [[2026-10-20-craftax-method-dyna-q]] starts its tuning from this config.
+### Task 8: Fine tuning and the tuned config
+
+**Files:**
+- Modify: `configs/phases/tune-fine.yaml` (add `smdp-skills`, stage `fine`, 3 seeds), `configs/methods/smdp-skills.yaml` (`tuned:`), this plan (`## Results`), [[Experiment decisions]]
+
+- [ ] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=smdp-skills FINE=smdp-skills DRY_RUN=1`; expected: 9 configs, the centre reused by run name, 24 new runs.
+- [ ] **Step 2: Run** `make queue PHASE=tune-fine METHOD=smdp-skills FINE=smdp-skills` (resumable); `make status PHASE=tune-fine` shows 27 finished for this method (24 new, 3 reused from `tune-coarse`).
+- [ ] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/smdp-skills.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`); [[2026-10-20-craftax-method-dyna-q]] reads the block through `base_from: smdp-skills.tuned`:
+
+```bash
+uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned smdp-skills <confighash8>
+```
+
+- [ ] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]].
 
 ### Task 9: Final 1M with ablations
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=smdp-skills` (best config and the 3 ablations of [[SMDP Q-Learning over Hand-Defined Skills design#Ablations]], seeds 0-9: 40 runs).
+**Files:**
+- Modify: `configs/phases/final-1m.yaml` (add `smdp-skills`: `tuned` and the 3 ablations as overrides of `tuned`, seeds 0-9)
+
+- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=smdp-skills` (best config and the 3 ablations of [[SMDP Q-Learning over Hand-Defined Skills design#Ablations]], seeds 0-9: 40 runs); `make status PHASE=final-1m` shows 40 finished for this method.
 - [ ] **Step 2: Check** that the PQN-RNN control final exists with the same seeds ([[2026-10-20-craftax-method-pqn-rnn]]); comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]], with the skill methods in their own block.
 
 ### Task 10: Final 1B
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1b METHOD=smdp-skills` (best 1M knobs on the 1B skill-network settings, 10 seeds; laptop or `scripts/cluster/run_array.sh`).
-- [ ] **Step 2: Merge** node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 10 finished for this method.
+**Files:**
+- Modify: `configs/phases/final-1b.yaml` (add `smdp-skills`: `tuned` method knobs on the 1B skill-network settings, 3 seeds)
 
-### Task 11: Analysis hooks and abort rules
+- [ ] **Step 1: Run** `make queue PHASE=final-1b METHOD=smdp-skills` (best 1M knobs on the 1B skill-network settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
+- [ ] **Step 2: Merge** node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for this method.
+
+### Task 11: Abort rules
 
 **Files:**
-- Modify: `src/wut_murl_craftax/training/smdp.py` (guards), `src/wut_murl_craftax/analysis/obstacles.py` (method detectors, from [[2026-10-20-craftax-training-analysis]])
-- Test: `tests/training/test_smdp_trainer.py`, `tests/analysis/test_obstacles.py`
+- Modify: `src/wut_murl_craftax/training/smdp.py` (guards)
+- Test: `tests/training/test_smdp_trainer.py`
 
-- [ ] **Step 1: Write the failing tests**: a NaN in `Q_top` or the skill loss aborts the run with status `FAILED` and tag `abort=nan`; occupancy above 0.25 aborts with `abort=table_full`; an updated entry above 300 aborts with `abort=divergence`; each detector below fires on a synthetic series and stays silent on a clean one.
+- [ ] **Step 1: Write the failing tests**: a NaN in `Q_top` or the skill loss aborts the run with status `FAILED` and tag `abort=nan`; occupancy above 0.25 aborts with `abort=table_full`; an updated entry above 300 aborts with `abort=divergence`.
 - [ ] **Step 2: Implement** the abort rules: NaN or inf in `Q_top`, losses or parameters; occupancy > 0.25; any updated `Q_top` entry > 300 (no discounted return can exceed the 226 achievement reward plus the bounded health term).
-- [ ] **Step 3: Implement** the detectors for [[2026-10-20-craftax-training-analysis]]:
-  - Stuck top level: one skill with success rate < 5% takes > 20% of decisions for >= 10% of the budget.
-  - Fallback collapse: `fight` plus `unlock_any` take > 60% of decisions after the ε decay.
-  - Skill interference: the shared skill-forgetting rule applied per skill (`skill/<name>/success_rate` from >= 20% to < 5%), with the skill whose `chosen_share` rose most in the same window.
-  - Timeout dominance: timeouts > 50% of one skill's ends for >= 10% of the budget (timeout multiplier too small or skill unlearnable).
-  - Deep-skill starvation: `collect_diamond`, `descend` from floor 1 or `make_iron_pickaxe` chosen fewer than 100 times in the run.
-  - Survival failure despite flags: > 30% of low-stat interruptions followed by death within 100 steps.
-  - Key aliasing: the same key reached with both success and timeout of one skill in > 40% of tries (the key hides the map).
-- [ ] **Step 4: Run** `make tests`.
+- [ ] **Step 3: Run** `uv run pytest tests/training/test_smdp_trainer.py -q`, then `make tests`.
+
+## Combination with other methods
+
+For Phase 3 of [[2026-10-20-craftax-project]] (compatible = same base control and no `HookFields` field set by both):
+
+- Base control: PQN-RNN (the skill network's learner); `smdp-skills` sets no `HookFields` field, because its rollout is its own.
+- `count-bonus-pqn-rnn`: compatible. The combination passes the count bonus's `intrinsic_reward_fn` (the same hook function, with its `init_state_fn` state carried in the skill rollout) to `rollout_step` (Task 3), and $r^+$ is added to the native reward in the top-level return $R$, so the bonus steers which skill to choose; the skill pseudo-rewards are unchanged.
+- `sil` and `count-bonus-ppo-rnn`: incompatible (PPO-RNN base).
+- `dyna-q`: not a pair; `dyna-q` already contains `smdp-skills`.
+- A combination with a skill method is reported in the "uses hand-written skills" block.
+
+## Detectors to add
+
+Implemented in [[2026-10-20-craftax-training-analysis]] Task 4 (Phase 4), not in this plan; this plan only logs the metrics they read. [[2026-10-20-craftax-method-dyna-q]] reuses them unchanged.
+
+- Stuck top level: one skill with success rate < 5% takes > 20% of decisions for >= 10% of the budget.
+- Fallback collapse: `fight` plus `unlock_any` take > 60% of decisions after the ε decay.
+- Skill interference: the shared skill-forgetting rule applied per skill (`smdp/skill/<name>/success_rate` from >= 20% to < 5%), with the skill whose `chosen_share` rose most in the same window.
+- Timeout dominance: timeouts > 50% of one skill's ends for >= 10% of the budget (timeout multiplier too small or skill unlearnable).
+- Deep-skill starvation: `collect_diamond`, `descend` from floor 1 or `make_iron_pickaxe` chosen fewer than 100 times in the run.
+- Survival failure despite flags: > 30% of low-stat interruptions followed by death within 100 steps.
+- Key aliasing: the same key reached with both success and timeout of one skill in > 40% of tries (the key hides the map).
+- Blind skill test: `smdp/skill/<name>/test_agreement` below 0.9 for one skill (the observation test misses what the events record, for example unlit tiles on dark floors).
 
 ## Risks
 
 - Prior knowledge decides much of the result: the score measures the library as much as the learner; the random-top-level ablation and the separate reporting block keep this visible.
+- Observation-only skill tests are noisier than privileged ones (unlit facing tiles, creatures walking out of view after an attack): `test_agreement` measures the error per skill, and the blind-test detector flags it; the tests stay observation-only by design.
 - Deep skills rarely succeed early, so the top level sees few samples for them: optimistic $q_{\text{init}}$ and the ε warm-up; the starvation detector reports it.
 - Non-Markov top level: one key averages situations with and without nearby water, trees or ladders; the aliasing detector measures it.
 - Shared-network interference: the per-skill detector; the fallback is a per-skill output head, an ablation outside the grid.
 - Few top-level samples at 1M (each env finishes only a few skills in 1M steps): the comparison with Dyna is the planned answer; the flat PQN-RNN control may win at 1M, which is a result.
-- Dependency on two other modules: the PQN-RNN learner contract (Task 4 Step 1) and `progress_key.py` (`fields`, `bucket`, `hash_fields`, [[Craftax skill library#What the skills need from the progress key]]); a change there updates this plan in the same change.
+- Dependency on two other modules: the PQN-RNN learner contract (Task 4 Step 1) and `progress_key.py` (`bucket`, `hash_fields`, and `fields` in the key-equality test, [[Craftax skill library#What the skills need from the progress key]]); a change there updates this plan in the same change.
 - Hash collisions: 105 MB table, occupancy logged, abort at 0.25.

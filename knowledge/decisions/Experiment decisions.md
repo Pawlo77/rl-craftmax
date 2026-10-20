@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 # Experiment decisions
 
@@ -126,3 +126,61 @@ Decision: the final score of a run is the mean training-episode return, as % of 
 Why: it is the scoreboard metric, so our numbers compare with [[Craftax Baselines results]] and [[Existing Implementations]]; averaging over many episodes is less noisy than one evaluation of the last checkpoint.
 
 Consequences: tuning, reproduction bands, statistics and the report use this score ([[2026-10-20-craftax-evaluation-and-metrics]], [[2026-10-20-craftax-comparison-and-results]], [[2026-10-20-craftax-report]]); T1 shows the stochastic and greedy fixed-seed evaluation beside it. Rejected: the final fixed-seed evaluation only.
+
+## 2026-10-21 - Run identity, resume state, evaluation, step events, skills, licences, combination and gates
+
+Decision: a run is named `<registry-name>-<budget>-<confighash8>-s<seed>` and looked up across the whole MLflow store, not per experiment; a run belongs to every phase that lists it, recorded in the MLflow tag `phases` (a comma list, extended when a later phase reuses the run); each phase is still an MLflow experiment for browsing.
+
+Why: a phase-local lookup created two runs for one (config, budget, seed), for example PPO's published config in `tune-coarse` and again in `final-1m`.
+
+Consequences: `make status` and the exports filter by the tag `phases`; `make merge-mlflow` merges the tags; a reused finished run only gets the evaluation its new phase needs ([[2026-10-20-craftax-infrastructure]] Tasks 1, 2, 6). Rejected: phase name inside the run name (duplicated compute).
+
+Decision: resuming restores the whole trainer state (params, optimizer state, env states, RNG keys, method state, BatchRenorm statistics, run-log and episode accumulators) from `state/`, written every `checkpoint_every` updates and on SIGINT/SIGTERM; `ckpt/` keeps only the log-spaced params for eval and video; the run directory is the run's MLflow artifact directory.
+
+Why: params-only checkpoints cannot resume a run to the same result; a resumed run must equal an uninterrupted one.
+
+Consequences: `save_state` / `load_state` in `training/checkpoints.py`; every method's state is one pytree and its resume test compares against an uninterrupted run ([[2026-10-20-craftax-infrastructure]] Task 2). Rejected: restarting interrupted runs from scratch.
+
+Decision: fixed-seed evaluation stores seed, actions and step events only (no observations), runs each checkpoint until every eval episode ends, evaluates tuning runs at the final checkpoint only and final runs at every log-spaced checkpoint; the eval time is part of the compute budget.
+
+Why: storing observations of 64 seeds x 2 modes per checkpoint cost about 106 GB per checkpoint and mode, and evaluating every checkpoint of every tuning run cost about 280M eval steps per 1M run; replaying seed + actions rebuilds the observations exactly.
+
+Consequences: one eval module, `visualisation/eval_rollouts.py`, builds every method's policy from the registry ([[2026-10-20-craftax-infrastructure]] Task 5); [[2026-10-20-craftax-compute-budget]] adds about 42 laptop hours at 1M and 45 hours at 1B (3 seeds, counted at the laptop rate) for evaluation. Rejected: fixed-length eval rollouts (cut episodes); evaluating every checkpoint of tuning runs.
+
+Decision: the wrapper step (`training/wrappers.py`) computes `StepEvents` (unlocks, floor change, damage, kills, deaths, ...) from the pre-reset next state, before the optimistic reset swaps in a new episode, and returns them with the transition; nobody compares states across a done step.
+
+Why: with optimistic resets the state returned on a done step is a new episode's start, so an unlock or death on the last step was invisible to evaluation, SIL, skill tests and the count bonus.
+
+Consequences: training metrics, evaluation, SIL, skill success tests and the count bonus all read these events; `evaluation/events.py` defines the fields ([[2026-10-20-craftax-method-ppo]] Task 2, [[2026-10-20-craftax-infrastructure]] Task 4). This refines the 2026-10-20 resets decision: the events of a done step come from the terminal state, while the state returned for it is still the new episode's start. Rejected: masking done steps (loses the last step's events).
+
+Decision: skill methods act without privileged state: skill start, termination and success use only the observation and the reward the agent receives (`unlock_any` succeeds when the achievement part of the reward, reward minus 0.1 x health change read from the observation, is above 0; `fight` succeeds when an adjacent hostile creature disappears after the agent's attack or a kill achievement's reward arrives); privileged state is used for logging only. SIL's slot index uses `events.unlocked`, privileged but only for selecting training data.
+
+Why: a policy that reads hidden game state at decision time is not comparable with the controls, which see the observation only.
+
+Consequences: [[2026-10-20-craftax-method-smdp-skills]], [[2026-10-20-craftax-method-dyna-q]] and [[2026-10-20-craftax-method-sil]] document the rule; the skill block still marks the prior knowledge of hand-written skills. Rejected: success tests on the full `EnvState`.
+
+Decision: the three YouTube uploads use Creative Commons BY; everything published on Hugging Face and this repository stay MIT.
+
+Why: YouTube offers only the standard YouTube licence and Creative Commons BY, no MIT option (decided by the user).
+
+Consequences: [[2026-10-20-craftax-visualisation-production]] and [[2026-10-20-craftax-huggingface-release]] state CC BY for the uploads and MIT for the same videos in the dataset repo. Rejected: the standard YouTube licence.
+
+Decision: the combination's pair is chosen after both `final-1m` and `final-1b`, from both budgets, as the best two compatible methods (same base control, no hook field set by both); it runs as `combo-1m` (10 seeds) and `combo-1b` (3 seeds, see the next section), without retuning; if the pair contains a skill method, the combination is reported in the "uses hand-written skills" block.
+
+Why: choosing from 1M alone could pick a pair that does not hold at 1B, and a combination using hand-written skills inherits their prior knowledge.
+
+Consequences: Phase 3 task in [[2026-10-20-craftax-project]]; every analysis reads the four final phases `final-1m final-1b combo-1m combo-1b`. Rejected: choosing the pair at 1M and running `combo-1b` in parallel with `final-1b`.
+
+Decision: a reproduction gate reports the gap between our control and the published number (band h from `evaluation.reproduction`) and the comparison continues with our control; it never stops the comparison.
+
+Why: every method is compared against its base control on the same code, so a gap to the published number changes how the controls are read, not whether the methods can be compared.
+
+Consequences: the gap is reported in [[2026-10-20-craftax-comparison-and-results]] and [[2026-10-20-craftax-report]]; the control plans keep their diagnostic steps for a failed gate. Rejected: blocking the comparison until every control reproduces.
+
+## 2026-10-21 - Seeds at 1B
+
+Decision: `final-1m` and `combo-1m` keep 10 seeds per configuration; `final-1b` and `combo-1b` use 3 seeds. At 1B the results are reported as mean and median with 95% confidence intervals (stratified bootstrap and t-based) and read as indicative; probability of improvement and Holm-corrected significance claims are made at 1M only. This replaces "10 seeds per final configuration" of the 2026-10-20 seeds decision for the 1B finals.
+
+Why: the 1B runs are about 99% of all environment steps; the user chose to cut compute (runs 888 -> 825; the 1B training and evaluation hours fall to 3/10, about 83 GPU hours in [[2026-10-20-craftax-compute-budget]]).
+
+Consequences: 1B results are indicative; significance is tested at 1M (with 3 against 3 seeds a two-sided Mann-Whitney U cannot reach 0.05); the IQM of 3 seeds equals the median, so 1B tables report mean and median; the 1B reproduction band of each control is computed with n = 3 on our side and is wider ([[2026-10-20-craftax-method-ppo]] Task 5, `evaluation.reproduction`); the combination pair is ranked by the 1M IQM and the 1B mean ([[2026-10-20-craftax-project]] Phase 3); run counts and hours in [[2026-10-20-craftax-compute-budget]], statistics in [[2026-10-20-craftax-evaluation-and-metrics]] and [[2026-10-20-craftax-comparison-and-results]]. Rejected: 10 seeds at 1B; adaptive 5 + 5 seeds at 1B; 5 seeds everywhere.

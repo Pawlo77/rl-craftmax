@@ -1,5 +1,5 @@
 ---
-title: "Count-Based Progress Bonus"
+title: "Count-Based Progress Bonus design"
 type: concept
 domain: training
 parent: "[[Methods]]"
@@ -9,7 +9,7 @@ updated: 2026-10-21
 aliases: [Count bonus, Progress-key count bonus]
 related-code: []
 ---
-# Count-Based Progress Bonus
+# Count-Based Progress Bonus design
 
 An intrinsic reward $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$ over a hand-chosen summary $\phi$ of game progress (floor, tools, armour, spells, bucketed inventory), counted globally over all of training and added to the extrinsic reward of a PPO-RNN or PQN-RNN learner. Candidate and novelty check: [[Count-Based Progress Bonus|Count-Based Progress Bonus (candidate)]]. Plan: [[2026-10-20-craftax-method-count-bonus]].
 
@@ -21,7 +21,7 @@ An intrinsic reward $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$ over a hand-chos
 - The key and the global count table are used for reward computation only, never for acting.
 - **Acts:** the 43 primitive actions (Classic 17), as the base learner: softmax sample (PPO-RNN) or ε-greedy (PQN-RNN).
 - **Rewarded by:** $r_t + r^+_t$: the environment reward $r_t$ ([[Craftax scoring and evaluation#Reward]]) plus the bonus $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$.
-- $N$ counts every visit of the key by any env since the run began, incremented before the bonus is read, so $N \ge 1$; the bonus is 0 on done steps.
+- $N$ counts every visit of the key by any env since the run began, incremented before the bonus is read, so $N \ge 1$; done steps are neither counted nor paid (bonus 0).
 - $\beta$ is tuned in {0.01, 0.03, 0.1, 0.3}; decay `constant` ($\beta_t = \beta$) or `linear` ($\beta_t = \beta (1 - t/T)$, 0 at the end of the budget $T$).
 - **Training objective:** maximise the expected discounted sum of $r_t + r^+_t$ with γ = 0.99 (GAE λ 0.8 on PPO-RNN, Q(λ) λ 0.5 on PQN-RNN); the bonus shrinks as counts grow, so the target moves.
 - **Evaluated on:** the environment reward only: training-episode return as % of 226; the bonus is never in a reported score and is logged apart (`count/r_int_share`).
@@ -30,10 +30,12 @@ An intrinsic reward $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$ over a hand-chos
 ## What we implement
 
 - One bonus module, `training/count_bonus.py`, used by two variants: `count-bonus-ppo-rnn` and `count-bonus-pqn-rnn`.
+- Hooks of the shared contract in `training/hooks.py` ([[2026-10-20-craftax-method-ppo-rnn]] Task 1): `init_state_fn(key, spec)` builds the method state from `HookSpec` (`obs_dim` sizes the SimHash projection, `total_steps` is the budget $T$ of the linear decay); `intrinsic_reward_fn` updates the counts and returns the bonus every step; `metrics_fn` returns `count/...` names; `observe` and `extra_loss_fn` are unused.
 - The progress key lives in `training/progress_key.py`, shared with [[SMDP Q-Learning over Hand-Defined Skills]] and [[Dyna-Q over a Skill-Level Progress Model]].
 - The key is read from the inner Craftax `EnvState`, not decoded from the observation: integers are exact there, while the observation holds `sqrt(n) / 10` ([[Craftax observations and actions]]).
-- The bonus is computed for the next state $s_{t+1}$ and is 0 on done steps. Under optimistic resets (`auto_reset=False` envs inside `OptimisticResetVecEnvWrapper`, [[PPO design]]) the state the wrapper returns for a done step is not the terminal state but the start state of a new episode, one of the `envs / 16` worlds generated in that step (envs that finish together may share one); `next_env_state` of a done step therefore says nothing about the finished episode, and the terminal state is never seen. The mask follows the masked bonuses of [[RND (Matthews 2024)]] and [[ICM (Matthews 2024)]].
-- Counts are updated inside the rollout scan, every step, before the bonus is read, so $N \ge 1$ and a key seen by 300 envs in the same step is counted 300 times.
+- The bonus is computed for the next state $s_{t+1}$; done steps are neither counted nor paid. Under optimistic resets (`auto_reset=False` envs inside `OptimisticResetVecEnvWrapper`, [[PPO design]]) the state the wrapper returns for a done step is not the terminal state but the start state of a new episode, one of the `envs / 16` worlds generated in that step (envs that finish together may share one); `next_env_state` of a done step therefore says nothing about the finished episode.
+- The wrapper computes its `StepEvents` from the pre-reset state ([[2026-10-20-craftax-method-ppo]] Task 2), but the bonus needs none of them: it reads only `next_env_state` and `done`, never compares `env_state` with `next_env_state`, so no state is compared across a done step. The mask follows the masked bonuses of [[RND (Matthews 2024)]] and [[ICM (Matthews 2024)]].
+- Counts are updated inside `intrinsic_reward_fn` in the rollout scan, every step, before the bonus is read, so $N \ge 1$ and a key seen by 300 envs in the same step is counted 300 times.
 
 ```mermaid
 flowchart LR
@@ -42,7 +44,8 @@ flowchart LR
   B --> H["multiply-add hash, fold to K = 2^20"]
   H --> C["global count table: N[key] += 1"]
   C --> R["bonus = beta_t / sqrt(N[key])"]
-  D["done flag"] --> M["mask: bonus 0 on done steps"]
+  D["done flag"] --> M["mask: done steps not counted, bonus 0"]
+  D --> C
   R --> M
   M --> O["intrinsic reward to the learner"]
 ```
@@ -70,8 +73,13 @@ Fields from `EnvState` (craftax 1.6.1); every field is an integer, bucketed by t
 - `log2` buckets give 7 levels for 0-99 (0, 1, 2-3, 4-7, 8-15, 16-31, 32-99 capped at 6); it is the candidate note's rule and the "too fine" end of the knob.
 - Excluded on purpose: position, map, mobs, daylight, health, food, drink, energy, XP and attributes (scenery or survival state, not progress).
 - Craftax-Classic (smoke only): wood, stone, coal, iron, diamond, sapling with the same caps, and one bit per tool (`wood_pickaxe` ... `iron_sword`, counts above 1 stack damage in Classic, [[Craftax-Classic rules]]); no floor field.
-- Hash: `h = sum_i f_i * P_i mod 2^32` with fixed odd 32-bit constants `P_i`, then the Knuth multiplicative fold `(h * 2654435761 mod 2^32) >> (32 - 20)` to $[0, 2^{20})$.
-- `progress_key.py` also exposes the unhashed field vector, so the skill methods can use an exact key.
+- Hash: `h = sum_i f_i * P_i mod 2^32` with fixed odd 32-bit constants `P_i`, then the Knuth multiplicative fold `(h * 2654435761 mod 2^32) >> (32 - bits)` to $[0, 2^{\text{bits}})$, `bits` = 20 here.
+- Public API of `progress_key.py`, tested in [[2026-10-20-craftax-method-count-bonus]] Task 1:
+  - `unwrap(env_state)`: the inner Craftax `EnvState` under `LogWrapper` and `OptimisticResetVecEnvWrapper`.
+  - `fields(state, granularity) -> int32[F]`: the unhashed, bucketed field vector of the table above.
+  - `bucket(name, count, granularity) -> int32`: the bucket of one material (used by the skill methods' collect tests and caps).
+  - `hash_fields(fields, bits) -> int32`: the hash and fold above for a field vector of any length (the skill methods append 4 low-stat flags).
+- The SimHash key of the ablation lives in `count_bonus.py` (`simhash_key`), folded by the same `hash_fields`.
 
 ## Count table and bonus
 
@@ -94,8 +102,8 @@ flowchart TD
   Q1 --> Q2["TD loss on Q, epsilon-greedy unchanged"]
 ```
 
-- PPO-RNN: `intrinsic_reward_fn` of `PPORNNConfig`; one value head learns $r + r^+$, as ICM and E3B do ([[E3B (Matthews 2024)]]); the RND-style second head is not used, so the two variants share one reward definition.
-- PQN-RNN: `intrinsic_reward_fn` of `PQNRNNConfig`; $r + r^+$ replaces $r$ in the backward Q($\lambda$) recursion ([[07b Eligibility-trace control and off-policy]], [[PQN-RNN (Gallici 2025)]]); the bonus is a reward, so the off-policy TD target needs no correction ([[06 Temporal-difference learning]]).
+- PPO-RNN: the `intrinsic_reward_fn` hook given to `PPORNNConfig`; one value head learns $r + r^+$, as ICM and E3B do ([[E3B (Matthews 2024)]]); the RND-style second head is not used, so the two variants share one reward definition.
+- PQN-RNN: the same hook given to `PQNRNNConfig`; $r + r^+$ replaces $r$ in the backward Q($\lambda$) recursion ([[07b Eligibility-trace control and off-policy]], [[PQN-RNN (Gallici 2025)]]); the bonus is a reward, so the off-policy TD target needs no correction ([[06 Temporal-difference learning]]).
 - PQN keeps its control ε-greedy schedule (1.0 to 0.005 over 10% of updates): after the decay the bonus is the only directed exploration, which is the test the PQN paper's §5.2 remark asks for.
 - Scoreboard returns, eval returns and every metric of [[2026-10-20-craftax-evaluation-and-metrics]] use the extrinsic reward only.
 
@@ -104,7 +112,7 @@ flowchart TD
 | Kind | Items |
 |---|---|
 | Tuned (1M, two stages) | β, key granularity, decay |
-| Fixed | table size $2^{20}$, global never-reset counts, one value head, done mask, base learner settings of the controls |
+| Fixed | table size $2^{20}$, global never-reset counts, one value head, done steps not counted or paid, base learner settings of the controls |
 | Prior knowledge | the choice of progress fields and the recipe caps (from the game rules); no achievement list, no recipe graph, no reward shaping per item |
 
 - The prior knowledge is a state abstraction, not a behaviour: the agent is never told which key is good, only which keys are rare.

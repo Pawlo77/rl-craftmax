@@ -3,14 +3,14 @@ title: "Craftax project plan overview"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: draft
+status: ready
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 tags: [plan, overview, summary]
 ---
 # Craftax project plan overview
 
-Status: draft
+Status: ready
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -46,7 +46,7 @@ flowchart LR
   I["Infrastructure: resumable MLflow runner"] --> C["Controls reproduced at 1M"]
   C --> T["Methods tuned at 1M (coarse, then fine)"]
   T --> F1["Finals: 10 seeds at 1M"]
-  T --> F2["Finals: 10 seeds at 1B"]
+  T --> F2["Finals: 3 seeds at 1B"]
   F1 --> X["Best two methods combined"]
   F2 --> X
   F1 --> A["Analysis: hard scenarios, obstacles, comparison, decision trees"]
@@ -60,15 +60,17 @@ flowchart LR
 
 ## Phases and where they run
 
-| Phase | What happens | Runs | Laptop estimate |
+| Phase | What happens | Runs | Time estimate (training + evaluation) |
 |---|---|---|---|
-| 0 | Infrastructure, metrics, controls reproduced | smoke + control tuning | part of the 112 h below |
-| 1 | Each method implemented, tested, tuned at 1M | 494 coarse + 138 fine | about 112 h for phases 0-2 at 1M |
-| 2 | Finals at 1M and 1B, 10 seeds each | 150 + 90 | 1B: about 128 GPU hours on CUDA, or about 11,300 laptop hours |
-| 3 | Best two methods combined | 20 | included above |
+| 0 | Infrastructure, metrics, controls tuned and reproduced | 6 smoke + 89 coarse + 36 fine (controls) | about 18 laptop hours (16.2 + 1.8) |
+| 1 | Each method implemented, tested, tuned at 1M | 10 smoke + 405 coarse + 102 fine | about 83 laptop hours (74.5 + 8.5) |
+| 2 | Finals: 10 seeds at 1M, 3 seeds at 1B | 140 `final-1m` + 24 `final-1b` | 1M: about 49 laptop hours (20.0 + 29.4); 1B: about 72 GPU hours on CUDA (33.0 + 39.1; about 2,970 laptop hours) |
+| 3 | Best two methods combined, after both finals | 10 `combo-1m` + 3 `combo-1b` | 1M: about 4 laptop hours (1.7 + 2.5); 1B: about 11 GPU hours (5.1 + 6.0) |
 | 4 | Analysis | offline | small |
 | 5-7 | Videos, report, Hugging Face release | offline | small |
 
+- Totals: 825 runs; everything at 1M about 154.5 laptop hours (112.4 training + 42.1 evaluation); everything at 1B about 83 GPU hours (38.0 training + 45.1 evaluation, the evaluation counted at the laptop rate).
+- 1B results rest on 3 seeds and are indicative; significance claims are made at 1M (10 seeds) ([[Experiment decisions]]).
 - Full numbers: [[2026-10-20-craftax-compute-budget]].
 
 ## How to run it

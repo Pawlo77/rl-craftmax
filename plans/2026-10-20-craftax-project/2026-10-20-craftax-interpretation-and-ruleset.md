@@ -3,20 +3,20 @@ title: "Craftax interpretation and decision ruleset implementation plan"
 type: plan
 domain: interpretation
 parent: "[[2026-10-20-craftax-project]]"
-status: draft
+status: ready
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 tags: [plan, interpretation, decision-trees, distillation]
 ---
 # Craftax interpretation and decision ruleset implementation plan
 
-Status: draft
+Status: ready
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** measure how complex the final decision ruleset of each method in [[2026-10-20-craftax-project]] is, by distilling every final policy into decision trees of growing size, and turn the trees into a plain-language account of each method's strategy for the report.
 
-**Architecture:** a new package `src/wut_murl_craftax/interpretation/`: `features.py` decodes the symbolic observation into about 120 named, human-readable features; `dataset.py` collects (features, network action) pairs from fixed-seed rollouts of a final policy; `distill.py` fits a grid of trees and computes fidelity curves; `tree_policy.py` plays a tree as a policy for closed-loop fidelity; `rules.py` extracts rules and feature importance. Outputs go to `outputs/interpretation/<budget>/<method>/` and are logged as artifacts of run `distill-<budget>-<method>` in MLflow experiment `analysis`. Observation layout: [[Craftax observations and actions]].
+**Architecture:** a new package `src/wut_murl_craftax/interpretation/`: `features.py` decodes the symbolic observation into about 120 named, human-readable features; `dataset.py` collects (features, network action) pairs from fixed-seed rollouts of a final policy; `distill.py` fits a grid of trees and computes fidelity curves; `tree_policy.py` plays a tree as a policy for closed-loop fidelity; `rules.py` extracts rules and feature importance, and for the two-level skill policies (`smdp-skills`, `dyna-q`, and the combination when it contains one) also the top-level rules from the greedy table. Final policies come from the four final phases `final-1m final-1b combo-1m combo-1b`, loaded through `visualisation.eval_rollouts.EvalRun.load` (a `Policy` with `init_carry`/`step` for feed-forward, recurrent, PQN and two-level skill policies). Outputs go to `outputs/interpretation/<budget>/<method>/` and are logged as artifacts of run `distill-<budget>-<method>` in MLflow experiment `analysis`. Observation layout: [[Craftax observations and actions]].
 
 **Tech Stack:** scikit-learn (`DecisionTreeClassifier`, `export_text`, `permutation_importance`), numpy, pandas, matplotlib, JAX for rollouts through the trainer interface of [[2026-10-20-craftax-infrastructure]] (`policy(state) -> Policy`).
 
@@ -24,7 +24,7 @@ Distillation loop per final seed:
 
 ```mermaid
 flowchart LR
-  P["final policy (10 seeds)"] --> R["rollouts: train 30000+, val 10000+, test 20000+"]
+  P["final policy (10 seeds at 1M, 3 at 1B)"] --> R["rollouts: train 30000+, val 10000+, test 20000+"]
   R --> F["features.py: about 120 named features"]
   F --> D["dataset.py: features, greedy action, probs"]
   D --> G["distill.py: trees, 2 to 4096 leaves"]
@@ -37,6 +37,8 @@ flowchart LR
   L --> OUT["complexity.csv, fidelity_vs_leaves"]
   TP --> OUT
   RU --> W["Decision-tree interpretation note, report section"]
+  GT["smdp_greedy_table.parquet (skill methods)"] --> TOP["rules.py: top-level rules over visited keys"]
+  TOP --> W
   OUT --> W
 ```
 
@@ -56,10 +58,12 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 | Creatures | visible melee, ranged, passive and enemy-projectile counts; nearest hostile distance and offset signs; hostile adjacent; nearest passive distance | creature channels |
 | Neighbours | walkable flag of the 4 adjacent tiles | block channels |
 | Memory proxies (recurrent policies only, reported apart) | previous action, steps since the last unlock | computed along the rollout, not in the observation |
+| Current skill (two-level skill policies only, reported apart) | one-hot of the skill the top level is running (25 values) and steps since that skill started | the policy carry, not in the observation |
 
 ## Fidelity and tree sizes
 
 - Target label: the network's greedy action at each visited state; recurrent policies carry their hidden state along the rollout.
+- Two-level skill policies (`smdp-skills`, `dyna-q`, a combination containing one): the label is the primitive action the full policy takes (top level, then the skill network), and the current skill is a feature (table above); the closed-loop tree replaces only the skill network, the method's top level and skill termination stay. The top level is reported separately: each visited key of the final checkpoint's `smdp_greedy_table.parquet` (visited key, decoded fields, greedy skill, value; eval extras of [[2026-10-20-craftax-method-smdp-skills]]) is one rule; reported are the number of visited keys, the number of distinct greedy skills, a tree over the decoded key fields predicting the greedy skill (its L90 over keys) and the 10 highest-value rules in words.
 - State distribution: states visited by the stochastic policy (the behaviour that is scored).
 - Training states: 256 episodes on seeds `30000` to `30255`, at most 2,000 states sampled uniformly per episode.
 - Validation states (tree-size choice): the 64 eval seeds `10000` to `10063`.
@@ -69,7 +73,7 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 - Closed-loop fidelity: the tree played greedily on the 64 held-out seeds; its score (% of max) divided by the network's greedy score on the same seeds.
 - Tree grid: `max_leaf_nodes` in 2, 4, 8, ..., 4096 (12 sizes) and `max_depth` in 2, 4, 6, 8, 10, 12, 16, 20, unlimited; `min_samples_leaf=5`, `criterion="gini"`, `random_state=0`.
 - Complexity: L90 = smallest grid `max_leaf_nodes` with test top-1 fidelity >= 0.9 (reported as "> 4096" when never reached); L80 and L95 likewise; depth at L90.
-- Per method: all 10 final seeds distilled; median and IQR of L90 over seeds; rules shown for the seed with the median final score.
+- Per method: every final seed distilled (10 at 1M, 3 at 1B); median and IQR of L90 over seeds at 1M, median and range at 1B; rules shown for the seed with the median final score.
 - One DAgger round: play the 256-leaf tree on the training seeds, label its states with the network, refit on the union; both versions reported (Ross et al. 2011; VIPER, Bastani et al. 2018).
 
 ## What each tree is asked
@@ -80,6 +84,7 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 - Does each rule match a game mechanic ([[Craftax survival stats]], [[Craftax action effects]], [[Craftax crafting and placing]]) or is it surprising?
 - Where does the tree fail: test confusion by action group and the floors with the lowest fidelity?
 - Is a higher-scoring policy more complex: Spearman correlation between final score and L90 over all distilled seeds, methods and controls?
+- For the skill methods: which skill does the top level pick in which progress situation, and how many top-level rules does it use?
 
 ---
 
@@ -100,8 +105,8 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 - Create: `src/wut_murl_craftax/interpretation/dataset.py`
 - Test: `tests/interpretation/test_dataset.py`
 
-- [ ] **Step 1: Write the failing tests**: the training, validation and test seed sets are disjoint and constant; two collections from the same policy and seeds are identical; per-episode subsampling keeps at most 2,000 states; a recurrent toy policy's labels depend on its carried hidden state.
-- [ ] **Step 2: Implement** `collect(policy, game, seeds, max_states_per_episode) -> Dataset` (features, network greedy action, action probabilities, episode id, floor, memory proxies), saved as `outputs/interpretation/<budget>/<method>/<run>/<split>.npz`.
+- [ ] **Step 1: Write the failing tests**: the training, validation and test seed sets are disjoint and constant; two collections from the same policy and seeds are identical; per-episode subsampling keeps at most 2,000 states; a recurrent toy policy's labels depend on its carried hidden state; a toy two-level policy (2 skills, each a fixed primitive action) gets the primitive action as label and the current-skill one-hot as features.
+- [ ] **Step 2: Implement** `collect(policy, game, seeds, max_states_per_episode) -> Dataset` (features, greedy primitive action, action probabilities from `visualisation.eval_rollouts.network_outputs` on the visited observations, because `Policy.step` returns only the action and the carry ([[2026-10-20-craftax-visualisation-production]] Task 5), episode id, floor, memory proxies, current skill for two-level policies), saved as `outputs/interpretation/<budget>/<method>/<run>/<split>.npz`.
 - [ ] **Step 3: Run** `uv run pytest tests/interpretation/test_dataset.py -q`.
 
 ### Task 3: Tree grid and fidelity curves
@@ -120,8 +125,8 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 - Create: `src/wut_murl_craftax/interpretation/tree_policy.py`
 - Test: `tests/interpretation/test_tree_policy.py`
 
-- [ ] **Step 1: Write the failing tests**: `TreePolicy(tree, game)(state, rng)` returns the tree's action for `env.get_obs(state)`; it satisfies the `Policy` protocol of `visualisation.rollout`; a 4-leaf tree plays 100 Classic steps through `visualisation.rollout.play`.
-- [ ] **Step 2: Implement** `TreePolicy` and `closed_loop(tree, game, seeds) -> scores` reusing the eval keys of [[Recording training data]].
+- [ ] **Step 1: Write the failing tests**: `TreePolicy(tree, game)` returns the tree's action for `env.get_obs(state)`; it satisfies the `Policy` protocol (`init_carry`, `step`) used by `visualisation.eval_rollouts`; a 4-leaf tree plays 100 Classic steps through `visualisation.rollout.play`; `TreePolicy(tree, game, top_level=policy)` on the toy two-level policy keeps the top level's skill choices and replaces only the primitive actions.
+- [ ] **Step 2: Implement** `TreePolicy` (with optional `top_level` for skill methods) and `closed_loop(tree, game, seeds) -> scores` reusing the eval keys of [[Recording training data]].
 - [ ] **Step 3: Run** `uv run pytest tests/interpretation/test_tree_policy.py -q`.
 
 ### Task 5: Rules and importance
@@ -131,18 +136,22 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 - Test: `tests/interpretation/test_rules.py`
 
 - [ ] **Step 1: Write the failing tests** on the synthetic 8-leaf policy: `rules_text` lists 8 leaves with feature names and thresholds in decoded units; `paths_to(tree, action)` returns every condition chain ending in that action; permutation importance ranks the 5 rule features above the others.
-- [ ] **Step 2: Implement** `rules_text`, `paths_to`, `importance(tree, test)`, `failure_breakdown(tree, test)` (confusion by action group, fidelity per floor).
-- [ ] **Step 3: Run** `uv run pytest tests/interpretation/test_rules.py -q`.
+- [ ] **Step 2: Write the failing test** for the top level: on a fixture `smdp_greedy_table.parquet` of 40 keys whose greedy skill is a 4-leaf rule over 2 decoded fields, `top_level_rules(table)` reports 40 rules, the 4 distinct skills, a key-to-skill tree with L90 <= 4 and the 10 highest-value rules in words.
+- [ ] **Step 3: Implement** `rules_text`, `paths_to`, `importance(tree, test)`, `failure_breakdown(tree, test)` (confusion by action group, fidelity per floor) and `top_level_rules(table)`.
+- [ ] **Step 4: Run** `uv run pytest tests/interpretation/test_rules.py -q`.
 
 ### Task 6: Distil every final policy
 
 **Files:**
 - Create: `src/wut_murl_craftax/interpretation/run.py` (CLI)
+- Test: `tests/interpretation/test_run_cli.py`
 
-- [ ] **Step 1: Write the failing test** in `tests/interpretation/test_run_cli.py`: on a 2-update Classic PPO run the CLI writes `curve.csv`, `complexity.json`, `rules_16.txt`, `importance.csv`, `closed_loop.csv` and `fidelity_vs_leaves.png`, and logs them under `distill-<budget>-<method>` in a temporary MLflow store.
-- [ ] **Step 2: Implement** `uv run python -m wut_murl_craftax.interpretation.run --phase <final phase> --method <method|all> [--dagger] --out outputs/interpretation/<budget>`; resumable per run (skips finished outputs).
-- [ ] **Step 3: Run** for both final phases, all methods and controls, with and without `--dagger`.
-- [ ] **Step 4: Write** the per-method comparison table `outputs/interpretation/<budget>/complexity.csv` (method, median L90 [IQR], fidelity at 16, 64 and 256 leaves, closed-loop ratio of the 256-leaf tree, Spearman of score vs L90) and the figure `fidelity_vs_leaves_<budget>.pdf` (log2 x axis, one line per method, dashed 0.9); copy the figure to `outputs/results/figures/` for [[2026-10-20-craftax-comparison-and-results]].
+Runs before [[2026-10-20-craftax-comparison-and-results]] Task 6 (Phase 4 order): its LaTeX export reads `outputs/interpretation/<budget>/complexity.csv` written in Step 4.
+
+- [ ] **Step 1: Write the failing test** in `tests/interpretation/test_run_cli.py`: on a 2-update Classic PPO run the CLI writes `curve.csv`, `complexity.json`, `rules_16.txt`, `importance.csv`, `closed_loop.csv` and `fidelity_vs_leaves.png`, and logs them under `distill-<budget>-<method>` in a temporary MLflow store; on a 2-update Classic `smdp-skills` run it also writes `top_level_rules.txt` and `top_level.json`.
+- [ ] **Step 2: Implement** `uv run python -m wut_murl_craftax.interpretation.run --phases <phase> [<phase> ...] --method <method|all> [--dagger] --out outputs/interpretation`; runs are grouped by their `budget` tag into `outputs/interpretation/<budget>/`; resumable per run (skips finished outputs).
+- [ ] **Step 3: Run** `uv run pytest tests/interpretation/test_run_cli.py -q`, then `uv run python -m wut_murl_craftax.interpretation.run --phases final-1m final-1b combo-1m combo-1b --method all --out outputs/interpretation` and the same with `--dagger` (all methods, the combination and the three controls).
+- [ ] **Step 4: Write** the per-method comparison table `outputs/interpretation/<budget>/complexity.csv` (method, median L90 [IQR], fidelity at 16, 64 and 256 leaves, closed-loop ratio of the 256-leaf tree, Spearman of score vs L90; for skill methods also the top-level key count and key-to-skill L90) and the figure `fidelity_vs_leaves_<budget>.pdf` (log2 x axis, one line per method, dashed 0.9); copy the figure to `outputs/results/figures/` for [[2026-10-20-craftax-comparison-and-results]].
 
 ### Task 7: Interpretation write-up
 
@@ -150,6 +159,7 @@ From the Craftax symbolic observation (8268 values); Classic uses the matching s
 - Create: `knowledge/results/Decision-tree interpretation.md` (template `knowledge/_templates/concept.md`, `domain: interpretation`, `parent: "[[2026-10-20-craftax-project]]"`), `knowledge/architecture/interpretation.md` (template `module.md`)
 
 - [ ] **Step 1: Write** one section per method answering the questions under "What each tree is asked", with the 16-leaf rules rewritten as 5 to 10 plain-language bullets, each marked "matches mechanic" or "surprising".
-- [ ] **Step 2: Write** the cross-method section: the complexity table, the score-vs-L90 correlation, what recurrent methods lose without memory features and what the memory proxies recover.
-- [ ] **Step 3: Draft** the report's interpretation section (about 0.4 page, [[2026-10-20-craftax-report]]): one figure (fidelity vs leaves), one sentence per method on its strategy, the complexity result; numbers through `report/numbers.tex` macros.
-- [ ] **Step 4: Run** `make knowledge` and `make check`.
+- [ ] **Step 2: Write** for each skill method a separate "Top level" subsection: the number of top-level rules, the key-to-skill tree and the 10 highest-value rules in words, kept apart from the primitive-action results.
+- [ ] **Step 3: Write** the cross-method section: the complexity table, the score-vs-L90 correlation, what recurrent methods lose without memory features and what the memory proxies recover.
+- [ ] **Step 4: Draft** the report's interpretation section (about 0.4 page, [[2026-10-20-craftax-report]]): one figure (fidelity vs leaves), one sentence per method on its strategy, the complexity result; numbers through `report/numbers.tex` macros.
+- [ ] **Step 5: Run** `make knowledge` and `make check`.

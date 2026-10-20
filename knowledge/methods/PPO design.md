@@ -22,7 +22,7 @@ Feed-forward Proximal Policy Optimisation, the first control: the Craftax paper'
 - Also in it: facing direction, armour and enchantments, light level, sleeping and resting flags, learned spells, floor, ladder-open flag, boss-vulnerable flag.
 - Not in it: the achievement flags, exact kill counts, the step counter and anything outside the 9 x 11 window.
 - No memory: the action depends on the current observation alone.
-- Privileged state: none for acting or reward; achievement flags reach the logs only, via `info["Achievements/*"]` on done steps (logging only).
+- Privileged state: none for acting or reward; achievement unlocks and other step outcomes (floor, damage, kills) reach the logs and the evaluation only, as the `StepEvents` record the reset wrapper computes from the hidden pre-reset next state (`info["events"]`).
 - **Acts:** one of the 43 primitive actions per step (Classic 17), sampled from the policy's softmax.
 - **Rewarded by:** the environment reward only: tier weight 1, 3, 5 or 8 per achievement unlocked for the first time in the episode, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]).
 - The entropy bonus 0.01 is a loss term that keeps the policy random, not a reward.
@@ -53,7 +53,7 @@ flowchart LR
 - Two published configurations, set explicitly: Craftax-1M = paper Table 11 (256 envs x 16 steps, lr 3e-4); Craftax-1B = Table 7 (1024 x 64, lr 2e-4). Why: the original code defaults are the 1B config and the README gives no 1M command; our port's defaults are a Classic debugging setup (256 envs, width 256), so no default may leak into a run.
 - Activation tanh. Why: Table 7 and 11 list tanh, and `--activation` is parsed but never used in the original, so the published runs used the `ActorCritic` class default, tanh ([[Craftax Baselines reproduction notes]]).
 - Max grad norm 1.0. Why: not in the paper tables; the code default is what produced the published numbers.
-- Optimistic resets, as the original: `auto_reset=False` envs inside Craftax_Baselines' `OptimisticResetVecEnvWrapper` with reset ratio `min(16, envs)`, vendored at 7ce36fa into `training/wrappers.py` with its MIT notice ([[Craftax API and wrappers]]). Why: the published numbers were produced with them, they are about 2x faster ([[Craftax performance]]), and every control and method shares one reset setup ([[Experiment decisions]]); 7ce36fa includes the fix for Baselines issue #11. Rejected: auto-reset envs (one wrapper fewer, but slower and a deviation from the published setup); they remain only as a debug comparison.
+- Optimistic resets, as the original: `auto_reset=False` envs inside Craftax_Baselines' `OptimisticResetVecEnvWrapper` with reset ratio `min(16, envs)`, vendored at 7ce36fa into `training/wrappers.py` with its MIT notice ([[Craftax API and wrappers]]); our one addition: the reset wrapper also returns the step's `StepEvents`, computed from the next state before a finished env is replaced, so an unlock on the last step of an episode is never lost ([[2026-10-20-craftax-evaluation-and-metrics]]). Why: the published numbers were produced with them, they are about 2x faster ([[Craftax performance]]), and every control and method shares one reset setup ([[Experiment decisions]]); 7ce36fa includes the fix for Baselines issue #11. Rejected: auto-reset envs (one wrapper fewer, but slower and a deviation from the published setup); they remain only as a debug comparison.
 - Score: training-episode return as % of 226 over the last 2% of the budget, the scoreboard metric ([[2026-10-20-craftax-evaluation-and-metrics]], [[Craftax scoring and evaluation]]).
 - Light tuning only: Stage 1 = 6 published alternatives one at a time (1B-table shape at 1M, lr 2e-4 and 4e-4, GAE lambda 0.7 and 0.9, entropy 0) plus the published config; Stage 2 = 4 neighbours on the 2 most sensitive numeric knobs. Why: the paper already tuned PPO at both budgets (random search at 1M, App. E.2); the control must stay the published method.
 - Tuned = published unless a config beats it by more than the reproduction band half-width h. Why: a 3-seed win inside the noise would make the control a different method without evidence.
@@ -61,10 +61,10 @@ flowchart LR
 
 ## Reproduction check
 
-- Acceptance: |our 10-seed mean - published| <= h, h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2).
+- Acceptance: |our n-seed mean - published| <= h, h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), SE_ours = sd / sqrt(n); n = 10 at 1M and 3 at 1B (`final-1b` has 3 seeds, [[Experiment decisions]]), so the 1B band is wider and the 1B check indicative.
 - s_pub at 1M: 0.083 percentage points, the per-seed sd of PPO-RNN 1M (last 5 updates per seed) derived from the Simulus per-run data; no PPO 1M spread is published.
 - s_pub at 1B: 0.91 percentage points, the largest third-party sd (SimBa rerun, [[PPO (Matthews 2024)]]); other reruns: 0.22 to 0.58.
-- Planning bands: 1M 2.08 to 2.32; 1B 11.04 to 12.76.
+- Planning bands: 1M 2.08 to 2.32 (10 seeds); 1B 10.65 to 13.15 (3 seeds).
 - Debug order on a fail, cheapest and most likely first: config diff against the tables; metric definition and final window; CPU-only learner (device numerics, [[Craftax on Apple GPU]]); a comparison against auto-reset envs (a check, not a fix); the original `ppo.py` in an isolated environment at 1M. If the original also misses, the gap is environment or version (Craftax 1.6.1 vs the 2024 release, [[Craftax versions and dependencies]]), recorded, and the control stays as is.
 
 ## Fixed vs tuned
@@ -84,7 +84,8 @@ flowchart LR
 
 - MLflow logging and resumable checkpoints instead of W&B and a final-only Orbax save.
 - Craftax 1.6.1 and JAX 0.11 instead of the unpinned 2024 stack ([[Craftax Baselines reproduction notes]]).
-- Extra logged diagnostics (`clip_frac`, `grad_norm`); the loss values are unchanged.
+- Extra logged diagnostics (`clip_frac`, `grad_norm`) and the per-step `StepEvents` in `info["events"]`; the loss values and env transitions are unchanged.
+- The env batch is sharded over the CPU devices when the runner starts JAX with several host devices; the numbers match the unsharded run (a test).
 
 ## What to watch
 

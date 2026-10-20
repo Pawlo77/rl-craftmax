@@ -3,14 +3,14 @@ title: "Craftax Hugging Face release implementation plan"
 type: plan
 domain: release
 parent: "[[2026-10-20-craftax-project]]"
-status: draft
+status: ready
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 tags: [plan, release, huggingface, publication]
 ---
 # Craftax Hugging Face release implementation plan
 
-Status: draft
+Status: ready
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -32,27 +32,27 @@ Status: draft
 | Path in the repo | Content | Source |
 |---|---|---|
 | `README.md` | dataset card | `release/cards.py` |
-| `mlruns.db` | scrubbed MLflow store: tuning and final phases, analysis runs | `release/scrub.py` |
-| `mlruns/<experiment id>/<run id>/artifacts/` | per run: `config.json`, `metrics.npz`, `episodes.npz`, `eval/*.npz`, `eval_tables/*.parquet` | MLflow artifact root |
-| `metrics/<phase>/` | `runs`, `curves`, `eval_episodes` as parquet and CSV | [[2026-10-20-craftax-evaluation-and-metrics]] export |
+| `mlruns.db` | scrubbed MLflow store: phases `smoke`, `tune-coarse`, `tune-fine`, `final-1m`, `final-1b`, `combo-1m`, `combo-1b`, analysis runs | `release/scrub.py` |
+| `mlruns/<experiment id>/<run id>/artifacts/` | per run: `config.json`, `metrics.npz`, `episodes.npz`, `eval/<mode>/<update>.npz`, `eval_tables/*.parquet` (no `state/`, no `ckpt/` beyond the files below) | MLflow artifact root |
+| `metrics/<phase>/` | `runs`, `curves`, `eval_episodes` as parquet and CSV, for `tune-coarse tune-fine final-1m final-1b combo-1m combo-1b` | [[2026-10-20-craftax-evaluation-and-metrics]] export |
 | `results/figures/`, `results/tables/` | every figure (PDF, PNG) and table (CSV, LaTeX) | [[2026-10-20-craftax-comparison-and-results]] |
 | `analysis/<budget>/<method>/` | hard scenarios, `cases.csv`, obstacles tables, plots | [[2026-10-20-craftax-training-analysis]] |
 | `interpretation/<budget>/<method>/` | fidelity curves, complexity, 16-leaf rules, importance | [[2026-10-20-craftax-interpretation-and-ruleset]] |
-| `checkpoints/<budget>/<method>/s<seed>/` | final params (`final.msgpack`), `config.json`, model card `README.md` | final runs, all 10 seeds |
+| `checkpoints/<budget>/<method>/s<seed>/` | final params (`final.msgpack`), `config.json`, model card `README.md` | final runs (`final-1m`, `final-1b`, `combo-1m`, `combo-1b`), every seed (10 at 1M, 3 at 1B) |
 | `checkpoints/<budget>/<method>/video/` | the early checkpoints used in the videos (best seed only) | `ckpt/index.json` |
 | `media/gifs/`, `media/videos/` | GIFs and the three MP4s | visualisation outputs |
 | `report/report.pdf` | the report | `report/` |
 | `LICENSE`, `NOTICE` | the MIT licence text (copy of the repository `LICENSE`) and third-party notices | this plan |
 
-- Size estimate for checkpoints: a Craftax-Symbolic width-512 params-only checkpoint is 38,163,145 B ([[Recording training data]]); multiply by methods x 2 budgets x 10 seeds and replace with measured sizes in Task 3.
-- Videos with music go in only if every music licence in `configs/video/music.yaml` allows redistribution outside YouTube; otherwise the voice-only mix (`ffmpeg.mux_audio` with `--voice` only) is uploaded.
+- Size estimate for checkpoints: a Craftax-Symbolic width-512 params-only checkpoint is 38,163,145 B ([[Recording training data]]); multiply by the final runs (8 agents and the combination, 10 seeds at 1M and 3 at 1B) and replace with measured sizes in Task 3.
+- Videos with music go in only if every music licence in `configs/video/music.yaml` allows redistribution outside YouTube; otherwise the voice-only mix is uploaded, made from the silent storyboard render and its `voice.wav` with `uv run python -m wut_murl_craftax.visualisation.cuts mux <silent storyboard render> outputs/visualisation/out/<video>_<layout>_voice.mp4 --voice <that video's voice.wav from the storyboard>` (no `--music`; the silent render is the storyboard run without `--voice-dir` and `--music`), and `bundle.py` stages that file under `media/videos/`.
 - Never uploaded: `.env`, tokens, host names, absolute local paths, tuning checkpoints, 16 px masters, lossless clips.
 
 ## Scrubbing
 
 - Copy `mlruns.db` to `outputs/release/mlruns.db`; the original is never modified.
 - Delete tags `mlflow.user`, `mlflow.source.name`, `mlflow.source.git.repoURL` if it holds a local path, and any tag whose value contains a host name or an absolute home path.
-- Keep tags `method`, `budget`, `phase`, `seed`, `config_hash`, `profile`, `device_kind`, `mlflow.source.git.commit`.
+- Keep tags `method`, `budget`, `phases`, `seed`, `config_hash`, `profile`, `device_kind`, `mlflow.source.git.commit`.
 - Rewrite every `artifact_uri` and `artifact_location` to the relative form `mlruns/<experiment id>/<run id>/artifacts`.
 - Check that run, metric, param and tag counts (minus deleted tags) equal the original store's.
 
@@ -70,7 +70,8 @@ Status: draft
 - Dataset card front matter: `license: mit`, `pretty_name`, `task_categories: [reinforcement-learning]`, `tags: [craftax, jax, mlflow, reinforcement-learning]`, `size_categories`, `configs` entries for the `metrics/` parquet files so the dataset viewer shows them.
 - Dataset card sections: summary, contents table with measured sizes, how the data was produced (repository URL and commit), protocol and metric definitions (summary of [[2026-10-20-craftax-evaluation-and-metrics]]), how to load each part, licence and attribution, limitations, citation (from `CITATION.cff`).
 - Model card per checkpoint folder (front matter `license: mit`): method, network, observation (`Craftax-Symbolic-v1`, craftax 1.6.1), budget, seed, final score and eval scores, loading snippet, intended use (research and teaching), limitations.
-- Licence (decided, [[Experiment decisions]]): MIT for everything we release: data, metrics, figures, tables, GIFs, videos, checkpoints, the Space code and this repository; `LICENSE` holds the standard MIT text, `Copyright (c) 2026 Paweł Pozorski`.
+- Licence (decided, [[Experiment decisions]]): MIT for everything published on Hugging Face: data, metrics, figures, tables, GIFs, the video copies, checkpoints, the Space code, and this repository; `LICENSE` holds the standard MIT text, `Copyright (c) 2026 Paweł Pozorski`.
+- The three YouTube uploads of the same videos use Creative Commons BY, because YouTube has no MIT option (decided by the user, [[2026-10-20-craftax-visualisation-production]]); the dataset card and the Space's Videos tab say so next to the YouTube links.
 - Third-party code keeps its own licence header: `training/batch_renorm.py`, ported from purejaxql, stays Apache-2.0 (its header names purejaxql and Flax); `training/wrappers.py` and the Craftax_Baselines portions of `training/ppo.py` keep their MIT notice (Copyright (c) 2024 Michael Matthews).
 - Music is not ours to license: a video with music is uploaded only if every track's licence in `configs/video/music.yaml` allows redistribution (see Dataset contents); the MIT licence covers our footage and voice, not the track.
 - `NOTICE`: Craftax (MIT, Matthews et al.), the Craftax_Baselines portions of `training/ppo.py` and `training/wrappers.py` (MIT), `training/batch_renorm.py` (Apache-2.0, purejaxql and Flax), each music track's licence and attribution.
@@ -127,7 +128,11 @@ flowchart TD
 
 ### Task 3: Size check
 
-- [ ] **Step 1: Run** the bundle CLI on the real outputs.
+**Files:**
+- Modify: `plans/2026-10-20-craftax-project/2026-10-20-craftax-huggingface-release.md` (sizes, counts and limits under this task)
+- Create (outputs, not in git): `outputs/release/dataset/`, `outputs/release/space/`, `manifest.json` in each staged folder
+
+- [ ] **Step 1: Run** `uv run python -m wut_murl_craftax.release.bundle --out outputs/release` on the real outputs.
 - [ ] **Step 2: Run** `du -sh outputs/release/dataset/*` and `find outputs/release/dataset -type f | wc -l`; write the sizes and counts per top-level folder under this task.
 - [ ] **Step 3: Check** the current Hugging Face limits (largest file, files per folder, total repo size for a free account) on `https://huggingface.co/docs/hub/storage-limits`; write them under this task with the date read.
 - [ ] **Step 4: Fix** any breach: split large folders into subfolders, or drop the video checkpoints first; never drop final checkpoints or `mlruns.db` without asking the user.
@@ -153,6 +158,10 @@ flowchart TD
 - [ ] **Step 3: Run** `uv run pytest tests/release/test_publish.py -q`.
 
 ### Task 6: Release
+
+**Files:**
+- Read: `manifest.json` in each staged folder, `outputs/release/dataset/`, `outputs/release/space/` (uploaded, not changed)
+- Create (remote): dataset repo `Pawlo77/wut-murl-craftax-results`, Space `Pawlo77/wut-murl-craftax`
 
 - [ ] **Step 1: Run** `uv run python -m wut_murl_craftax.release.publish --dry-run` and show the output to the user (Gate 1).
 - [ ] **Step 2: Wait** for the user to log in (Gate 2) and to reply "publish" (Gate 3).

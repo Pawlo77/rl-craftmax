@@ -7,7 +7,7 @@ tags: [concept, method, control, q-learning, recurrent]
 created: 2026-10-20
 updated: 2026-10-21
 aliases: [PQN-RNN control, Parallelised Q-Network]
-related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
+related-code: []
 ---
 # PQN-RNN design
 
@@ -17,7 +17,7 @@ Recurrent Parallelised Q-Network, the third control and the only value-based one
 
 - **Observes:** the 8268-float symbolic observation (Classic 1345), as [[PPO design#Access and reward]]: local 9 x 11 map view, inventory, stats, floor and flags.
 - Plus the previous action as a one-hot (43) and its own memory, the LSTM state (512 numbers), reset to zeros after a done.
-- Privileged state (not in the observation): none for acting or reward; achievement flags are read for logging only.
+- Privileged state (not in the observation): none for acting or reward; the step outcomes (`StepEvents`, computed from the hidden pre-reset next state) reach the logs, the evaluation and the hooks' `traj.events`; the control's hooks are empty, so nothing reads them for acting or reward.
 - **Acts:** one of the 43 primitive actions per step (Classic 17), ε-greedy on the Q-values: ε from 1.0 to 0.005 over the first 10% of updates.
 - **Rewarded by:** the environment reward only (scale 1.0): tier weight 1, 3, 5 or 8 per achievement unlocked for the first time in the episode, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]).
 - **Training objective:** learn the action values of the greedy policy, i.e. maximise the expected discounted sum of environment rewards with γ = 0.99; λ = 0.5 only mixes the n-step targets.
@@ -30,7 +30,7 @@ Recurrent Parallelised Q-Network, the third control and the only value-based one
 - A port of `purejaxql/pqn_rnn_craftax.py` and `config/alg/pqn_rnn_craftax.yaml` at commit 47af6d7 (Apache-2.0), with the BatchRenorm module `utils/batch_renorm.py`.
 - Network: BatchRenorm on the 8268 inputs, Dense(512) + LayerNorm + ReLU, the previous action as a one-hot appended, LSTM(512) reset on done, Dense(43) Q-values.
 - Update: per rollout, 4 epochs x 4 minibatches of whole env sequences; each minibatch reruns the network from the stored start hidden, computes targets from the stop-gradient Q-values of the same pass, and minimises `0.5 * (Q(s_t, a_t) - G_t)^2`; RAdam, gradient clip 0.5, learning rate decayed linearly to about 0.
-- Code: new `src/wut_murl_craftax/training/pqn_rnn.py` (`PQNRNNConfig`, `q_lambda_targets`, `make_trainer`) and `training/batch_renorm.py`.
+- Code: new `src/wut_murl_craftax/training/pqn_rnn.py` (`PQNRNNConfig`, `build_network`, `q_lambda_targets`, `learn`, `make_trainer`) and `training/batch_renorm.py`; nothing is shared with `training/ppo.py` except the env setup in `training/wrappers.py`.
 
 ```mermaid
 flowchart LR
@@ -59,9 +59,10 @@ flowchart LR
 
 ## Extension hooks
 
-- The same contract as PPO-RNN (`training/hooks.py`, [[PPO-RNN design]]), as fields of `PQNRNNConfig`: `intrinsic_reward_fn(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`, `observe(state, traj) -> state` per rollout, `extra_loss_fn(params, state, key) -> (loss, (state, metrics))` with `extra_steps = K` optimizer steps after the Q epochs, plus `init_state_fn`, `env_wrapper_fn`, `metrics_fn`; the method state is part of the train state and checkpointed.
+- The same contract as PPO-RNN (`training/hooks.py`, [[PPO-RNN design]]); `HookFields` is a base class of `PQNRNNConfig`: `init_state_fn(key, spec)`, `intrinsic_reward_fn(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`, `observe(state, traj) -> state` per rollout, `extra_loss_fn(params, state, key) -> (loss, (state, metrics))` with `extra_steps = K` optimizer steps after the Q epochs, `env_wrapper_fn`, `metrics_fn` (fully qualified names); the method state is part of the trainer state and saved with it.
+- `traj` is the shared `Traj`: `obs`, `actions`, `rewards`, `dones`, `hidden` (the LSTM `(c, h)` each action was chosen from, float16), `events` (`StepEvents` per step) and `extra` (`r_int`, `q_vals`, `last_actions`).
 - `r_int` is added to the reward before the Q(lambda) targets.
-- For the skill methods ([[2026-10-20-craftax-method-smdp-skills]], [[2026-10-20-craftax-method-dyna-q]]): `PQNRNNConfig.extra_obs_dim` widens the network input for extra features (a skill one-hot); `make_network` is the public constructor; `q_lambda_targets` works on its own; `learn(train_state, traj, key, loss_mask=None)` is the learner update, callable from another rollout, and the mask drops transitions from the TD loss.
+- For the skill methods ([[2026-10-20-craftax-method-smdp-skills]], [[2026-10-20-craftax-method-dyna-q]]): `PQNRNNConfig.extra_obs_dim` widens the network input for extra features (a skill one-hot); `build_network(cfg, n_actions, obs_dim)` is the public constructor; `q_lambda_targets` works on its own; `learn(train_state, traj, key, loss_mask=None)` is the learner update, callable from another rollout, and the mask drops transitions from the TD loss.
 - Why a mask and not a separate loss: one TD loss implementation; masked steps still feed the recurrent state and the targets, they only give no gradient.
 - The count bonus ([[2026-10-20-craftax-method-count-bonus]]) uses `intrinsic_reward_fn` inside the Q(lambda) reward.
 - Epsilon fields stay in `PQNRNNConfig`, so a method can replace epsilon-greedy (for example a count bonus with `eps_start = eps_finish = 0`).
@@ -69,7 +70,7 @@ flowchart LR
 
 ## Reproduction check
 
-- 1B: |our 10-seed mean - 16.0| <= h, h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), s_pub 1.31 percentage points (Auto-Craftax PyTorch PQN-LSTM port, the only published spread); planning band 14.78 to 17.22.
+- 1B: |our 3-seed mean - 16.0| <= h, h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), SE_ours over our 3 `final-1b` seeds, s_pub 1.31 percentage points (Auto-Craftax PyTorch PQN-LSTM port, the only published spread); planning band 14.23 to 17.77 (indicative).
 - 1M: no published number; our base against the original script with the same overrides, 3 seeds each, within 2 standard errors of the difference.
 - Debug order on a fail: target test and config diff; BatchRenorm warm-up and running statistics; a comparison against auto-reset envs (a check); CPU-only learner.
 

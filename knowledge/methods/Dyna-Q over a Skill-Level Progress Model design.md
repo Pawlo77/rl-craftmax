@@ -17,7 +17,7 @@ related-code: []
 
 - **Observes and acts:** exactly as `smdp-skills` ([[SMDP Q-Learning over Hand-Defined Skills design#Access and reward]]): the top level sees only the progress key and the start-condition mask and picks among the 25 options.
 - The skill network sees the 8268-float observation (Classic 1345), the previous action, the skill one-hot and the step fraction, and picks among the 43 primitive actions.
-- Privileged state as `smdp-skills`: key and mask fields are also in the observation; the `fight` and `unlock_any` success tests read the kill counter, boss progress and `EnvState.achievements` (not in the observation) and decide when skills end.
+- No privileged state for acting, as `smdp-skills`: key, mask and every skill end come from the decoded observation and the reward (`unlock_any` from the achievement part of the reward, `fight` from the observed creature or a kill achievement's reward); `EnvState` and `StepEvents` are read for logging only ([[Craftax skill library#Access and reward]]).
 - The model adds no new input: it stores only quantities the top level already had, $(R, \gamma^\tau, k', \text{done}, \text{mask}')$ of each finished real skill.
 - **Rewarded by:** real updates as `smdp-skills`: the top level on the discounted environment reward over each skill, the skill network on the success pseudo-reward ([[Craftax scoring and evaluation#Reward]]).
 - Planning updates: the same SMDP target on modelled outcomes, i.e. stored real returns $R$ of the pair, plus $\kappa\sqrt{t - t^{\text{last}}}$ in Dyna-Q+ ([[#Planning updates]]).

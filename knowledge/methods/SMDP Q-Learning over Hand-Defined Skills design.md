@@ -17,40 +17,40 @@ A two-level value-based agent: a table $Q[k, o]$ over hashed progress keys $k$ a
 
 Two learners with different inputs and rewards; which state each skill test reads: [[Craftax skill library#Access and reward]].
 
-- **Observes, top level:** only the hashed progress key $k$ (progress fields plus 4 low-stat flags: food, drink, energy, health <= 3) and the mask of skills whose start condition holds; never the observation itself.
-- Key and mask are read from `EnvState` (privileged path), but every field they use is also in the observation; used for acting.
+- **Observes, top level:** only the hashed progress key $k$ (progress fields plus 4 low-stat flags: food, drink, energy, health <= 3) and the mask of skills whose start condition holds; never the raw observation.
+- Key and mask are decoded from the observation (`skills.decode_obs`, `skills.key_fields`), not read from `EnvState`; a test checks that the decoded key equals the privileged progress fields, so the top level sees nothing the observation lacks.
 - **Observes, skill network:** the 8268-float observation (Classic 1345), the previous action one-hot (43), the running skill as a one-hot (25) and `steps_in_skill / T_max`, plus an LSTM state kept across skills.
-- Privileged (not in the observation): the success tests of `fight` (floor kill counter, kills per creature type, boss progress) and `unlock_any` (`EnvState.achievements`).
-- These tests set the skill pseudo-reward and end the skill; the end decides when the top level chooses again, so they affect acting through timing.
+- Skill ends (success tests, step limits, interruptions) read only the observation and the reward: `unlock_any` succeeds when the achievement part of the reward is > 0 (reward minus 0.1 x the health change, health from the observation); `fight` succeeds when a hostile creature on the facing tile is gone after the agent's attack or a kill achievement's reward arrives ([[Craftax skill library#Access and reward]]).
+- Privileged state (`EnvState`, the wrapper's `StepEvents`) is used for logging only: `smdp/skill/<name>/test_agreement` compares each observation test with the event-based one; it never decides a skill end, a pseudo-reward or a choice.
 - **Acts:** the top level picks one of the 25 options, ε-greedy over the available ones, each time its env's skill ends.
 - While a learned skill runs, the skill network picks one of the 43 primitive actions per step (ε-greedy as PQN-RNN); `read_book` and `level_up` issue one fixed action.
 - **Rewarded by, top level:** the environment reward summed over the skill's τ steps, $R = \sum_{i=0}^{\tau-1} \gamma^i r_{t+i}$ ([[Craftax scoring and evaluation#Reward]]), target $R + \gamma^\tau (1 - \text{done}) \max_{o'} Q[k', o']$ ([[#Top-level update]]).
 - The top-level γ is per game step, tuned in {0.995, 0.999}, so a long skill is discounted more.
-- **Rewarded by, skill network:** the pseudo-reward $r^o_t$ = 1 on the step the skill's success test passes, else 0 (also 0 on death); every skill end is terminal; γ = 0.99, λ = 0.5.
-- The skill network never receives the environment reward.
+- **Rewarded by, skill network:** the pseudo-reward $r^o_t$ = 1 on the step the skill's success test passes, else 0 (also 0 on death and on any done step, where no test runs across the reset); every skill end is terminal; γ = 0.99, λ = 0.5.
+- The skill network never receives the environment reward as input or training reward; the success tests read it only to detect unlocks and kills.
 - **Training objective:** the top level maximises the expected discounted sum of environment rewards with its tuned γ; each skill maximises $0.99^{\text{steps to success}}$, i.e. succeed fast.
 - **Evaluated on:** the environment reward only: training-episode return as % of 226; the pseudo-rewards never enter a score.
-- **Prior knowledge:** the skills, their start conditions, success tests, step limits and interruptions, the `level_up` rule, and the progress-key fields with low-stat flags ([[Craftax skill library#Prior knowledge]]).
+- **Prior knowledge:** the skills, their start conditions, success tests, step limits and interruptions, the `level_up` rule, the observation decoding, and the progress-key fields with low-stat flags ([[Craftax skill library#Prior knowledge]]).
 
 ## What we implement
 
 - Registry name `smdp-skills`; both levels learn action values, no PPO anywhere.
 - Top level: tabular SMDP Q-learning, the backup of the elevator case study ([[14.4 Elevator dispatching]]) with the discounted sum in place of the integral and max in place of min (rewards, not costs).
 - Low level: the shared skill network of the [[Craftax skill library]], trained by the PQN-RNN learner ([[PQN-RNN (Gallici 2025)]], [[2026-10-20-craftax-method-pqn-rnn]]).
-- Progress key: `progress_key.fields` plus 4 low-stat flags, hashed to $2^{20}$ rows ([[Count-Based Progress Bonus design]]).
+- Progress key: the progress fields decoded from the observation (`skills.key_fields`, bucketed by `progress_key.bucket`) plus 4 low-stat flags, hashed by `progress_key.hash_fields` to $2^{20}$ rows ([[Count-Based Progress Bonus design]]).
 - Everything is vectorised over envs in JAX: each env runs its own skill and decides at its own time; the table lives in the rollout `scan` carry and is updated every env step for the envs whose skill just ended.
 
 ```mermaid
 flowchart LR
-  ST["EnvState s"] --> K["progress key k = hash(fields, low-stat flags)"]
-  ST --> MK["start conditions: mask of available skills"]
+  ST["observation o and reward r"] --> K["progress key k = hash_fields(key_fields(o), low-stat flags)"]
+  ST --> MK["start conditions from o: mask of available skills"]
   K --> QT["top-level table Q[k, :]"]
   MK --> QT
   QT --> EG["epsilon-greedy over available skills"]
   EG --> SK["skill o runs: shared Q(lambda) network picks actions"]
   SK --> ENV["env step: native reward r, pseudo-reward r_o"]
   ENV --> ACC["R += discount * r; discount *= gamma; steps += 1"]
-  ACC --> TERM{"skill ended? success, step limit, death, interrupt"}
+  ACC --> TERM{"skill ended? success test on o and r, step limit, episode end, interrupt"}
   TERM -- "no" --> SK
   TERM -- "yes" --> UPD["SMDP update of Q[k_start, o] with R, gamma^tau, max Q[k', :]"]
   UPD --> K
@@ -78,7 +78,7 @@ $$R = \sum_{i=0}^{\tau-1} \gamma^{i} r_{t+i}, \qquad y = R + \gamma^{\tau}\,(1 -
 |---|---|
 | Tuned at 1M (two stages) | top-level α, top-level γ, ε decay fraction, skill timeout multiplier, key granularity |
 | Fixed | table rows $2^{20}$, $q_{\text{init}} = 10$, ε end 0.05, low-stat threshold 3, skill death reward 0, the skill network's settings from the PQN-RNN control |
-| Prior knowledge | the skill library: options, start conditions, success tests, interruptions, `level_up` rule; the progress-key fields ([[Craftax skill library#Prior knowledge]]) |
+| Prior knowledge | the skill library: options, start conditions, success tests, interruptions, `level_up` rule, observation decoding; the progress-key fields ([[Craftax skill library#Prior knowledge]]) |
 
 - Results are reported apart from blocks A and D of [[Existing Implementations]], in the "uses hand-written skills" block ([[Craftax skill library#Prior knowledge]]).
 

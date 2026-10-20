@@ -3,20 +3,20 @@ title: "Craftax compute budget"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: draft
+status: ready
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 tags: [plan, compute, estimates]
 ---
 # Craftax compute budget
 
-Status: draft
+Status: ready
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** know how many runs each phase holds and how long they take on the Apple M4 Pro laptop and on a CUDA GPU, and keep the numbers current as real throughput is measured.
+**Goal:** know how many runs each phase holds and how long training and evaluation take on the Apple M4 Pro laptop and on a CUDA GPU, and keep the numbers current as real throughput is measured.
 
-**Architecture:** totals are sums of the per-method tables in each method plan; each table uses steps per second x an overhead factor + 1 minute of compilation per run. All numbers are estimates until [[2026-10-20-craftax-infrastructure]] Task 7 measures real throughput.
+**Architecture:** training totals are sums of the per-method tables in each method plan (steps per second x an overhead factor; laptop hours include 1 minute of compilation per run, GPU hours exclude it); evaluation time is added per method as eval steps per run (all its eval checkpoints) / the method's steps per second; training and evaluation are shown separately. All numbers are estimates until [[2026-10-20-craftax-infrastructure]] Task 7 and each method's smoke task measure real throughput.
 
 **Tech Stack:** MLflow (measured steps/s per run), the method plans of [[2026-10-20-craftax-project]].
 
@@ -33,60 +33,83 @@ Status: draft
 | CPU rollouts with metal updates | +4-5% end to end for a 256-wide MLP | measured |
 | Authors' RTX 4090, PPO 1B | about 1 hour (266,961 steps/s end to end) | [[Craftax performance]] |
 
-- Per-method overhead factors (estimates, from each method's design): PPO 1.0, PPO-RNN and PQN-RNN 1.25 over PPO, count bonus 1.05 over its base, self-imitation 1.3, SMDP skills 1.1, Dyna-Q 1.15.
+- Per-method overhead factors (estimates, from each method's design): PPO 1.0, PPO-RNN and PQN-RNN 1.25 over PPO, count bonus 1.05 over its base, self-imitation 1.3, SMDP skills 1.1, Dyna-Q 1.15, combination 1.3 (as self-imitation).
+- Hours convention: laptop hours per run include the 1-minute compile; GPU hours per run exclude it, in this file and in every method plan.
+
+## Evaluation assumptions
+
+Evaluation follows [[2026-10-20-craftax-infrastructure]] Task 5 and the "Evaluation cost" rule of [[2026-10-20-craftax-evaluation-and-metrics]]: 64 fixed seeds x 2 modes (stochastic, greedy) = 128 episodes per checkpoint, in 1,000-step chunks until the last episode ends.
+
+| Quantity | Value | Note |
+|---|---|---|
+| Eval checkpoints per run | tuning and smoke (`smoke`, `tune-coarse`, `tune-fine`): 1 (final); finals (`final-1m`, `final-1b`, `combo-1m`, `combo-1b`): 13 (update 0 + 11 log-spaced + the last, `checkpoint_schedule`) | |
+| Longest eval episode L, rounded up to the chunk | 1,000 steps at 1M and on Classic; 8,000 steps averaged over the 13 checkpoints of a 1B run | estimate |
+| Eval steps per run | tuning and smoke: 128 x 1,000 = 128,000; `final-1m`, `combo-1m`: 13 x 128,000 = 1,664,000; `final-1b`, `combo-1b`: 13 x 128 x 8,000 = 13,312,000 | |
+| Eval throughput | the method's training planning throughput on the laptop (both modes as one 128-env batch); cluster runs are costed at the same laptop rate, because the GPU eval rate of a 128-env batch is not measured | estimate, conservative on the cluster |
 
 ## Runs per phase
 
-| Method | `smoke` | `tune-coarse` | `tune-fine` | `final-1m` | `final-1b` | Runs |
-|---|---|---|---|---|---|---|
-| [[2026-10-20-craftax-method-ppo]] | 2 | 28 (7 configs, published config at 10 seeds) | 12 | 10 | 10 | 62 |
-| [[2026-10-20-craftax-method-ppo-rnn]] | 2 | 31 (8 configs) | 12 | 10 | 10 | 65 |
-| [[2026-10-20-craftax-method-pqn-rnn]] | 2 | 30 (10 configs) | 12 | 10 | 10 | 64 |
-| [[2026-10-20-craftax-method-count-bonus]], 2 variants | 4 | 144 (24 configs each) | 30 | 30 (incl. SimHash ablation) | 20 | 228 |
-| [[2026-10-20-craftax-method-sil]] | 2 | 54 (18 configs) | 24 | 20 (incl. buffer ablation) | 10 | 110 |
-| [[2026-10-20-craftax-method-smdp-skills]] | 2 | 144 (48 configs) | 24 | 40 (incl. 3 ablations) | 10 | 220 |
-| [[2026-10-20-craftax-method-dyna-q]] | 2 | 63 (21 configs) | 24 | 20 (incl. kappa ablation) | 10 | 119 |
-| Combination of the best two (Phase 3) | - | - | - | 10 | 10 | 20 |
-| **Total** | 16 | 494 | 138 | 150 | 90 | **888** |
+Seeds: 3 per config in tuning, 10 in `final-1m` and `combo-1m`, 3 in `final-1b` and `combo-1b` ([[Experiment decisions]], 2026-10-21).
+
+| Method | `smoke` | `tune-coarse` | `tune-fine` | `final-1m` | `final-1b` | `combo-1m` | `combo-1b` | Runs |
+|---|---|---|---|---|---|---|---|---|
+| [[2026-10-20-craftax-method-ppo]] | 2 | 28 (7 configs, published config at 10 seeds) | 12 | 10 | 3 | - | - | 55 |
+| [[2026-10-20-craftax-method-ppo-rnn]] | 2 | 31 (8 configs) | 12 | 10 | 3 | - | - | 58 |
+| [[2026-10-20-craftax-method-pqn-rnn]] | 2 | 30 (10 configs) | 12 | 10 | 3 | - | - | 57 |
+| [[2026-10-20-craftax-method-count-bonus]], 2 variants | 4 | 144 (24 configs each) | 30 | 30 (incl. SimHash ablation) | 6 | - | - | 214 |
+| [[2026-10-20-craftax-method-sil]] | 2 | 54 (18 configs) | 24 | 20 (incl. buffer ablation) | 3 | - | - | 103 |
+| [[2026-10-20-craftax-method-smdp-skills]] | 2 | 144 (48 configs) | 24 | 40 (incl. 3 ablations) | 3 | - | - | 213 |
+| [[2026-10-20-craftax-method-dyna-q]] | 2 | 63 (21 configs) | 24 | 20 (incl. kappa ablation) | 3 | - | - | 112 |
+| Combination of the best two (Phase 3) | - | - | - | - | - | 10 | 3 | 13 |
+| **Total** | 16 | 494 | 138 | 140 | 24 | 10 | 3 | **825** |
+
+- The [[2026-10-20-craftax-method-pqn-rnn]] 1M reference-code check adds 3 runs of the original script outside the queue (about 0.4 laptop hours, counted in the PQN-RNN row below, no fixed-seed evaluation).
 
 ## Laptop time (sequential, hours, estimates)
 
-| Method | Up to `final-1m` | `final-1b` | Total |
-|---|---|---|---|
-| PPO | 5.5 | 926.1 | 931.6 |
-| PPO-RNN | 7.0 | 1,157.6 | 1,164.6 |
-| PQN-RNN | 6.9 | 1,157.6 | 1,164.5 |
-| Count bonus, 2 variants | 28.3 | 2,430.8 | 2,459.1 |
-| Self-imitation | 16.4 | 1,504.8 | 1,521.2 |
-| SMDP skills | 30.0 | 1,273.3 | 1,303.3 |
-| Dyna-Q | 16.1 | 1,331.2 | 1,347.3 |
-| Combination (overhead 1.3, estimate) | 1.7 | 1,504.8 | 1,506.5 |
-| **Total** | **111.9** (about 4.7 days) | **11,286** (about 470 days) | **11,398** |
+Sums of the method plans' tables (training, with compile) and evaluation bullets. The "1M finals" and "1B finals" columns hold `final-1m` and `final-1b`; for the combination row they hold `combo-1m` and `combo-1b`.
 
-- Everything up to and including `final-1m` (all tuning and 1M finals) is about 112 laptop hours.
-- One 1B run is about 93 hours (PPO) to 150 hours (combination) on the laptop.
+| Method | Training: `smoke` + tuning | Training: 1M finals | Training: 1B finals | Eval: `smoke` + tuning | Eval: 1M finals | Eval: 1B finals | Total |
+|---|---|---|---|---|---|---|---|
+| PPO | 4.4 | 1.1 | 277.8 | 0.5 | 1.5 | 3.7 | 289.1 |
+| PPO-RNN | 5.7 | 1.3 | 347.3 | 0.6 | 1.9 | 4.6 | 361.5 |
+| PQN-RNN (incl. 0.4 reference-code check) | 6.0 | 1.3 | 347.3 | 0.6 | 1.9 | 4.6 | 361.8 |
+| Count bonus, 2 variants | 24.1 | 4.1 | 729.3 | 2.7 | 6.1 | 9.7 | 776.1 |
+| Self-imitation | 13.1 | 3.3 | 451.4 | 1.5 | 5.0 | 6.0 | 480.4 |
+| SMDP skills | 24.2 | 5.8 | 382.0 | 2.7 | 8.5 | 5.1 | 428.3 |
+| Dyna-Q | 13.1 | 3.0 | 399.4 | 1.5 | 4.4 | 5.3 | 426.7 |
+| Combination (`combo-1m`, `combo-1b`; overhead 1.3, estimate) | - | 1.7 | 451.4 | - | 2.5 | 6.0 | 461.6 |
+| **Total** | **90.7** | **21.7** | **3,385.9** | **10.2** | **31.9** | **45.1** | **3,585.4** |
+
+- Totals are summed before rounding, so a column of rounded rows can differ from its total by 0.1.
+- Everything at 1M (smoke, tuning, `final-1m`, `combo-1m`) is about 154.5 laptop hours (about 6.4 days): 112.4 h training and 42.1 h evaluation.
+- Evaluation at 1M is dominated by the 13 checkpoints of each 1M final run (1,664,000 eval steps against 1M training steps); a tuning run adds 128,000 eval steps.
+- One 1B run is about 93 hours (PPO) to 150 hours (self-imitation, combination) of training on the laptop, plus 1.2 (PPO) to 2.0 hours (self-imitation, combination) of evaluation.
 
 ## 1B finals on a CUDA GPU (authors' hardware, estimates)
 
-| Method | Hours per run | 10 seeds |
-|---|---|---|
-| PPO | 1.04 | 10.4 |
-| PPO-RNN, PQN-RNN | 1.30 each | 13.0 each |
-| Count bonus | 1.38 per variant | 27.6 for both |
-| Self-imitation | 1.71 | 17.1 |
-| SMDP skills | 1.45 | 14.5 |
-| Dyna-Q | 1.51 | 15.1 |
-| Combination | about 1.7 | about 17 |
-| **Total** | | **about 128 GPU hours** |
+Training hours per run exclude the 1-minute compile; eval hours are counted at the laptop rate (Evaluation assumptions).
 
-- Seeds are independent runs: with k GPUs the 1B wall-clock is about 128 / k hours.
+| Method | Training hours per run | Eval hours per run | 3 seeds, training + eval |
+|---|---|---|---|
+| PPO | 1.04 | 1.23 | 6.8 |
+| PPO-RNN, PQN-RNN | 1.30 each | 1.54 each | 8.5 each |
+| Count bonus | 1.37 per variant | 1.62 per variant | 17.9 for both |
+| Self-imitation | 1.69 | 2.00 | 11.1 |
+| SMDP skills | 1.43 | 1.69 | 9.4 |
+| Dyna-Q | 1.50 | 1.77 | 9.8 |
+| Combination (`combo-1b`) | 1.69 | 2.00 | 11.1 |
+| **Total** | | | **about 83 GPU hours** (38.0 training + 45.1 eval) |
+
+- `final-1b` is about 72 GPU hours (33.0 training + 39.1 eval) and `combo-1b` about 11 (5.1 + 6.0).
+- Seeds are independent runs: with k GPUs the 1B wall-clock is about 83 / k hours.
 
 ## Mix of machines
 
 ```mermaid
 flowchart LR
-  L["Laptop: smoke, tune-coarse, tune-fine, final-1m (about 112 h)"] --> M["mlruns.db"]
-  C["Cluster GPUs: final-1b, combo-1b (about 128 GPU h)"] --> N["node stores"]
+  L["Laptop: smoke, tune-coarse, tune-fine, final-1m, combo-1m (about 155 h with eval)"] --> M["mlruns.db"]
+  C["Cluster GPUs: final-1b, combo-1b (about 83 GPU h with eval)"] --> N["node stores"]
   N -- "make merge-mlflow" --> M
   M --> A["Phase 4 analysis"]
 ```
@@ -98,6 +121,6 @@ flowchart LR
 **Files:**
 - Modify: this file, the "Runs and laptop time estimate" table of each method plan
 
-- [ ] **Step 1:** after [[2026-10-20-craftax-infrastructure]] Task 7, read each method's mean steps/s from the `smoke` runs in MLflow (`make status PHASE=smoke`).
-- [ ] **Step 2:** recompute every table with the measured values; mark them "measured".
-- [ ] **Step 3:** after `tune-coarse` of each method, recheck its overhead factor against the PPO-RNN or PQN-RNN base.
+- [ ] **Step 1:** after [[2026-10-20-craftax-infrastructure]] Task 7 and each method's smoke task, read each method's mean steps/s and eval steps per checkpoint (longest of the 128 eval episodes) from the `smoke` runs (`make status PHASE=smoke`, then the runs in `make mlflow`).
+- [ ] **Step 2:** recompute every table with the measured values (laptop hours with compile, GPU hours without); mark them "measured".
+- [ ] **Step 3:** after `tune-coarse` of each method, recheck its overhead factor against the PPO-RNN or PQN-RNN base and the eval episode length at its final checkpoint; after the first `final-1b` run, replace the 1B eval assumptions with its measured eval time.

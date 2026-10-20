@@ -17,7 +17,7 @@ PPO with a GRU memory, the second control and the strongest Craftax paper baseli
 
 - **Observes:** the 8268-float symbolic observation (Classic 1345), as [[PPO design#Access and reward]]: local 9 x 11 map view, inventory, stats, floor and flags.
 - Plus its own memory: the GRU hidden state (512 numbers) summarising earlier observations of the episode; the done flag only resets it to zeros.
-- Privileged state (not in the observation): none for acting or reward; achievement flags are read for logging only.
+- Privileged state (not in the observation): none for acting or reward; the step outcomes (`StepEvents`: unlocks, floor, damage, kills, computed from the hidden pre-reset next state) reach the logs, the evaluation and the hooks' `traj.events`; the control's hooks are empty, so nothing reads them for acting or reward.
 - **Acts:** one of the 43 primitive actions per step (Classic 17), sampled from the policy's softmax.
 - **Rewarded by:** the environment reward only: tier weight 1, 3, 5 or 8 per achievement unlocked for the first time in the episode, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]).
 - The hooks are empty in the control, so `r_int = 0`; the entropy bonus 0.01 is a loss term, not a reward.
@@ -30,7 +30,7 @@ PPO with a GRU memory, the second control and the strongest Craftax paper baseli
 - The PPO of [[PPO design]] (clipped ratio, clipped value loss, entropy bonus, GAE, Adam with annealed learning rate), unchanged.
 - Network as Craftax_Baselines `ppo_rnn.py` `ActorCriticRNN`: Dense(512) + ReLU embedding, GRU(512), then actor 2 x Dense(512) + ReLU + logits and critic 2 x Dense(512) + ReLU + value.
 - Memory is the answer to partial observability: the agent sees a 9 x 11 window, so where it has been and what it has stored is not in the observation ([[Craftax observations and actions]]).
-- Code: new `src/wut_murl_craftax/training/ppo_rnn.py` (`PPORNNConfig`, `make_trainer`), sharing GAE and the loss math with `training/ppo.py`.
+- Code: new `src/wut_murl_craftax/training/ppo_rnn.py` (`PPORNNConfig`, `build_network`, `make_trainer`), sharing GAE and the loss math with `training/ppo.py`.
 
 ```mermaid
 flowchart LR
@@ -56,20 +56,21 @@ flowchart LR
 
 ## Extension hooks
 
-- One shared contract in `training/hooks.py`, the same for PQN-RNN: hooks are fields of `PPORNNConfig` set by a method's factory (`PPORNNConfig(intrinsic_reward_fn=...)`); the method state lives in the train state and is checkpointed.
-- `intrinsic_reward_fn(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`: per env step; `r_int` is added to the reward before GAE; the score keeps the extrinsic reward.
-- `observe(state, traj) -> state`: once per rollout, before GAE.
-- `extra_loss_fn(params, state, key) -> (loss, (state, metrics))` with `extra_steps = K` optimizer steps after the PPO epochs.
-- `init_state_fn`, `env_wrapper_fn` (observation or action wrappers), `metrics_fn` (logged as `hook/*`); `make_network` is public so an add-on loss can apply the network.
+- One shared contract in `training/hooks.py`, the same for PQN-RNN: `HookFields` is a base class of `PPORNNConfig`, so a method's factory sets the hooks directly (`PPORNNConfig(intrinsic_reward_fn=...)`); the method state lives in the train state and is saved with the whole trainer state (resumable runs).
+- `init_state_fn(key, spec) -> state`, once, with `spec = HookSpec(n_envs, obs_dim, n_actions, n_achievements, total_steps)`; each method adapts its own init to it.
+- `intrinsic_reward_fn(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`: per env step (count updates happen here); `r_int` is added to the reward before GAE; the score keeps the extrinsic reward. On a done step `next_env_state` is already the next episode's start (optimistic reset), so a hook never compares states across a done.
+- `observe(state, traj) -> state`: once per rollout, before GAE; `traj` holds `obs`, `actions`, `rewards`, `dones`, `hidden` (the GRU state each action was chosen from, float16) and `events` (a `StepEvents` per step, including `unlocked`).
+- `extra_loss_fn(params, state, key) -> (loss, (state, metrics))` with `extra_steps = K` optimizer steps after the PPO epochs; `extra_steps` is declared in `HookFields` only.
+- `env_wrapper_fn` (observation or action wrappers), `metrics_fn` (returns fully qualified names such as `count/...` or `sil/...`, logged unchanged); `build_network(cfg, n_actions, obs_dim)` is public so an add-on loss can apply the network.
 - Users: [[2026-10-20-craftax-method-count-bonus]] (`intrinsic_reward_fn`), [[2026-10-20-craftax-method-sil]] (`observe`, `extra_loss_fn`, `extra_steps`).
 - Why hooks and not subclasses: one recurrent PPO implementation, add-ons as pure functions inside `jit`, and a bit-identity test proves that zero hooks leave the control unchanged.
 - Why extra steps after the epochs, not a term inside the PPO loss: self-imitation learning samples from its own buffer at its own batch size, and the PPO loss of the control stays untouched.
 
 ## Reproduction check
 
-- Band: h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), as [[PPO design]].
+- Band: h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), SE_ours over our n seeds (10 at 1M, 3 at 1B), as [[PPO design]].
 - 1M: s_pub 0.083 percentage points (Simulus per-run data, 10 seeds); planning band 2.18 to 2.42.
-- 1B: s_pub 0.35 (largest third-party spread, Singh et al. 2026, type not stated); planning band 14.94 to 15.66. Third-party reruns with separate evaluation report 16.2-16.4%, which is a different protocol ([[PPO-RNN (Matthews 2024)]]).
+- 1B: s_pub 0.35 (largest third-party spread, Singh et al. 2026, type not stated); with our 3 seeds the planning band is 14.79 to 15.81 (indicative). Third-party reruns with separate evaluation report 16.2-16.4%, which is a different protocol ([[PPO-RNN (Matthews 2024)]]).
 - Debug order on a fail: first make sure the PPO control passes; then the recompute check, the hidden reset and the sequence minibatching; then the original `ppo_rnn.py` at 1M in an isolated environment.
 
 ## Fixed vs tuned
