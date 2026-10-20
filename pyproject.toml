@@ -74,7 +74,11 @@ required-version = ">=0.11.28"
 target-version = "py312"
 line-length = 88
 # Generated rules and skill Markdown hold Python fences; the vendored skill stays as shipped.
-extend-exclude = [".claude/rules", ".agents/skills/caveman", ".agents/**/*.md"]
+# The book skills' helpers keep their own style; the book notebooks are executed outputs.
+extend-exclude = [
+  ".claude/rules", ".agents/skills/caveman", ".agents/**/*.md",
+  ".agents/skills/book-chapter-*", "research/*/notebooks",
+]
 
 [tool.ruff.lint]
 select = [
@@ -144,7 +148,7 @@ vault-dirs = "knowledge"
 
 [tool.codespell]
 ignore-words-list = "pyproject,toml,venv,prek,kwargs,args,init,utils,workflow,workflows,pytest,cov"
-skip = "report/*"
+skip = "report/*,research/*/notebooks/*,research/*/sources/*"   # base64 images, OCR snapshot
 
 [tool.agent-kit.vault.schema]
 dirs = ["knowledge"]
@@ -177,6 +181,18 @@ parent = "[[wut_murl_craftax]]"
 [tool.agent-kit.obsidian-plugins]
 templater-obsidian = "silentvoid13/Templater"
 mermaid-tools = "dartungar/obsidian-mermaid"
+
+[tool.agent-kit.vault]
+link-dirs = ["research"]           # book notes: linkable, link-checked, outside the knowledge schema
+
+# The book skills came over from the earlier vault at these sizes
+[tool.agent-kit.brevity.existing]
+".agents/skills/book-chapter-notebooks/SKILL.md|words" = 1388
+".agents/skills/book-chapter-notebooks/SKILL.md|lines" = 127
+".agents/skills/book-chapter-notebooks/scripts/run_notebook.py|module docstring lines" = 17
+".agents/skills/book-chapter-notes/SKILL.md|words" = 1426
+".agents/skills/book-chapter-notes/SKILL.md|lines" = 161
+".agents/skills/book-chapter-notes/references/final-review.md|words" = 600
 
 [[tool.agent-kit.brevity.budget]]
 patterns = ["knowledge/AGENTS.md"]
