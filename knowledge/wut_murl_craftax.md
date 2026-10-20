@@ -11,6 +11,16 @@ Reinforcement learning on Craftax
 
 Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
+## Craftax
+
+- [[Craftax]]: the environment framework (API, observations, achievements, scoring, Apple GPU setup).
+
+## Research
+
+- [[Craftax Baselines]]: the official baselines repository, protocol and published scores.
+- [[Existing Implementations]]: every known Craftax agent with results and training cost; the table to benchmark against.
+- [[Sutton & Barto - Reinforcement learning, an introduction (2nd ed draft)]]: RL textbook notes and notebooks.
+
 ## Packages
 
 | Package | Responsibility |

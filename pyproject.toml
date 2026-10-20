@@ -147,7 +147,7 @@ tree-dirs = "src tests"
 vault-dirs = "knowledge"
 
 [tool.codespell]
-ignore-words-list = "pyproject,toml,venv,prek,kwargs,args,init,utils,workflow,workflows,pytest,cov"
+ignore-words-list = "ore,pyproject,toml,venv,prek,kwargs,args,init,utils,workflow,workflows,pytest,cov"
 skip = "report/*,research/*/notebooks/*,research/*/sources/*"   # base64 images, OCR snapshot
 
 [tool.agent-kit.vault.schema]
