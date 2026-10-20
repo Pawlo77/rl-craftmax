@@ -30,6 +30,13 @@ classifiers = [
 ]
 
 dependencies = [
+  # The environment and the RL stack. jax stays below 0.12 because metaljax (Apple GPU) needs >=0.11,<0.12;
+  # versions are the ones tested on Apple Silicon in knowledge/craftax/Craftax on Apple GPU.md.
+  "craftax==1.6.1",
+  "flax==0.12.10",
+  "jax==0.11.2",
+  "jaxlib==0.11.2",
+  "optax==0.2.8",
   "humanize>=4.15.0",
   "ipykernel>=7.2.0",
   "ipywidgets>=8.1.8",
@@ -56,6 +63,15 @@ requires = ["uv_build>=0.11.0,<0.12.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
+# Apple GPU backend for JAX (make install syncs all groups). Inactive until JAX_PLATFORMS=metal:
+# correct results and faster network updates, but Craftax env stepping is faster on CPU.
+metal = [
+  "metaljax==0.11.9; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+# NVIDIA GPU backend for the Linux clusters, matched to jax 0.11.2.
+cuda = [
+  "jax[cuda12]==0.11.2; sys_platform == 'linux'",
+]
 dev = [
   "bandit>=1.9.4",
   "mypy>=1.16.0",
