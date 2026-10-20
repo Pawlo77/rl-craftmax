@@ -200,6 +200,7 @@ mermaid-tools = "dartungar/obsidian-mermaid"
 
 [tool.agent-kit.vault]
 link-dirs = ["research"]           # book notes: linkable, link-checked, outside the knowledge schema
+flat = [".remember"]               # plans/ may hold one subfolder per multi-file plan
 
 # The book skills came over from the earlier vault at these sizes
 [tool.agent-kit.brevity.existing]

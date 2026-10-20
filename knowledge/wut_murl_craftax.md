@@ -38,4 +38,7 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 ## Decisions
 
+- [[Experiment decisions]]: benchmarks, seeds, tuning, metrics, evaluation, run/resume, report and publication, method selection.
+- [[Visualisation decisions]]: video formats, footage, audio, review, metrics, code location.
+
 ## Handbook
