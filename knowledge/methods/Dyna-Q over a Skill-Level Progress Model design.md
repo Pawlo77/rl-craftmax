@@ -5,13 +5,26 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, model-based, dyna, planning, tabular]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [Dyna skills, dyna-q]
 related-code: []
 ---
 # Dyna-Q over a Skill-Level Progress Model design
 
 [[SMDP Q-Learning over Hand-Defined Skills design]] plus a learned lookup-table model of skill outcomes $(k, o) \mapsto (R, \tau, k', \text{done})$ and the book's planning updates on it: Dyna-Q, Dyna-Q+, prioritized sweeping and value iteration, all at the level of progress keys and skills. Candidate and novelty check: [[Dyna-Q over a Skill-Level Progress Model]]. Plan: [[2026-10-20-craftax-method-dyna-q]]. Module: `src/wut_murl_craftax/training/dyna_q.py`.
+
+## Access and reward
+
+- **Observes and acts:** exactly as `smdp-skills` ([[SMDP Q-Learning over Hand-Defined Skills design#Access and reward]]): the top level sees only the progress key and the start-condition mask and picks among the 25 options.
+- The skill network sees the 8268-float observation (Classic 1345), the previous action, the skill one-hot and the step fraction, and picks among the 43 primitive actions.
+- Privileged state as `smdp-skills`: key and mask fields are also in the observation; the `fight` and `unlock_any` success tests read the kill counter, boss progress and `EnvState.achievements` (not in the observation) and decide when skills end.
+- The model adds no new input: it stores only quantities the top level already had, $(R, \gamma^\tau, k', \text{done}, \text{mask}')$ of each finished real skill.
+- **Rewarded by:** real updates as `smdp-skills`: the top level on the discounted environment reward over each skill, the skill network on the success pseudo-reward ([[Craftax scoring and evaluation#Reward]]).
+- Planning updates: the same SMDP target on modelled outcomes, i.e. stored real returns $R$ of the pair, plus $\kappa\sqrt{t - t^{\text{last}}}$ in Dyna-Q+ ([[#Planning updates]]).
+- κ is tuned in {0, 0.003, 0.03} and paid on simulated backups only; real updates never get it.
+- **Training objective:** as `smdp-skills`: the top level maximises the expected discounted sum of environment rewards with its tuned γ (0.995 or 0.999 per game step); planning only speeds up learning that value.
+- **Evaluated on:** the environment reward only: training-episode return as % of 226; pseudo-rewards and the κ bonus never enter a score.
+- **Prior knowledge:** the skill library and progress key of `smdp-skills`; the model itself is learned ([[#Fixed, tuned, prior knowledge]]).
 
 ## What we implement
 

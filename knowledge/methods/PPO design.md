@@ -5,13 +5,30 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, control, ppo, actor-critic]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [PPO control, feed-forward PPO]
 related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
 ---
 # PPO design
 
 Feed-forward Proximal Policy Optimisation, the first control: the Craftax paper's MLP baseline on Craftax-Symbolic, rerun with our code to reproduce 2.2% (1M) and 11.9% (1B) of the maximum 226 ([[PPO (Matthews 2024)]], [[Craftax Baselines results]]). Its tuned shared settings are the starting point of every PPO-based method. Plan: [[2026-10-20-craftax-method-ppo]].
+
+## Access and reward
+
+"Privileged" means read from the hidden env state (`EnvState`), not from the observation the agent gets.
+
+- **Observes:** the symbolic observation only, 8268 floats; Craftax-Classic smoke runs: 1345 ([[Craftax observations and actions]]).
+- Its parts: the local 9 x 11 map view (block, item and creature one-hots plus a visibility bit per tile), inventory, potions, 9 stats (health, food, drink, energy, mana, XP, 3 attributes).
+- Also in it: facing direction, armour and enchantments, light level, sleeping and resting flags, learned spells, floor, ladder-open flag, boss-vulnerable flag.
+- Not in it: the achievement flags, exact kill counts, the step counter and anything outside the 9 x 11 window.
+- No memory: the action depends on the current observation alone.
+- Privileged state: none for acting or reward; achievement flags reach the logs only, via `info["Achievements/*"]` on done steps (logging only).
+- **Acts:** one of the 43 primitive actions per step (Classic 17), sampled from the policy's softmax.
+- **Rewarded by:** the environment reward only: tier weight 1, 3, 5 or 8 per achievement unlocked for the first time in the episode, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]).
+- The entropy bonus 0.01 is a loss term that keeps the policy random, not a reward.
+- **Training objective:** maximise the expected discounted sum of environment rewards with γ = 0.99; GAE λ = 0.8 only shapes the advantage estimate.
+- **Evaluated on:** the same environment reward: training-episode return as % of 226 ([[2026-10-20-craftax-evaluation-and-metrics]]).
+- **Prior knowledge:** none about the game ([[#Prior knowledge]]).
 
 ## What we implement
 

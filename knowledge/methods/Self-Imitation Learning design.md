@@ -5,13 +5,29 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, self-imitation, replay, ppo-rnn]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [SIL, Per-achievement self-imitation]
 related-code: []
 ---
 # Self-Imitation Learning
 
 PPO-RNN plus a replay buffer of the steps that led to each achievement unlock and an extra loss that imitates a stored action only where the return that followed it beat the critic, $(R - V)_+ > 0$ (Oh et al. 2018). Candidate and novelty check: [[Self-Imitation Learning|Self-Imitation Learning (candidate)]]. Plan: [[2026-10-20-craftax-method-sil]].
+
+## Access and reward
+
+- **Observes:** for acting, exactly what PPO-RNN observes ([[PPO-RNN design#Access and reward]]): the 8268-float observation (Classic 1345) and the GRU state.
+- Achievement flags `EnvState.achievements`: privileged (not in the observation); used only to detect a new unlock and choose its slot, i.e. which past steps are trained on, never for acting or reward.
+- The stored windows hold the same observations, actions, environment rewards and GRU states the agent produced itself; nothing else.
+- **Acts:** the 43 primitive actions (Classic 17), sampled from the PPO-RNN policy.
+- **Rewarded by:** the environment reward only ([[Craftax scoring and evaluation#Reward]]); SIL adds no reward term but an extra loss.
+- Imitation target: the return $R_j = \sum_{k=j}^{t} \gamma^{k-j} r_k$ of each stored step $j$, environment rewards up to the unlock at step $t$, γ = 0.99, cut there and not bootstrapped.
+- Extra loss, K steps after each PPO update: $\lambda_{\text{sil}}$ x mean of $-\log \pi(a_j \mid s_j)\,(R_j - V(s_j))_+ + \tfrac{0.01}{2}\,((R_j - V(s_j))_+)^2$ ([[#Loss and update]]).
+- $(x)_+ = \max(x, 0)$: only stored actions whose return beat the critic's estimate are imitated, and the critic is only pushed up.
+- **Training objective:** maximise the expected discounted sum of environment rewards with γ = 0.99, while also raising the probability of own past actions that did better than expected.
+- **Evaluated on:** the environment reward only: training-episode return as % of 226; the SIL loss never enters a score.
+- **Prior knowledge:** the achievement list as slot index, part of the env state and the reward definition ([[#Fixed, tuned, prior knowledge]]).
+- Open point: under optimistic resets the `EnvState` after a done step is a new episode, so an unlock in the last step (always `DEFEAT_NECROMANCER`, which ends the episode) is never seen.
+- Open point: the `observe` hook's `traj` carries no achievement flags ([[2026-10-20-craftax-method-ppo-rnn]]), so the trigger needs them added to the rollout arrays.
 
 ## What we implement
 

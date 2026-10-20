@@ -5,13 +5,24 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, control, q-learning, recurrent]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [PQN-RNN control, Parallelised Q-Network]
 related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
 ---
 # PQN-RNN design
 
 Recurrent Parallelised Q-Network, the third control and the only value-based one: online Q(lambda)-learning on the batch just collected from many parallel envs, with no replay buffer and no target network; 16.0% of the maximum 226 on Craftax-1B ([[PQN-RNN (Gallici 2025)]]). It is the base module of the count-based progress bonus (PQN variant) and of the skill methods. Plan: [[2026-10-20-craftax-method-pqn-rnn]].
+
+## Access and reward
+
+- **Observes:** the 8268-float symbolic observation (Classic 1345), as [[PPO design#Access and reward]]: local 9 x 11 map view, inventory, stats, floor and flags.
+- Plus the previous action as a one-hot (43) and its own memory, the LSTM state (512 numbers), reset to zeros after a done.
+- Privileged state (not in the observation): none for acting or reward; achievement flags are read for logging only.
+- **Acts:** one of the 43 primitive actions per step (Classic 17), ε-greedy on the Q-values: ε from 1.0 to 0.005 over the first 10% of updates.
+- **Rewarded by:** the environment reward only (scale 1.0): tier weight 1, 3, 5 or 8 per achievement unlocked for the first time in the episode, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]).
+- **Training objective:** learn the action values of the greedy policy, i.e. maximise the expected discounted sum of environment rewards with γ = 0.99; λ = 0.5 only mixes the n-step targets.
+- **Evaluated on:** the same environment reward: training-episode return as % of 226, episodes played with the current ε ([[2026-10-20-craftax-evaluation-and-metrics]]).
+- **Prior knowledge:** none about the game ([[#Prior knowledge]]).
 
 ## What we implement
 

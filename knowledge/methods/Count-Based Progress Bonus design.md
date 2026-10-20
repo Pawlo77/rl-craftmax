@@ -5,13 +5,27 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, exploration, intrinsic-reward, count-based]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [Count bonus, Progress-key count bonus]
 related-code: []
 ---
 # Count-Based Progress Bonus
 
 An intrinsic reward $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$ over a hand-chosen summary $\phi$ of game progress (floor, tools, armour, spells, bucketed inventory), counted globally over all of training and added to the extrinsic reward of a PPO-RNN or PQN-RNN learner. Candidate and novelty check: [[Count-Based Progress Bonus|Count-Based Progress Bonus (candidate)]]. Plan: [[2026-10-20-craftax-method-count-bonus]].
+
+## Access and reward
+
+- **Observes:** exactly what its base learner observes, nothing more ([[PPO-RNN design#Access and reward]], [[PQN-RNN design#Access and reward]]): the 8268-float observation (Classic 1345) plus the recurrent state, and for PQN-RNN the previous action.
+- The network never sees the progress key, the counts or the bonus.
+- Progress key: read from the next `EnvState` (privileged path), but every field is also in the observation (floor / 10, ladder-open flag, `sqrt(n) / 10` inventory, tool levels, spells, enchantments); `EnvState` only gives exact integers.
+- The key and the global count table are used for reward computation only, never for acting.
+- **Acts:** the 43 primitive actions (Classic 17), as the base learner: softmax sample (PPO-RNN) or ε-greedy (PQN-RNN).
+- **Rewarded by:** $r_t + r^+_t$: the environment reward $r_t$ ([[Craftax scoring and evaluation#Reward]]) plus the bonus $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$.
+- $N$ counts every visit of the key by any env since the run began, incremented before the bonus is read, so $N \ge 1$; the bonus is 0 on done steps.
+- $\beta$ is tuned in {0.01, 0.03, 0.1, 0.3}; decay `constant` ($\beta_t = \beta$) or `linear` ($\beta_t = \beta (1 - t/T)$, 0 at the end of the budget $T$).
+- **Training objective:** maximise the expected discounted sum of $r_t + r^+_t$ with γ = 0.99 (GAE λ 0.8 on PPO-RNN, Q(λ) λ 0.5 on PQN-RNN); the bonus shrinks as counts grow, so the target moves.
+- **Evaluated on:** the environment reward only: training-episode return as % of 226; the bonus is never in a reported score and is logged apart (`count/r_int_share`).
+- **Prior knowledge:** the progress-key design, i.e. which fields count as progress and the recipe caps ([[#Fixed, tuned, prior knowledge]]).
 
 ## What we implement
 

@@ -5,17 +5,28 @@ domain: craftax
 parent: "[[Craftax]]"
 tags: [craftax, concept, evaluation, reward]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 # Craftax scoring and evaluation
 
 ## Reward
 
-Per step, from the end of `craftax_step` ([game_logic.py L3072](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/game_logic.py#L3072)):
+Per step, exactly as the end of `craftax_step` computes it ([game_logic.py L3072-L3079](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/game_logic.py#L3072-L3079)); `init_*` are read at the start of the step ([L3006-L3008](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/game_logic.py#L3006-L3008)):
 
-```text
-reward = sum(new achievements this step x tier reward) + 0.1 x (health_after - health_before)
+```python
+achievement_reward = (
+    (state.achievements.astype(int) - init_achievements.astype(int))
+    * ACHIEVEMENT_REWARD_MAP  # tier weight per achievement: 1, 3, 5 or 8
+).sum()
+health_reward = (state.player_health - init_health) * 0.1
+reward = achievement_reward + health_reward
 ```
+
+- `state` is the state after `clip_inventory_and_intrinsics`, so health is already clipped to [0, 8 + strength].
+- Achievements never turn false, so the first term pays each achievement once, in the step it first becomes true.
+- `step_env` returns this reward unchanged: no clipping, scaling or discount ([craftax_symbolic_env.py L56](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/envs/craftax_symbolic_env.py#L56)).
+- Over an episode the health terms add up to 0.1 x (final health - 9), the start health: between -0.9 (death) and +0.4 (health 13 at strength 5).
+- So an episode return is the achievement total plus a term in [-0.9, +0.4]; Craftax-Classic (start and maximum health 9): [-0.9, 0].
 
 | Variant | Achievement reward | Health term | Source |
 |---|---|---|---|

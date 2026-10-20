@@ -5,13 +5,25 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, control, ppo, recurrent, actor-critic]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [PPO-RNN control, PPO-GRU]
 related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
 ---
 # PPO-RNN design
 
 PPO with a GRU memory, the second control and the strongest Craftax paper baseline: 2.3% (1M) and 15.3% (1B) of the maximum 226 ([[PPO-RNN (Matthews 2024)]], [[Craftax Baselines results]]). It is also the base module that the count-based progress bonus (PPO-RNN variant) and self-imitation learning extend through hooks. Plan: [[2026-10-20-craftax-method-ppo-rnn]].
+
+## Access and reward
+
+- **Observes:** the 8268-float symbolic observation (Classic 1345), as [[PPO design#Access and reward]]: local 9 x 11 map view, inventory, stats, floor and flags.
+- Plus its own memory: the GRU hidden state (512 numbers) summarising earlier observations of the episode; the done flag only resets it to zeros.
+- Privileged state (not in the observation): none for acting or reward; achievement flags are read for logging only.
+- **Acts:** one of the 43 primitive actions per step (Classic 17), sampled from the policy's softmax.
+- **Rewarded by:** the environment reward only: tier weight 1, 3, 5 or 8 per achievement unlocked for the first time in the episode, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]).
+- The hooks are empty in the control, so `r_int = 0`; the entropy bonus 0.01 is a loss term, not a reward.
+- **Training objective:** maximise the expected discounted sum of environment rewards with γ = 0.99 (GAE λ 0.8).
+- **Evaluated on:** the same environment reward: training-episode return as % of 226 ([[2026-10-20-craftax-evaluation-and-metrics]]).
+- **Prior knowledge:** none about the game ([[#Prior knowledge]]).
 
 ## What we implement
 

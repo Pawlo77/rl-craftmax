@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [concept, method, index]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 # Methods
 
@@ -22,7 +22,21 @@ The algorithms this project trains on Craftax: three controls and four methods, 
 | Dyna-Q over a Skill-Level Progress Model | method | model-based planning | [[Dyna-Q over a Skill-Level Progress Model design]] | [[Dyna-Q over a Skill-Level Progress Model]] | [[2026-10-20-craftax-method-dyna-q]] |
 
 - Shared by the skill methods: [[Craftax skill library]].
-- The progress key (floor, tools, inventory buckets, low-stat flags) is shared by the count bonus and both skill methods: [[Count-Based Progress Bonus design]].
+- The progress key (floor, tools, inventory buckets) is shared by the count bonus and both skill methods, which append 4 low-stat flags: [[Count-Based Progress Bonus design]].
+
+## Access and reward at a glance
+
+All methods are evaluated on the same environment reward, so extra reward terms never inflate reported scores. Reward $r$: per achievement unlocked for the first time in the episode its tier weight 1, 3, 5 or 8, plus 0.1 x the health change ([[Craftax scoring and evaluation#Reward]]). Privileged: read from `EnvState`, not from the observation. Details: each design note's "Access and reward".
+
+| Method | Observes | Privileged state used for | Acts on | Training reward | Evaluated on | Prior knowledge |
+|---|---|---|---|---|---|---|
+| PPO | observation (8268 floats, Classic 1345) | none (logging only) | 43 actions | $r$, γ 0.99 | $r$: training return, % of 226 | none |
+| PPO-RNN | observation + GRU memory | none (logging only) | 43 actions | $r$, γ 0.99 | same | none |
+| PQN-RNN | observation + previous action + LSTM memory | none (logging only) | 43 actions, ε-greedy | $r$, Q(λ) with γ 0.99, λ 0.5 | same | none |
+| Count bonus (on PPO-RNN or PQN-RNN) | as its base | reward only (progress key; its fields are also in the observation) | 43 actions | $r + \beta_t / \sqrt{N[\text{key}]}$, 0 on done steps | same | progress-key design |
+| Self-Imitation Learning | as PPO-RNN | choice of training data only (`achievements` picks the stored windows) | 43 actions | $r$, plus an imitation loss on stored windows where the return beat the critic | same | achievement list as slot index |
+| SMDP skills | top: progress key + skill mask; skills: observation + previous action + skill id + step fraction + LSTM | acting via skill ends (`fight` kill counter, `unlock_any` achievements) and the skill reward | top: 25 options; skills: 43 actions | top: discounted $r$ over each skill (γ 0.995 or 0.999); skills: 1 on success | same | skills, start conditions, success tests, progress key |
+| Dyna-Q skills | as SMDP skills | as SMDP skills | as SMDP skills | as SMDP skills, plus planning backups on stored skill outcomes (+ κ bonus on simulated ones only) | same | as SMDP skills |
 
 ## How the methods relate
 

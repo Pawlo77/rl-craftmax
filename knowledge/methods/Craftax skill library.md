@@ -5,13 +5,28 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, skills, options, hierarchical-rl, prior-knowledge]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [Skill library, Hand-defined skills]
 related-code: []
 ---
 # Craftax skill library
 
 The 25 hand-written options (23 learned skills and 2 one-step primitive options) shared by [[SMDP Q-Learning over Hand-Defined Skills design]] and [[Dyna-Q over a Skill-Level Progress Model design]]: for each, a start condition (initiation set), a success test, a step limit and the game rules it relies on. Module: `src/wut_murl_craftax/training/skills.py`. Plans: [[2026-10-20-craftax-method-smdp-skills]], [[2026-10-20-craftax-method-dyna-q]]. Game rules: [[Game]].
+
+## Access and reward
+
+What each part of a skill reads; "privileged" means read from `EnvState` with no counterpart in the observation ([[Craftax observations and actions]]).
+
+| Part | Reads | In the observation? | Used for |
+|---|---|---|---|
+| Start conditions | floor, inventory, tool levels, stats, XP, attributes, ladder-open flag | yes, all (read from `EnvState` for exact integers) | top-level mask (acting) |
+| Success tests of collect, craft, place, survival, `descend`, `open_chest`, `enchant` skills | inventory buckets, tool levels, stats, floor, the facing tile, enchantments | yes | pseudo-reward and skill end |
+| `fight` success | kill counter of the floor, kills per creature type (`StepEvents`), boss progress | no, privileged (the observation has only the ladder-open and boss-vulnerable flags) | pseudo-reward and skill end |
+| `unlock_any` success | `EnvState.achievements` | no, privileged | pseudo-reward and skill end |
+| Interruptions | floor, low-stat flags | yes | skill end |
+
+- A skill end makes the top level choose again, so the privileged tests affect acting through timing, not through the network's input.
+- Skill pseudo-reward: 1 on the success step, 0 otherwise and on death ([[#Common rules]]); it trains the skill network only, and no reported score uses it.
 
 ## Common rules
 

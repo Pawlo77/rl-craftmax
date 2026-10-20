@@ -5,13 +5,32 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, hierarchical-rl, options, smdp, q-learning, tabular]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 aliases: [SMDP skills, smdp-skills]
 related-code: []
 ---
 # SMDP Q-Learning over Hand-Defined Skills design
 
 A two-level value-based agent: a table $Q[k, o]$ over hashed progress keys $k$ and the 25 options $o$ of the [[Craftax skill library]] learns with semi-Markov Q-learning on the native reward, while one shared recurrent Q($\lambda$) network learns all skills on their success pseudo-rewards. Candidate and novelty check: [[SMDP Q-Learning over Hand-Defined Skills]]. Plan: [[2026-10-20-craftax-method-smdp-skills]]. Module: `src/wut_murl_craftax/training/smdp.py`.
+
+## Access and reward
+
+Two learners with different inputs and rewards; which state each skill test reads: [[Craftax skill library#Access and reward]].
+
+- **Observes, top level:** only the hashed progress key $k$ (progress fields plus 4 low-stat flags: food, drink, energy, health <= 3) and the mask of skills whose start condition holds; never the observation itself.
+- Key and mask are read from `EnvState` (privileged path), but every field they use is also in the observation; used for acting.
+- **Observes, skill network:** the 8268-float observation (Classic 1345), the previous action one-hot (43), the running skill as a one-hot (25) and `steps_in_skill / T_max`, plus an LSTM state kept across skills.
+- Privileged (not in the observation): the success tests of `fight` (floor kill counter, kills per creature type, boss progress) and `unlock_any` (`EnvState.achievements`).
+- These tests set the skill pseudo-reward and end the skill; the end decides when the top level chooses again, so they affect acting through timing.
+- **Acts:** the top level picks one of the 25 options, ε-greedy over the available ones, each time its env's skill ends.
+- While a learned skill runs, the skill network picks one of the 43 primitive actions per step (ε-greedy as PQN-RNN); `read_book` and `level_up` issue one fixed action.
+- **Rewarded by, top level:** the environment reward summed over the skill's τ steps, $R = \sum_{i=0}^{\tau-1} \gamma^i r_{t+i}$ ([[Craftax scoring and evaluation#Reward]]), target $R + \gamma^\tau (1 - \text{done}) \max_{o'} Q[k', o']$ ([[#Top-level update]]).
+- The top-level γ is per game step, tuned in {0.995, 0.999}, so a long skill is discounted more.
+- **Rewarded by, skill network:** the pseudo-reward $r^o_t$ = 1 on the step the skill's success test passes, else 0 (also 0 on death); every skill end is terminal; γ = 0.99, λ = 0.5.
+- The skill network never receives the environment reward.
+- **Training objective:** the top level maximises the expected discounted sum of environment rewards with its tuned γ; each skill maximises $0.99^{\text{steps to success}}$, i.e. succeed fast.
+- **Evaluated on:** the environment reward only: training-episode return as % of 226; the pseudo-rewards never enter a score.
+- **Prior knowledge:** the skills, their start conditions, success tests, step limits and interruptions, the `level_up` rule, and the progress-key fields with low-stat flags ([[Craftax skill library#Prior knowledge]]).
 
 ## What we implement
 
