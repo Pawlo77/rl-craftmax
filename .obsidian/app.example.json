@@ -8,6 +8,9 @@
     ".mypy_cache/",
     ".remember/logs/",
     ".remember/tmp/",
+    "configs/",
+    "outputs/",
+    "notebooks/",
     "knowledge/_templates/",
     "/^(README|CONTRIBUTING|AGENTS|CLAUDE)\\.md$/",
     "/(^|\\/)(AGENTS|CLAUDE)\\.md$/"
