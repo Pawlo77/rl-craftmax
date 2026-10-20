@@ -67,6 +67,16 @@ created: 2026-10-20
 - Standard deviations: not reported; figures show ±1 standard error.
 - None of the exploration methods improved reward at 1B; the authors hypothesise the reward is dense enough without a bonus, which may distract the agent ([paper](https://arxiv.org/abs/2402.16801) §4.3).
 
+Third-party reruns found in the 2026-10-20 pass:
+
+| Source | Benchmark | Metric | Value | Seeds |
+|---|---|---|---|---|
+| [[RePPO (Nishimori 2026)]] (PPO-V + RND, Craftax_Baselines settings) | Craftax-1B, Symbolic | % of max, 100 evaluation episodes per seed, mean (sd) | 11.68 (0.30) with entropy 0.01; 9.62 (1.54) without | 5 |
+| [[Rule Learner Planner (dargilboa 2026)]] (PPO-RND with reward; RND reward-free) | Craftax-Classic, Symbolic, 300k / 1M | Crafter score of own training episodes, % | with reward 3.8 / 5.3; reward-free 1.4 / 1.3 | 3 |
+| [[SCALAR (Zabounidis 2026)]] (PPO-RND, augmented observation) | Craftax-Classic and Craftax 1B | target-achievement success, % | e.g. Collect Diamond 34.5, Enter Gnomish Mines 0.0 | 5 |
+
+- [[DLSD (Rajaraman 2025)]] reports a separate, DQN-based reward-free RND (Crafter score 1.65 at 2M steps); not this implementation.
+
 ## Problems and limitations
 
 - No measurable benefit from the bonus at either budget ([paper](https://arxiv.org/abs/2402.16801) §4.3, §4.4).

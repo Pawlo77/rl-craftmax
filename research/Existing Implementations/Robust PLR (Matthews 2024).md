@@ -51,6 +51,8 @@ created: 2026-10-20
 |---|---|---|---|---|
 | Craftax-1B, Symbolic | evaluation reward on 20 fixed levels, % of max (226) | not reported as a number; below PLR, slightly above DR | 10 | [paper](https://arxiv.org/abs/2402.16801) §4.5, Fig. 7 |
 
+- Third-party rerun (2026-10-20 pass): [[PACE (Yuan 2026)]] reruns Robust PLR (PLR⟂) with a JaxUED PPO student on Craftax-Symbolic for 1.07B steps and evaluates the final checkpoints on 20 held-out levels: mean episodic reward 23.780 (sd across levels 4.688), i.e. 10.5% of 226 over 10 seeds; IQM of min-max normalised reward 0.409 [0.320, 0.520] ([PACE paper](https://arxiv.org/abs/2605.01358) Tables 4, 5). Same kind of protocol as the table above but different levels, hyperparameters and budget; in that rerun DR ranks above PLR, unlike the Craftax paper.
+
 ## Problems and limitations
 
 - Contradicts earlier evidence that PLR⊥ beats PLR; suggested reasons: Craftax always generates solvable, high-quality levels, and PLR⊥ does fewer gradient updates per environment step ([paper](https://arxiv.org/abs/2402.16801) §4.5).

@@ -80,6 +80,8 @@ created: 2026-10-20
 - Ranking reported: PLR > DR, then Robust PLR, ACCEL (RSwap) and ACCEL (Noise) roughly equal, ACCEL (Swap) worst ([paper](https://arxiv.org/abs/2402.16801) §4.5).
 - Curated levels tend to place resources closer to the spawn point ([paper](https://arxiv.org/abs/2402.16801) App. G.2).
 
+- Third-party rerun (2026-10-20 pass): [[PACE (Yuan 2026)]] reruns PLR with a JaxUED PPO student on Craftax-Symbolic for 1.07B steps and evaluates the final checkpoints on 20 held-out levels: mean episodic reward 25.380 (sd across levels 5.233), i.e. 11.2% of 226 over 10 seeds; IQM of min-max normalised reward 0.484 [0.372, 0.615] ([PACE paper](https://arxiv.org/abs/2605.01358) Tables 4, 5). Same kind of protocol as the table above but different levels, hyperparameters and budget; in that rerun DR ranks above PLR, unlike the Craftax paper.
+
 ## Problems and limitations
 
 - Evaluation is on in-distribution levels, which the authors note favours DR over UED ([paper](https://arxiv.org/abs/2402.16801) §4.5).

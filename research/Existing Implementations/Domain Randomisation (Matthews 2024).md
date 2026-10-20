@@ -66,6 +66,8 @@ created: 2026-10-20
 |---|---|---|---|---|
 | Craftax-1B, Symbolic | evaluation reward on 20 fixed levels, % of max (226) | not reported as a number; second to PLR | 10 | [paper](https://arxiv.org/abs/2402.16801) §4.5, Fig. 7 |
 
+- Third-party rerun (2026-10-20 pass): [[PACE (Yuan 2026)]] reruns DR with a JaxUED PPO student on Craftax-Symbolic for 1.07B steps and evaluates the final checkpoints on 20 held-out levels: mean episodic reward 27.723 (sd across levels 3.839), i.e. 12.3% of 226 over 10 seeds; IQM of min-max normalised reward 0.603 [0.530, 0.675] ([PACE paper](https://arxiv.org/abs/2605.01358) Tables 4, 5). Same kind of protocol as the table above but different levels, hyperparameters and budget; in that rerun DR ranks above PLR, unlike the Craftax paper.
+
 ## Problems and limitations
 
 - Evaluation on in-distribution levels favours DR, per the authors ([paper](https://arxiv.org/abs/2402.16801) §4.5).

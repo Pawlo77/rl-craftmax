@@ -67,6 +67,8 @@ created: 2026-10-20
 - Standard deviations: not reported.
 - Corrected results: not published as of this pass (arXiv still at v2 of 3 June 2024; README unchanged).
 
+- Third-party run (2026-10-20 pass): reward-free ICM on Craftax-Classic (Symbolic), Crafter score of its own training episodes 0.9% at 300k and 0.5% at 1M steps, 3 seeds ([[Rule Learner Planner (dargilboa 2026)]]; [headline table](https://github.com/dargilboa/explanatorium/blob/main/craftax_wm/figures/headline_table.md)); reward-free, so not comparable with the table above.
+
 ## Problems and limitations
 
 - Bug: the old code computed `error = (latent_next_obs - latent_next_obs_pred) * done[:, None]`, so the bonus was paid only on episode termination; the fix multiplies by `(1 - done)`, but "the ICM sweep was run on an old commit" and "the ICM results in the paper are wrong" ([Baselines issue #4](https://github.com/MichaelTMatthews/Craftax_Baselines/issues/4), January 2025).

@@ -81,6 +81,21 @@ created: 2026-10-20
 - At 1M, all five baselines perform similarly and only very basic achievements progress ([paper](https://arxiv.org/abs/2402.16801) §4.4).
 - Craftax-Classic: the abstract credits PPO with 90% of optimal reward at 1B steps in under an hour, but App. F.3 shows PPO-RNN; see [[PPO-RNN (Matthews 2024)]].
 
+Third-party reruns found in the 2026-10-20 pass (protocols differ; details in the linked notes):
+
+| Source | Benchmark | Metric | Value | Seeds |
+|---|---|---|---|---|
+| [[RePPO (Nishimori 2026)]] (Craftax_Baselines code and settings) | Craftax-1B, Symbolic | % of max, 100 evaluation episodes per seed, mean (sd) | 11.66 (0.33) with entropy 0.01; 9.31 (1.00) without | 5 |
+| [[Feasibility Classification (Zabounidis 2026)]] (unmasked PPO-MLP) | Craftax 1B, Symbolic; Craftax-Classic 1B, Symbolic | raw return, 10,240 stochastic evaluation episodes per seed, mean ± sd | 26.9 ± 0.5 (11.9%); Classic 19.2 ± 0.0 (87.3%) | 4 |
+| [[SimBa (Lee 2025)]] (repository CSV) | Craftax-1B, Symbolic | `avg_return` (raw), mean (sd) | 25.74 (2.06), i.e. 11.4% | 5 |
+| [[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]] (PyTorch port) | Craftax-1B, Symbolic | training-episode return (raw), mean ± sd | 26.83 ± 1.31 (11.9%) | 3 |
+| [[Concept Grounding (Adamski 2026)]] (PyTorch, action-masked, 3 epochs, 16 minibatches) | Craftax 500M, Symbolic | % of max, 100k sampled evaluation episodes per agent, mean ± sd | 11.62 ± 0.13 | 20 |
+| [[SGRL (Qi 2025)]] (lr 7e-4, γ 0.97, 256 environments) | Craftax-Classic 5M | raw reward / score %, mean ± (type not stated) | 11.9 ± 1.1 / 24.8 ± 5.7 | 5 |
+| [[Rule Learner Planner (dargilboa 2026)]] (64 environments) | Craftax-Classic, Symbolic, 300k / 1M | Crafter score of own training episodes, % | 3.6 / 5.0 | 3 |
+| [[SCALAR (Zabounidis 2026)]] (PPO-FC, augmented observation) | Craftax-Classic and Craftax 1B | target-achievement success, % | e.g. Collect Diamond 35.4, Enter Gnomish Mines 0.0 | 5 |
+
+- Figure-only PPO reruns (no numbers) appear in SimBa (Fig. 10), Adam-Rel (Craftax-Classic, Fig. 3), OPEN (Craftax-Classic 30M, Fig. 5) and C-TeC; see the rejected list in [[Existing Implementations]].
+
 ## Problems and limitations
 
 - No progress into the second floor (Gnomish Mines) at 1B steps ([paper](https://arxiv.org/abs/2402.16801) §4.3).

@@ -62,6 +62,8 @@ created: 2026-10-20
 - RSwap reaches the Gnomish Mines in 1% of replay episodes, almost never on DR levels ([paper](https://arxiv.org/abs/2402.16801) §4.5).
 - Both swap variants earn "significantly higher returns during replay", which may mean the generated levels are easier ([paper](https://arxiv.org/abs/2402.16801) §4.5, Fig. 8).
 
+- Third-party rerun (2026-10-20 pass): [[PACE (Yuan 2026)]] reruns ACCEL (mutation variant not stated) with a JaxUED PPO student on Craftax-Symbolic for 1.07B steps and evaluates the final checkpoints on 20 held-out levels: mean episodic reward 22.661 (sd across levels 4.005), i.e. 10.0% of 226 over 10 seeds; IQM of min-max normalised reward 0.364 [0.283, 0.458] ([PACE paper](https://arxiv.org/abs/2605.01358) Tables 4, 5). Same kind of protocol as the table above but different levels, hyperparameters and budget; in that rerun DR ranks above PLR, unlike the Craftax paper.
+
 ## Problems and limitations
 
 - Unrestricted Swap produces levels visually very different from the generator's ([paper](https://arxiv.org/abs/2402.16801) App. G.2).

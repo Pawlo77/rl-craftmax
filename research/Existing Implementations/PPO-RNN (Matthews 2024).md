@@ -67,6 +67,19 @@ created: 2026-10-20
 - Enters the dungeon (floor 1) significantly more often than the other baselines, which drives its higher reward ([paper](https://arxiv.org/abs/2402.16801) §4.3, Fig. 5).
 - Craftax-Classic: all achievements except `COLLECT_DIAMOND` and `EAT_PLANT` are reliably achieved ([paper](https://arxiv.org/abs/2402.16801) App. F.3).
 
+Third-party reruns found in the 2026-10-20 pass (protocols differ; details in the linked notes):
+
+| Source | Benchmark | Metric | Value | Seeds |
+|---|---|---|---|---|
+| [[Feasibility Classification (Zabounidis 2026)]] (unmasked PPO, GRU 512) | Craftax 1B, Symbolic; Craftax-Classic 1B, Symbolic | raw return, 10,240 stochastic evaluation episodes per seed, mean ± sd | 36.7 ± 0.1 (16.2%); Classic 19.8 ± 0.0 (90.0%) | 4 |
+| Singh, Ghasemi, Crowley 2026, [arXiv:2608.14642](https://arxiv.org/abs/2608.14642) §6.1, Table 2 (unconstrained PPO-GRU, hidden 512) | Craftax-Symbolic-v1, 1e9 steps | raw return, 64 environments x 4096 steps of evaluation (about 2,400 episodes across seeds), ± type not stated | 37.05 ± 0.78 (16.4%); about 3 h per run on one H100 | 3 |
+| Park, Cho, Ahn 2025 (CrafterDojo), [arXiv:2508.13530](https://arxiv.org/abs/2508.13530) Table 1, "Expert Behavior Generator" | Craftax-Classic-Symbolic, 10B steps, Crafter reward plus a −10 survival penalty after all achievements | return % of max / Crafter score %, 100 episodes | 98.4 ± 0.04 / 97.5 (Table 4 of the same paper lists 1e9 total timesteps) | not stated |
+| [[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]] (PyTorch PPO-LSTM port) | Craftax-1B, Symbolic | training-episode return (raw), mean ± sd | 33.88 ± 0.50 (15.0%) | 3 |
+| [[Rule Learner Planner (dargilboa 2026)]] (64 environments) | Craftax-Classic, Symbolic, 300k / 1M | Crafter score of own training episodes, % | 3.4 / 5.9 | 3 |
+| [[SCALAR (Zabounidis 2026)]] (augmented observation) | Craftax-Classic and Craftax 1B | target-achievement success, % | e.g. Collect Diamond 40.9, Enter Dungeon 89.7, Enter Gnomish Mines 0.0 | 5 |
+
+- The 2.3% Craftax-1M value is also quoted, not rerun, in [[Multitask Preplay (Carvalho 2025)]].
+
 ## Problems and limitations
 
 - No appreciable progress into the Gnomish Mines at 1B or 10B steps ([paper](https://arxiv.org/abs/2402.16801) §4.3, App. F.2).

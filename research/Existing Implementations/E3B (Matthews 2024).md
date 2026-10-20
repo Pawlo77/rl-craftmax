@@ -63,6 +63,8 @@ created: 2026-10-20
 - Standard deviations: not reported.
 - E3B achieves `EAT_PLANT` most often of all baselines, so the bonus does push exploration of other parts of the world ([paper](https://arxiv.org/abs/2402.16801) §4.3, Fig. 5).
 
+- Third-party run (2026-10-20 pass): reward-free E3B on Craftax-Classic (Symbolic), Crafter score of its own training episodes 1.4% at 300k and 1.3% at 1M steps, 3 seeds ([[Rule Learner Planner (dargilboa 2026)]]; [headline table](https://github.com/dargilboa/explanatorium/blob/main/craftax_wm/figures/headline_table.md)); reward-free, so not comparable with the table above.
+
 ## Problems and limitations
 
 - Lowest 1B reward of the five baselines; the authors suspect the bonus distracts the agent in a reward-dense game ([paper](https://arxiv.org/abs/2402.16801) §4.3).

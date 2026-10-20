@@ -75,6 +75,19 @@ created: 2026-10-20
 - At 4B, the agent visits the Sewers "a decent amount of time" and gets several Advanced achievements, which no Craftax-paper baseline reached even with 10B steps ([README](https://github.com/Reytuag/transformerXL_PPO_JAX#results-on-craftax)).
 - The Craftax scoreboard marks results from outside the Craftax paper as reported, not verified ([Craftax README](https://github.com/MichaelTMatthews/Craftax#-scoreboard)).
 
+Third-party reruns found in the 2026-10-20 pass (protocols differ; details in the linked notes):
+
+| Source | Benchmark | Metric | Value | Seeds |
+|---|---|---|---|---|
+| [[PPO-LSTM (Jiralerspong 2026)]] (Modrax reimplementation, linear heads) | Craftax-1B, Symbolic | % of max, final checkpoint, 1024 evaluation episodes, mean ± s.e. | 17.79 ± 0.82 (18.61 ± 0.10 without one seed at 10.4) | 10 |
+| [[DiCode (Mitsides 2026)]] (same agent as DiCode) | Craftax-Symbolic, 2B steps | final mean return (raw), 1024 held-out worlds, sampled actions, 8192-step cap | 41.59 (18.4%); no s.e. printed | 8 |
+| [[AHC (Zhu 2026)]] (DiCode's student, fresh native runs) | Craftax-Symbolic, 0.996B / 2.005B | native return (raw), 1024 worlds x 10 stochastic rollouts, mean ± sample sd | 36.63 ± 1.42 / 41.91 ± 1.01 | 3 |
+| [[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]] (PyTorch reproduction h007) | Craftax-1B, Symbolic | training-episode return (raw), mean ± sd | 19.01 ± 0.84 (8.4%), "46% of the published reference" | 3 |
+| [[SCALAR (Zabounidis 2026)]] (PPO-TRXL, augmented observation) | Craftax-Classic and Craftax 1B | target-achievement success, % | e.g. Enter Dungeon 96.5, Enter Gnomish Mines 0.0 | 5 |
+
+- New cost figures from [[PPO-LSTM (Jiralerspong 2026)]]: GTrXL reimplementation 4.62M parameters, about 8h45m per 1B-step run on an L40S and about 5h30m on an "A100L"; DiCode reports about 9 h for 2B steps on an RTX 6000 Ada ([[DiCode (Mitsides 2026)]]).
+- [[Sable Inference Search (Chalumeau 2025)]] calls 18.3% the state of the art its base policy matched; [[maskedPPO-GTrXL (Doguhan58 2026)]] builds on this code with masking and reward shaping.
+
 ## Problems and limitations
 
 - A bug in the version that produced the reported curves gave the position-wise MLP one layer instead of two plus layer norm; after the fix, "performances seem to remain similar"; the exact graph needs commit `db3e52a` ([README](https://github.com/Reytuag/transformerXL_PPO_JAX#results-on-craftax)).

@@ -80,6 +80,8 @@ created: 2026-10-20
 - Craftax-1M: not reported.
 - Evaluation protocol for Craftax (training episodes or greedy test episodes): not stated; the config has test-time evaluation off by default (`TEST_DURING_TRAINING: False`).
 
+- Third-party reruns found in the 2026-10-20 pass: PyTorch ports in [[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]], Craftax-1B (Symbolic), training-episode return 20.95 ± 1.04 (PQN, 9.3%) and 24.23 ± 2.95 (PQN-LSTM, 10.7%), mean ± sd over 3 seeds; [[SCALAR (Zabounidis 2026)]] reports target-achievement success rates for PQN and PQN-RNN (e.g. PQN-RNN Collect Diamond 46.9%, Enter Dungeon 92.5%), 5 seeds, augmented observation.
+
 ## Problems and limitations
 
 - ε-greedy exploration is "too simple" for hard-exploration problems (said for Atari; [paper](https://arxiv.org/abs/2407.04811) §5.2).

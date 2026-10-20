@@ -80,6 +80,8 @@ created: 2026-10-20
 - Baselines in the same figure (Simulus authors' reruns): PPO-RNN 2.13, RND 2.11, E3B 1.91; TWM of Dedieu et al. 5.44 (the v1 value of [[Efficient MBRL (Dedieu 2025)]]) ([paper](https://arxiv.org/abs/2502.11537) Fig. 1).
 - Outperforms all model-free baselines in the Craftax-1M training curves ([paper](https://arxiv.org/abs/2502.11537) Fig. 5).
 
+- Follow-up (2026-10-20 pass): [[EASimulus (Peng 2026)]] adds an event-prediction loss to Simulus and reports 7.23% on Craftax-1M; its repository's `Simulus.json` is an identical copy of this repository's per-run file, not a new rerun.
+
 ## Problems and limitations
 
 - Craftax was excluded from the ablations for compute reasons, so the contribution of each component on Craftax is unknown ([paper](https://arxiv.org/abs/2502.11537) §3.3).

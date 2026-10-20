@@ -85,6 +85,9 @@ created: 2026-10-20
 - Ablations (fast agent, ablation table captioned Fig. 4 in [paper](https://arxiv.org/abs/2502.01591) §4.3): no Dyna 55.02 ± 5.34; no NNT 60.66 ± 1.38; no BTF 64.96 ± 1.13; T_BP = 0 33.54 ± 10.09; continuous 7 x 7 patches 21.20 ± 0.55; MFRL without RNN 41.82 ± 0.97.
 - Evaluation protocol for the Craftax numbers (training or separate test episodes): not reported.
 
+- Third-party reproduction (2026-10-20 pass): [[ITC (Kim 2026)]] reruns the fast MBRL agent on Craftax-Classic (Pixels), 10 seeds, mean ± s.e., reward % / score %: with ITC's code 48.17 ± 0.82 / 10.22 ± 0.20 at 0.5M and 68.14 ± 0.42 / 24.89 ± 0.74 at 1M; with ITC's hyperparameters 54.32 ± 0.60 / 13.06 ± 0.39 at 0.5M and 68.55 ± 0.72 / 27.24 ± 0.86 at 1M ([ITC paper](https://arxiv.org/abs/2605.16457) Tables 1, 2). Reward is averaged over training episodes of the final 50,000 interactions.
+- Later Pixels-1M results built on this agent: [[ITC (Kim 2026)]] (Craftax-Classic 72.46%, Craftax 7.09%). The DreamerV3 rerun and the Moon et al. baseline of Table 1 now have their own notes: [[DreamerV3 (Hafner 2023)]], [[Moon PPO Baseline (Moon 2023)]].
+
 ## Problems and limitations
 
 - NNT relies on the known tile grid of Craftax observations (ground-truth patch size 7 x 7); 5 x 5 and 9 x 9 patches reduce reward to 57.28 and 45.55 ([paper](https://arxiv.org/abs/2502.01591) §3.5, §4.3, Fig. 4).
