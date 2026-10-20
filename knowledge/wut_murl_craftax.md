@@ -14,6 +14,7 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 ## Craftax
 
 - [[Craftax]]: the environment framework (API, observations, achievements, scoring, Apple GPU setup).
+- [[Craftax game rules]]: the full game: stats, resources, crafting, creatures, combat, magic, floors, boss, achievements, complexity.
 
 ## Research
 

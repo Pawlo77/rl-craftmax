@@ -5,6 +5,7 @@ domain: craftax
 parent: "[[Craftax]]"
 tags: [craftax, concept, procedural-generation, seeding]
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Craftax world generation
 
@@ -48,7 +49,7 @@ created: 2026-10-20
 
 `generate_dungeon` ([world_gen.py L76](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/world_gen/world_gen.py#L76)):
 
-- 8 rooms of side 5-10 placed on a grid of 16x16 chunks and joined by paths.
+- 8 rooms of side 5-9 (`randint(5, 10)`, upper bound exclusive) placed on a grid of 16x16 chunks and joined by paths.
 - Every room has a torch in each of its 4 corners and one chest; a fountain with probability 0.5 (sewers use water instead).
 - The first room holds the floor's special block: none (dungeon), ice enchantment table (sewers), fire enchantment table (vaults).
 - About 10% of walls are mossy; dungeon floors are fully lit.

@@ -5,6 +5,7 @@ domain: craftax
 parent: "[[Craftax]]"
 tags: [craftax, concept, observation-space, action-space]
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Craftax observations and actions
 
@@ -113,7 +114,7 @@ From [classic renderer.py](https://github.com/MichaelTMatthews/Craftax/blob/c3c2
 - Movement actions 1-4 also set the facing direction; `DO` acts on the faced tile (mine, attack, eat, drink, open chest, hit the necromancer) ([game_logic.py](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/craftax/craftax/game_logic.py)).
 - While sleeping or resting every action is replaced by `NOOP`.
 - Crafting needs a crafting table (and for iron items a furnace) in one of the 8 surrounding tiles, diagonals included (`is_near_block`).
-- Recipes and effects: [[Craftax game content and achievements]].
+- What each action does: [[Craftax action effects]]; recipes: [[Craftax crafting and placing]].
 
 ## Source discrepancies
 

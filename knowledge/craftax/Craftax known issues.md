@@ -5,6 +5,7 @@ domain: craftax
 parent: "[[Craftax]]"
 tags: [craftax, concept, known-issues, gotchas]
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Craftax known issues
 
@@ -49,7 +50,7 @@ State as of craftax 1.6.1 and the [issue tracker](https://github.com/MichaelTMat
 
 - Symbolic values exceed the declared `Box(0, 1)`: enchantment channels are 0/1/2 and intrinsics can reach 2.1 ([[Craftax observations and actions]]).
 - [obs_description.md](https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d/obs_description.md) puts the per-tile light flag at index 83 (code: 82) and lists potions as `n / 10` (code: `sqrt(n) / 10`).
-- Paper vs code: 65 achievements in the text vs 67 in code and paper Table 6; creature one-hot of 36 vs 40; light level "a float" vs a binary visibility flag; several creature health and damage values differ ([[Craftax game content and achievements]]).
+- Paper vs code: 65 achievements in the text vs 67 in code and paper Table 6; creature one-hot of 36 vs 40; light level "a float" vs a binary visibility flag; several creature health and damage values differ ([[Craftax game rules#Source disagreements]]).
 - Enum `Achievement` is declared out of value order; `ENTER_DUNGEON = 29` (floor 1) and `ENTER_GNOMISH_MINES = 28` (floor 2) are correct as mapped ([issue #53](https://github.com/MichaelTMatthews/Craftax/issues/53), closed).
 - Classic `info["score"]` is a per-episode geometric mean of 0/100 values, not a score over success rates ([[Craftax scoring and evaluation]]).
 
@@ -68,3 +69,4 @@ State as of craftax 1.6.1 and the [issue tracker](https://github.com/MichaelTMat
 - Plants grow only on the overworld (`update_plants` touches floor 0 only) and at most 10 grow at once.
 - Ladders down stay closed until 8 creatures are killed on the floor.
 - Potion colours are re-permuted every episode, so a policy cannot memorise them across episodes.
+- More, each checked in code: [[Craftax game rules#Rule surprises]].

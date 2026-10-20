@@ -5,6 +5,7 @@ domain: craftax
 parent: "[[wut_murl_craftax]]"
 tags: [craftax, concept, environment, overview]
 created: 2026-10-20
+updated: 2026-10-20
 aliases: [Craftax framework]
 ---
 # Craftax
@@ -38,12 +39,33 @@ Craftax is an open-ended RL benchmark written entirely in JAX: a 2D, top-down, p
 | Benchmarks | Craftax-1B, Craftax-1M (symbolic only) | not a benchmark | [paper §3.4](https://arxiv.org/html/2402.16801v2#S3.SS4) |
 | Latest release | 1.6.1 (2026-06-20) | same package | [PyPI](https://pypi.org/project/craftax/) |
 
+## The game in brief
+
+Full rules, numbers and sources: [[Craftax game rules]].
+
+- The player moves on a grid, one tile per step, and acts on the tile it faces with `DO` (mine, attack, drink, eat, open a chest).
+- Health, food, drink and energy start at 9 and must stay above 0: food, drink and energy fall slowly, and any of them at 0 drains health ([[Craftax survival stats]]).
+- Food comes from killing cows, bats or snails (+6) and from ripe plants (+4); drink from water and fountains (+1); energy from sleeping ([[Craftax farming and food]]).
+- Sleeping and resting repeat `NOOP` until energy or health is full; a sleeping player takes 3.5x melee damage.
+- A 300-step day/night cycle brings more zombies at night on the overworld ([[Craftax episode and time]]).
+- Crafting ladder: wood, then a crafting table (2 wood), wood tools, stone, stone tools, coal and iron with a furnace, iron tools and armour, diamonds, diamond tools and armour ([[Craftax crafting and placing]]).
+- Trees vanish when chopped, and each pickaxe tier unlocks the next ore: stone and coal, iron, diamond, then sapphire and ruby ([[Craftax blocks and resources]]).
+- 9 floors: overworld, dungeon, gnomish mines, sewers, vaults, troll mines, fire realm, ice realm, graveyard; four of them are dark and need torches ([[Craftax floors and progression]]).
+- A floor's down ladder opens after 8 melee or ranged kills there; the first visit to each floor gives 1 XP for dexterity, strength or intelligence.
+- 19 creatures in passive, melee and ranged classes, up to 3 + 3 + 2 alive per floor, chasing, shooting and despawning by distance ([[Craftax creatures]]).
+- Combat splits damage into physical, fire and ice; armour and enchantments block fractions of each, and late creatures resist physical damage almost completely ([[Craftax combat]]).
+- Magic: books teach fireball and iceball (2 mana each); enchantment tables turn rubies and sapphires into fire or ice damage and defence (9 mana); six potion colours have effects reshuffled every episode ([[Craftax magic potions and enchanting]]).
+- The final floor's necromancer sends 8 waves of earlier floors' creatures; hitting it after each wave, 8 hits in total, wins and ends the episode ([[Craftax boss fight]]).
+- 67 achievements pay 1, 3, 5 or 8 the first time (226 total), plus 0.1 per health point gained or lost ([[Craftax achievements]]).
+- Craftax-Classic keeps only the overworld, 3 creatures, wood/stone/iron tools and 22 achievements worth 1 each ([[Craftax-Classic rules]]).
+- Its state space is at most about 10^47,835 states against about 10^170 for Go, and the agent sees only 99 tiles at a time ([[Craftax game complexity]]).
+
 ## Notes
 
 - [[Craftax environments]]: variants, registered names, classes, params.
 - [[Craftax API and wrappers]]: install, `reset`/`step`, `jit`/`vmap`, wrappers, play scripts, rendering.
 - [[Craftax observations and actions]]: symbolic and pixel layouts, all actions.
-- [[Craftax game content and achievements]]: floors, creatures, crafting, intrinsics, achievements by tier.
+- [[Craftax game rules]]: the full game rules of Craftax and Craftax-Classic, one note per topic, plus a state-space complexity estimate.
 - [[Craftax scoring and evaluation]]: reward, % of 226, Craftax-1B/1M, scoreboard, logging.
 - [[Craftax world generation]]: what `reset` builds, seeding, UED hooks.
 - [[Craftax performance]]: reported throughput and hardware.

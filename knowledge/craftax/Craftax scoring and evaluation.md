@@ -5,6 +5,7 @@ domain: craftax
 parent: "[[Craftax]]"
 tags: [craftax, concept, evaluation, reward]
 created: 2026-10-20
+updated: 2026-10-20
 ---
 # Craftax scoring and evaluation
 
@@ -24,7 +25,7 @@ reward = sum(new achievements this step x tier reward) + 0.1 x (health_after - h
 - Each achievement pays once per episode (first unlock).
 - Tiers were introduced because a flat +1 per achievement gave too little incentive to enter the dungeons ([paper §3.3](https://arxiv.org/html/2402.16801v2#S3.SS3)).
 - Health is clipped at 0 before the reward is computed, so death costs at most the remaining health x 0.1; in Classic this was fixed in v1.6.0 (see [[Craftax known issues]]).
-- The full list of 67 achievements and tiers: [[Craftax game content and achievements]].
+- The full list of 67 achievements, tiers and triggers: [[Craftax achievements]].
 - Per-achievement reward only (for example `EAT_COW`) is not built in; the maintainer suggests editing `achievement_mapping` or a reward wrapper ([issue #37](https://github.com/MichaelTMatthews/Craftax/issues/37)).
 
 ## Reported metric
