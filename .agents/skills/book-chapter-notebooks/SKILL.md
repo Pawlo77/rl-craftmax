@@ -1,23 +1,23 @@
 ---
 name: book-chapter-notebooks
-description: 'Create a runnable Jupytext notebook in research/reinforcement-learning-an-introduction/notebooks/ that implements and demonstrates everything algorithmic in one chapter (or sub-chapter group) of the Sutton & Barto "Reinforcement Learning: An Introduction" 2nd-edition draft. Use whenever asked to implement, code up, simulate, or build a notebook for a chapter of this book.'
+description: 'Create a runnable Jupytext notebook in research/Reinforcement Learning An Introduction/notebooks/ that implements and demonstrates everything algorithmic in one chapter (or sub-chapter group) of the Sutton & Barto "Reinforcement Learning: An Introduction" 2nd-edition draft. Use whenever asked to implement, code up, simulate, or build a notebook for a chapter of this book.'
 ---
 
 # Book chapter notebooks
 
-One notebook per chapter note, same name and numbering: `research/reinforcement-learning-an-introduction/chapters/<NN>[a|b] <Title>.md` →
-`research/reinforcement-learning-an-introduction/notebooks/<NN>[a|b] <Title>.ipynb`, executed, with outputs. Only the `.ipynb` is kept in
-`research/reinforcement-learning-an-introduction/notebooks/`; author the Jupytext percent `.py` in a scratch directory and delete nothing else. The notebook implements what the chapter describes in a
+One notebook per chapter note, same name and numbering: `research/Reinforcement Learning An Introduction/chapters/<NN>[a|b] <Title>.md` →
+`research/Reinforcement Learning An Introduction/notebooks/<NN>[a|b] <Title>.ipynb`, executed, with outputs. Only the `.ipynb` is kept in
+`research/Reinforcement Learning An Introduction/notebooks/`; author the Jupytext percent `.py` in a scratch directory and delete nothing else. The notebook implements what the chapter describes in a
 small, readable, reproducible form and checks it against known truth or the book's stated results.
 
-The book lives in `research/reinforcement-learning-an-introduction/`; notebooks rely only on the helpers inside this skill and on the
+The book lives in `research/Reinforcement Learning An Introduction/`; notebooks rely only on the helpers inside this skill and on the
 chapter notes.
 
 ## Inputs
 
-- The chapter note `research/reinforcement-learning-an-introduction/chapters/<name>.md` (the notebook's section order follows its Approach and
+- The chapter note `research/Reinforcement Learning An Introduction/chapters/<name>.md` (the notebook's section order follows its Approach and
   Math sections, and its notation). If it does not exist, write it first with `book-chapter-notes`.
-- The PDF `research/reinforcement-learning-an-introduction/sources/SuttonBartoIPRLBook2ndEd.pdf`, read with
+- The PDF `research/Reinforcement Learning An Introduction/sources/SuttonBartoIPRLBook2ndEd.pdf`, read with
   `.agents/skills/book-chapter-notes/scripts/pages.py` (printed page numbers). Algorithm boxes,
   hyperparameters, example setups and result descriptions come from page renders, not from memory.
 - The format skeleton `references/notebook-skeleton.py` and the checklist `references/notebook-review.md`.
@@ -88,13 +88,13 @@ chapter notes.
 
 1. Read the chapter note and the chapter's algorithm boxes and example descriptions in the PDF.
 2. Plan sections: a table of section, what is implemented, truth or baseline, checkpoint.
-3. Write the notebook from the skeleton as a percent `.py` in a scratch directory (not in `research/reinforcement-learning-an-introduction/notebooks/`).
+3. Write the notebook from the skeleton as a percent `.py` in a scratch directory (not in `research/Reinforcement Learning An Introduction/notebooks/`).
 4. **Execute**:
    ```bash
    uv run --no-project --python 3.12 --with jupytext --with ipykernel --with jupyter-client \
      --with nbformat --with numpy --with matplotlib --with scipy --with pandas \
      python -I .agents/skills/book-chapter-notebooks/scripts/run_notebook.py \
-     "<scratch>/<name>.py" --out "research/reinforcement-learning-an-introduction/notebooks/<name>.ipynb" --print
+     "<scratch>/<name>.py" --out "research/Reinforcement Learning An Introduction/notebooks/<name>.ipynb" --print
    ```
    It runs a fresh kernel, writes the executed `.ipynb` to `--out`, stops at the first error, and prints
    each cell's text output so the markdown can be checked against it.

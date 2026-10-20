@@ -1,6 +1,6 @@
 ---
 name: book-chapter-notes
-description: 'Write detailed Obsidian study notes for one chapter (or sub-chapter group) of the Sutton & Barto "Reinforcement Learning: An Introduction" 2nd-edition draft PDF in this research/reinforcement-learning-an-introduction/ folder, and maintain the main book note. Use whenever asked to take notes on, summarize, or analyze a chapter or section of this book, or to write or refresh the main book index note.'
+description: 'Write detailed Obsidian study notes for one chapter (or sub-chapter group) of the Sutton & Barto "Reinforcement Learning: An Introduction" 2nd-edition draft PDF in this research/Reinforcement Learning An Introduction/ folder, and maintain the main book note. Use whenever asked to take notes on, summarize, or analyze a chapter or section of this book, or to write or refresh the main book index note.'
 ---
 
 # Book chapter notes
@@ -8,13 +8,13 @@ description: 'Write detailed Obsidian study notes for one chapter (or sub-chapte
 One note per chapter (or per sub-chapter group for long chapters), written from the PDF, then
 reviewed twice before it counts as done. The main note ties the chapters together.
 
-The book lives in `research/reinforcement-learning-an-introduction/`; chapter notes link only to notes inside that folder. Read pages with
+The book lives in `research/Reinforcement Learning An Introduction/`; chapter notes link only to notes inside that folder. Read pages with
 the helper in this skill (`scripts/pages.py`).
 
 ## Files
 
 ```
-research/reinforcement-learning-an-introduction/
+research/Reinforcement Learning An Introduction/
   sources/SuttonBartoIPRLBook2ndEd.pdf          the source of truth
   chapters/<NN>[a|b] <Title>.md                 chapter notes (style reference: chapters/01 Introduction.md)
   Sutton & Barto - Reinforcement learning, an introduction (2nd ed draft).md   main note
@@ -58,7 +58,7 @@ Chapter and section numbers of this draft differ from the final book; use the dr
 
 1. **Locate** the chapter pages. Read the whole body, skim the reference/bibliographic remarks only
    for facts the body lacks.
-   - Text: `uv run --no-project --with pypdfium2 --with pillow python -I <skill-dir>/scripts/pages.py text research/reinforcement-learning-an-introduction/sources/SuttonBartoIPRLBook2ndEd.pdf <first> <last>`
+   - Text: `uv run --no-project --with pypdfium2 --with pillow python -I <skill-dir>/scripts/pages.py text "research/Reinforcement Learning An Introduction/sources/SuttonBartoIPRLBook2ndEd.pdf" <first> <last>`
    - Renders: same with `render … --out <scratchpad>/pages` (then view the PNGs).
 2. **Take equations, numbers, algorithm boxes and table values from renders only**; the text layer
    scrambles math. Unreadable → say so in the note; never fill in from memory. Quote the

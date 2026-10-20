@@ -187,12 +187,12 @@ link-dirs = ["research"]           # book notes: linkable, link-checked, outside
 
 # The book skills came over from the earlier vault at these sizes
 [tool.agent-kit.brevity.existing]
-".agents/skills/book-chapter-notebooks/SKILL.md|words" = 1388
+".agents/skills/book-chapter-notebooks/SKILL.md|words" = 1409
 ".agents/skills/book-chapter-notebooks/SKILL.md|lines" = 127
 ".agents/skills/book-chapter-notebooks/scripts/run_notebook.py|module docstring lines" = 17
-".agents/skills/book-chapter-notes/SKILL.md|words" = 1426
+".agents/skills/book-chapter-notes/SKILL.md|words" = 1432
 ".agents/skills/book-chapter-notes/SKILL.md|lines" = 161
-".agents/skills/book-chapter-notes/references/final-review.md|words" = 600
+".agents/skills/book-chapter-notes/references/final-review.md|words" = 603
 
 [[tool.agent-kit.brevity.budget]]
 patterns = ["knowledge/AGENTS.md"]

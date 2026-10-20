@@ -54,7 +54,7 @@ Spawn a read-only reviewer (`note-fact-checker` if present, otherwise a general-
 told not to edit). Prompt template:
 
 > Check one Obsidian note against its source PDF. Note: `<note path>`. PDF:
-> `research/reinforcement-learning-an-introduction/sources/SuttonBartoIPRLBook2ndEd.pdf`. The note covers printed pages `<first>-<last>`
+> `research/Reinforcement Learning An Introduction/sources/SuttonBartoIPRLBook2ndEd.pdf`. The note covers printed pages `<first>-<last>`
 > (PDF index = printed + 13; render with `.claude/skills/book-chapter-notes/scripts/pages.py` or
 > any renderer). Verify every claim, number, algorithm, update rule and equation against rendered
 > pages (the text layer scrambles math). Rows in the Dataset example are labelled illustrative:
