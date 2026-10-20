@@ -29,6 +29,7 @@ Status: draft
 - Q(lambda) targets written as one reverse scan whose carry is only the next lambda-return, seeded with max Q(s_{T-1}); this makes the bug class of purejaxql issue #12 (seeding with Q(s_T)) impossible, and a test compares against an independent forward-view lambda-return.
 - 1M settings are not published; the base keeps every repo setting except the rollout shape, which takes PPO's 1M shape (256 envs x 16 steps, 244 updates), because the 1B shape gives only 7 updates at 1M.
 - 1B: the repo config unchanged; final-1b is the reproduction check against 16.0%.
+- Optimistic resets with ratio 16, as the repo (`USE_OPTIMISTIC_RESETS: True`), through `training/wrappers.py` ([[2026-10-20-craftax-method-ppo]] Task 2); the repo's random warm-up rollout is kept: `num_steps` uniform-random steps before the first update (`MEMORY_WINDOW: 0`), outside the step budget.
 
 ```mermaid
 flowchart LR
@@ -82,7 +83,8 @@ Fixed settings ([[PQN-RNN (Gallici 2025)]], repo `config/alg/pqn_rnn_craftax.yam
 | Network | input BatchRenorm, Dense 512 + LayerNorm + ReLU, last action, LSTM 512, Dense 43 | same | `NUM_LAYERS 1`, `NUM_RNN_LAYERS 1` |
 | BatchRenorm | momentum 0.999, eps 1e-3, r_max 3, d_max 5, warm-up 1,000 grad steps | same | the code comment says 100,000; the code uses 1,000 |
 | Reward scale | 1.0 | 1.0 | |
-| Resets | auto-reset | auto-reset | deviation: repo uses optimistic resets |
+| Resets | optimistic, ratio 16 | optimistic, ratio 16 | as the repo (`OPTIMISTIC_RESET_RATIO: 16`); `training/wrappers.py` |
+| Random warm-up rollout | 16 random steps | 128 random steps | as the repo: `MEMORY_WINDOW + NUM_STEPS` steps at epsilon 1 before update 0, not counted in the budget; its transitions are replaced before the first update |
 
 ## Runs and laptop time estimate
 
@@ -131,7 +133,7 @@ Throughput (estimate): 2,400 steps/s on Craftax-Symbolic, 8,000 on Classic; over
 
 - [ ] **Step 1: Write the failing tests** (Task 4 list).
 - [ ] **Step 2: Implement** `PQNRNNConfig` (env, steps, envs 256, num_steps 16, minibatches 4, epochs 4, lr 3e-4, lr_linear_decay True, max_grad_norm 0.5, gamma 0.99, lam 0.5, eps_start 1.0, eps_finish 0.005, eps_decay 0.1, hidden 512, norm_input True, norm_type "layer_norm", input_norm "batch_renorm", add_last_action True, rew_scale 1.0, extra_obs_dim 0, seed, and the `HookFields`; `envs % minibatches == 0` checked) and `RNNQNetwork` built by `make_network(cfg, n_actions, obs_dim)`; the input is `obs_dim + extra_obs_dim` wide (the extra features, for example a skill one-hot, are concatenated by the caller or by an `env_wrapper_fn` before the input normalisation).
-- [ ] **Step 3: Implement** the rollout: carry `(hidden, obs, last_done, last_action, env_state, method_state, key)`; network in inference mode (running statistics); epsilon-greedy with the update's epsilon; `intrinsic_reward_fn` per step; store the start hidden; `observe` once per rollout.
+- [ ] **Step 3: Implement** the rollout on the PPO env setup (`auto_reset=False`, `LogWrapper`, `OptimisticResetVecEnvWrapper` from `training/wrappers.py`): carry `(hidden, obs, last_done, last_action, env_state, method_state, key)`; in `init` only (never on resume), the repo's warm-up: `num_steps` steps at epsilon 1 with the initial network, whose env and LSTM states start the first rollout and whose transitions are dropped; network in inference mode (running statistics); epsilon-greedy with the update's epsilon; `intrinsic_reward_fn` per step; store the start hidden; `observe` once per rollout.
 - [ ] **Step 4: Implement** the update: per epoch permute envs, split into whole-sequence minibatches; forward pass in training mode from the stored start hidden (updates batch statistics); targets by `q_lambda_targets`; loss `0.5 * sum(m_t (Q(s_t, a_t) - G_t)^2) / max(sum(m_t), 1)` over steps 0 to T-2 with `m = loss_mask` (all ones when `None`), so a caller can drop transitions (for example steps where a hand-written skill acted); this update is the public `learn(train_state, traj, key, loss_mask=None) -> (train_state, metrics)`, called by `train_chunk` and callable from another rollout that builds `traj` with the same fields; RAdam with global-norm clip; learning rate linear in the update index to about 0 (1e-20 as the repo); then `extra_steps` steps on `extra_loss_fn`.
 - [ ] **Step 5: Implement** `make_trainer(cfg)` (`init`, `train_chunk`, `policy`): `policy` gives greedy (argmax) and stochastic (epsilon-greedy at the update's epsilon) modes; action probabilities are the epsilon-greedy distribution; the stored value is max Q.
 - [ ] **Step 6: Run** `uv run pytest tests/training/test_pqn_rnn.py -q`, then `make tests`.
@@ -141,7 +143,7 @@ Throughput (estimate): 2,400 steps/s on Craftax-Symbolic, 8,000 on Classic; over
 **Files:**
 - Test: `tests/training/test_pqn_rnn.py`, `tests/training/test_pqn_rnn_hooks.py`
 
-- [ ] **Step 1: Write** the tests: (a) LSTM reset: the output after a done equals that of a fresh zero carry; (b) the last-action input at step t is the one-hot of the action at t-1 and zero after a reset; (c) epsilon schedule: 1.0 at update 0, 0.005 from `eps_decay x n_updates` on, linear between; (d) epsilon-greedy: epsilon 0 is argmax, epsilon 1 gives every one of 43 actions in 20,000 draws; (e) the rollout's Q-values recomputed in inference mode from the stored start hidden match to 1e-5 (sequence bookkeeping); (f) determinism on Craftax-Classic, 8 envs x 8 steps, 2 updates; (g) `PQNRNNConfig` 1B equals the repo YAML field by field; (h) `extra_obs_dim = 5` makes `make_network` accept 8268 + 5 inputs and the zero-feature case equals the control; (i) `loss_mask` all ones equals `None` exactly, a mask with zeros on half the steps gives the loss of the other half alone, and an all-zero mask leaves params unchanged; (j) `learn` called directly on a hand-built `traj` (no `train_chunk`) gives the same params as one `train_chunk` update on the same transitions; (k) `q_lambda_targets` imports and runs without a trainer.
+- [ ] **Step 1: Write** the tests: (a) LSTM reset: the output after a done equals that of a fresh zero carry; (b) the last-action input at step t is the one-hot of the action at t-1 and zero after a reset; (c) epsilon schedule: 1.0 at update 0, 0.005 from `eps_decay x n_updates` on, linear between; (d) epsilon-greedy: epsilon 0 is argmax, epsilon 1 gives every one of 43 actions in 20,000 draws; (e) the rollout's Q-values recomputed in inference mode from the stored start hidden match to 1e-5 (sequence bookkeeping); (f) determinism on Craftax-Classic, 8 envs x 8 steps, 2 updates; (g) `PQNRNNConfig` 1B equals the repo YAML field by field; (h) `extra_obs_dim = 5` makes `make_network` accept 8268 + 5 inputs and the zero-feature case equals the control; (i) `loss_mask` all ones equals `None` exactly, a mask with zeros on half the steps gives the loss of the other half alone, and an all-zero mask leaves params unchanged; (j) `learn` called directly on a hand-built `traj` (no `train_chunk`) gives the same params as one `train_chunk` update on the same transitions; (k) `q_lambda_targets` imports and runs without a trainer; (l) the warm-up rollout runs `num_steps` random steps in `init`, leaves the env-step counter at 0, never enters a loss, and does not rerun when a run resumes from a checkpoint.
 - [ ] **Step 2: Write** the hook tests: zero hooks give bit-identical params and batch statistics to no hooks (CPU); a constant `r_int = c` raises every target by `c` times the lambda-weighted discount sum (hand check, 3 steps); `extra_steps = 2` with an L2 `extra_loss_fn` (returning `(loss, (state, metrics))`) lowers the param norm and leaves the next learning rate and epsilon unchanged; `observe` sees `traj` with `q_vals`, `action`, `reward`, `done`.
 - [ ] **Step 3: Run** `uv run pytest tests/training/test_pqn_rnn.py tests/training/test_pqn_rnn_hooks.py -q`.
 
@@ -170,7 +172,7 @@ flowchart TD
   C -->|yes| D["Stage 1 and 2; PQN-based methods may start tuning"]
   C -->|no| E["1 target test vs forward view, config diff vs YAML"]
   E --> F["2 normalisation: BatchRenorm warm-up and running stats"]
-  F --> G["3 optimistic resets and the random warm-up rollout"]
+  F --> G["3 check: compare against auto-reset"]
   G --> H["4 CPU-only learner"]
   H --> I["record the gap and continue with our control"]
 ```
@@ -227,4 +229,4 @@ flowchart TD
 - The 16.0% has no published spread; the band uses a third-party port's sd and may be too wide or too narrow.
 - Epsilon-greedy episodes are the training episodes behind the scoreboard metric; their return depends on epsilon, which ends at 0.005, so the training score is close to greedy only late in training.
 - No published 1M number: the 1M control is anchored to the original code, not to a scoreboard value.
-- The repo plays a random warm-up rollout before training (not counted in its steps); we skip it, a small difference in the initial env states only.
+- The repo's random warm-up rollout is kept as published (outside the step budget); a resumed run must not replay it, which test (l) of Task 4 checks.

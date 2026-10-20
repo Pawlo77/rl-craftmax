@@ -36,7 +36,7 @@ flowchart LR
 - Two published configurations, set explicitly: Craftax-1M = paper Table 11 (256 envs x 16 steps, lr 3e-4); Craftax-1B = Table 7 (1024 x 64, lr 2e-4). Why: the original code defaults are the 1B config and the README gives no 1M command; our port's defaults are a Classic debugging setup (256 envs, width 256), so no default may leak into a run.
 - Activation tanh. Why: Table 7 and 11 list tanh, and `--activation` is parsed but never used in the original, so the published runs used the `ActorCritic` class default, tanh ([[Craftax Baselines reproduction notes]]).
 - Max grad norm 1.0. Why: not in the paper tables; the code default is what produced the published numbers.
-- Auto-reset environments, no optimistic resets. Why: one fewer wrapper and no dependence on the reset-pool behaviour of Baselines issue #11; the paper reports "essentially no effect" on learning (App. C). Checked as debug step 4 if reproduction fails ([[Craftax API and wrappers]]).
+- Optimistic resets, as the original: `auto_reset=False` envs inside Craftax_Baselines' `OptimisticResetVecEnvWrapper` with reset ratio `min(16, envs)`, vendored at 7ce36fa into `training/wrappers.py` with its MIT notice ([[Craftax API and wrappers]]). Why: the published numbers were produced with them, they are about 2x faster ([[Craftax performance]]), and every control and method shares one reset setup ([[Experiment decisions]]); 7ce36fa includes the fix for Baselines issue #11. Rejected: auto-reset envs (one wrapper fewer, but slower and a deviation from the published setup); they remain only as a debug comparison.
 - Score: training-episode return as % of 226 over the last 2% of the budget, the scoreboard metric ([[2026-10-20-craftax-evaluation-and-metrics]], [[Craftax scoring and evaluation]]).
 - Light tuning only: Stage 1 = 6 published alternatives one at a time (1B-table shape at 1M, lr 2e-4 and 4e-4, GAE lambda 0.7 and 0.9, entropy 0) plus the published config; Stage 2 = 4 neighbours on the 2 most sensitive numeric knobs. Why: the paper already tuned PPO at both budgets (random search at 1M, App. E.2); the control must stay the published method.
 - Tuned = published unless a config beats it by more than the reproduction band half-width h. Why: a 3-seed win inside the noise would make the control a different method without evidence.
@@ -48,7 +48,7 @@ flowchart LR
 - s_pub at 1M: 0.083 percentage points, the per-seed sd of PPO-RNN 1M (last 5 updates per seed) derived from the Simulus per-run data; no PPO 1M spread is published.
 - s_pub at 1B: 0.91 percentage points, the largest third-party sd (SimBa rerun, [[PPO (Matthews 2024)]]); other reruns: 0.22 to 0.58.
 - Planning bands: 1M 2.08 to 2.32; 1B 11.04 to 12.76.
-- Debug order on a fail, cheapest and most likely first: config diff against the tables; metric definition and final window; CPU-only learner (device numerics, [[Craftax on Apple GPU]]); optimistic resets; the original `ppo.py` in an isolated environment at 1M. If the original also misses, the gap is environment or version (Craftax 1.6.1 vs the 2024 release, [[Craftax versions and dependencies]]), recorded, and the control stays as is.
+- Debug order on a fail, cheapest and most likely first: config diff against the tables; metric definition and final window; CPU-only learner (device numerics, [[Craftax on Apple GPU]]); a comparison against auto-reset envs (a check, not a fix); the original `ppo.py` in an isolated environment at 1M. If the original also misses, the gap is environment or version (Craftax 1.6.1 vs the 2024 release, [[Craftax versions and dependencies]]), recorded, and the control stays as is.
 
 ## Fixed vs tuned
 
@@ -65,7 +65,6 @@ flowchart LR
 
 ## Differences from the published version
 
-- Auto-reset instead of optimistic resets.
 - MLflow logging and resumable checkpoints instead of W&B and a final-only Orbax save.
 - Craftax 1.6.1 and JAX 0.11 instead of the unpinned 2024 stack ([[Craftax Baselines reproduction notes]]).
 - Extra logged diagnostics (`clip_frac`, `grad_norm`); the loss values are unchanged.

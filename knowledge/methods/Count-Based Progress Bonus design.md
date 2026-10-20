@@ -18,7 +18,7 @@ An intrinsic reward $r^+_t = \beta_t / \sqrt{N[\phi(s_{t+1})]}$ over a hand-chos
 - One bonus module, `training/count_bonus.py`, used by two variants: `count-bonus-ppo-rnn` and `count-bonus-pqn-rnn`.
 - The progress key lives in `training/progress_key.py`, shared with [[SMDP Q-Learning over Hand-Defined Skills]] and [[Dyna-Q over a Skill-Level Progress Model]].
 - The key is read from the inner Craftax `EnvState`, not decoded from the observation: integers are exact there, while the observation holds `sqrt(n) / 10` ([[Craftax observations and actions]]).
-- The bonus is computed for the next state $s_{t+1}$ and is 0 on done steps: with auto-reset the next state of a done step is a fresh episode, as in the masked bonuses of [[RND (Matthews 2024)]] and [[ICM (Matthews 2024)]].
+- The bonus is computed for the next state $s_{t+1}$ and is 0 on done steps. Under optimistic resets (`auto_reset=False` envs inside `OptimisticResetVecEnvWrapper`, [[PPO design]]) the state the wrapper returns for a done step is not the terminal state but the start state of a new episode, one of the `envs / 16` worlds generated in that step (envs that finish together may share one); `next_env_state` of a done step therefore says nothing about the finished episode, and the terminal state is never seen. The mask follows the masked bonuses of [[RND (Matthews 2024)]] and [[ICM (Matthews 2024)]].
 - Counts are updated inside the rollout scan, every step, before the bonus is read, so $N \ge 1$ and a key seen by 300 envs in the same step is counted 300 times.
 
 ```mermaid

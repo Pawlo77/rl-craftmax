@@ -43,7 +43,7 @@ flowchart LR
 - Epsilon 1.0 to 0.005 over 10% of the updates, one epsilon for all envs. Why: repo setting; issue #11 confirms the shared epsilon is by design.
 - 1M base: the repo settings with PPO's 1M rollout shape (256 envs x 16 steps, 244 updates). Why: the repo shape (1024 x 128) gives only 7 updates at 1M and the epsilon decay would end inside the first update; the 1M PPO table found many workers with short rollouts best.
 - 1B: the repo YAML unchanged. Why: the published 16.0% used it; no 1B tuning ([[Experiment decisions]]).
-- Auto-reset envs and no random warm-up rollout. Why: as the PPO controls; the repo's warm-up transitions are replaced before the first update (`MEMORY_WINDOW: 0`), so skipping it changes only the initial env states.
+- Optimistic resets (`auto_reset=False` + `OptimisticResetVecEnvWrapper`, ratio `min(16, envs)`; the repo's `USE_OPTIMISTIC_RESETS: True`, `OPTIMISTIC_RESET_RATIO: 16`) and the repo's random warm-up rollout: `MEMORY_WINDOW + NUM_STEPS` uniform-random steps (16 at 1M, 128 at 1B) before the first update, outside the step budget. Why: both are what produced the published 16.0%, and every control shares one reset setup ([[Experiment decisions]]); with `MEMORY_WINDOW: 0` the warm-up transitions are replaced before the first update, so the warm-up only moves the initial env and LSTM states, and it runs once in `init`, never on resume.
 - Evaluation: greedy mode = argmax (the repo's `EPS_TEST: 0`); stochastic mode = epsilon-greedy at the current epsilon; the scoreboard score is the training episodes, as for the PPO controls ([[2026-10-20-craftax-evaluation-and-metrics]]).
 
 ## Extension hooks
@@ -60,7 +60,7 @@ flowchart LR
 
 - 1B: |our 10-seed mean - 16.0| <= h, h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), s_pub 1.31 percentage points (Auto-Craftax PyTorch PQN-LSTM port, the only published spread); planning band 14.78 to 17.22.
 - 1M: no published number; our base against the original script with the same overrides, 3 seeds each, within 2 standard errors of the difference.
-- Debug order on a fail: target test and config diff; BatchRenorm warm-up and running statistics; optimistic resets and the warm-up rollout; CPU-only learner.
+- Debug order on a fail: target test and config diff; BatchRenorm warm-up and running statistics; a comparison against auto-reset envs (a check); CPU-only learner.
 
 ## Fixed vs tuned
 
@@ -78,7 +78,7 @@ flowchart LR
 ## Differences from the published version
 
 - Our own Q(lambda) target code (same values as the RNN script, structured so issue #12 cannot occur).
-- Auto-reset instead of optimistic resets; no warm-up rollout; MLflow and resumable checkpoints instead of W&B and safetensors.
+- MLflow and resumable checkpoints instead of W&B and safetensors.
 - 1M settings chosen by us (PQN has no published 1M result).
 - Achievement metrics always logged (the repo default `LOG_ACHIEVEMENTS: False`).
 - Craftax 1.6.1 and JAX 0.11.

@@ -6,5 +6,5 @@ authors:
   - family-names: "Pozorski"
     given-names: "Paweł"
     email: "pozorski.paul@gmail.com"
-license: Apache-2.0
+license: MIT
 repository-code: "https://github.com/Pawlo77/wut_murl_craftax"

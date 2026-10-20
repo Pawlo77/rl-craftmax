@@ -38,7 +38,7 @@ flowchart LR
 - Whole-sequence minibatches: the rollout keeps the hidden state at its start, each minibatch holds whole env sequences and reruns the GRU from it. Why: this is how the original computes log-probs for the ratio; a check that the first-minibatch ratio is exactly 1 catches any mismatch.
 - 1M settings = PPO Table 11 (256 envs x 16 steps, lr 3e-4) with the recurrent network. Why: the paper gives no PPO-RNN 1M settings; the Simulus third-party rerun used these and got 2.2% (last 5 updates, derived from its per-run data), close to the published 2.3%.
 - 1B settings = Table 7 + ReLU network, unchanged, as `python ppo_rnn.py`. Why: the paper's 1B tuning is the reference ([[Experiment decisions]]).
-- Auto-reset environments, as [[PPO design]].
+- Optimistic resets (`auto_reset=False` + `OptimisticResetVecEnvWrapper`, ratio `min(16, envs)`), as [[PPO design]].
 - Light tuning: Stage 1 = 7 published alternatives one at a time (Table 7 shape at 1M, 64 x 64 shape, tanh, lr 2e-4 and 4e-4, GAE lambda 0.9, entropy 0) plus the base; Stage 2 = 4 neighbours on the 2 most sensitive numeric knobs; tuned = published unless the winner beats it by more than the band half-width.
 - Sequence length 64 is a Stage 1 alternative. Why: at 16 steps the gradient never reaches back more than 16 steps, which may limit what the memory learns; 64 x 64 keeps the batch at 4,096.
 
@@ -75,7 +75,7 @@ flowchart LR
 
 ## Differences from the published version
 
-- Auto-reset instead of optimistic resets; MLflow and resumable checkpoints instead of W&B.
+- MLflow and resumable checkpoints instead of W&B.
 - 1M settings chosen by us (no published PPO-RNN 1M table).
 - Hooks in the training loop; inactive in the control.
 - Craftax 1.6.1 and JAX 0.11 instead of the unpinned 2024 stack.

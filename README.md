@@ -13,6 +13,6 @@ Run `make help` for all targets.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).
 
 Copyright 2026 Paweł Pozorski.

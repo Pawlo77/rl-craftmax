@@ -93,7 +93,7 @@ Each phase ends with `make check` green and its results visible in MLflow; later
 
 ### Phase 6: Report
 
-- [ ] [[2026-10-20-craftax-report]]: 4 pages, numbers generated from MLflow.
+- [ ] [[2026-10-20-craftax-report]]: 4 pages of content plus page 5 for references, disclosure and acknowledgements; numbers generated from MLflow.
 
 ### Phase 7: Hugging Face release (last)
 

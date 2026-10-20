@@ -25,7 +25,7 @@ Status: draft
 ## Design
 
 - Key: floor, ladder-open flag, pickaxe, sword, bow, armour sum, spells, enchantment bits and recipe-capped material counts, read from `EnvState`; scenery (map, position, mobs, daylight, survival stats) is excluded.
-- Counts: one global table per run, never reset, updated every rollout step before the bonus is read; bonus 0 on done steps.
+- Counts: one global table per run, never reset, updated every rollout step before the bonus is read; bonus 0 on done steps (under optimistic resets the state returned for a done step is a new episode's start state, not the terminal one, [[Count-Based Progress Bonus design]]).
 - PPO-RNN variant: GAE over $r + r^+$ with the control's single value head; PQN-RNN variant: $r + r^+$ inside the Q($\lambda$) target, ε-greedy schedule unchanged.
 - Tuned: β, key granularity (tiers, recipe, log2), β decay (constant, linear to 0); everything else is the tuned control.
 - Ablation: counts over a SimHash of the full observation (PPO-RNN variant, `final-1m`), the matched observation-novelty control.

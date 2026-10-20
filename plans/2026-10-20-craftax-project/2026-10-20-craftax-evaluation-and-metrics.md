@@ -45,7 +45,7 @@ flowchart LR
 - Craftax-Classic (`Craftax-Classic-Symbolic-v1`, max reward 22) is for debugging and the video warm-up only; it never shares a results table with Craftax.
 - Scoreboard metric: training-episode return as % of 226 (returns of episodes played by the stochastic training policy, health term included).
 - Per-update score: mean return of the training episodes that finished in that update, as % of 226.
-- Final score of a run: mean return of the training episodes that finished in the last 2% of the budget (1B: last 20M steps; 1M: last 20k steps), extended backwards until at least 100 episodes are included.
+- Final score of a run (decided, [[Experiment decisions]]): mean training-episode return as % of 226 over the episodes that finished in the last 2% of the budget (1B: last 20M steps; 1M: last 20k steps), widened backwards until at least 100 episodes are included; the fixed-seed evaluation of the final checkpoint (both modes) is reported alongside it, never in its place.
 - Fixed-seed evaluation: 64 eval seeds `10000` to `10063`, the same for every checkpoint, method and benchmark.
 - Eval keys follow [[Recording training data]] (`fold_in` scheme); envs use `auto_reset=False`; each episode runs until death or the 100,000-step cap.
 - Two eval modes: stochastic (action sampled with key `fold_in(k_act, t)`) and greedy (argmax of the policy).
@@ -198,7 +198,7 @@ Compared only between runs with the same `profile` tag ([[2026-10-20-craftax-inf
 - Modify: `src/wut_murl_craftax/evaluation/episode_metrics.py` (created by Task 4 of [[2026-10-20-craftax-infrastructure]])
 - Test: `tests/evaluation/test_episode_metrics.py`
 
-- [ ] **Step 1: Write the failing tests** with a synthetic `StepEvents` stream over 3 envs and 2 auto-resets: per-episode accumulators reset at `done`; per-update means count only finished episodes; the first-unlock vector keeps the earliest env step and never moves later; the summary keys equal `METRIC_KEYS`.
+- [ ] **Step 1: Write the failing tests** with a synthetic `StepEvents` stream over 3 envs and 2 episode ends: per-episode accumulators reset at `done`; per-update means count only finished episodes; the first-unlock vector keeps the earliest env step and never moves later; the summary keys equal `METRIC_KEYS`.
 - [ ] **Step 2: Implement** the accumulators inside the rollout `scan` and the per-update summary; MLflow names: `train/score_pct`, `train/return`, `train/ach/<name>`, `train/funnel/depth_<k>`, `train/funnel/floor_<f>`, `train/end/<type>`, `train/death/<cause>`, `train/stalls_per_episode`, `train/survival/<stat>_{low,zero}`, `train/close_calls`, `train/kills/<creature>`, `train/damage_{dealt,taken}`, `train/action/<name>`, `train/action_entropy`, `train/wasted_share`, `train/adv/<mechanic>`.
 - [ ] **Step 3: Implement** first unlocks as metrics `first_unlock/<name>` (step = env steps) and `first_unlock_wall/<name>` (value = `wall_s`), logged once per achievement.
 - [ ] **Step 4: Measure** steady SPS with and without the accumulators on Craftax-Symbolic, 1024 envs, 20 updates, laptop profile; log `metrics_overhead_pct`; write the measured number under this task.

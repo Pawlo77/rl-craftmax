@@ -28,7 +28,7 @@ Status: draft
 - Two published configurations: Craftax-1M (paper Table 11) and Craftax-1B (paper Table 7); both are set explicitly, never taken from code defaults (the port's defaults are a Classic debugging setup).
 - Reproduction check at 1M (published config, 10 seeds) before any method tuning starts, and at 1B (the final-1b phase itself); acceptance band and debug order in Task 5.
 - Light tuning: Stage 1 checks only published alternatives one knob at a time; the tuned config replaces the published one only if it wins by more than the band half-width.
-- Auto-reset environments instead of optimistic resets (one documented deviation from the original); everything else matches `ppo.py` at commit 7ce36fa.
+- Optimistic resets, as the original: `auto_reset=False` envs inside Craftax_Baselines' `OptimisticResetVecEnvWrapper` with reset ratio 16 (`min(16, envs)`), vendored into `src/wut_murl_craftax/training/wrappers.py` (Task 2); every control and method uses the same reset setup ([[Experiment decisions]]); everything else matches `ppo.py` at commit 7ce36fa as well.
 - Decisions and their reasons: [[PPO design]].
 
 ## Hyperparameter grid
@@ -66,7 +66,7 @@ Fixed settings (shared PPO settings for every PPO-based method start from the `t
 | Clip epsilon, value coef, entropy coef | 0.2, 0.5, 0.01 | 0.2, 0.5, 0.01 | value loss clipped |
 | Max grad norm | 1.0 | 1.0 | code default, not in the tables |
 | Width, activation | 512, tanh | 512, tanh | `--activation` is a no-op in the original; tanh is the class default |
-| Resets | auto-reset | auto-reset | deviation: original uses optimistic resets |
+| Resets | optimistic, ratio 16 (16 new worlds per step) | optimistic, ratio 16 (64 new worlds per step) | as the original: `auto_reset=False` + `OptimisticResetVecEnvWrapper` |
 
 - 1B: no tuning; final-1b runs Table 7 exactly (PPO has no method knobs), which makes final-1b the 1B reproduction check.
 
@@ -84,6 +84,7 @@ Throughput (estimate): PPO on Craftax-Symbolic 3,000 steps/s with 8 CPU shards, 
 | Total | | | | 62 | | 931.6 |
 
 - One 1M run: 1e6 / 3,000 + 60 s = 393 s; one 1B run: 333,393 s = 92.6 h.
+- Optimistic resets should raise the measured throughput above these estimates (the authors report about 2x, [[Craftax performance]]); Task 3 records the measurement.
 - final-1b on a CUDA cluster GPU (authors' hardware, estimate): 1e9 / 266,961 steps/s x 1.0 = 1.04 h per run, 10.4 h for 10 seeds.
 - Run counts feed [[2026-10-20-craftax-compute-budget]].
 
@@ -104,13 +105,16 @@ Throughput (estimate): PPO on Craftax-Symbolic 3,000 steps/s with 8 CPU shards, 
 ### Task 2: Port audit against Craftax_Baselines and PPO metrics
 
 **Files:**
+- Create: `src/wut_murl_craftax/training/wrappers.py` (vendored from Craftax_Baselines `wrappers.py` at 7ce36fa: `GymnaxWrapper`, `LogWrapper`, `OptimisticResetVecEnvWrapper`; its MIT notice kept in the file header; the one copy every control and method imports)
 - Modify: `src/wut_murl_craftax/training/ppo.py`
-- Test: `tests/training/test_ppo.py`
+- Test: `tests/training/test_ppo.py`, `tests/training/test_wrappers.py`
 
-- [ ] **Step 1: Write the failing tests**: GAE on a hand-computed 4-step, 2-env example with a done at step 2 (gamma 0.9, lambda 0.8; expected advantages written in the test); the clipped policy and value losses on a 2-sample batch against values computed by hand; the learning rate is `lr` at the first minibatch and `lr / n_updates` at the last update; `n_updates` drops the last partial update (1e6 // 4096 = 244); two runs with the same seed on Classic give identical parameters after 2 updates; `clip_frac` and `grad_norm` appear in the loss summary.
-- [ ] **Step 2: Add** `ppo_terms(logits, value, batch, cfg)` (the loss math, so PPO-RNN reuses it) and the extra summaries `clip_frac` (share of ratios outside 1 +- clip) and `grad_norm` (before clipping); outputs of the existing loss stay identical (the old test values must not change).
-- [ ] **Step 3: Check** the registry entry `METHODS["ppo"]` from infrastructure Task 3 accepts every key of `ppo.yaml` (`width`, `envs`, `num_steps`, `lr`, `gae_lambda`, `ent`, ...).
-- [ ] **Step 4: Run** `uv run pytest tests/training/test_ppo.py -q`, then `make tests`.
+- [ ] **Step 1: Write the failing tests** for the wrapper (Craftax-Classic, 32 envs, ratio 16): a non-done env's returned state equals the plain step; every done env's returned state is the start state of a new episode (timestep 0, fresh inventory), never the terminal state; `num_envs % reset_ratio != 0` raises; with fewer done envs than resets (the issue #11 case) only done envs change; the ratio used is `min(16, envs)`.
+- [ ] **Step 2: Vendor** the wrappers unchanged in behaviour and build the training env as the original: `make_craftax_env_from_name(name, auto_reset=False)`, then `LogWrapper`, then `OptimisticResetVecEnvWrapper(envs, reset_ratio=min(16, envs))`; config keys `resets: optimistic` (default; `auto` only for the debug comparison of Task 5) and `reset_ratio: 16`.
+- [ ] **Step 3: Write the failing tests** for the port: GAE on a hand-computed 4-step, 2-env example with a done at step 2 (gamma 0.9, lambda 0.8; expected advantages written in the test); the clipped policy and value losses on a 2-sample batch against values computed by hand; the learning rate is `lr` at the first minibatch and `lr / n_updates` at the last update; `n_updates` drops the last partial update (1e6 // 4096 = 244); two runs with the same seed on Classic give identical parameters after 2 updates; `clip_frac` and `grad_norm` appear in the loss summary.
+- [ ] **Step 4: Add** `ppo_terms(logits, value, batch, cfg)` (the loss math, so PPO-RNN reuses it) and the extra summaries `clip_frac` (share of ratios outside 1 +- clip) and `grad_norm` (before clipping); outputs of the existing loss stay identical (the old test values must not change).
+- [ ] **Step 5: Check** the registry entry `METHODS["ppo"]` from infrastructure Task 3 accepts every key of `ppo.yaml` (`width`, `envs`, `num_steps`, `lr`, `gae_lambda`, `ent`, ...).
+- [ ] **Step 6: Run** `uv run pytest tests/training/test_ppo.py tests/training/test_wrappers.py -q`, then `make tests`.
 
 ### Task 3: Smoke run
 
@@ -149,7 +153,7 @@ flowchart TD
   B -->|no| D["1 config diff vs Table 11"]
   D --> E["2 metric definition and final window"]
   E --> F["3 CPU-only learner (device numerics)"]
-  F --> G["4 optimistic resets on"]
+  F --> G["4 check: compare against auto-reset"]
   G --> H["5 original ppo.py in an isolated env"]
   H --> I{"original also outside?"}
   I -->|yes| J["record: environment or version gap"]
@@ -206,7 +210,7 @@ flowchart TD
 ## Risks
 
 - Craftax 1.6.1 vs the 2024 version behind the scoreboard: reward-affecting errata (v1.5.0 `eat_plant`, v1.6.0 Classic health) may shift scores; debug step 5 separates code from environment ([[Craftax Baselines reproduction notes]]).
-- Auto-reset instead of optimistic resets: the paper reports "essentially no effect" on learning; debug step 4 checks it.
+- Optimistic resets hand duplicate start worlds to envs when more envs finish in one step than worlds are generated (16 per step at 256 envs); the paper reports "essentially no effect" on learning, and debug step 4 (a comparison against auto-reset envs) checks it on our code. The vendored copy is taken at 7ce36fa, which includes the fix for Baselines issue #11 (fewer finished envs than resets).
 - Metal learner numerics differ from CUDA float32; debug step 3 runs the learner on CPU ([[Craftax on Apple GPU]]).
 - The published number has no spread; s_pub comes from third-party reruns with other protocols, so the band is an estimate.
 - Third-party PPO 1M spread is not published; the PPO-RNN 1M spread is the proxy.

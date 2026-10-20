@@ -42,7 +42,7 @@ Status: draft
 | `checkpoints/<budget>/<method>/video/` | the early checkpoints used in the videos (best seed only) | `ckpt/index.json` |
 | `media/gifs/`, `media/videos/` | GIFs and the three MP4s | visualisation outputs |
 | `report/report.pdf` | the report | `report/` |
-| `LICENSE`, `NOTICE` | licences and third-party notices | this plan |
+| `LICENSE`, `NOTICE` | the MIT licence text (copy of the repository `LICENSE`) and third-party notices | this plan |
 
 - Size estimate for checkpoints: a Craftax-Symbolic width-512 params-only checkpoint is 38,163,145 B ([[Recording training data]]); multiply by methods x 2 budgets x 10 seeds and replace with measured sizes in Task 3.
 - Videos with music go in only if every music licence in `configs/video/music.yaml` allows redistribution outside YouTube; otherwise the voice-only mix (`ffmpeg.mux_audio` with `--voice` only) is uploaded.
@@ -63,15 +63,17 @@ Status: draft
 - `app.py` reads only `data/`; links to the dataset, the report PDF in the dataset and the videos are plain URLs.
 - Tabs: Results (two tables), Plots (gallery), Videos (YouTube links from `published.yaml` and 4 GIFs), Data (how to download the dataset, open `mlruns.db` with `mlflow ui --backend-store-uri sqlite:///mlruns.db`, load a checkpoint with `flax.serialization.from_bytes`).
 - `requirements.txt`: `gradio` and `pandas`, each pinned to the version tested locally.
-- Space card `README.md` front matter: `title`, `emoji`, `colorFrom`, `colorTo`, `sdk: gradio`, `sdk_version`, `app_file: app.py`, `license`, `short_description`, `datasets: [Pawlo77/wut-murl-craftax-results]`.
+- Space card `README.md` front matter: `title`, `emoji`, `colorFrom`, `colorTo`, `sdk: gradio`, `sdk_version`, `app_file: app.py`, `license: mit`, `short_description`, `datasets: [Pawlo77/wut-murl-craftax-results]`.
 
 ## Cards and licence
 
-- Dataset card front matter: `license`, `pretty_name`, `task_categories: [reinforcement-learning]`, `tags: [craftax, jax, mlflow, reinforcement-learning]`, `size_categories`, `configs` entries for the `metrics/` parquet files so the dataset viewer shows them.
+- Dataset card front matter: `license: mit`, `pretty_name`, `task_categories: [reinforcement-learning]`, `tags: [craftax, jax, mlflow, reinforcement-learning]`, `size_categories`, `configs` entries for the `metrics/` parquet files so the dataset viewer shows them.
 - Dataset card sections: summary, contents table with measured sizes, how the data was produced (repository URL and commit), protocol and metric definitions (summary of [[2026-10-20-craftax-evaluation-and-metrics]]), how to load each part, licence and attribution, limitations, citation (from `CITATION.cff`).
-- Model card per checkpoint folder: method, network, observation (`Craftax-Symbolic-v1`, craftax 1.6.1), budget, seed, final score and eval scores, loading snippet, intended use (research and teaching), limitations.
-- Proposed licences: CC-BY-4.0 for data, figures, tables, GIFs and videos; Apache-2.0 (the repository licence) for checkpoints and the Space code.
-- `NOTICE`: Craftax (MIT, Matthews et al.), the Craftax_Baselines portions of `training/ppo.py` (MIT), each music track's licence and attribution.
+- Model card per checkpoint folder (front matter `license: mit`): method, network, observation (`Craftax-Symbolic-v1`, craftax 1.6.1), budget, seed, final score and eval scores, loading snippet, intended use (research and teaching), limitations.
+- Licence (decided, [[Experiment decisions]]): MIT for everything we release: data, metrics, figures, tables, GIFs, videos, checkpoints, the Space code and this repository; `LICENSE` holds the standard MIT text, `Copyright (c) 2026 Paweł Pozorski`.
+- Third-party code keeps its own licence header: `training/batch_renorm.py`, ported from purejaxql, stays Apache-2.0 (its header names purejaxql and Flax); `training/wrappers.py` and the Craftax_Baselines portions of `training/ppo.py` keep their MIT notice (Copyright (c) 2024 Michael Matthews).
+- Music is not ours to license: a video with music is uploaded only if every track's licence in `configs/video/music.yaml` allows redistribution (see Dataset contents); the MIT licence covers our footage and voice, not the track.
+- `NOTICE`: Craftax (MIT, Matthews et al.), the Craftax_Baselines portions of `training/ppo.py` and `training/wrappers.py` (MIT), `training/batch_renorm.py` (Apache-2.0, purejaxql and Flax), each music track's licence and attribution.
 
 ## Confirmation gate
 
@@ -119,7 +121,7 @@ flowchart TD
 - Create: `src/wut_murl_craftax/release/bundle.py`, `src/wut_murl_craftax/release/cards.py`
 - Test: `tests/release/test_bundle.py`
 
-- [ ] **Step 1: Write the failing tests** on a fixture tree: the staged dataset holds exactly the paths of the Dataset contents table; tuning checkpoints, masters and `.env` are excluded; `manifest.json` lists path, size and SHA-256 of every file; videos with music are excluded when `music.yaml` says redistribution is not allowed; the cards contain the measured sizes and the commit hash.
+- [ ] **Step 1: Write the failing tests** on a fixture tree: the staged dataset holds exactly the paths of the Dataset contents table; tuning checkpoints, masters and `.env` are excluded; `manifest.json` lists path, size and SHA-256 of every file; videos with music are excluded when `music.yaml` says redistribution is not allowed; the cards contain the measured sizes, the commit hash and `license: mit` in their front matter.
 - [ ] **Step 2: Implement** `stage_dataset(out)`, `stage_space(out)`, `write_manifest(dir)`, `dataset_card(...)`, `model_card(run)`; the CLI `uv run python -m wut_murl_craftax.release.bundle --out outputs/release`.
 - [ ] **Step 3: Run** `uv run pytest tests/release/test_bundle.py -q`.
 
@@ -165,5 +167,5 @@ flowchart TD
 - Modify: `README.md` (links to the Space, the dataset, the report and the videos)
 
 - [ ] **Step 1: Check** that the Space and dataset URLs cited in the report resolve while logged out.
-- [ ] **Step 2: Write** the module note and the README links; append a dated section to [[Experiment decisions]] with the final licences and what was left out of the release.
+- [ ] **Step 2: Write** the module note and the README links; append a dated section to [[Experiment decisions]] with what was left out of the release (the licences are already decided: MIT).
 - [ ] **Step 3: Run** `make knowledge` and `make check`.

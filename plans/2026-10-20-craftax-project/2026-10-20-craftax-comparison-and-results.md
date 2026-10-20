@@ -40,6 +40,7 @@ flowchart LR
 
 ## Comparison rules
 
+- Final score of a run (decided, [[Experiment decisions]]): mean training-episode return as % of 226 over the last 2% of the budget, widened to at least 100 episodes ([[2026-10-20-craftax-evaluation-and-metrics]]); T1 reports the fixed-seed evaluation of the final checkpoint (stochastic and greedy) alongside it.
 - "Method" includes the combination of the two best compatible methods ([[Experiment decisions]]); it gets its own row, colour and radar.
 - Our runs are compared with each other only within one benchmark (1M or 1B) and one score kind (training-episode score, stochastic eval, greedy eval).
 - Training-episode score vs block A (1B) and block D (1M) of [[Existing Implementations]]; stochastic fixed-seed eval vs block A2; blocks A3, B, B2, C, C2, C3 and E to I are never compared.

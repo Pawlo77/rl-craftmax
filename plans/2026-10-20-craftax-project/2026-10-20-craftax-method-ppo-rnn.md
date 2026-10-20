@@ -77,7 +77,7 @@ Fixed settings:
 | Gamma, GAE lambda, clip, vf, ent | 0.99, 0.8, 0.2, 0.5, 0.01 | same | [[Craftax Baselines algorithms and hyperparameters]] |
 | Network | Dense 512 ReLU, GRU 512, heads 2 x Dense 512 ReLU | same | `ppo_rnn.py` `ActorCriticRNN` |
 | Hidden reset | zeros where the previous step ended an episode | same | `ScannedRNN` |
-| Resets | auto-reset | auto-reset | deviation, as PPO |
+| Resets | optimistic, ratio 16 | optimistic, ratio 16 | as PPO and the original: `training/wrappers.py` ([[2026-10-20-craftax-method-ppo]] Task 2); ratio `min(16, envs)`, so 64 x 64 generates 4 worlds per step |
 
 - 1B: no tuning; final-1b = Table 7 + the published network (ReLU), the 1B reproduction check. Methods built on PPO-RNN take their 1B shared settings from this column.
 
@@ -122,7 +122,7 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 - `t` is the run's env-step counter at that step (int32); `traj` holds the rollout arrays `obs`, `action`, `reward` (extrinsic), `r_int`, `done`, `value`, `logp`, plus the start hidden state.
 - `extra_steps` is a `PPORNNConfig` field (default 0); the extra steps use the same Adam state; the learning-rate schedule is indexed by update, not by optimizer count, so K does not shift it.
 
-- [ ] **Step 3: Document** in the module docstring: env states give `achievements` and inventory ([[Craftax scoring and evaluation]]); `r_int` is added to the reward before GAE and the extrinsic reward is kept for the score; hook callables close over the method's own config (and the network via `make_network`, exposed by each base module); `None` hooks are skipped at trace time, so the control graph is unchanged; the same contract serves `training/pqn_rnn.py` (`r_int` enters the Q(lambda) targets).
+- [ ] **Step 3: Document** in the module docstring: env states give `achievements` and inventory ([[Craftax scoring and evaluation]]); `r_int` is added to the reward before GAE and the extrinsic reward is kept for the score; hook callables close over the method's own config (and the network via `make_network`, exposed by each base module); `None` hooks are skipped at trace time, so the control graph is unchanged; `env_wrapper_fn` wraps the no-auto-reset env inside `LogWrapper` and `OptimisticResetVecEnvWrapper`, so a wrapper that changes reward or `done` acts before the reset ([[Craftax API and wrappers]]); the same contract serves `training/pqn_rnn.py` (`r_int` enters the Q(lambda) targets).
 - [ ] **Step 4: Run** `uv run pytest tests/training/test_hooks.py -q`.
 
 ### Task 2: Recurrent network and trainer
@@ -134,7 +134,7 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 
 - [ ] **Step 1: Write the failing tests** (Task 3 list).
 - [ ] **Step 2: Implement** `PPORNNConfig` (the `PPOConfig` fields plus `rnn_width: int = 512`, `activation: Literal["relu", "tanh"] = "relu"`, `extra_steps: int = 0`; `envs % minibatches == 0` checked), `ScannedGRU` (reset to zeros where `last_done`), `ActorCriticRNN`.
-- [ ] **Step 3: Implement** the rollout: carry `(hidden, obs, last_done, env_state, method_state, key)`; store `hidden` at the rollout start; call `intrinsic_reward_fn` per step; `observe` once on the finished trajectory; GAE via the shared function from `training/ppo.py`.
+- [ ] **Step 3: Implement** the rollout on the PPO env setup (`auto_reset=False`, `LogWrapper`, `OptimisticResetVecEnvWrapper` from `training/wrappers.py`): carry `(hidden, obs, last_done, env_state, method_state, key)`; store `hidden` at the rollout start; call `intrinsic_reward_fn` per step; `observe` once on the finished trajectory; GAE via the shared function from `training/ppo.py`.
 - [ ] **Step 4: Implement** the update: permute envs (axis 1) once per epoch, split into `minibatches` groups of whole sequences, rerun the GRU from the stored start hidden, loss = `ppo_terms(...)`; then `extra_steps` Adam steps on `extra_loss_fn`.
 - [ ] **Step 5: Implement** `make_network(cfg, n_actions, obs_dim)` (public, so add-ons can apply the network in their losses) and `make_trainer(cfg)` with `init`, `train_chunk`, `policy` (infrastructure Task 3), using `device_roles()`: rollout on the actor, update, `observe` and extra steps on the learner; the method state follows the step that uses it.
 - [ ] **Step 6: Run** `uv run pytest tests/training/test_ppo_rnn.py -q`, then `make tests`.

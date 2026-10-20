@@ -100,3 +100,29 @@ Decision: every add-on builds on the recurrent controls (PPO-RNN, PQN-RNN) throu
 Why: gains are measured against the stronger published bases, on the same code, settings and seeds.
 
 Consequences: `training/hooks.py`, shared by [[2026-10-20-craftax-method-ppo-rnn]] and [[2026-10-20-craftax-method-pqn-rnn]].
+
+## 2026-10-20 - Resets, report length, licences and final score
+
+Decision: every control and method uses optimistic resets: `auto_reset=False` envs inside Craftax_Baselines' `OptimisticResetVecEnvWrapper` with reset ratio 16 (`min(16, envs)`), as the original baselines; PQN-RNN also keeps the repo's random warm-up rollout.
+
+Why: the published PPO, PPO-RNN and PQN-RNN numbers were produced with them, and they are about 2x faster because only one new world is generated per 16 envs per step ([[Craftax performance]], [[Craftax API and wrappers]]).
+
+Consequences: the wrapper is vendored once at 7ce36fa (MIT notice kept, includes the fix for Baselines issue #11) into `src/wut_murl_craftax/training/wrappers.py` ([[2026-10-20-craftax-method-ppo]] Task 2) and every plan references it; the state returned for a done step is a new episode's start state, never the terminal state, which the count bonus masks ([[Count-Based Progress Bonus design]]); a comparison against auto-reset envs is a debug check, not a step to turn resets on. Rejected: auto-reset envs for all runs (one wrapper fewer, but slower and a deviation from every published control).
+
+Decision: the report has 4 pages of content; references, the generative-AI disclosure and acknowledgements go on page 5.
+
+Why: the Interspeech rules for regular papers allow page 5 for exactly these parts, so the content keeps all 4 pages.
+
+Consequences: [[2026-10-20-craftax-report]] budgets 4.00 pages for the sections and checks that the content ends on page 4. Rejected: 4 pages in total, references included.
+
+Decision: MIT for everything we release: data, metrics, figures, tables, GIFs, videos, checkpoints, the Space code and this repository (`LICENSE`: Copyright (c) 2026 Paweł Pozorski).
+
+Why: one permissive licence for code and results is simple to apply and matches Craftax and Craftax_Baselines (both MIT).
+
+Consequences: `LICENSE`, `README.md`, `CITATION.cff`, `pyproject.toml` and the Hugging Face cards (`license: mit`) say MIT ([[2026-10-20-craftax-huggingface-release]]); third-party code keeps its own licence header (`training/batch_renorm.py` from purejaxql stays Apache-2.0, the vendored Craftax_Baselines wrappers keep their MIT notice); a video with music is uploaded only if the music licence allows redistribution. Rejected: CC-BY-4.0 for data and media with Apache-2.0 for code; CC-BY-NC-4.0.
+
+Decision: the final score of a run is the mean training-episode return, as % of the maximum 226, over the episodes that finished in the last 2% of the budget, widened backwards to at least 100 episodes; the fixed-seed evaluation of the final checkpoint is reported alongside it.
+
+Why: it is the scoreboard metric, so our numbers compare with [[Craftax Baselines results]] and [[Existing Implementations]]; averaging over many episodes is less noisy than one evaluation of the last checkpoint.
+
+Consequences: tuning, reproduction bands, statistics and the report use this score ([[2026-10-20-craftax-evaluation-and-metrics]], [[2026-10-20-craftax-comparison-and-results]], [[2026-10-20-craftax-report]]); T1 shows the stochastic and greedy fixed-seed evaluation beside it. Rejected: the final fixed-seed evaluation only.
