@@ -23,7 +23,9 @@
 
 ## Results
 
-Results are in the report, [`report/report.pdf`](report/report.pdf) (4 pages), and, once published, in the Hugging Face Space [`Pawlo77/wut-murl-craftax`](https://huggingface.co/spaces/Pawlo77/wut-murl-craftax) with the full MLflow store in the dataset [`Pawlo77/wut-murl-craftax-results`](https://huggingface.co/datasets/Pawlo77/wut-murl-craftax-results). This README stays result-free on purpose.
+- Report: [`report/report.pdf`](report/report.pdf).
+- Hugging Face Space: [`Pawlo77/wut-murl-craftax`](https://huggingface.co/spaces/Pawlo77/wut-murl-craftax).
+- MLflow runs and checkpoints: [`Pawlo77/wut-murl-craftax-results`](https://huggingface.co/datasets/Pawlo77/wut-murl-craftax-results).
 
 ## Methods
 
@@ -37,7 +39,7 @@ Results are in the report, [`report/report.pdf`](report/report.pdf) (4 pages), a
 | SMDP Q-Learning over Hand-Defined Skills | method | hierarchical RL | [design](knowledge/methods/SMDP%20Q-Learning%20over%20Hand-Defined%20Skills%20design.md) |
 | Dyna-Q over a Skill-Level Progress Model | method | model-based planning | [design](knowledge/methods/Dyna-Q%20over%20a%20Skill-Level%20Progress%20Model%20design.md) |
 
-What each method observes and how it is rewarded: [`knowledge/methods/Methods.md`](knowledge/methods/Methods.md). All methods are scored on the environment reward only. The skill methods use hand-written skills (prior knowledge) and are reported in a separate block.
+Observations and rewards per method: [`knowledge/methods/Methods.md`](knowledge/methods/Methods.md). The skill methods use hand-written skills and are reported separately.
 
 ## Installation
 
@@ -61,7 +63,7 @@ make vis STEP=grid ARGS="--help"                                        # one vi
 make help                                                               # every target
 ```
 
-Experiments run as resumable MLflow runs (`make mlflow` opens the UI); the execution plan below adds `make queue PHASE=<phase>`, which can be stopped with Ctrl-C and resumed at any time.
+Runs are logged to MLflow; `make mlflow` opens the UI.
 
 ## Project map
 
@@ -74,18 +76,18 @@ Experiments run as resumable MLflow runs (`make mlflow` opens the UI); the execu
 | [`report/`](report) | the 4-page report (Interspeech LaTeX template) |
 | `configs/`, `outputs/` | experiment configs; generated outputs (git-ignored) |
 
-Open the repository folder as an Obsidian vault and start at [`wut_murl_craftax`](knowledge/wut_murl_craftax.md). Development setup and checks: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+The repository is an Obsidian vault; start at [`wut_murl_craftax`](knowledge/wut_murl_craftax.md). Development: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Acknowledgements
 
 - [Craftax](https://github.com/MichaelTMatthews/Craftax) (MIT): the environment.
-- [Craftax_Baselines](https://github.com/MichaelTMatthews/Craftax_Baselines) (MIT): the PPO, PPO-RNN and exploration baselines our controls are adapted from; vendored code keeps its notice.
+- [Craftax_Baselines](https://github.com/MichaelTMatthews/Craftax_Baselines) (MIT): the PPO and PPO-RNN baselines our controls are adapted from.
 - [purejaxql](https://github.com/mttga/purejaxql) (Apache-2.0): the PQN-RNN reference implementation.
 - R. S. Sutton and A. G. Barto, *Reinforcement Learning: An Introduction*: the methods' foundations.
 
 ## Citing
 
-Please cite this repository ([`CITATION.cff`](CITATION.cff); GitHub's "Cite this repository" button gives APA or BibTeX) and Craftax, whose paper also describes the Craftax_Baselines code:
+Please cite this repository ([`CITATION.cff`](CITATION.cff)) and Craftax:
 
 ```bibtex
 @misc{pozorski2026wutmurlcraftax,
