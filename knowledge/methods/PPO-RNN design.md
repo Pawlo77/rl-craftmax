@@ -1,0 +1,86 @@
+---
+title: "PPO-RNN design"
+type: concept
+domain: training
+parent: "[[Methods]]"
+tags: [concept, method, control, ppo, recurrent, actor-critic]
+created: 2026-10-20
+updated: 2026-10-20
+aliases: [PPO-RNN control, PPO-GRU]
+related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
+---
+# PPO-RNN design
+
+PPO with a GRU memory, the second control and the strongest Craftax paper baseline: 2.3% (1M) and 15.3% (1B) of the maximum 226 ([[PPO-RNN (Matthews 2024)]], [[Craftax Baselines results]]). It is also the base module that the count-based progress bonus (PPO-RNN variant) and self-imitation learning extend through hooks. Plan: [[2026-10-20-craftax-method-ppo-rnn]].
+
+## What we implement
+
+- The PPO of [[PPO design]] (clipped ratio, clipped value loss, entropy bonus, GAE, Adam with annealed learning rate), unchanged.
+- Network as Craftax_Baselines `ppo_rnn.py` `ActorCriticRNN`: Dense(512) + ReLU embedding, GRU(512), then actor 2 x Dense(512) + ReLU + logits and critic 2 x Dense(512) + ReLU + value.
+- Memory is the answer to partial observability: the agent sees a 9 x 11 window, so where it has been and what it has stored is not in the observation ([[Craftax observations and actions]]).
+- Code: new `src/wut_murl_craftax/training/ppo_rnn.py` (`PPORNNConfig`, `make_trainer`), sharing GAE and the loss math with `training/ppo.py`.
+
+```mermaid
+flowchart LR
+  O["obs 8268 + done flag"] --> E["Dense 512, ReLU"]
+  E --> G["GRU 512, reset to zeros after done"]
+  H["hidden from previous step"] --> G
+  G --> A["actor: 2 x Dense 512 ReLU, 43 logits"]
+  G --> C["critic: 2 x Dense 512 ReLU, value"]
+  G --> H2["hidden to next step"]
+```
+
+## Decisions
+
+- ReLU throughout. Why: the published 15.3% came from `ppo_rnn.py`, which hard-codes ReLU; `--activation` is parsed but never used, so the paper's "same hyperparameters as PPO" (tanh) never reached the RNN ([[Craftax Baselines reproduction notes]]). tanh is one Stage 1 alternative.
+- GRU, not LSTM. Why: the published PPO-RNN uses `nn.GRUCell`; PQN-RNN keeps its own LSTM ([[PQN-RNN design]]).
+- Hidden state reset to zeros where the previous step ended an episode. Why: as `ScannedRNN`; memory must not leak across episodes.
+- Whole-sequence minibatches: the rollout keeps the hidden state at its start, each minibatch holds whole env sequences and reruns the GRU from it. Why: this is how the original computes log-probs for the ratio; a check that the first-minibatch ratio is exactly 1 catches any mismatch.
+- 1M settings = PPO Table 11 (256 envs x 16 steps, lr 3e-4) with the recurrent network. Why: the paper gives no PPO-RNN 1M settings; the Simulus third-party rerun used these and got 2.2% (last 5 updates, derived from its per-run data), close to the published 2.3%.
+- 1B settings = Table 7 + ReLU network, unchanged, as `python ppo_rnn.py`. Why: the paper's 1B tuning is the reference ([[Experiment decisions]]).
+- Auto-reset environments, as [[PPO design]].
+- Light tuning: Stage 1 = 7 published alternatives one at a time (Table 7 shape at 1M, 64 x 64 shape, tanh, lr 2e-4 and 4e-4, GAE lambda 0.9, entropy 0) plus the base; Stage 2 = 4 neighbours on the 2 most sensitive numeric knobs; tuned = published unless the winner beats it by more than the band half-width.
+- Sequence length 64 is a Stage 1 alternative. Why: at 16 steps the gradient never reaches back more than 16 steps, which may limit what the memory learns; 64 x 64 keeps the batch at 4,096.
+
+## Extension hooks
+
+- One shared contract in `training/hooks.py`, the same for PQN-RNN; the method state lives in the train state and is checkpointed.
+- `intrinsic_reward_fn(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`: per env step; `r_int` is added to the reward before GAE; the score keeps the extrinsic reward.
+- `observe(state, traj) -> state`: once per rollout, before GAE.
+- `extra_loss_fn(params, state, key) -> (loss, metrics)` with `extra_steps = K` optimizer steps after the PPO epochs.
+- `init_state_fn`, `env_wrapper_fn` (observation or action wrappers), `metrics_fn` (logged as `hook/*`).
+- Why hooks and not subclasses: one recurrent PPO implementation, add-ons as pure functions inside `jit`, and a bit-identity test proves that zero hooks leave the control unchanged.
+- Why extra steps after the epochs, not a term inside the PPO loss: self-imitation learning samples from its own buffer at its own batch size, and the PPO loss of the control stays untouched.
+
+## Reproduction check
+
+- Band: h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), as [[PPO design]].
+- 1M: s_pub 0.083 percentage points (Simulus per-run data, 10 seeds); planning band 2.18 to 2.42.
+- 1B: s_pub 0.35 (largest third-party spread, Singh et al. 2026, type not stated); planning band 14.94 to 15.66. Third-party reruns with separate evaluation report 16.2-16.4%, which is a different protocol ([[PPO-RNN (Matthews 2024)]]).
+- Debug order on a fail: first make sure the PPO control passes; then the recompute check, the hidden reset and the sequence minibatching; then the original `ppo_rnn.py` at 1M in an isolated environment.
+
+## Fixed vs tuned
+
+| Setting | Status |
+|---|---|
+| Losses, optimiser, epochs, minibatches, clip, value coef, gamma, widths, GRU, hidden reset | fixed (published) |
+| Rollout shape, activation, learning rate, GAE lambda, entropy coef | tuned lightly at 1M |
+| Everything at 1B | fixed to Table 7 + ReLU network |
+
+## Prior knowledge
+
+- None about the game; the same reward and observation as [[PPO design]].
+- The memory is generic; nothing in it is specific to Craftax.
+
+## Differences from the published version
+
+- Auto-reset instead of optimistic resets; MLflow and resumable checkpoints instead of W&B.
+- 1M settings chosen by us (no published PPO-RNN 1M table).
+- Hooks in the training loop; inactive in the control.
+- Craftax 1.6.1 and JAX 0.11 instead of the unpinned 2024 stack.
+
+## What to watch
+
+- The paper's signature: more dungeon entries than PPO, drives the score; `defeat_zombie` success falls most for PPO-RNN; `eat_plant` ignored ([[Craftax Baselines results]], [[Craftax farming and food]], [[Craftax floors and progression]]).
+- No progress into the Gnomish Mines, even at 10B steps ([[Game]]).
+- The late rise of the 1B curve comes from the learning-rate decay, not from late learning.

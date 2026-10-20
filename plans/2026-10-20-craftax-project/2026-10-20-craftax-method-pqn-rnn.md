@@ -1,0 +1,230 @@
+---
+title: "Craftax PQN-RNN control implementation plan"
+type: plan
+domain: training
+parent: "[[2026-10-20-craftax-project]]"
+status: draft
+created: 2026-10-20
+updated: 2026-10-20
+tags: [plan, method, control, q-learning, recurrent]
+---
+# Craftax PQN-RNN control implementation plan
+
+Status: draft
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** a recurrent Parallelised Q-Network control that reproduces the published Craftax-1B score (16.0%, [[PQN-RNN (Gallici 2025)]]) inside an acceptance band, matches the published code at 1M, is lightly tuned at 1M, and is the base module that the count-bonus (PQN variant) and the skill methods extend through the same hooks as PPO-RNN.
+
+**Architecture:** new module `src/wut_murl_craftax/training/pqn_rnn.py` with `PQNRNNConfig`, `RNNQNetwork` (BatchRenorm on the input, Dense 512 + LayerNorm + ReLU, last action one-hot appended, LSTM 512 reset on done, Dense to 43 Q-values), `q_lambda_targets` and `make_trainer(cfg, hooks_factory=None)`; `src/wut_murl_craftax/training/batch_renorm.py` ported from purejaxql (Apache-2.0). Hooks from `training/hooks.py` ([[2026-10-20-craftax-method-ppo-rnn]] Task 1): `init_state_fn`, `intrinsic_reward_fn`, `observe`, `extra_loss_fn` (with `extra_steps`), `env_wrapper_fn`, `metrics_fn`. Registry entry `pqn-rnn` in `training/interface.py` ([[2026-10-20-craftax-infrastructure]] Task 3); config `configs/methods/pqn-rnn.yaml`. Design decisions: [[PQN-RNN design]].
+
+**Tech Stack:** JAX 0.11, craftax 1.6.1, flax (`nn.OptimizedLSTMCell`, `nn.scan`, `nn.LayerNorm`), optax (`radam`), MLflow, PyYAML, existing `training.records`, `training.checkpoints`, `orchestration`, `evaluation.reproduction` ([[2026-10-20-craftax-method-ppo]] Task 4).
+
+---
+
+## Design
+
+- PQN = online Q(lambda) on the batch just collected from many parallel envs: no replay buffer, no target network; stability from normalisation (paper Section 3).
+- Port of `purejaxql/pqn_rnn_craftax.py` at commit 47af6d7 with its config `pqn_rnn_craftax.yaml`: BatchRenorm on the input and LayerNorm in the hidden layer (the repo setting, the paper's best variant in Section 5.5).
+- Q(lambda) targets written as one reverse scan whose carry is only the next lambda-return, seeded with max Q(s_{T-1}); this makes the bug class of purejaxql issue #12 (seeding with Q(s_T)) impossible, and a test compares against an independent forward-view lambda-return.
+- 1M settings are not published; the base keeps every repo setting except the rollout shape, which takes PPO's 1M shape (256 envs x 16 steps, 244 updates), because the 1B shape gives only 7 updates at 1M.
+- 1B: the repo config unchanged; final-1b is the reproduction check against 16.0%.
+
+```mermaid
+flowchart LR
+  W["env_wrapper_fn: wraps env once"] --> R
+  R["rollout scan on CPU actor: LSTM carry, epsilon-greedy, env step"] --> I["intrinsic_reward_fn per step: r = r_ext + r_int"]
+  I --> R
+  R --> U["observe(state, traj) once per rollout"]
+  U --> M["epochs x minibatches of env sequences"]
+  M --> F["forward pass with batch statistics: Q for all steps"]
+  F --> T["Q(lambda) targets from stop-gradient Q, last step only bootstraps"]
+  T --> L["0.5 x squared TD error, RAdam step"]
+  L --> M
+  M --> X["extra_steps = K optimizer steps on extra_loss_fn"]
+  X --> R
+```
+
+## Hyperparameter grid
+
+Stage 1 (coarse, Craftax-1M, 3 seeds): one knob at a time from the 1M base, 10 configs. The base gets 3 seeds (no published 1M number); the 1M check is against the original code (Task 6).
+
+| Knob | Values (base first) | Why |
+|---|---|---|
+| Rollout shape (envs x steps) | 256 x 16; 1024 x 128 (repo 1B, 7 updates at 1M); 64 x 64 | 1M vs 1B shape; 64-step sequences for the LSTM at the same batch |
+| Learning rate | 3e-4; 1.5e-4; 6e-4 | the repo value and x 0.5, x 2 |
+| Q(lambda) lambda | 0.5; 0; 0.8 | lambda 0 is one-step Q-learning ([[06 Temporal-difference learning]]); 0.8 = PPO's GAE lambda |
+| Epsilon decay (share of updates) | 0.1; 0.25 | at 1M the 0.1 decay ends after 24 updates |
+| Normalisation | BatchRenorm input + LayerNorm hidden (repo); BatchRenorm input + BatchRenorm hidden (paper Table 4 literally); LayerNorm input + LayerNorm hidden (no batch statistics) | settles the paper vs repo mismatch at 1M; the last removes running statistics that lag in a short run |
+
+Configs: base (1) + shape (2) + lr (2) + lambda (2) + epsilon decay (1) + normalisation (2) = 10; runs = 30.
+
+Stage 2 (fine, Craftax-1M, 3 seeds): best Stage 1 config; the 1-2 numeric knobs with the largest Stage 1 effect; shape and normalisation are categorical and not refined.
+
+| Knob | Fine values around the best coarse value b |
+|---|---|
+| Learning rate | b x 0.75, b x 1.5 |
+| lambda | b - 0.1, b + 0.1 (clipped to 0 and 0.95) |
+| Epsilon decay | b x 0.5, b x 2 |
+
+Expected: 4 configs, 12 runs. Selection: `tuned` = the best config; ties within h of the base (h from Task 6 with 3 seeds) keep the base. `tuned` is the fixed shared setting of the PQN-based methods (`base_from: pqn-rnn.tuned`).
+
+Fixed settings ([[PQN-RNN (Gallici 2025)]], repo `config/alg/pqn_rnn_craftax.yaml`):
+
+| Setting | Craftax-1M (base) | Craftax-1B (repo) | Note |
+|---|---|---|---|
+| Environment | `Craftax-Symbolic-v1` | `Craftax-Symbolic-v1` | Classic only in `smoke` |
+| Envs x steps | 256 x 16 (244 updates) | 1024 x 128 (7,629 updates) | the last step of each rollout only bootstraps |
+| Epochs, minibatches | 4, 4 (64 envs each) | 4, 4 (256 envs each) | minibatches split envs |
+| Learning rate | 3e-4, linear decay | 3e-4, linear decay | RAdam, grad clip 0.5 |
+| Gamma, lambda | 0.99, 0.5 | 0.99, 0.5 | |
+| Epsilon | 1.0 to 0.005 over 10% of updates | same | one epsilon for all envs (issue #11) |
+| Network | input BatchRenorm, Dense 512 + LayerNorm + ReLU, last action, LSTM 512, Dense 43 | same | `NUM_LAYERS 1`, `NUM_RNN_LAYERS 1` |
+| BatchRenorm | momentum 0.999, eps 1e-3, r_max 3, d_max 5, warm-up 1,000 grad steps | same | the code comment says 100,000; the code uses 1,000 |
+| Reward scale | 1.0 | 1.0 | |
+| Resets | auto-reset | auto-reset | deviation: repo uses optimistic resets |
+
+## Runs and laptop time estimate
+
+Throughput (estimate): 2,400 steps/s on Craftax-Symbolic, 8,000 on Classic; overhead factor 1.25 relative to PPO (estimate: the LSTM has 4 gate blocks against the GRU's 3, but the Q-network has one head instead of PPO-RNN's two 2-layer heads, about 6.4M against 6.9M parameters, so the shared RNN planning value applies); +1 min compile per run.
+
+| Phase (MLflow experiment) | Configs | Seeds | Steps per run | Runs | Est. steps/s | Est. hours (laptop, sequential) |
+|---|---|---|---|---|---|---|
+| `smoke` (Craftax-Classic) | 2 | 1 | 200k | 2 | 8,000 | 0.05 |
+| `tune-coarse` | 10 | 3 | 1M | 30 | 2,400 | 3.97 |
+| `tune-fine` | 4 | 3 | 1M | 12 | 2,400 | 1.59 |
+| `final-1m` | 1 | 10 | 1M | 10 | 2,400 | 1.32 |
+| `final-1b` | 1 | 10 | 1B | 10 | 2,400 | 1157.57 |
+| Total | | | | 64 | | 1164.5 |
+
+- One 1M run: 477 s; one 1B run: 416,727 s = 115.8 h.
+- The 1M reference-code check (Task 6) adds 3 runs of the original script outside the queue, about 0.4 h at the same throughput (estimate).
+- final-1b on a CUDA cluster GPU (authors' hardware, estimate): 1e9 / 266,961 steps/s x 1.25 = 1.30 h per run, 13.0 h for 10 seeds.
+
+## Tasks
+
+### Task 1: BatchRenorm port
+
+**Files:**
+- Create: `src/wut_murl_craftax/training/batch_renorm.py` (Apache-2.0 header naming purejaxql and Flax)
+- Test: `tests/training/test_batch_renorm.py`
+
+- [ ] **Step 1: Write the failing tests**: with `use_running_average=True` the output uses the stored mean and var and no statistic changes; in training mode before 1,000 steps the output equals plain batch normalisation; after warm-up r and d are clipped to [1/3, 3] and [-5, 5]; running mean after one step = 0.999 x old + 0.001 x batch mean.
+- [ ] **Step 2: Port** the module unchanged in behaviour (same defaults).
+- [ ] **Step 3: Run** `uv run pytest tests/training/test_batch_renorm.py -q`.
+
+### Task 2: Q(lambda) targets
+
+**Files:**
+- Create: `src/wut_murl_craftax/training/pqn_rnn.py` (function `q_lambda_targets(q_next_max, reward, done, gamma, lam)`)
+- Test: `tests/training/test_q_lambda.py`
+
+- [ ] **Step 1: Write the failing tests**: (a) against an independent forward view: for a random 6-step, 3-env trajectory with dones, every target equals `(1 - lam) * sum_n lam^(n-1) G^(n) + lam^(N-1) G^(N)` computed by explicit loops ([[07a n-step TD and TD(λ)]]), with each n-step return cut at episode ends; (b) lam = 0 gives `r + gamma (1 - d) max Q(s')`, one-step Q-learning; (c) lam = 1 without dones gives the discounted reward sum plus `gamma^k max Q(s_{T-1})`; (d) the issue #12 case (T = 6, gamma 0.9, lam 0.8, fixed random Q): the target at T-2 is `r_{T-2} + gamma max Q(s_{T-1})`, not `Q(s_T)`; (e) a done at step t makes the target `r_t`.
+- [ ] **Step 2: Implement** the reverse scan with carry `G_next` only: `G_t = r_t + gamma (1 - d_t) ((1 - lam) maxQ(s_{t+1}) + lam G_{t+1})`, seeded with `G_{T-1} = max Q(s_{T-1})`; inputs are the stop-gradient Q-values of the same forward pass; output covers steps 0 to T-2.
+- [ ] **Step 3: Run** `uv run pytest tests/training/test_q_lambda.py -q`.
+
+### Task 3: Network and trainer
+
+**Files:**
+- Modify: `src/wut_murl_craftax/training/pqn_rnn.py`, `src/wut_murl_craftax/training/__init__.py`, `src/wut_murl_craftax/training/interface.py` (entry `pqn-rnn`)
+- Test: `tests/training/test_pqn_rnn.py`
+
+- [ ] **Step 1: Write the failing tests** (Task 4 list).
+- [ ] **Step 2: Implement** `PQNRNNConfig` (env, steps, envs 256, num_steps 16, minibatches 4, epochs 4, lr 3e-4, lr_linear_decay True, max_grad_norm 0.5, gamma 0.99, lam 0.5, eps_start 1.0, eps_finish 0.005, eps_decay 0.1, hidden 512, norm_input True, norm_type "layer_norm", input_norm "batch_renorm", add_last_action True, rew_scale 1.0, extra_steps 0, seed; `envs % minibatches == 0` checked) and `RNNQNetwork`.
+- [ ] **Step 3: Implement** the rollout: carry `(hidden, obs, last_done, last_action, env_state, method_state, key)`; network in inference mode (running statistics); epsilon-greedy with the update's epsilon; `intrinsic_reward_fn` per step; store the start hidden; `observe` once per rollout.
+- [ ] **Step 4: Implement** the update: per epoch permute envs, split into whole-sequence minibatches; forward pass in training mode from the stored start hidden (updates batch statistics); targets by `q_lambda_targets`; loss `0.5 * mean((Q(s_t, a_t) - G_t)^2)` over steps 0 to T-2; RAdam with global-norm clip; learning rate linear in the update index to about 0 (1e-20 as the repo); then `extra_steps` steps on `extra_loss_fn`.
+- [ ] **Step 5: Implement** `make_trainer(cfg, hooks_factory=None)` (`init`, `train_chunk`, `policy`): `policy` gives greedy (argmax) and stochastic (epsilon-greedy at the update's epsilon) modes; action probabilities are the epsilon-greedy distribution; the stored value is max Q.
+- [ ] **Step 6: Run** `uv run pytest tests/training/test_pqn_rnn.py -q`, then `make tests`.
+
+### Task 4: Correctness tests on tiny inputs
+
+**Files:**
+- Test: `tests/training/test_pqn_rnn.py`, `tests/training/test_pqn_rnn_hooks.py`
+
+- [ ] **Step 1: Write** the tests: (a) LSTM reset: the output after a done equals that of a fresh zero carry; (b) the last-action input at step t is the one-hot of the action at t-1 and zero after a reset; (c) epsilon schedule: 1.0 at update 0, 0.005 from `eps_decay x n_updates` on, linear between; (d) epsilon-greedy: epsilon 0 is argmax, epsilon 1 gives every one of 43 actions in 20,000 draws; (e) the rollout's Q-values recomputed in inference mode from the stored start hidden match to 1e-5 (sequence bookkeeping); (f) determinism on Craftax-Classic, 8 envs x 8 steps, 2 updates; (g) `PQNRNNConfig` 1B equals the repo YAML field by field.
+- [ ] **Step 2: Write** the hook tests: zero hooks give bit-identical params and batch statistics to no hooks (CPU); a constant `r_int = c` raises every target by `c` times the lambda-weighted discount sum (hand check, 3 steps); `extra_steps = 2` with an L2 `extra_loss_fn` lowers the param norm and leaves the next learning rate and epsilon unchanged; `observe` sees `traj` with `q_vals`, `action`, `reward`, `done`.
+- [ ] **Step 3: Run** `uv run pytest tests/training/test_pqn_rnn.py tests/training/test_pqn_rnn_hooks.py -q`.
+
+### Task 5: Config and smoke run
+
+**Files:**
+- Create: `configs/methods/pqn-rnn.yaml`
+- Modify: `configs/phases/smoke.yaml` (add `pqn-rnn`: Craftax-Classic, `base` and `lambda-0`, 1 seed, 200k steps)
+- Test: `tests/training/test_pqn_rnn_configs.py`
+
+- [ ] **Step 1: Write the failing test**: `base` = the 1M base above; `budgets.1b` = the repo YAML; 10 coarse entries each differing in exactly the Stage 1 keys; `tuned: null`.
+- [ ] **Step 2: Write** the YAML and run `uv run pytest tests/training/test_pqn_rnn_configs.py -q`.
+- [ ] **Step 3: Run** `make queue PHASE=smoke METHOD=pqn-rnn`; check: return above the uniform-random Classic return ([[2026-10-20-craftax-method-ppo]] Task 3), `pqn/q_max_mean` finite and below 30 (Classic maximum 22), no NaN; record steps/s in [[2026-10-20-craftax-compute-budget]].
+
+### Task 6: Stage 1 and the reference-code check at 1M
+
+**Acceptance bands** (formula of [[2026-10-20-craftax-method-ppo]] Task 5):
+
+- 1M, no published number: our base (3 seeds) against the original `pqn_rnn_craftax.py` with the same 1M overrides (3 seeds); pass if |difference of means| <= 2 sqrt(SE_ours^2 + SE_orig^2).
+- 1B (Task 8): published 16.0; s_pub 1.31 percentage points (the only spread found: the Auto-Craftax PyTorch PQN-LSTM port, raw sd 2.95, [[PQN-RNN (Gallici 2025)]]); planning h 1.22, band 14.78 to 17.22.
+
+```mermaid
+flowchart TD
+  A["base 1M, 3 seeds, ours"] --> C{"within 2 SE of the original script?"}
+  B["purejaxql pqn_rnn_craftax.py, same overrides, 3 seeds"] --> C
+  C -->|yes| D["Stage 1 and 2; PQN-based methods may start tuning"]
+  C -->|no| E["1 target test vs forward view, config diff vs YAML"]
+  E --> F["2 normalisation: BatchRenorm warm-up and running stats"]
+  F --> G["3 optimistic resets and the random warm-up rollout"]
+  G --> H["4 CPU-only learner"]
+  H --> I["record the gap and continue with our control"]
+```
+
+**Files:**
+- Modify: `configs/phases/tune-coarse.yaml` (add `pqn-rnn`)
+
+- [ ] **Step 1: Run** `make queue PHASE=tune-coarse METHOD=pqn-rnn`; 30 finished.
+- [ ] **Step 2: Run** the original in a throwaway environment outside this repo: a checkout of `mttga/purejaxql` at 47af6d7 and a short driver that replaces `wandb.log` with a JSONL writer, sets `WANDB_MODE` to a value other than `disabled`, and calls `make_train` with `TOTAL_TIMESTEPS=1e6 TOTAL_TIMESTEPS_DECAY=1e6 NUM_ENVS=256 NUM_STEPS=16`, seeds 0-2: `uv run --isolated --no-project --python 3.12 --with craftax==1.6.1 --with "jax==0.11.*" --with flax --with optax --with chex --with hydra-core --with wandb --with safetensors python driver.py`.
+- [ ] **Step 3: Compare** the final scores (last 2% of the budget, `returned_episode_returns` / 226) with ours; on a fail, work the diagram, 3 seeds per diagnostic run, results noted in [[PQN-RNN design]].
+
+### Task 7: Stage 2 and the tuned config
+
+**Files:**
+- Modify: `configs/methods/pqn-rnn.yaml`, `configs/phases/tune-fine.yaml`
+
+- [ ] **Step 1: Run** `uv run python -m wut_murl_craftax.orchestration.queue --expand-fine pqn-rnn`, review the 4 entries, then `make queue PHASE=tune-fine METHOD=pqn-rnn`; 12 finished.
+- [ ] **Step 2: Apply** the selection rule, write `tuned`, add a dated section to [[Experiment decisions]] (including which normalisation won at 1M).
+
+### Task 8: Finals at 1M and 1B
+
+**Files:**
+- Modify: `configs/phases/final-1m.yaml`, `configs/phases/final-1b.yaml`
+
+- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=pqn-rnn`; 10 finished.
+- [ ] **Step 2: Run** `make queue PHASE=final-1b METHOD=pqn-rnn` (repo 1B config; laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 10 finished.
+- [ ] **Step 3: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method pqn-rnn --budget 1b --phase final-1b`; report in [[2026-10-20-craftax-comparison-and-results]] with the note that the paper does not say whether 16.0% is training or greedy-test episodes.
+
+### Task 9: PQN-RNN metrics logged per update
+
+**Files:**
+- Modify: `src/wut_murl_craftax/training/pqn_rnn.py`
+- Test: `tests/training/test_pqn_rnn.py`
+
+- [ ] **Step 1: Write the failing test**: `train_chunk` returns, all finite: `pqn/td_loss`, `pqn/q_taken_mean`, `pqn/q_max_mean`, `pqn/target_mean`, `pqn/action_gap` (max Q minus second-best Q), `pqn/epsilon`, `pqn/greedy_share` (share of steps that took the greedy action), `pqn/lr`, `pqn/grad_norm`, `pqn/bn_warm` (BatchRenorm past warm-up), `pqn/bn_var_min` (smallest running variance of the input), `rnn/hidden_norm`, `rnn/reset_share`, `reward/extrinsic`, `reward/intrinsic`, and every `hook/*`.
+- [ ] **Step 2: Implement** them; `train/action_entropy` of [[2026-10-20-craftax-evaluation-and-metrics]] is the entropy of the epsilon-greedy behaviour.
+
+### Task 10: Analysis hooks and stop criteria
+
+**Files:**
+- Modify: `configs/methods/pqn-rnn.yaml` (`abort:` block)
+- Test: `tests/orchestration/test_runner.py`
+
+- [ ] **Step 1: Write the failing test**: a fake run with `pqn/q_max_mean` = 400 at update 5 ends `FAILED` (divergence); a `pqn/td_loss` above 10 x its running median for 3 updates is flagged.
+- [ ] **Step 2: Implement** the rules: abort on NaN or inf (one rerun from the last checkpoint, then an issue note); abort when `pqn/q_max_mean` > 300 (no Craftax episode returns more than the 226 achievement points plus the small net health term, [[Craftax scoring and evaluation]]); flags for the TD-loss spike, `pqn/action_gap` < 1e-3 after epsilon reaches its floor (Q-values that do not separate actions), `pqn/bn_var_min` < 1e-6; no early stopping on score.
+- [ ] **Step 3: Hand** to [[2026-10-20-craftax-training-analysis]] the obstacles to watch: exploration failure once epsilon reaches 0.005 (epsilon-greedy is "too simple" per the PQN paper), value failure and numerical failure (bootstrapping with no target network, [[09b Control with approximation, bootstrapping]]), plateau at 1M, skill forgetting, survival failure; compare the dungeon-entry rate with PPO-RNN ([[Craftax floors and progression]]).
+- [ ] **Step 4: Run** `make tests` and `uv run python scripts/check_vault.py`.
+
+## Risks
+
+- Paper Table 4 says `batch_norm`, the repo YAML `layer_norm`; we follow the repo (the code the scoreboard links) and test the literal Table 4 setting in Stage 1.
+- At 1M the BatchRenorm warm-up (1,000 grad steps) covers a quarter of the 3,904 grad steps and the running statistics (momentum 0.999) lag, so early rollouts act on stale input statistics; the LayerNorm-input alternative checks this.
+- purejaxql issue #12 (wrong Q(lambda) seed) affects the MLP scripts, not `pqn_rnn_craftax.py` (it re-seeds before the scan; read at 47af6d7 and confirmed in the issue thread); our target code and its forward-view test make it impossible either way.
+- The 16.0% has no published spread; the band uses a third-party port's sd and may be too wide or too narrow.
+- Epsilon-greedy episodes are the training episodes behind the scoreboard metric; their return depends on epsilon, which ends at 0.005, so the training score is close to greedy only late in training.
+- No published 1M number: the 1M control is anchored to the original code, not to a scoreboard value.
+- The repo plays a random warm-up rollout before training (not counted in its steps); we skip it, a small difference in the initial env states only.

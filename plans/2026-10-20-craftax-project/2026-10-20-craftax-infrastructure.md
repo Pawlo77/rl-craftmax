@@ -20,6 +20,21 @@ Status: draft
 
 **Tech Stack:** JAX 0.11, craftax 1.6.1, flax, optax, MLflow (SQLite store), mlflow-sysmetrics, PyYAML, existing `wut_murl_craftax.orchestration` (runtime, tracking, reproducibility).
 
+```mermaid
+flowchart LR
+  Y["configs/phases/phase.yaml"] --> Q["expand_phase: run names"]
+  Q --> L{"MLflow run with this name?"}
+  L -- "FINISHED" --> S["skip"]
+  L -- "KILLED or RUNNING + checkpoint" --> R["resume from checkpoint"]
+  L -- "none" --> N["start new run"]
+  R --> T["train_chunk loop"]
+  N --> T
+  T -- "every checkpoint_every updates" --> C["checkpoint + metrics to MLflow"]
+  C --> T
+  T -- "Ctrl-C or SIGTERM" --> K["checkpoint, mark KILLED"]
+  T -- "budget reached" --> F["final eval, mark FINISHED"]
+```
+
 ---
 
 ### Task 1: Run identity and queue expansion
