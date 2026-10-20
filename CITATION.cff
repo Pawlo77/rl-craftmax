@@ -1,10 +1,58 @@
 cff-version: 1.2.0
-message: "If you use this work in research, please cite it."
-title: "wut_murl_craftax: Reinforcement learning on Craftax"
+message: "If you use this work in research, please cite it and Craftax (see references)."
+title: "wut_murl_craftax: Textbook reinforcement learning on Craftax"
+abstract: >-
+  Course project for Mathematical Underpinning of Reinforcement Learning (MURL) at the
+  Warsaw University of Technology: three published agents and four textbook-level methods
+  trained on Craftax, compared on score, learning stability, hardware use and in-game
+  behaviour, with distilled decision rules and videos of the learning process.
 type: software
 authors:
   - family-names: "Pozorski"
     given-names: "Paweł"
     email: "pozorski.paul@gmail.com"
+    affiliation: "Warsaw University of Technology"
 license: MIT
 repository-code: "https://github.com/Pawlo77/wut_murl_craftax"
+keywords:
+  - reinforcement learning
+  - Craftax
+  - JAX
+  - exploration
+  - hierarchical reinforcement learning
+references:
+  - type: conference-paper
+    title: "Craftax: A Lightning-Fast Benchmark for Open-Ended Reinforcement Learning"
+    authors:
+      - family-names: "Matthews"
+        given-names: "Michael"
+      - family-names: "Beukman"
+        given-names: "Michael"
+      - family-names: "Ellis"
+        given-names: "Benjamin"
+      - family-names: "Samvelyan"
+        given-names: "Mikayel"
+      - family-names: "Jackson"
+        given-names: "Matthew"
+      - family-names: "Coward"
+        given-names: "Samuel"
+      - family-names: "Foerster"
+        given-names: "Jakob"
+    collection-title: "International Conference on Machine Learning (ICML)"
+    year: 2024
+    url: "https://arxiv.org/abs/2402.16801"
+  - type: software
+    title: "Craftax"
+    authors:
+      - family-names: "Matthews"
+        given-names: "Michael"
+    repository-code: "https://github.com/MichaelTMatthews/Craftax"
+    license: MIT
+    version: "1.6.1"
+  - type: software
+    title: "Craftax_Baselines"
+    authors:
+      - family-names: "Matthews"
+        given-names: "Michael"
+    repository-code: "https://github.com/MichaelTMatthews/Craftax_Baselines"
+    license: MIT

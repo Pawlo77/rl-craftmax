@@ -7,26 +7,60 @@ Learning-process steps: ``eval_rollouts``, ``grid``, ``curves``, ``timeline``,
 ``python -m wut_murl_craftax.visualisation.<step>``.
 """
 
-from .curves import render_curves
-from .cuts import gif, long_cut, short_cut
-from .eval_rollouts import EvalRun, evaluate, load_eval
-from .grid import build_grid
-from .highlights import candidates, detect
-from .montage import sequence
-from .overlay import render_overlay
-from .render import render_kept, render_master
-from .review import build_assets, write_page
-from .rollout import (
-    HeuristicPolicy,
-    NetworkPolicy,
-    Policy,
-    RandomPolicy,
-    Rollout,
-    game_for,
-    play,
-    replay,
-)
-from .timeline import render_timeline
+import importlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .curves import render_curves
+    from .cuts import gif, long_cut, short_cut
+    from .eval_rollouts import EvalRun, evaluate, load_eval
+    from .grid import build_grid
+    from .highlights import candidates, detect
+    from .montage import sequence
+    from .overlay import render_overlay
+    from .render import render_kept, render_master
+    from .review import build_assets, write_page
+    from .rollout import (
+        HeuristicPolicy,
+        NetworkPolicy,
+        Policy,
+        RandomPolicy,
+        Rollout,
+        game_for,
+        play,
+        replay,
+    )
+    from .timeline import render_timeline
+
+_EXPORTS: dict[str, str] = {
+    "EvalRun": "eval_rollouts",
+    "HeuristicPolicy": "rollout",
+    "NetworkPolicy": "rollout",
+    "Policy": "rollout",
+    "RandomPolicy": "rollout",
+    "Rollout": "rollout",
+    "build_assets": "review",
+    "build_grid": "grid",
+    "candidates": "highlights",
+    "detect": "highlights",
+    "evaluate": "eval_rollouts",
+    "game_for": "rollout",
+    "gif": "cuts",
+    "load_eval": "eval_rollouts",
+    "long_cut": "cuts",
+    "play": "rollout",
+    "render_curves": "curves",
+    "render_kept": "render",
+    "render_master": "render",
+    "render_overlay": "overlay",
+    "render_timeline": "timeline",
+    "replay": "rollout",
+    "sequence": "montage",
+    "short_cut": "cuts",
+    "write_page": "review",
+}
+"""Public name -> submodule; imported on first access so ``python -m`` runs of a
+submodule do not import it twice."""
 
 __all__ = [
     "EvalRun",
@@ -55,3 +89,12 @@ __all__ = [
     "short_cut",
     "write_page",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Import a public name from its submodule on first access."""
+    module = _EXPORTS.get(name)
+    if module is None:
+        msg = f"module {__name__!r} has no attribute {name!r}"
+        raise AttributeError(msg)
+    return getattr(importlib.import_module(f".{module}", __name__), name)
