@@ -12,9 +12,27 @@ updated: 2026-10-20
 ---
 # Candidate Algorithms
 
-Algorithms the project could try on Craftax beyond the published agents in [[Existing Implementations]]. Each builds on the PPO or PPO-RNN baseline ([[Craftax Baselines]]) and on textbook ideas from [[Sutton & Barto - Reinforcement learning, an introduction (2nd ed draft)]]. Novelty was checked on 2026-10-20 (method at the end).
+Algorithms the project could try on Craftax beyond the published agents in [[Existing Implementations]], built on textbook ideas from [[Sutton & Barto - Reinforcement learning, an introduction (2nd ed draft)]]. Two groups: PPO add-ons (a bonus, loss, reward wrapper, input or reset strategy on the PPO or PPO-RNN baseline, [[Craftax Baselines]]) and different algorithm families (a learner that is not PPO). Novelty was checked on 2026-10-20 (method at the end).
 
-## Top 5 recommendations
+## Proposed final method set
+
+Four methods: the two best different-family algorithms and the two best PPO add-ons. Controls are our own reruns of PPO-RNN and PQN-RNN at Craftax-1M and Craftax-1B.
+
+| # | Method | Group | Why |
+|---|---|---|---|
+| 1 | [[Count-Based Progress Bonus]] on PPO-RNN and on PQN-RNN | PPO add-on (also run on the value-based learner) | Simplest Top 5 pick; its progress key is reused by methods 3 and 4; the same bonus on both learners tests whether exploration help depends on the learner |
+| 2 | [[Self-Imitation Learning]] on PPO-RNN | PPO add-on | Turns rare one-time achievements into many training examples; independent of method 1 |
+| 3 | [[SMDP Q-Learning over Hand-Defined Skills]] | Hierarchical RL, value-based | Book-level answer to the long crafting chain: about 10 skill decisions instead of thousands of key presses, learned by a plain Q-table |
+| 4 | [[Dyna-Q over a Skill-Level Progress Model]] | Model-based planning | Adds the book's Dyna-Q to method 3 with about 150 lines; a lookup-table model of skill outcomes avoids the screen-prediction problems of the world-model agents |
+
+- Value-based against policy gradient: PPO-RNN against PQN-RNN, each with and without the method-1 bonus.
+- Model-free against planning: method 3 against method 4, same skills, same seeds (planning updates $n = 0$ against $n > 0$).
+- Flat against hierarchical: PQN-RNN against method 3, whose skills are trained by the same PQN-RNN learner.
+- Base against add-on: PPO-RNN against PPO-RNN plus method 1 and PPO-RNN plus method 2.
+- Prior knowledge: methods 3 and 4 use hand-written skills, so they are also reported apart from block A of [[Existing Implementations]], as maskedPPO is.
+- Reserve: [[Actor-Critic with Eligibility Traces]] if the team wants a fifth, knowledge-free algorithm comparison (batch against online updates).
+
+## Top 5 PPO add-ons
 
 For a one-semester student project: a small team building on PPO-RNN. Picks are ranked by promise and by conceptual and implementation simplicity; each is evaluated at both Craftax-1M and Craftax-1B.
 
@@ -64,7 +82,9 @@ For a one-semester student project: a small team building on PPO-RNN. Picks are 
 - Minimal first experiment: PPO-RNN with reset probability $p \in \{0.25, 0.5\}$ to archived cells against $p = 0$, Craftax-1B, 5 seeds, after debugging the archive on Craftax-Classic; evaluate on normal resets only, and also report Craftax-1M.
 - Success: non-zero, repeatable `ENTER_GNOMISH_MINES` success on normal resets and reward above PPO-RNN's 15.3% at 1B (block A); stretch goal: above PPO-GTrXL's 18.3%.
 
-## Candidates
+## PPO add-ons
+
+All rows below keep PPO (or PPO-RNN) as the learner and change one part around it.
 
 | Candidate | One-line idea | Craftax mechanic it exploits | Difficulty | Novelty status |
 |---|---|---|---|---|
@@ -78,6 +98,41 @@ For a one-semester student project: a small team building on PPO-RNN. Picks are 
 | [[Bandit-Tuned Exploration]] | UCB picks the bonus weight per episode | Bonus-weight sensitivity | medium | Not found |
 
 - Common pitfall: `info["Achievements/..."]` is non-zero only on the step an episode ends ([[Craftax Baselines benchmark protocol]]); read `env_state.achievements` for anything that needs unlocks during an episode.
+
+## Different algorithm families
+
+Second pass (2026-10-20): whole algorithm families whose learner is not PPO, at the level of the textbook. Every family evaluated has a note; families already covered by a note in this folder or in [[Existing Implementations]] link that note instead. Difficulty is conceptual and implementation complexity only.
+
+| Candidate | Family | Book chapter | Craftax mechanic exploited | Implementation difficulty | Novelty status |
+|---|---|---|---|---|---|
+| [[SMDP Q-Learning over Hand-Defined Skills]] | Hierarchical RL: SMDP Q-learning table over progress keys, Q(λ) skills | [[14.4 Elevator dispatching]], [[06 Temporal-difference learning]], [[07b Eligibility-trace control and off-policy]] | Tech-tree chains, survival stats, floors; skill end tests from the JAX state | medium | Candidate. Partial overlap: SCALAR (LLM skills, STRIPS planner, PPO), SEA on Crafter (rule-based controller); a learned tabular SMDP top level not found |
+| [[Dyna-Q over a Skill-Level Progress Model]] | Model-based planning: Dyna-Q, Dyna-Q+, prioritized sweeping | [[08a Models, planning, Dyna]], [[04 Dynamic programming]] | Recipe graph learned as a lookup-table model; long chains | medium (on top of the SMDP note) | Candidate. Partial overlap: SEA graph (Crafter), Rule Learner Planner (reward-free, Classic), AHC hand-written graph; Dyna-Q on a learned skill-outcome model not found |
+| [[Actor-Critic with Eligibility Traces]] | Online actor-critic with traces (and its Q(λ) twin) | [[11 Policy approximation (actor-critic)]], [[07a n-step TD and TD(λ)]] | 100,000-step episodes, dense health reward, parallel envs to average per-step updates | medium | Candidate. Not found on Craftax or Crafter |
+| [[Monte Carlo Control]] | Monte Carlo control | [[05a Monte Carlo prediction and control]] | - | low | Rejected: the λ = 1 setting of PQN and GAE; huge variance over 100,000-step episodes |
+| [[Sarsa-Lambda with Function Approximation]] | On-policy TD control | [[07b Eligibility-trace control and off-policy]], [[09b Control with approximation, bootstrapping]] | - | low | Rejected: the family is done on Craftax by PQN-RNN (Q(λ)); a one-line target ablation |
+| [[Synchronous Advantage Actor-Critic (A2C)]] | Batch actor-critic | [[11 Policy approximation (actor-critic)]] | - | low | Rejected: a special case of PPO (one epoch, no clip); not found on Craftax |
+| [[REINFORCE with Baseline]] | Monte Carlo policy gradient | [[11 Policy approximation (actor-critic)]], [[05a Monte Carlo prediction and control]] | - | low | Rejected: variance over long episodes; used inside Simulus's imagination |
+| [[V-trace Off-Policy Actor-Critic]] | Off-policy actor-critic (IMPALA) | [[05b Off-policy Monte Carlo]], [[07b Eligibility-trace control and off-policy]] | - | medium | Rejected: no actor lag in the JAX pipeline, so it equals A2C; IMPALA used on Crafter by SEA |
+| [[Advantage-Weighted Regression]] | Advantage-weighted policy improvement | not in the book | - | medium | Rejected: not textbook; overlaps [[Self-Imitation Learning]] |
+| [[Average-Reward Differential Q-Learning]] | Average-reward control (R-learning) | [[11 Policy approximation (actor-critic)]] | - | low | Rejected: chaining episodes makes dying and re-earning easy achievements profitable |
+| [[Distributional Q-Learning]] | Distributional values (C51, QR-DQN) | not in the book | - | medium | Rejected: not textbook; distributional ensembles on Crafter (Jiang et al. 2023), HL-Gauss values in Simulus |
+| [[Successor Features and GPI over Achievements]] | Successor features, generalized policy improvement | [[03b MDPs, value functions, optimality]] | - | high | Rejected: not textbook; reduces to [[Per-Achievement Value Heads]] plus skills; all-goals learning done by Multitask Preplay and LEO |
+| [[Linear Sarsa-Lambda with Tile Coding]] | Linear function approximation | [[09a Function approximation and linear methods]], [[09b Control with approximation, bootstrapping]] | - | low | Rejected: a linear function of the view cannot navigate; the table part is used in the SMDP note |
+| [[Least-Squares Policy Iteration]] | Least-squares TD (LSTD, LSPI) | [[09a Function approximation and linear methods]], [[04 Dynamic programming]] | - | medium | Rejected: same representation limit; on progress keys it equals the value-iteration variant of the Dyna note |
+| [[MCTS with a Learned Model]] | Decision-time planning (MuZero style) | [[08b Trajectory sampling, search, MCTS]] | - | high | Rejected: beyond student level; not found on Craftax; at the skill level value iteration is exact |
+| [[Option-Critic]] | Learned options | not in the book | - | high | Rejected: not textbook, option collapse; a hobby project on Craftax without numbers |
+| [[PQN-RNN (Gallici 2025)]] | Q(λ) with a network over parallel envs | [[07b Eligibility-trace control and off-policy]] | - | - | Covered: done on Craftax (16.0% at 1B); used as a learner in the final set |
+| [[DLSD (Rajaraman 2025)]], [[PQN-RNN (Gallici 2025)]] | DQN with a replay buffer | [[06 Temporal-difference learning]] | - | - | Covered: DQN on Craftax-Classic (DLSD); replay-buffer PQN on Craftax (same score, slower) |
+| [[Off-Policy Dyna with Imagined Data]], [[Efficient MBRL (Dedieu 2025)]], [[Simulus (Cohen 2025)]], [[DreamerV3 (Hafner 2023)]] | Dyna with a neural world model | [[08a Models, planning, Dyna]] | - | - | Covered: done on Craftax and Craftax-Classic |
+| [[Achievement Skill Options]], [[SCALAR (Zabounidis 2026)]] | Options with a PPO top level | [[03a MDP setting and returns]] | - | - | Covered: done with LLM skills (SCALAR) |
+| [[Rule Learner Planner (dargilboa 2026)]] | Learned rules plus backward-chaining planner | [[08b Trajectory sampling, search, MCTS]] | - | - | Covered: reward-free, Craftax-Classic |
+| [[RePPO (Nishimori 2026)]] | Policy gradient for a retry (max-return) objective | [[11 Policy approximation (actor-critic)]] | - | - | Covered: done on Craftax-1B |
+| [[DLSD (Rajaraman 2025)]] | Unsupervised skill discovery (DIAYN) | not in the book | - | - | Covered: done on Craftax-Classic |
+| [[Sable Inference Search (Chalumeau 2025)]] | Decision-time search with the real simulator | [[08b Trajectory sampling, search, MCTS]] | - | - | Covered: done; not comparable (see Rejected ideas) |
+| Evolution strategies, goal-conditioned RL with hindsight relabelling | ES (OpenES, EGGROLL); HER (LEO) | [[01 Introduction]] (evolutionary search) | - | - | Covered: done on Craftax; see Rejected ideas |
+
+- Each rejected family is done on Craftax, beyond textbook level, or a special case of a method already in the set.
+- The progress key of [[Count-Based Progress Bonus]] is the shared state abstraction of the SMDP and Dyna candidates.
 
 ## Suggested by existing work
 
@@ -111,6 +166,13 @@ Future-work ideas from the sources behind [[Existing Implementations]] (Craftax 
 8. [[Bandit-Tuned Exploration]]: needs a working bonus from step 2.
 9. [[Population-Based Training]]: last, to tune whichever of steps 2-8 works best.
 
+Different-family track, in parallel with steps 2-9:
+
+1. Reproduce PQN-RNN (purejaxql) next to PPO-RNN; it is the value-based control and the skill learner of step 2.
+2. [[SMDP Q-Learning over Hand-Defined Skills]] on Craftax-Classic, then Craftax; reuses the progress key of [[Count-Based Progress Bonus]].
+3. [[Dyna-Q over a Skill-Level Progress Model]]: a switch on top of the SMDP agent.
+4. [[Actor-Critic with Eligibility Traces]]: independent; reserve.
+
 ## Rejected ideas
 
 - Action masking of impossible actions: done on Craftax and Craftax-Classic ("Overcoming Valid Action Suppression", [arXiv 2603.09090](https://arxiv.org/abs/2603.09090)); also in maskedPPO-GTrXL ([repository](https://github.com/Doguhan58/craftax-maskedPPO-reward-shaping), [Craftax PR #52](https://github.com/MichaelTMatthews/Craftax/pull/52)).
@@ -128,6 +190,15 @@ Future-work ideas from the sources behind [[Existing Implementations]] (Craftax 
 - Empowerment maximisation: shown on Crafter ([arXiv 2610.13002](https://arxiv.org/abs/2610.13002)); heavier theory than the project targets.
 
 ## How novelty was checked
+
+Second pass (algorithm families, 2026-10-20):
+
+- Semantic Scholar: the 106 papers citing arXiv 2402.16801, titles and abstracts filtered for option, hierarchical, SMDP, Dyna, planning, MCTS, successor, eligibility, trace, Sarsa, Q-learning, actor-critic, A2C, IMPALA, V-trace, average reward, distributional, least-squares, linear, tabular, abstraction, streaming and skill terms.
+- arXiv API: `all:craftax` (30 papers), `crafter AND (hierarchical OR options OR planning OR tree)`, `crafter AND (successor OR distributional OR eligibility OR sarsa OR q-learning)`.
+- Full text (arXiv HTML) of the closest papers: SEA (2305.00508), H²RL (2603.06565), Streaming Deep RL (2410.14606), Scalable Option Learning (2509.00338).
+- Web searches per family ("Craftax" or "Crafter" plus the method name) and GitHub repository search for "craftax" plus each family name (no hits); GitHub code search stopped by the API rate limit.
+
+First pass (PPO add-ons):
 
 - Semantic Scholar: all 105 indexed papers citing the Craftax paper (arXiv 2402.16801), titles and abstracts, read 2026-10-20; the index may miss recent papers.
 - Full text of the closest papers: Anchor-and-Harvest Curriculum, LEO, SCALAR, ReMax PPO, Adam-Rel, EGGROLL.
