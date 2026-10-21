@@ -908,12 +908,15 @@ class PQNRNNPolicy:
         obs: jax.Array,
         key: jax.Array,
         greedy: bool | jax.Array,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, PolicyCarry]:
         """Argmax actions when ``greedy``, else epsilon-greedy at ``params["eps"]``.
 
         ``params["variables"]`` are the network's. Evaluation episodes end at their
         done, so no reset input is needed.
         """
+        del reward, done  # the previous step's: not an input of this network
         lstm, last = carry
         resets = jnp.zeros((1, obs.shape[0]), bool)
         x = widen(obs, self.net.obs_dim)[None]

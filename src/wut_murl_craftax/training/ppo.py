@@ -614,8 +614,11 @@ class PPOPolicy:
         obs: jax.Array,
         key: jax.Array,
         greedy: bool | jax.Array,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, tuple[()]]:
         """Sampled actions, or the most likely ones when ``greedy``."""
+        del reward, done  # the previous step's: not an input of this network
         logits, _ = policy_value(self.net, params, obs)
         sampled = jax.random.categorical(key, logits)
         return jnp.where(greedy, logits.argmax(-1), sampled), carry

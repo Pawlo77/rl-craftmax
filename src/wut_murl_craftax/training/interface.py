@@ -30,12 +30,21 @@ class Policy(Protocol):
         ...
 
     def step(
-        self, params: Any, carry: Any, obs: jax.Array, key: jax.Array, greedy: bool
+        self,
+        params: Any,
+        carry: Any,
+        obs: jax.Array,
+        key: jax.Array,
+        greedy: bool,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, Any]:
         """Actions for a batch of observations and the next carry.
 
         ``greedy`` takes the most likely action instead of sampling; jit-safe as a
-        static argument or a traced bool.
+        static argument or a traced bool. ``reward`` and ``done`` belong to the env
+        step that produced ``obs`` (zeros at an episode start); evaluation passes
+        them, policies that do not need them ignore them.
         """
         ...
 

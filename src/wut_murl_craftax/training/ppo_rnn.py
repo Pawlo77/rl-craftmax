@@ -628,11 +628,14 @@ class PPORNNPolicy:
         obs: jax.Array,
         key: jax.Array,
         greedy: bool | jax.Array,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, jax.Array]:
         """Sampled actions, or the most likely ones when ``greedy``; the next carry.
 
         Evaluation episodes end at their done, so no reset input is needed.
         """
+        del reward, done  # the previous step's: not an input of this network
         resets = jnp.zeros((1, obs.shape[0]), bool)
         carry, logits, _ = apply_network(self.net, params, carry, obs[None], resets)
         sampled = jax.random.categorical(key, logits[0])

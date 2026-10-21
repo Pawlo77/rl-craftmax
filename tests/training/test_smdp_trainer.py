@@ -43,6 +43,8 @@ from wut_murl_craftax.training.skills import (
     SKILLS,
     SUCCESS,
     TIMEOUT,
+    available,
+    decode_obs,
 )
 from wut_murl_craftax.visualisation import eval_rollouts
 
@@ -411,15 +413,19 @@ def test_the_greedy_table_lists_every_decided_key(entry: Any, tmp_path: Path) ->
 # --- the two-level policy -----------------------------------------------------------
 
 
-def _eval_obs(state: Any) -> jax.Array:
-    """The training observations with the reward column of the eval env."""
-    return state.carry.per_env.obs
+def _ranked(state: Any, **shared: Any) -> Any:
+    """``state`` with a table that ranks the skills the same in every row (no greedy
+    ties) and the given shared fields (e.g. both epsilons)."""
+    sh = state.carry.shared
+    ranks = jnp.arange(NUM_SKILLS, dtype=jnp.float32).at[SKILL_IDS["fight"]].set(99.0)
+    q = jnp.broadcast_to(ranks, sh.q.shape)  # fight first: always available, short
+    carry = state.carry.replace(shared=sh.replace(q=q, **shared))
+    return state.replace(carry=carry)
 
 
 def test_the_policy_carries_the_lstm_and_skill_state(entry: Any) -> None:
     trainer, _, _, (state, _) = entry
     policy, params = trainer.policy(state), trainer.params(state)
-    assert {"variables", "eps", "eps_top", "q", "seen"} <= params.keys()
     carry = policy.init_carry(ENVS)
     lstm, last, skill, steps, prev, started = carry
     assert lstm[0].shape == (ENVS, 16)
@@ -427,8 +433,8 @@ def test_the_policy_carries_the_lstm_and_skill_state(entry: Any) -> None:
     assert skill.shape == steps.shape == started.shape == (ENVS,)
     assert prev.shape == (ENVS, CLASSIC_OBS)
     step = jax.jit(policy.step, static_argnames="greedy")
-    obs = _eval_obs(state)
-    assert obs.shape == (ENVS, CLASSIC_OBS + 1)
+    obs = state.carry.per_env.obs
+    assert obs.shape == (ENVS, CLASSIC_OBS)
     act, carry2 = step(params, carry, obs, jax.random.key(0), greedy=False)
     assert act.shape == (ENVS,)
     assert ((act >= 0) & (act < 17)).all()
@@ -438,28 +444,74 @@ def test_the_policy_carries_the_lstm_and_skill_state(entry: Any) -> None:
     np.testing.assert_array_equal(extras["steps_in_skill"], 0)  # a first decision
     assert bool(carry2[5].all())
     # one more step: the skills keep running and count their steps
-    _, carry3 = step(params, carry2, obs, jax.random.key(1), greedy=True)
+    zero = jnp.zeros(ENVS)
+    _, carry3 = step(params, carry2, obs, jax.random.key(1), True, zero, zero > 0)
     running = np.asarray(carry3[2]) == np.asarray(carry2[2])
     np.testing.assert_array_equal(np.asarray(carry3[3])[running], 1)
-    assert trainer.env_wrapper(state) is smdp.reward_in_obs
+    # a done input starts a new episode: new skills, zero LSTM, no last action
+    done = jnp.ones(ENVS, bool)
+    _, carry4 = step(params, carry3, obs, jax.random.key(2), True, zero, done)
+    np.testing.assert_array_equal(carry4[3], 0)
+    assert trainer.env_wrapper(state) is None
 
 
 def test_the_policy_picks_skills_from_the_checkpoint_table(entry: Any) -> None:
     """Greedy: the best available skill of the row; eps_top 1: any available one."""
     trainer, _, _, (state, _) = entry
-    policy, params = trainer.policy(state), trainer.params(state)
+    policy = trainer.policy(state)
     fight = SKILL_IDS["fight"]
-    q = jnp.full_like(params["q"], -1.0).at[:, fight].set(5.0)
+    sh = state.carry.shared
+    q = jnp.full_like(sh.q, -1.0).at[:, fight].set(5.0)
+    best = trainer.params(
+        state.replace(carry=state.carry.replace(shared=sh.replace(q=q)))
+    )
     step = jax.jit(policy.step, static_argnames="greedy")
-    obs, carry = _eval_obs(state), policy.init_carry(ENVS)
-    _, c = step(params | {"q": q}, carry, obs, jax.random.key(0), greedy=True)
+    obs, carry = state.carry.per_env.obs, policy.init_carry(ENVS)
+    _, c = step(best, carry, obs, jax.random.key(0), greedy=True)
     np.testing.assert_array_equal(c[2], fight)
-    explore = params | {"q": q, "eps_top": 1.0}
+    explore = best | {"eps_top": 1.0}
     picks = [
         step(explore, carry, obs, jax.random.key(k), greedy=False)[1][2]
         for k in range(4)
     ]
     assert len(np.unique(np.concatenate(picks))) > 1
+
+
+def test_evaluation_acts_as_the_training_rollout(methods_dir: Path) -> None:
+    """Greedy on both levels, a tie-free table and a tiny alpha (picks keep their
+    order while the rollout updates the table): fed each step's observation and the
+    previous step's reward and done, the policy repeats 24 rollout steps."""
+    trainer = METHODS[NAME]
+    cfg = _config(methods_dir, alpha=1e-6, timeout_mult=0.05)  # fight: 15 steps
+    state = trainer.init(cfg, jax.random.key(3))
+    state = _ranked(state, eps=jnp.float32(0.0), eps_top=jnp.float32(0.0))
+    pe = state.carry.per_env
+    view = jax.vmap(decode_obs)(pe.obs)
+    avail = jax.vmap(lambda v: available(v, "recipe"))(view)
+    first = jnp.argmax(
+        jnp.where(avail, state.carry.shared.q[pe.skill.k_start], -jnp.inf), -1
+    )
+    skill = pe.skill.replace(skill=first.astype(jnp.int32))
+    state = state.replace(carry=state.carry.replace(per_env=pe.replace(skill=skill)))
+    s = smdp._setup(state.cfg)
+    variables = smdp.variables_of(state.train_state)
+    start = (state.start_key, state.start_avail)
+    carry, outs = jax.tree.map(jnp.copy, state.carry), []
+    for _ in range(3):
+        carry, out, _, _, _ = s.collect(carry, variables, state.diamond, start)
+        outs.append(out)
+    out = {k: jnp.concatenate([o[k] for o in outs]) for k in outs[0]}
+    policy, params = trainer.policy(state), trainer.params(state)
+    step = jax.jit(policy.step, static_argnames="greedy")
+    c, r, d = policy.init_carry(ENVS), jnp.zeros(ENVS), jnp.zeros(ENVS, bool)
+    for t in range(3 * NUM_STEPS):
+        obs = out["obs"][t, :, :CLASSIC_OBS]
+        act, c = step(params, c, obs, jax.random.key(t), True, r, d)
+        np.testing.assert_array_equal(act, out["action"][t], err_msg=f"step {t}")
+        np.testing.assert_array_equal(c[2], out["skill"][t], err_msg=f"step {t}")
+        np.testing.assert_array_equal(c[3], out["steps_in_skill"][t])
+        r, d = out["native_reward"][t], out["episode_done"][t]
+    assert int(out["done"].sum()) > 0  # skills ended and were chosen anew
 
 
 # --- through the runner ---------------------------------------------------------------

@@ -32,6 +32,8 @@ class RandomPolicy:
         obs: jax.Array,
         key: jax.Array,
         greedy: bool | jax.Array,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, tuple[()]]:
         sampled = jax.random.randint(key, obs.shape[:1], 0, N_ACTIONS)
         return jnp.where(greedy, 0, sampled), carry

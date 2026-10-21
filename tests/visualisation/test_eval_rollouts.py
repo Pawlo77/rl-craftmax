@@ -24,6 +24,7 @@ from wut_murl_craftax.orchestration.runtime import device_roles
 from wut_murl_craftax.training.checkpoints import save_checkpoint
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.ppo import PPOPolicy
+from wut_murl_craftax.training.records import achievement_weights
 from wut_murl_craftax.visualisation.eval_rollouts import (
     EVAL_SEEDS as PRODUCTION_SEEDS,
 )
@@ -54,7 +55,11 @@ class _CountingPolicy:
     """A recurrent stand-in: the carry counts steps, the action is the count mod 5."""
 
     def init_carry(self, n: int) -> dict[str, jax.Array]:
-        return {"t": jnp.zeros(n, jnp.int32)}
+        return {
+            "t": jnp.zeros(n, jnp.int32),
+            "r": jnp.zeros(n),
+            "d": jnp.zeros(n, bool),
+        }
 
     def step(
         self,
@@ -63,17 +68,32 @@ class _CountingPolicy:
         obs: jax.Array,
         key: jax.Array,
         greedy: bool | jax.Array,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, dict[str, jax.Array]]:
+        """Also keeps the previous step's reward and done that evaluation passes."""
         del obs, key, greedy
-        return (carry["t"] + params["shift"]) % MOVES, {"t": carry["t"] + 1}
+        assert reward is not None
+        assert done is not None
+        nxt = {"t": carry["t"] + 1, "r": reward, "d": done}
+        return (carry["t"] + params["shift"]) % MOVES, nxt
 
     def extras(self, carry: Mapping[str, jax.Array]) -> dict[str, jax.Array]:
         """A two-level policy's running skill and skill step, read from the carry."""
         return {"skill": carry["t"] // 4, "skill_step": carry["t"] % 4}
 
 
+class _InputsPolicy(_CountingPolicy):
+    """`_CountingPolicy` whose extras are the reward and done it was handed."""
+
+    def extras(self, carry: Mapping[str, jax.Array]) -> dict[str, jax.Array]:
+        return {"reward": carry["r"], "done": carry["d"]}
+
+
 class _CountingTrainer:
     """The registry entry of `_CountingPolicy`; its params are one shift."""
+
+    policy_class: type[_CountingPolicy] = _CountingPolicy
 
     def init(self, config: Mapping[str, Any], key: jax.Array) -> dict[str, jax.Array]:
         del config, key
@@ -83,7 +103,7 @@ class _CountingTrainer:
         return state
 
     def policy(self, state: dict[str, jax.Array]) -> _CountingPolicy:
-        return _CountingPolicy()
+        return self.policy_class()
 
     def env_wrapper(self, state: dict[str, jax.Array]) -> None:
         return None
@@ -193,6 +213,26 @@ def test_load_opens_any_registry_entry_and_threads_its_carry(
     assert ppo.method == "ppo"
     assert isinstance(ppo.policy, PPOPolicy)
     assert str(load_eval(ppo.dir, 0)["method"]) == "ppo"
+
+
+def test_each_step_gets_the_reward_and_done_of_the_step_before(
+    counting_run: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zeros at the episode start, then the transition that produced ``obs``."""
+    inputs = _CountingTrainer()
+    inputs.policy_class = _InputsPolicy
+    monkeypatch.setitem(METHODS, "counting", inputs)
+    run = EvalRun.load(counting_run)
+    out = rollout_seeds(run, run.params(0), EVAL_SEEDS, greedy=True)
+    assert out is not None
+    unlocks = out["events/unlocked"] @ achievement_weights(ENV)
+    rewards = unlocks + 0.1 * out["events/health_delta"]
+    for i, n in enumerate(out["length"]):
+        np.testing.assert_allclose(out["extras/reward"][i, 0], 0.0)
+        np.testing.assert_allclose(
+            out["extras/reward"][i, 1:n], rewards[i, : n - 1], atol=1e-5
+        )
+        assert not out["extras/done"][i, :n].any()
 
 
 def test_the_scan_stops_after_the_chunk_where_the_last_episode_ended() -> None:

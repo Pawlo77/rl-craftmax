@@ -199,6 +199,7 @@ class Trainer(Protocol):
 
         Evaluation passes the abstract state of ``jax.eval_shape(init)``: read its
         structure and static fields only; acting reads values from the params alone.
+        ``Policy.step`` also gets the previous env step's ``reward`` and ``done``.
         """
         ...
 

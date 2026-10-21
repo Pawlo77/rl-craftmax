@@ -6,8 +6,8 @@ running skill's discounted return and ``gamma^tau``; `smdp_update` is the semi-M
 backup, one mean TD step per (key, skill) pair ended in the same env step; `mc_init`,
 `mc_push`, `mc_update` are the Monte Carlo ablation; `rollout_step` is one env step of
 every env. `SMDPTrainer` (registry ``smdp-skills``) trains the skill network with
-`pqn_rnn.learn` and acts through `SMDPPolicy`, which reads the reward from
-`reward_in_obs`. Imported after ``configure_runtime`` (Craftax via ``pqn_rnn``).
+`pqn_rnn.learn` and acts through `SMDPPolicy`, whose skill tests read the reward that
+evaluation hands `Policy.step`. Imported after ``configure_runtime`` (via ``pqn_rnn``).
 Design: [[SMDP Q-Learning over Hand-Defined Skills design]].
 """
 
@@ -49,8 +49,6 @@ from .pqn_rnn import (
 from .progress_key import CLASSIC_FIELDS, FIELDS, Granularity, hash_fields
 from .records import LOSS_COLUMNS, achievement_names
 from .skills import (
-    CLASSIC_OBS,
-    CRAFTAX_OBS,
     EPISODE_END,
     FAILURE,
     FLOOR_CHANGE,
@@ -71,7 +69,6 @@ from .skills import (
     step_limit,
     test_agreement,
 )
-from .wrappers import GymnaxWrapper
 
 if TYPE_CHECKING:  # the runner imports mlflow; tests of this module do not need it
     from ..orchestration.runner import ChunkMetrics
@@ -377,7 +374,6 @@ class PerEnv(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Leaves with the env count as leading dim (split over an env mesh)."""
 
     obs: jax.Array
-    """As the env returns it; `reward_in_obs` appends a reward column."""
     env_state: Any
     h: Carry
     """LSTM carry, kept across skill ends, reset after an episode end."""
@@ -424,9 +420,9 @@ class RolloutCarry(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax 
     cfg: SMDPConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
 
 
-def _views(obs: jax.Array, width: int) -> ObsView:
-    """Views of a batch of observations, without a reward column past ``width``."""
-    return jax.vmap(decode_obs)(obs[..., :width])
+def _views(obs: jax.Array) -> ObsView:
+    """Views of a batch of observations."""
+    return jax.vmap(decode_obs)(obs)
 
 
 def _keys(cfg: SMDPConfig, v: ObsView) -> tuple[jax.Array, jax.Array, jax.Array]:
@@ -473,14 +469,14 @@ def init_rollout(
     q = init_table(cfg.log2_rows, NUM_SKILLS, cfg.q_init, envs=envs)
     key, k_reset, k_pick = jax.random.split(key, 3)
     obs, st = env.reset(k_reset, params)
-    width = obs.shape[-1] - (obs.shape[-1] in (CRAFTAX_OBS + 1, CLASSIC_OBS + 1))
-    if network.obs_dim != width + EXTRA_DIM:
+    if network.obs_dim != obs.shape[-1] + EXTRA_DIM:
         msg = (
             f"the skill network takes {network.obs_dim} inputs, not the observation "
-            f"({width}) plus EXTRA_DIM ({EXTRA_DIM}): set extra_obs_dim={EXTRA_DIM}"
+            f"({obs.shape[-1]}) plus EXTRA_DIM ({EXTRA_DIM}): set "
+            f"extra_obs_dim={EXTRA_DIM}"
         )
         raise ValueError(msg)
-    k, avail, f = _keys(cfg, _views(obs, width))
+    k, avail, f = _keys(cfg, _views(obs))
     f0, f1 = jnp.zeros(envs, jnp.float32), jnp.ones(envs, jnp.float32)
     i0 = jnp.zeros(envs, jnp.int32)
     skill = SkillState(_pick(q, k, avail, jnp.float32(eps_top), k_pick), k, f0, f1, i0)
@@ -618,17 +614,16 @@ def rollout_step(
     """
     cfg, pe, sh = carry.cfg, carry.per_env, carry.shared
     params = env.default_params if env_params is None else env_params
-    width = network.obs_dim - EXTRA_DIM
     key, k_act, k_env, k_top = jax.random.split(sh.key, 4)
-    sk, view = pe.skill, _views(pe.obs, width)
+    sk, view = pe.skill, _views(pe.obs)
     la = jnp.where(pe.last_done, NO_ACTION, pe.last_act)
     h = _fresh(pe.h, pe.last_done)
     x, act, h2, prim, q_max = _skill_actions(
-        network, sh.variables, h, pe.obs[..., :width], (sk.skill, sk.steps), la,
+        network, sh.variables, h, pe.obs, (sk.skill, sk.steps), la,
         view, sh.eps, k_act, cfg.timeout_mult,
     )  # fmt: skip
     obs2, st2, r, done, info = env.step(k_env, pe.env_state, act, params)
-    view2 = _views(obs2, width)
+    view2 = _views(obs2)
     r_top, ms = r, sh.method_state
     if intrinsic_reward_fn is not None:
         r_plus, ms = intrinsic_reward_fn(ms, pe.env_state, st2, obs2, done, sh.t)
@@ -700,36 +695,6 @@ def to_traj(out: dict[str, jax.Array]) -> tuple[Traj, jax.Array]:
         {"last_actions": out["last_action"], "episode_dones": out["episode_done"]},
     )
     return traj, out["loss_mask"]
-
-
-class RewardInObs(GymnaxWrapper):
-    """Appends the step's reward to the observation, 0 after a reset.
-
-    The two-level `Policy.step` sees only observations, yet the skill tests read the
-    reward: evaluation hands it over in this column, and training runs the same env
-    chain. ``observation_space`` stays the bare env's: the network never sees it.
-    """
-
-    def reset(self, key: jax.Array, params: Any = None) -> tuple[jax.Array, Any]:
-        """Reset the env; the reward column is 0."""
-        obs, state = self._env.reset(key, params)
-        return _with_reward(obs, jnp.zeros(obs.shape[:-1])), state
-
-    def step(
-        self, key: jax.Array, state: Any, action: jax.Array, params: Any = None
-    ) -> Any:
-        """Step the env; the reward column is the step's reward."""
-        obs, state, r, done, info = self._env.step(key, state, action, params)
-        return _with_reward(obs, r), state, r, done, info
-
-
-def _with_reward(obs: jax.Array, r: jax.Array) -> jax.Array:
-    return jnp.concatenate([obs, jnp.asarray(r, obs.dtype)[..., None]], -1)
-
-
-def reward_in_obs(env: Any, params: Any) -> tuple[Any, Any]:
-    """The method's ``env_wrapper_fn``: `RewardInObs` around the bare env."""
-    return RewardInObs(env), params
 
 
 TOP_KEYS = frozenset({f.name for f in fields(SMDPConfig)} - {"gamma_top"}) | {
@@ -830,7 +795,7 @@ def _setup(cfg: SMDPTrainConfig) -> _Setup:
     roles, mesh, shared_at = env_placement(cfg.net.envs)
     if not SHARD_ROLLOUT:
         mesh, shared_at = None, roles.actor
-    env, env_params = make_train_env(cfg.net, reward_in_obs)
+    env, env_params = make_train_env(cfg.net)
     width = env.observation_space(env_params).shape[0]
     net = build_network(cfg.net, env.action_space(env_params).n, width)
     names = achievement_names(cfg.net.env)
@@ -936,7 +901,7 @@ def init_state(cfg: SMDPTrainConfig, key: jax.Array) -> SMDPState:
             cfg.top, s.env, s.net, None, k_roll, env_params=s.env_params,
             eps=eps0, eps_top=top0,
         )  # fmt: skip
-        first = decode_obs(carry.per_env.obs[0, : s.net.obs_dim - EXTRA_DIM])
+        first = decode_obs(carry.per_env.obs[0])
         found = jnp.array([0, -1, -1], jnp.int32)
     at = s.shared_at
     return SMDPState(
@@ -1128,7 +1093,7 @@ def write_greedy_table(run_dir: Path, update: int, params: Mapping[str, Any]) ->
 
 PolicyCarry = tuple[Carry, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
 """Per env: LSTM carry, last action, running skill, its steps, the previous
-observation (without the reward column) and whether a skill was chosen yet."""
+observation and whether a skill was chosen yet."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1138,16 +1103,11 @@ class SMDPPolicy:
     net: RNNQNetwork
     cfg: SMDPConfig
 
-    @property
-    def width(self) -> int:
-        """Observation features before the reward column."""
-        return self.net.obs_dim - EXTRA_DIM
-
     def init_carry(self, n: int) -> PolicyCarry:
         """Zero LSTM carry, no last action and no skill yet for ``n`` envs."""
         zero = jnp.zeros(n, jnp.int32)
         last = jnp.full(n, NO_ACTION, jnp.int32)
-        prev = jnp.zeros((n, self.width))
+        prev = jnp.zeros((n, self.net.obs_dim - EXTRA_DIM))
         return self.net.init_carry(n), last, zero, zero, prev, jnp.zeros(n, bool)
 
     def step(
@@ -1157,43 +1117,42 @@ class SMDPPolicy:
         obs: jax.Array,
         key: jax.Array,
         greedy: bool | jax.Array,
+        reward: jax.Array | None = None,
+        done: jax.Array | None = None,
     ) -> tuple[jax.Array, PolicyCarry]:
         """End the last step's skill if its test says so, choose anew, then act.
 
-        ``obs`` carries the last reward in its final column (`reward_in_obs`). Greedy
-        acts at ε 0 on both levels (greedy skill ties stay random), else at the
-        checkpoint's ``eps_top`` and ``eps``. Evaluation episodes end at their done.
-
-        Raises:
-            ValueError: If ``obs`` has no reward column.
+        ``reward`` and ``done`` (default 0) are those of the step that produced
+        ``obs``, as in the training rollout: the skill tests read the reward, and a
+        done starts a new episode (fresh skill, LSTM and last action). Greedy acts at
+        ε 0 on both levels (greedy skill ties stay random), else at the checkpoint's
+        ``eps_top`` and ``eps``.
         """
         lstm, last, skill, steps, prev, started = carry
-        if obs.shape[-1] != self.width + 1:
-            msg = "the two-level policy needs the reward column of `reward_in_obs`"
-            raise ValueError(msg)
-        raw, r = obs[..., : self.width], obs[..., self.width]
-        cfg, view2 = self.cfg, jax.vmap(decode_obs)(raw)
+        n = obs.shape[0]
+        r = jnp.zeros(n) if reward is None else reward
+        new = ~started if done is None else ~started | done
+        cfg, view2 = self.cfg, _views(obs)
 
         def end(k: Any, a: Any, act: Any, r: Any, b: Any, n: Any) -> Any:
             return skill_step(
                 k, a, act, r, b, False, n, cfg.timeout_mult, granularity=cfg.granularity
             )
 
-        _, ended, _ = jax.vmap(end)(
-            skill, jax.vmap(decode_obs)(prev), last, r, view2, steps
-        )
-        ended = ended | ~started
+        _, ended = jax.vmap(end)(skill, _views(prev), last, r, view2, steps)[:2]
+        ended = ended | new
         k_top, k_act = jax.random.split(key)
         k, avail, _ = _keys(cfg, view2)
         top = jnp.where(greedy, 0.0, params["eps_top"])
         skill = jnp.where(ended, _pick(params["q"], k, avail, top, k_top), skill)
         steps = jnp.where(ended, 0, steps + 1)
+        last = jnp.where(new, NO_ACTION, last)
         eps = jnp.where(greedy, 0.0, params["eps"])
         _, act, lstm, _, _ = _skill_actions(
-            self.net, params["variables"], lstm, raw, (skill, steps), last, view2,
-            eps, k_act, cfg.timeout_mult,
+            self.net, params["variables"], _fresh(lstm, new), obs, (skill, steps),
+            last, view2, eps, k_act, cfg.timeout_mult,
         )  # fmt: skip
-        return act, (lstm, act, skill, steps, raw, jnp.ones_like(started))
+        return act, (lstm, act, skill, steps, obs, jnp.ones_like(started))
 
     def extras(self, carry: PolicyCarry) -> dict[str, jax.Array]:
         """Per step for the eval file: the running skill and its step count."""
@@ -1251,9 +1210,5 @@ class SMDPTrainer:
         """The two-level policy of this config (reads no state values)."""
         return SMDPPolicy(_setup(state.cfg).net, state.cfg.top)
 
-    def env_wrapper(  # protocol
-        self, state: SMDPState
-    ) -> Callable[[Any, Any], tuple[Any, Any]]:
-        """`reward_in_obs`: evaluation hands the policy the reward the same way."""
-        del state  # one wrapper for every config
-        return reward_in_obs
+    def env_wrapper(self, state: SMDPState) -> None:  # protocol
+        """No env wrapper: the rollout is the method's own."""

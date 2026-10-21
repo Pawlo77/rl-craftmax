@@ -1,6 +1,7 @@
 """Fixed-seed evaluation of checkpoints, stored as replayable episodes.
 
 `evaluate` plays `EVAL_SEEDS` with a registry method's ``Policy`` (stochastic or greedy)
+(each step handed the previous step's reward and done, zeros at the start)
 in jitted chunks of `CHUNK_STEPS` until every episode has ended and writes
 ``eval/<mode>/<update>.npz``: ``seeds``, ``actions`` (-1 after the end), ``length``,
 ``method``, ``events/<StepEvents field>`` per step and the policy's ``extras/<name>``.
@@ -176,13 +177,14 @@ class EvalRun:
 
     @functools.cached_property
     def _reset(self) -> Callable[[jax.Array], Any]:
-        """Jitted ``seeds -> (obs, state, policy carry, done)``."""
+        """Jitted ``seeds -> (obs, state, policy carry, done, reward)``."""
 
         def reset(seeds: jax.Array) -> Any:
             k_reset = jax.vmap(lambda s: keys(s)[0])(seeds)
             obs, st = jax.vmap(self.env.reset, (0, None))(k_reset, self.env_params)
             n = seeds.shape[0]
-            return obs, st, self.policy.init_carry(n), jnp.zeros(n, bool)
+            carry = self.policy.init_carry(n)
+            return obs, st, carry, jnp.zeros(n, bool), jnp.zeros(n, jnp.float32)
 
         return cast(Callable[[jax.Array], Any], jax.jit(reset))
 
@@ -202,12 +204,16 @@ class EvalRun:
             k_act = jax.random.fold_in(k_reset, 2)
 
             def step(c: Any, t: jax.Array) -> tuple[Any, dict[str, Any]]:
-                obs, st, pc, done = c
+                obs, st, pc, done, r = c  # r, done: the step that produced obs
                 one = jax.tree.map(lambda x: x[None], pc)
                 k = jax.random.fold_in(k_act, t)
-                a, pc2 = self.policy.step(params, one, obs[None], k, greedy)
+                a, pc2 = self.policy.step(
+                    params, one, obs[None], k, greedy, r[None], done[None]
+                )
                 a, pc2 = a[0], jax.tree.map(lambda x: x[0], pc2)
-                obs2, st2, _, d, ev = self.env_step(st, a, jax.random.fold_in(k_env, t))
+                obs2, st2, r2, d, ev = self.env_step(
+                    st, a, jax.random.fold_in(k_env, t)
+                )
                 live = ~done
                 pad = jax.tree.map(jnp.zeros_like, ev)
                 pad = pad.replace(
@@ -219,7 +225,8 @@ class EvalRun:
                     rec["extras"] = jax.tree.map(
                         lambda x: jnp.where(live, x, 0), extras(pc2)
                     )
-                return (*_where(live, (obs2, st2, pc2), (obs, st, pc)), done | d), rec
+                kept = _where(live, (obs2, st2, pc2), (obs, st, pc))
+                return (*kept, done | d, jnp.where(live, r2, r)), rec
 
             return jax.lax.scan(step, c, t0 + jnp.arange(n))
 
