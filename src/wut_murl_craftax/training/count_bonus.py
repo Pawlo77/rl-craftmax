@@ -346,5 +346,5 @@ def hooks(cfg: CountBonusConfig, base: Any) -> HookFields:
     )
 
 
-METHOD = HookMethod(CountBonusConfig, hooks)
+METHOD = HookMethod(CountBonusConfig, hooks, write_top_keys)
 """The method both registry entries build their trainers with."""

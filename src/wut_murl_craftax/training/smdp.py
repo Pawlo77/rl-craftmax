@@ -1382,3 +1382,9 @@ class SMDPTrainer:
 
     def env_wrapper(self, state: SMDPState) -> None:  # protocol
         """No env wrapper: the rollout is the method's own."""
+
+    def checkpoint_artifacts(
+        self, state: SMDPState, run_dir: Path, update: int
+    ) -> None:
+        """The greedy table of the checkpoint, in ``eval/`` (`write_greedy_table`)."""
+        write_greedy_table(run_dir, update, self.params(state), state.cfg.top.q_init)

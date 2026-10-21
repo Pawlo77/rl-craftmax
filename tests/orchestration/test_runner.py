@@ -1207,3 +1207,71 @@ def test_a_queue_under_nohup_keeps_ignoring_hangups(store: Store) -> None:
     queue_process.communicate(timeout=120)
     assert queue_process.returncode == 128 + signal.SIGINT
     assert store.runs()[slow.name].info.status == "KILLED"
+
+
+# --- checkpoint artifacts -------------------------------------------------------
+
+
+class ArtifactTrainer(FakeTrainer):
+    """Records `checkpoint_artifacts` calls and writes a file; fails at ``fail_at``."""
+
+    def __init__(self, fail_at: int | None = None, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.fail_at = fail_at
+        self.artifact_calls: list[tuple[int, Path, int]] = []
+
+    def checkpoint_artifacts(self, state: Any, run_dir: Path, update: int) -> None:
+        # the runner passes the live state: the method counter is one step per update
+        self.artifact_calls.append((update, run_dir, int(state["method"][0])))
+        if update == self.fail_at:
+            msg = "disk full"
+            raise OSError(msg)
+        (run_dir / "eval").mkdir(exist_ok=True)
+        (run_dir / "eval" / f"art_{update}.txt").write_text(str(update))
+
+
+def test_checkpoint_artifacts_are_written_once_per_checkpoint_after_its_save(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    trainer = ArtifactTrainer()
+    store.run([spec], trainer)
+    run_dir = store.run_dir(spec.name)
+    # updates 1, 2, 3 of the 3-update run; the initial checkpoint (0) has none
+    assert [(u, d, n) for u, d, n in trainer.artifact_calls] == [
+        (1, run_dir, 1),
+        (2, run_dir, 2),
+        (3, run_dir, 3),
+    ]
+    assert sorted(p.name for p in (run_dir / "eval").glob("art_*")) == [
+        "art_1.txt",
+        "art_2.txt",
+        "art_3.txt",
+    ]
+    run = store.runs()[spec.name]
+    assert "warn/artifacts" not in run.data.tags
+    assert run.info.status == "FINISHED"
+
+
+def test_a_failing_checkpoint_artifact_warns_and_the_run_finishes(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    trainer = ArtifactTrainer(fail_at=2)
+    store.run([spec], trainer)
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    assert run.data.tags["warn/artifacts"] == "update 2: OSError: disk full"
+    assert [u for u, _, _ in trainer.artifact_calls] == [1, 2, 3]  # training went on
+    assert "fail/error" not in run.data.tags
+    assert "checkpoint artifacts of update 2 failed" in caplog.text
+    assert [e["update"] for e in load_index(store.run_dir(spec.name))] == [0, 1, 2, 3]
+    assert math.isfinite(run.data.metrics["final_score"])
+
+
+def test_a_trainer_without_checkpoint_artifacts_is_unaffected(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    assert "warn/artifacts" not in run.data.tags

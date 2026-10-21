@@ -24,7 +24,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 1010 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 240 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 1019 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 1044 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 163 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 223 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 249 | [[orchestration]] |
@@ -33,17 +33,17 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 199 | [[training]] |
 | [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. | 350 |  |
-| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. | 922 |  |
-| [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 374 | [[training]] |
+| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. | 929 |  |
+| [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 378 | [[training]] |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 68 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 726 | [[training]] |
-| [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 709 | [[training]] |
-| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 998 | [[training]] |
+| [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 717 | [[training]] |
+| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 1006 | [[training]] |
 | [[src/wut_murl_craftax/training/progress_key.py]] | Progress key of a Craftax state: bucketed integer fields and their hash. | 138 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 186 | [[training]] |
 | [[src/wut_murl_craftax/training/sil.py]] | Self-Imitation Learning: a per-env staging ring and a buffer of unlock windows. | 631 |  |
 | [[src/wut_murl_craftax/training/skills.py]] | Skill library of the skill methods: observation decoder, key, masks, skill ends. | 569 |  |
-| [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. | 1384 |  |
+| [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. | 1390 |  |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 | [[training]] |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 113 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |

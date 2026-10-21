@@ -26,6 +26,7 @@ the control's graph stays as it is. `make_trainer` gives the registry's `Trainer
 import functools
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import flax.linen as nn
@@ -696,6 +697,13 @@ class PPORNNTrainer:
     ) -> Callable[[Any, Any], tuple[Any, Any]] | None:
         """The config's ``env_wrapper_fn``; evaluation wraps its env the same way."""
         return state.cfg.env_wrapper_fn
+
+    def checkpoint_artifacts(
+        self, state: PPORNNState, run_dir: Path, update: int
+    ) -> None:
+        """The method's per-checkpoint files (`HookMethod.artifacts`), if it has any."""
+        if self.method is not None and self.method.artifacts is not None:
+            self.method.artifacts(run_dir, update, state.method_state)
 
 
 def make_trainer(

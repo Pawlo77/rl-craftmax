@@ -24,6 +24,7 @@ import dataclasses
 import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 
 import flax.linen as nn
@@ -985,6 +986,13 @@ class PQNRNNTrainer:
     ) -> Callable[[Any, Any], tuple[Any, Any]] | None:
         """The config's ``env_wrapper_fn``; evaluation wraps its env the same way."""
         return state.cfg.env_wrapper_fn
+
+    def checkpoint_artifacts(
+        self, state: PQNRNNState, run_dir: Path, update: int
+    ) -> None:
+        """The method's per-checkpoint files (`HookMethod.artifacts`), if it has any."""
+        if self.method is not None and self.method.artifacts is not None:
+            self.method.artifacts(run_dir, update, state.method_state)
 
 
 def make_trainer(

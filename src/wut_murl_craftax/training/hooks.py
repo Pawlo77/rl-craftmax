@@ -15,6 +15,7 @@ import dataclasses
 import functools
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import jax
@@ -281,6 +282,9 @@ class HookMethod[C]:
 
     config: type[C]
     hooks: Callable[[C, Any], HookFields]
+    artifacts: Callable[[Path, int, Any], Any] | None = None
+    """``(run_dir, update, method_state)``: writes the method's per-checkpoint files;
+    the trainers call it from their ``checkpoint_artifacts``."""
 
     @property
     def keys(self) -> frozenset[str]:

@@ -104,6 +104,8 @@ MIN_FINAL_EPISODES = 100
 """Episodes the final-score window is widened backwards to."""
 TAG_CKPT_MISSING = "ckpt/missing"
 """Run tag: comma-joined updates whose checkpoint file is lost and cannot be rebuilt."""
+TAG_WARN_ARTIFACTS = "warn/artifacts"
+"""Run tag: the latest `Trainer.checkpoint_artifacts` failure (update, error)."""
 TAG_FAIL_ERROR = "fail/error"
 """Run tag: the error of the last failed call (type and message, truncated)."""
 TAG_CODE_COMMIT = "code/commit"
@@ -170,6 +172,15 @@ class Trainer(Protocol):
     A trainer may set the attribute ``loss_columns: tuple[str, ...]``, the
     `LOSS_COLUMNS` it fills (default: all; PQN-RNN leaves the PPO-only ones NaN). The
     runner logs and abort-checks only those; ``metrics.npz`` keeps the full layout.
+
+    A trainer may also define ``checkpoint_artifacts(state, run_dir, update) -> None``:
+    the runner calls it in the training process right after each ``ckpt/`` save with
+    the live state, the run directory and the checkpoint's update (also for the final
+    one), and the method writes its per-checkpoint files there (by convention under
+    ``eval/``; writers replace the rows of an update, so a repeated call is safe). It
+    is not called for the initial checkpoint, for a checkpoint rebuilt from ``state/``
+    nor for one that exists already. It never fails a run: an exception is logged and
+    tagged `TAG_WARN_ARTIFACTS`.
     """
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
@@ -535,6 +546,19 @@ def _add_updates(
         )
 
 
+def _checkpoint_artifacts(trainer: Trainer, state: Any, out: Path, update: int) -> None:
+    """Call the trainer's optional `Trainer.checkpoint_artifacts`; warn, never fail."""
+    write = getattr(trainer, "checkpoint_artifacts", None)
+    if write is None:
+        return
+    try:
+        write(state, out, update)
+    except Exception as error:
+        logger.warning("checkpoint artifacts of update %d failed: %r", update, error)
+        text = f"update {update}: {type(error).__name__}: {error}"
+        mlflow.set_tag(TAG_WARN_ARTIFACTS, text[:500])
+
+
 def _train(
     trainer: Trainer,
     spec: RunSpec,
@@ -599,6 +623,7 @@ def _train(
         _tag_flags(flag_hits(rules, extras.series, n_updates), flagged)
         if update in ckpts and update not in written:
             save_checkpoint(out, update, update * spu, wall, trainer.params(state))
+            _checkpoint_artifacts(trainer, state, out, update)
         extras.save()
         save_state(out, _snapshot(fresh, state, update, wall, log))
         log.flush()

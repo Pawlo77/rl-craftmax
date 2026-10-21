@@ -920,3 +920,10 @@ class DynaTrainer:
 
     def env_wrapper(self, state: DynaState) -> None:  # protocol
         """No env wrapper: the rollout is the method's own."""
+
+    def checkpoint_artifacts(
+        self, state: DynaState, run_dir: Path, update: int
+    ) -> None:
+        """The skill graph and the greedy table of the checkpoint, in ``eval/``."""
+        write_model_graph(run_dir, update, state)
+        _SMDP.checkpoint_artifacts(state.smdp, run_dir, update)
