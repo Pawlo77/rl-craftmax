@@ -744,7 +744,7 @@ def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
         "dyna/vi_sweeps": r["sweeps"],
         "dyna/vi_residual": r["residual"],
         "dyna/plan_seconds": r["plan_seconds"],
-        "dyna/plan_wall_share": _share(r["plan_seconds"], r["update_seconds"]),
+        "dyna/plan_wall_share": r["plan_seconds"] / r["update_seconds"],
     }
 
 

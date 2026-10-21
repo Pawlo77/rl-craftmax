@@ -328,6 +328,8 @@ def test_method_metrics_are_shares_of_the_update_counts() -> None:
     assert (m["dyna/vi_sweeps"][0], m["dyna/vi_residual"][0]) == (3, 2e-4)
     assert m["dyna/plan_seconds"][0] == 0.5
     assert m["dyna/plan_wall_share"][0] == 0.25
+    fast = dyna_q.method_metrics(_record(plan_seconds=[0.01], update_seconds=[0.02]))
+    assert fast["dyna/plan_wall_share"][0] == 0.5  # seconds, not counts: no floor 1
     empty = dyna_q.method_metrics(
         _record(ends=[0], hits=[0], td_n=[0], n_pairs=[0.0], full_pairs=[0], stale=[0])
     )
