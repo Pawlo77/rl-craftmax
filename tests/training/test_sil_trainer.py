@@ -465,7 +465,7 @@ def test_the_runner_fails_a_run_whose_buffer_exceeds_the_profile(
     profile = yaml.safe_load((PROFILES / "test.yaml").read_text())
     need = sil.buffer_bytes(sil.SILConfig(), 8, 22, 1345, rnn_width=16).total
     path = tmp_path / "small.yaml"
-    path.write_text(yaml.safe_dump(profile | {"memory_limit_bytes": need - 1}))
+    path.write_text(yaml.safe_dump(profile | {"memory_limit_bytes": 3 * need - 1}))
     with pytest.raises(RuntimeError, match="memory_limit_bytes"):  # the queue's summary
         run_store.run([spec], path)
     run = run_store.runs()[spec.name]

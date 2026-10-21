@@ -41,7 +41,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 992 | [[training]] |
 | [[src/wut_murl_craftax/training/progress_key.py]] | Progress key of a Craftax state: bucketed integer fields and their hash. | 138 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 186 | [[training]] |
-| [[src/wut_murl_craftax/training/sil.py]] | Self-Imitation Learning: a per-env staging ring and a buffer of unlock windows. | 627 |  |
+| [[src/wut_murl_craftax/training/sil.py]] | Self-Imitation Learning: a per-env staging ring and a buffer of unlock windows. | 631 |  |
 | [[src/wut_murl_craftax/training/skills.py]] | Skill library of the skill methods: observation decoder, key, masks, skill ends. | 566 |  |
 | [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: the top-level table ``Q[2^bits, 25]``, its updates, the rollout. | 532 |  |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 | [[training]] |

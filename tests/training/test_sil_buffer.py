@@ -167,6 +167,16 @@ def test_check_memory_refuses_a_buffer_over_the_limit() -> None:
         check_memory(cfg, spec, 100 * 10**6)
 
 
+def test_check_memory_counts_the_runners_three_copies() -> None:
+    """The runner's fresh init state, the live state and the per-chunk copy."""
+    spec = HookSpec(256, 8268, 43, 67, 10**6)
+    cfg = SILConfig(slots_windows=8)
+    need = buffer_bytes(cfg, 256, 67, 8268).total
+    assert check_memory(cfg, spec, 3 * need).total == need
+    with pytest.raises(ValueError, match="3 copies"):
+        check_memory(cfg, spec, 3 * need - 1)
+
+
 def test_unlock_copies_the_window_from_staging_and_rollout() -> None:
     a = 5
     st = _run(SILConfig(), 8, lambda s: _traj(s, unlocks=[(130, 1, a)]))

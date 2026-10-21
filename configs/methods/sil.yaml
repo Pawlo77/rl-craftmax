@@ -51,9 +51,10 @@ grid:
 # run, and so does a metric in `finite`. The SIL loss parts are 0 with nothing to imitate
 # (an empty buffer or V above every return) and NaN once the loss or the params are;
 # sil/dominates turns NaN once sil/kl_after stayed above 0.5 for 20 updates in a row (the
-# SIL steps dominate the policy). The other sil/* metrics are not listed. A buffer above the profile's memory_limit_bytes
-# fails the run at init (training/sil.py `check_memory`). No flags: the plan's detectors
-# come with the analysis plan.
+# SIL steps dominate the policy). The other sil/* metrics are not listed. A config whose
+# 3 copies of the SIL state (the runner's peak) pass the profile's memory_limit_bytes
+# fails at init (training/sil.py `check_memory`). No flags: the plan's detectors come
+# with the analysis plan.
 abort:
   finite: [sil/policy_loss, sil/value_loss, sil/dominates]
 

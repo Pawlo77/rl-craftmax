@@ -40,6 +40,8 @@ run's."""
 TIE_SEED = 0
 """Seed of the random order among unlocks of one tier when a rollout has more unlocks
 than ``insert_cap`` (folded with the next stamp, so each rollout draws anew)."""
+PEAK_COPIES = 3
+"""Copies of the SIL state alive at the runner's peak (`check_memory`)."""
 KL_LIMIT, KL_UPDATES = 0.5, 20
 """``sil/kl_after`` above ``KL_LIMIT`` for ``KL_UPDATES`` updates in a row: the SIL
 steps dominate the policy, and ``sil/dominates`` turns NaN (a guard in
@@ -259,20 +261,22 @@ def check_memory(
     memory_limit_bytes: int,
     rnn_width: int = CONTROL_RNN_WIDTH,
 ) -> SILBytes:
-    """`buffer_bytes` of the run in ``spec``, refused above the machine's limit.
+    """`buffer_bytes` of the run in ``spec``, refused when its peak passes the limit.
 
-    A lower bound of the footprint: the state as allocated, without the copies an
-    update may make of it.
+    The peak is `PEAK_COPIES` times the state: the runner keeps the fresh init state
+    (its ``state/`` template), the live state, and `ppo_rnn.train_chunk` donates a
+    copy per chunk to the update.
 
     Raises:
-        ValueError: If staging plus buffer exceed ``memory_limit_bytes``.
+        ValueError: If that peak exceeds ``memory_limit_bytes``.
     """
     dims = (spec.n_envs, spec.n_achievements, spec.obs_dim, rnn_width)
     need = buffer_bytes(cfg, *dims)
-    if need.total > memory_limit_bytes:
+    if (peak := PEAK_COPIES * need.total) > memory_limit_bytes:
         msg = (
-            f"SIL needs {need.total:,} B (staging {need.staging:,}, buffer "
-            f"{need.buffer:,}), over memory_limit_bytes {memory_limit_bytes:,}"
+            f"SIL peaks at {peak:,} B, {PEAK_COPIES} copies of {need.total:,} (staging "
+            f"{need.staging:,}, buffer {need.buffer:,}), over memory_limit_bytes "
+            f"{memory_limit_bytes:,}"
         )
         raise ValueError(msg)
     return need
