@@ -1,5 +1,6 @@
 """Shared fixtures of the training tests: recurrent configs, equality, CPU runs."""
 
+import importlib
 import os
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import yaml
 
 from wut_murl_craftax.training.hooks import HookFields, HookMethod
 from wut_murl_craftax.training.ppo_rnn import PPORNNConfig
@@ -19,6 +21,8 @@ from wut_murl_craftax.training.pqn_rnn import PQNRNNConfig
 
 TEST_ENV = os.environ.get("CRAFTAX_TEST_ENV", "Craftax-Classic-Symbolic-v1")
 """Env of the recurrent tests; Craftax-Symbolic reruns them at the real scale."""
+PROFILE = Path(__file__).parents[1] / "orchestration" / "fixtures" / "profiles"
+"""Folder of the runner tests' machine profile ``test.yaml``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,3 +112,39 @@ def start_on_cpus() -> Callable[[str, int, Path], subprocess.Popen[str]]:
     """Start ``python -c script out`` on ``devices`` host CPUs (JAX fixes the count
     when it starts, hence a subprocess)."""
     return _start_on_cpus
+
+
+class RunStore:
+    """A throwaway MLflow store whose specs train in this process, unevaluated."""
+
+    def __init__(self, tmp: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # the runner imports mlflow (seconds): only the tests that train runs need it
+        self.runner = importlib.import_module("wut_murl_craftax.orchestration.runner")
+        monkeypatch.setattr(self.runner, "configure_runtime", lambda **kw: None)
+        # the platform choice would change JAX_PLATFORMS of the test process
+        monkeypatch.setattr(self.runner, "select_platforms", lambda mode: None)
+        self.uri = f"sqlite:///{tmp / 'mlruns.db'}"
+        self.config = tmp / "experiment.yaml"
+        mlflow_cfg = {"tracking_uri": self.uri, "experiment_name": "x"}
+        text = yaml.safe_dump({"experiment": {"name": "craftax"}, "mlflow": mlflow_cfg})
+        self.config.write_text(text, encoding="utf-8")
+
+    def run(self, specs: list[Any]) -> dict[str, Any]:
+        """Train ``specs`` with the registry's trainers; the store's runs by name."""
+        methods = importlib.import_module("wut_murl_craftax.training.interface").METHODS
+        self.runner.main(
+            specs,
+            PROFILE / "test.yaml",
+            experiment_config=self.config,
+            methods={s.registry_name: methods[s.registry_name] for s in specs},
+            evaluate=lambda run_dir, spec, should_stop: None,
+        )
+        client = self.runner.mlflow.MlflowClient(tracking_uri=self.uri)
+        ids = [e.experiment_id for e in client.search_experiments()]
+        return {r.info.run_name: r for r in client.search_runs(ids)}
+
+
+@pytest.fixture
+def run_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RunStore:
+    """`RunStore` in the test's temporary directory."""
+    return RunStore(tmp_path, monkeypatch)

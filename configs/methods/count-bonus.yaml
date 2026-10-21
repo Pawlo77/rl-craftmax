@@ -50,5 +50,13 @@ grid:
     - {name: b0.3-log2-constant, beta: 0.3, granularity: log2, decay: constant}
     - {name: b0.3-log2-linear, beta: 0.3, granularity: log2, decay: linear}
 
+# Runner rules (orchestration/abort.py): a non-finite loss column of the base aborts the
+# run, and so does a metric in `finite`. A NaN or inf bonus makes count/r_int_mean
+# non-finite; the two guards of training/count_bonus.py turn NaN when the table is more
+# than a quarter full (collisions above about 12%) or a count is below 0. Every count/*
+# metric is finite otherwise. No flags: the plan's detectors come with the analysis plan.
+abort:
+  finite: [count/r_int_mean, count/table_full, count/negative_counts]
+
 # written by `--mark-tuned count-bonus <hash8>`, one block per variant
 tuned: null

@@ -6,18 +6,17 @@ from pathlib import Path
 from typing import Any
 
 import jax
-import mlflow
 import numpy as np
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
-from wut_murl_craftax.orchestration import runner
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
     load_method,
     resolve_config,
 )
+from wut_murl_craftax.orchestration.runner import EXTRAS_FILE
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import count_bonus, ppo_rnn, pqn_rnn
 from wut_murl_craftax.training.checkpoints import load_state, save_state
@@ -54,7 +53,6 @@ TINY = {
 """Tuned blocks of the temporary control copies: tiny Classic runs, 64 steps each."""
 CONFIG_A = "b0.1-recipe-constant"
 """The coarse entry of smoke config A (the design's default knobs)."""
-PROFILE = REPO / "tests" / "orchestration" / "fixtures" / "profiles" / "test.yaml"
 
 
 @pytest.fixture(scope="module")
@@ -341,20 +339,10 @@ def test_the_table_stays_on_the_actor_devices(
 
 
 def test_the_runner_trains_and_evaluation_opens_both_variants(
-    methods_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    methods_dir: Path, run_store: Any, tmp_path: Path
 ) -> None:
     """A 2-update Classic run per variant: FINISHED, count/* logged, and the run
     directory reopens with the same configured trainer."""
-    monkeypatch.setattr(runner, "configure_runtime", lambda host_devices=None: None)
-    monkeypatch.setattr(runner, "select_platforms", lambda mode: None)
-    uri = f"sqlite:///{tmp_path / 'mlruns.db'}"
-    experiment = tmp_path / "experiment.yaml"
-    experiment.write_text(
-        yaml.safe_dump({
-            "experiment": {"name": "craftax"},
-            "mlflow": {"tracking_uri": uri, "experiment_name": "x"},
-        })
-    )
     phase = tmp_path / "count.yaml"
     entry = {"config": "count-bonus", "configs": [CONFIG_A], "seeds": 1}
     phase.write_text(
@@ -367,23 +355,13 @@ def test_the_runner_trains_and_evaluation_opens_both_variants(
     )
     specs = expand_phase(phase, methods_dir=methods_dir)
     assert len(specs) == 2
-    names = {s.registry_name for s in specs}
-    runner.main(
-        specs,
-        PROFILE,
-        experiment_config=experiment,
-        methods={n: METHODS[n] for n in names},
-        evaluate=lambda run_dir, spec, should_stop: None,
-    )
-    client = mlflow.MlflowClient(tracking_uri=uri)
-    ids = [e.experiment_id for e in client.search_experiments()]
-    runs = {r.info.run_name: r for r in client.search_runs(ids)}
+    runs = run_store.run(specs)
     for spec in specs:
         run = runs[spec.name]
         assert run.info.status == "FINISHED"
         assert {"count/distinct_keys", "count/occupancy"} <= run.data.metrics.keys()
         out = artifact_path(run.info.artifact_uri)
-        with np.load(out / runner.EXTRAS_FILE) as z:
+        with np.load(out / EXTRAS_FILE) as z:
             distinct = z["count/distinct_keys"]
         assert len(distinct) == 2
         assert (np.diff(distinct) >= 0).all()

@@ -13,6 +13,7 @@ from craftax.craftax.craftax_state import StaticEnvParams
 from craftax.craftax_classic.constants import BlockType
 from craftax.craftax_env import make_craftax_env_from_name
 
+from wut_murl_craftax.orchestration.queue import RunSpec, config_hash, load_method
 from wut_murl_craftax.training import count_bonus
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.count_bonus import (
@@ -27,6 +28,7 @@ from wut_murl_craftax.training.count_bonus import (
 from wut_murl_craftax.training.hooks import HookSpec
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.progress_key import CLASSIC_FIELDS, fields, hash_fields
+from wut_murl_craftax.training.records import LOSS_COLUMNS
 from wut_murl_craftax.training.wrappers import LogEnvState
 
 CLASSIC = "Craftax-Classic-Symbolic-v1"
@@ -54,8 +56,10 @@ CLASSIC_METRICS = {
     "count/r_int_share",
     "count/r_int_by_floor/0",
     "count/max_key_floor",
+    "count/table_full",
+    "count/negative_counts",
 }
-"""Every metric of a Craftax-Classic run (one floor)."""
+"""Every metric of a Craftax-Classic run (one floor), the two abort guards included."""
 
 
 def _cfg(**over: Any) -> CountBonusConfig:
@@ -378,3 +382,77 @@ def test_top_keys_lists_the_most_and_least_visited(
     saved = json.loads(path.read_text())
     assert set(saved) == {"10", "20"}
     assert saved["10"] == top_keys(st)
+
+
+# --- abort rules -----------------------------------------------------------------
+
+
+def test_the_guards_stay_zero_until_the_table_breaks(start: Any) -> None:
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
+    _, st = _call(st, _batch(start, start), [False, False])
+    m = jax.jit(metrics)
+    ok = m(st)
+    assert float(ok["count/table_full"]) == float(ok["count/negative_counts"]) == 0.0
+    k = st.table.shape[0]
+    quarter = st.replace(table=jnp.zeros_like(st.table).at[: k // 4].set(1))
+    assert float(m(quarter)["count/table_full"]) == 0.0  # occupancy 0.25 is allowed
+    full = quarter.replace(table=quarter.table.at[k // 4].set(1))
+    assert np.isnan(float(m(full)["count/table_full"]))
+    empty = int(np.flatnonzero(np.asarray(st.table) == 0)[0])
+    decremented = m(st.replace(table=st.table.at[empty].add(-1)))
+    assert np.isnan(float(decremented["count/negative_counts"]))
+    assert float(decremented["count/table_full"]) == 0.0
+
+
+def test_the_method_file_aborts_on_the_bonus_and_the_guards() -> None:
+    finite = ["count/r_int_mean", "count/table_full", "count/negative_counts"]
+    assert load_method("count-bonus").abort == {"finite": finite}
+
+
+def _spec(**over: Any) -> RunSpec:
+    """A 2-update Classic PPO-RNN variant run with the method file's abort rules."""
+    name = "count-bonus-ppo-rnn"
+    cfg = {
+        "method": name,
+        "env": CLASSIC,
+        "envs": 8,
+        "num_steps": 8,
+        "minibatches": 2,
+        "update_epochs": 1,
+        "rnn_width": 16,
+        **KNOBS,
+    } | over
+    abort = load_method("count-bonus").abort
+    return RunSpec(
+        name,
+        "count-bonus",
+        "0.128k",
+        CLASSIC,
+        0,
+        cfg,
+        config_hash(cfg),
+        "x",
+        "final",
+        abort,
+    )
+
+
+def test_a_full_table_fails_the_run(run_store: Any) -> None:
+    spec = _spec(log2_k=1, width=19)  # 2 slots: the first key fills half the table
+    run = run_store.run([spec])[spec.name]
+    assert run.info.status == "FAILED"
+    tags = run.data.tags
+    assert (tags["abort/metric"], tags["abort/update"]) == ("count/table_full", "1")
+
+
+def test_a_nan_bonus_fails_the_run(
+    run_store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(count_bonus, "_beta_t", lambda state, t: jnp.float32(jnp.nan))
+    spec = _spec(width=18)  # a config no other test compiles: the patch is traced
+    run = run_store.run([spec])[spec.name]
+    assert run.info.status == "FAILED"
+    tags = run.data.tags
+    assert tags["abort/update"] == "1"
+    # the NaN reaches the losses in the same update; either check stops the run
+    assert tags["abort/metric"] in {*LOSS_COLUMNS, "count/r_int_mean"}

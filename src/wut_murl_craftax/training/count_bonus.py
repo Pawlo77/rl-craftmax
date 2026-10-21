@@ -42,6 +42,8 @@ N_FLOORS = 9
 """Craftax floors (``StaticEnvParams.num_levels`` of craftax 1.6.1); Classic has one."""
 TOP_KEYS_FILE = "count_top_keys.json"
 """File in the run directory's ``eval/``: `top_keys` by checkpoint update."""
+MAX_OCCUPANCY = 0.25
+"""Occupied share of the table above which a run aborts (collisions above ~12%)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -262,12 +264,23 @@ def intrinsic_reward(
 
 
 def metrics(state: CountState) -> dict[str, jax.Array]:
-    """The ``count/...`` metrics: the table, and the bonus of the current update."""
+    """The ``count/...`` metrics: the table, and the bonus of the current update.
+
+    The guards ``count/table_full`` (occupancy above `MAX_OCCUPANCY`) and
+    ``count/negative_counts`` (a count below 0: counts only grow) are 0, or NaN once
+    broken, so the runner's ``abort.finite`` check fails the run on them.
+    """
     k = state.table.shape[0]
     distinct = jnp.count_nonzero(state.table).astype(jnp.int32)
     w = state.window
     by_floor = w.floor_sum / jnp.maximum(w.floor_n, 1)  # 0 on floors not visited
+
+    def guard(broken: jax.Array) -> jax.Array:
+        return jnp.where(broken, jnp.nan, 0.0).astype(jnp.float32)
+
     return {
+        "count/table_full": guard(distinct > MAX_OCCUPANCY * k),
+        "count/negative_counts": guard(state.table.min() < 0),
         "count/distinct_keys": distinct,
         "count/new_keys": distinct - w.start_distinct,
         "count/occupancy": distinct / k,
