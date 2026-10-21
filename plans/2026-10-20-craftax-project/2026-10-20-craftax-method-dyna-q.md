@@ -136,13 +136,7 @@ Fixed settings:
 - Create: `configs/methods/dyna-q.yaml` (`base` with `base_from: smdp-skills.tuned`, `grid.coarse`, `grid.fine` rule, `tuned: null`)
 - Test: `tests/training/test_dyna_q_trainer.py`
 
-Contract with `pqn_rnn.learn` (shared with `smdp-skills`, checked 2026-10-21 against `training/pqn_rnn.py`):
-
-- `loss_mask` only removes steps from the loss; an all-zero mask still moves params through RAdam momentum, so a method that wants no update skips `learn`.
-- The LR schedule assumes one `learn` call per update; extra calls shift it.
-- The `Traj` needs `extra["last_actions"]` and observations already widened to the network input.
-- `extra_obs_dim` stays 0 when an env wrapper widens the observations; it only appends zero features.
-- `learn` raises `ValueError` on a `Traj` (or `loss_mask`, `h0`) whose `(steps, envs)` differ from the config.
+Contract with `pqn_rnn.learn`: the same as for `smdp-skills`, see [[2026-10-20-craftax-method-smdp-skills]] Task 4 Step 1.
 
 - [ ] **Step 1: Write the failing tests**:
   - With $n = 0$ two updates on Craftax-Classic give the same `Q_top`, skill-network parameters and `smdp/*` metrics as `smdp-skills` with the same seed.
