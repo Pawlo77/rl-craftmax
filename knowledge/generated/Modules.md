@@ -27,10 +27,12 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 |  |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 225 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 159 |  |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training: method registry, PPO, checkpoints, resume state, metrics, episodes. | 85 | [[training]] |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training: method registry, PPO, PPO-RNN, method hooks, checkpoints, episodes. | 131 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
-| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 36 |  |
-| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 571 | [[training]] |
+| [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 241 |  |
+| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 40 |  |
+| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 604 | [[training]] |
+| [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 577 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 186 | [[training]] |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 |  |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 113 | [[visualisation]] |
@@ -62,5 +64,7 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/orchestration/runner.py]]
 - [[src/wut_murl_craftax/orchestration/store.py]]
 - [[src/wut_murl_craftax/orchestration/train_metrics.py]]
+- [[src/wut_murl_craftax/training/hooks.py]]
 - [[src/wut_murl_craftax/training/interface.py]]
+- [[src/wut_murl_craftax/training/ppo_rnn.py]]
 - [[src/wut_murl_craftax/training/wrappers.py]]

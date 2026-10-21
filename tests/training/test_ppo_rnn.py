@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from _contract import assert_done_step_unlock_counted
 
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training.hooks import HookFields
@@ -251,3 +252,14 @@ def test_registry_entry_trains_with_the_ppo_metric_shapes(cfg: PPORNNConfig) -> 
         trainer.init(
             {k: v for k, v in config.items() if k != "steps"}, jax.random.key(0)
         )
+
+
+def test_done_step_unlocks_reach_the_episode_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared trainer contract: whole-episode flags with the done step's unlocks."""
+    config = {"method": "ppo-rnn", "env": "Craftax-Classic-Symbolic-v1"}
+    # a config no other test compiles, so the patched step events are traced
+    config |= {"envs": 16, "num_steps": 32, "width": 19, "rnn_width": 19}
+    config |= {"minibatches": 2, "update_epochs": 1, "steps": 100 * 16 * 32}
+    assert_done_step_unlock_counted(METHODS["ppo-rnn"], config, monkeypatch)

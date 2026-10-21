@@ -38,6 +38,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
 from ..orchestration import shard_envs
 from .hooks import (
     HookFields,
@@ -190,13 +191,12 @@ def _make_rollout(
     cfg: PPORNNConfig, net: ActorCriticRNN, env: Any, env_params: Any, hk: ResolvedHooks
 ) -> Callable[..., Any]:
     """Jitted rollout of ``num_steps`` x ``envs`` with GAE on ``r_ext + r_int``."""
-    names = achievement_names(cfg.env)
     rewarded = "intrinsic_reward_fn" in hk.active
 
     def step(
         with_traj: bool, c: tuple[Any, ...], _: None
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        params, h, obs, last_done, st, ms, t, ep_ret, ep_len, key = c
+        params, h, obs, last_done, st, ms, t, acc, key = c
         key, k_a, k_s = jax.random.split(key, 3)
         h = jnp.where(last_done[:, None], 0.0, h)  # the hidden this step acts from
         h2, logits, v = apply_network(net, params, h, obs[None], last_done[None])
@@ -207,14 +207,13 @@ def _make_rollout(
         rec = {"obs": obs, "act": act, "logp": logp, "v": v, "r": r, "d": d}
         if rewarded:
             rec["r_int"], ms = hk.intrinsic_reward_fn(ms, st, st2, obs2, d, t)
-        # Craftax reports 100 * achieved, and only on the done step.
-        ach = jnp.stack([info[f"Achievements/{n}"] for n in names], -1) > 0
-        ep_ret2, ep_len2 = ep_ret + r, ep_len + 1
-        rec |= {"reset": last_done, "ach": ach, "ret": ep_ret2, "len": ep_len2}
+        # the events come from the pre-reset state, so a done step keeps its unlocks
+        acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
+        rec |= {"reset": last_done, "ach": total.ach, "ret": total.ret}
+        rec["len"] = total.length
         if with_traj:
             rec |= {"h": h.astype(jnp.float16), "ev": info["events"]}
-        ep_ret2, ep_len2 = ep_ret2 * (1 - d), ep_len2 * (1 - d)
-        return (params, h2, obs2, d, st2, ms, t + cfg.envs, ep_ret2, ep_len2, key), rec
+        return (params, h2, obs2, d, st2, ms, t + cfg.envs, acc2, key), rec
 
     @functools.partial(jax.jit, static_argnames="with_traj")
     def rollout(params: Any, carry: tuple[Any, ...], with_traj: bool) -> Any:
@@ -379,9 +378,8 @@ class PPORNNState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax A
     """GRU carry of each env, float32, before the reset of the next step."""
     last_done: jax.Array
     """The previous step ended the env's episode."""
-    ep_ret: jax.Array
-    """Return of each env's running episode."""
-    ep_len: jax.Array
+    episode: EpisodeAcc
+    """Return, length and achievements of each env's running episode."""
     env_steps: jax.Array
     """Env steps of the run so far, int32 (the hooks' ``t``)."""
     method_state: Any
@@ -412,21 +410,19 @@ def init_state(cfg: PPORNNConfig, key: jax.Array) -> PPORNNState:
             st,
             jnp.zeros((cfg.envs, cfg.rnn_width)),
             jnp.zeros(cfg.envs, bool),
-            jnp.zeros(cfg.envs),
-            jnp.zeros(cfg.envs, jnp.int32),
+            init_acc(cfg.envs, n_ach),
         )
         method_state = s.hooks.init_state_fn(k_method, spec)
     if s.mesh is not None:
         per_env = shard_envs(per_env, s.mesh)
-    obs, st, hidden, last_done, ep_ret, ep_len = per_env
+    obs, st, hidden, last_done, episode = per_env
     return PPORNNState(
         train_state=cast(TrainState, ts),
         env_state=st,
         obs=obs,
         hidden=hidden,
         last_done=last_done,
-        ep_ret=ep_ret,
-        ep_len=ep_len,
+        episode=episode,
         env_steps=jax.device_put(jnp.zeros((), jnp.int32), s.shared_at),
         method_state=_on_actor(method_state, s, cfg.envs),
         key=jax.device_put(key, s.learner),
@@ -452,19 +448,17 @@ def collect(
         state.env_state,
         _on_actor(state.method_state, s, state.cfg.envs),
         state.env_steps,
-        state.ep_ret,
-        state.ep_len,
+        state.episode,
         state.key_act,
     )
     carry, batch, traj, ep = s.rollout(params, carry, with_traj=with_traj)
-    hidden, obs, last_done, st, ms, t, ep_ret, ep_len, key_act = carry
+    hidden, obs, last_done, st, ms, t, episode, key_act = carry
     new = state.replace(
         env_state=st,
         obs=obs,
         hidden=hidden,
         last_done=last_done,
-        ep_ret=ep_ret,
-        ep_len=ep_len,
+        episode=episode,
         env_steps=t,
         method_state=ms,
         key_act=key_act,
