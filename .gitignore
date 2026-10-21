@@ -114,6 +114,8 @@ dmypy.json
 # Experiment outputs and tracking: never commit
 mlflow.db
 mlflow.db-*
+mlruns*.db
+mlruns*.db-*
 mlruns/
 runs/
 outputs/
