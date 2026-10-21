@@ -13,7 +13,7 @@ import mlflow
 import pytest
 import yaml
 
-from wut_murl_craftax.orchestration import queue
+from wut_murl_craftax.orchestration import queue, runner
 from wut_murl_craftax.orchestration.queue import (
     RunSpec,
     budget_steps,
@@ -651,9 +651,30 @@ def test_dry_run_prints_one_run_name_per_line_and_starts_nothing() -> None:
     assert all(re.fullmatch(r"ppo-200k-[0-9a-f]{8}-s0", line) for line in lines)
 
 
-def test_without_dry_run_the_specs_go_to_the_runner_seam() -> None:
-    with pytest.raises(NotImplementedError, match="infrastructure Task 2"):
-        queue.main(["--phase", "configs/phases/smoke.yaml"])
+def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(runner, "main", lambda *a: calls.append(a))
+    queue.main(["--phase", "configs/phases/smoke.yaml"])
+    queue.main([
+        "--phase",
+        "configs/phases/smoke.yaml",
+        "--profile",
+        "p.yaml",
+        "--max-runs",
+        "3",
+        "--worker-index",
+        "1",
+        "--num-workers",
+        "4",
+    ])
+    (specs, *flags), (_, *given) = calls
+    assert [s.name for s in specs] == [
+        s.name for s in expand_phase(REPO / "configs/phases/smoke.yaml")
+    ]
+    assert flags == [REPO / "configs/profiles/laptop.yaml", 0, 1, None]
+    assert given == [Path("p.yaml"), 1, 4, 3]
 
 
 def test_cli_selects_by_registry_name_and_by_slug() -> None:

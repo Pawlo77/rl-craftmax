@@ -14,8 +14,8 @@ from wut_murl_craftax.config import (
 def test_load_default_experiment_yaml() -> None:
     """Default config file parses with expected experiment name."""
     config = load_experiment_config(Path("configs/experiment.yaml"))
-    assert config.name == "default-experiment"
-    assert config.mlflow.experiment_name == "default-experiment"
+    assert config.name == "craftax"
+    assert config.mlflow.experiment_name == "craftax"
     assert config.mlflow.enabled is True
 
 

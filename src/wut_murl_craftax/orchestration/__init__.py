@@ -1,9 +1,10 @@
-"""Orchestration utilities: fast JAX runtime, run queue and MLflow tracking."""
+"""Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking."""
 
 import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .profiles import Profile, load_profile
     from .queue import (
         RunSpec,
         budget_steps,
@@ -16,6 +17,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         resolve_config,
     )
     from .reproducibility import ReproducibilityReport, collect_reproducibility_report
+    from .runner import ChunkMetrics, Trainer, final_score, worker_specs
     from .runtime import (
         DeviceRoles,
         configure_runtime,
@@ -27,10 +29,13 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .tracking import MlflowRunTracker, build_mlflow_tracker
 
 _EXPORTS: dict[str, str] = {
+    "ChunkMetrics": "runner",
     "DeviceRoles": "runtime",
     "MlflowRunTracker": "tracking",
+    "Profile": "profiles",
     "ReproducibilityReport": "reproducibility",
     "RunSpec": "queue",
+    "Trainer": "runner",
     "budget_steps": "queue",
     "build_mlflow_tracker": "tracking",
     "coarse_results": "queue",
@@ -41,20 +46,26 @@ _EXPORTS: dict[str, str] = {
     "env_mesh": "runtime",
     "expand_fine": "queue",
     "expand_phase": "queue",
+    "final_score": "runner",
     "load_method": "queue",
+    "load_profile": "profiles",
     "mark_tuned": "queue",
     "resolve_config": "queue",
     "shard_envs": "runtime",
     "warm_texture_cache": "runtime",
+    "worker_specs": "runner",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
 
 __all__ = [
+    "ChunkMetrics",
     "DeviceRoles",
     "MlflowRunTracker",
+    "Profile",
     "ReproducibilityReport",
     "RunSpec",
+    "Trainer",
     "budget_steps",
     "build_mlflow_tracker",
     "coarse_results",
@@ -65,11 +76,14 @@ __all__ = [
     "env_mesh",
     "expand_fine",
     "expand_phase",
+    "final_score",
     "load_method",
+    "load_profile",
     "mark_tuned",
     "resolve_config",
     "shard_envs",
     "warm_texture_cache",
+    "worker_specs",
 ]
 
 

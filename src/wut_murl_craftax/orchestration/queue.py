@@ -8,7 +8,7 @@ same config share a run. ``configs/methods/<slug>.yaml`` holds ``base``, ``budge
 a config resolves shallowly: donor, base, tuned or grid entry, budget, overrides
 (``resolve_config``). ``configs/phases/<phase>.yaml`` picks configs and seeds
 (``expand_phase``). CLI: ``--phase P [--method M] [--dry-run] [--expand-fine SLUG]``
-or ``--mark-tuned SLUG HASH8``.
+plus the runner's flags (``--profile``, ``--max-runs``, workers), or ``--mark-tuned``.
 """
 
 import argparse
@@ -32,6 +32,7 @@ from ..config import load_experiment_config
 REPO_ROOT = Path(__file__).resolve().parents[3]
 METHODS_DIR = REPO_ROOT / "configs" / "methods"
 EXPERIMENT_CONFIG = REPO_ROOT / "configs" / "experiment.yaml"
+DEFAULT_PROFILE = REPO_ROOT / "configs" / "profiles" / "laptop.yaml"
 TUNE_BUDGET = "1m"
 """Budget of the tuning stages; `expand_fine` resolves the stage-1 configs at it."""
 SCORE_METRIC = "final_score"
@@ -42,6 +43,8 @@ TAG_BUDGET = "budget"
 """Run tag: the budget label."""
 TAG_CONFIG_HASH = "config_hash"
 """Run tag: the 8-hex config hash."""
+TAG_SEED = "seed"
+"""Run tag: the seed."""
 TAG_PHASES = "phases"
 """Run tag: comma-joined names of the phases that list the run."""
 TAG_BEST = "best"
@@ -767,10 +770,11 @@ def mark_tuned(
 
 
 def run_specs(specs: Sequence[RunSpec], args: argparse.Namespace) -> None:
-    """Hand the specs to the runner; infrastructure Task 2 replaces this body."""
-    del specs, args  # unused until the runner exists
-    msg = "runner arrives in infrastructure Task 2"
-    raise NotImplementedError(msg)
+    """Hand the specs to the runner with the execution flags."""
+    # imported here: runner imports this module (a cycle), plus JAX and MLflow
+    from .runner import main as run
+
+    run(specs, args.profile, args.worker_index, args.num_workers, args.max_runs)
 
 
 def _print_fine(fine: Fine, slug: str, methods_dir: Path) -> None:
@@ -797,6 +801,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--mark-tuned", nargs=2, metavar=("SLUG", "HASH8"))
     parser.add_argument("--methods-dir", type=Path, default=METHODS_DIR)
+    parser.add_argument(
+        "--profile", type=Path, default=DEFAULT_PROFILE, help="machine profile YAML"
+    )
+    parser.add_argument("--max-runs", type=int, help="train at most N runs")
+    parser.add_argument("--worker-index", type=int, default=0)
+    parser.add_argument(
+        "--num-workers", type=int, default=1, help="worker i takes runs i, i + k, ..."
+    )
     args = parser.parse_args(argv)
     if args.mark_tuned:
         print(mark_tuned(*args.mark_tuned, methods_dir=args.methods_dir))

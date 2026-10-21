@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from ..config import ExperimentConfig, MLflowTrackingConfig
 from .reproducibility import collect_reproducibility_report
@@ -47,6 +49,31 @@ def _resolve_tracking_uri(tracking_uri: str) -> str:
     return str(resolved_path)
 
 
+def _artifact_location(tracking_uri: str, experiment: str) -> str | None:
+    """``<db dir>/mlruns/<experiment>`` for a SQLite file store, else MLflow's default.
+
+    MLflow's default is relative to the working directory; beside the database the
+    artifacts stay with their store wherever a process starts.
+    """
+    if not tracking_uri.startswith("sqlite:///") or tracking_uri.endswith(":memory:"):
+        return None
+    db = Path(tracking_uri.removeprefix("sqlite:///"))
+    return (db.parent / "mlruns" / experiment).as_uri()
+
+
+def artifact_path(artifact_uri: str) -> Path:
+    """Local directory of a ``file:`` artifact URI.
+
+    Raises:
+        ValueError: For a remote artifact store.
+    """
+    parsed = urlparse(artifact_uri)
+    if parsed.scheme not in ("", "file"):
+        msg = f"expected a local artifact store, got {artifact_uri}"
+        raise ValueError(msg)
+    return Path(unquote(parsed.path))
+
+
 @dataclass(slots=True)
 class MlflowRunTracker:
     """Track a single run with MLflow while tolerating offline/local-only setups."""
@@ -55,6 +82,10 @@ class MlflowRunTracker:
     experiment_config: ExperimentConfig
     run_name: str
     model_adapter: Any = None
+    run_id: str | None = None
+    """Run to resume; set to the started run's id by `start`."""
+    tags: Mapping[str, str] = field(default_factory=dict)
+    """Tags set on every start, also when resuming."""
 
     _mlflow: Any = field(default=None, init=False, repr=False)
     _run_active: bool = field(default=False, init=False, repr=False)
@@ -74,20 +105,13 @@ class MlflowRunTracker:
                     category=FutureWarning,
                 )
                 mlflow.set_tracking_uri(tracking_uri)
-                mlflow.set_experiment(self.tracking.experiment_name)
-                resume_run_id = os.environ.get(_ACTIVE_MLFLOW_RUN_ID_ENV)
-                if resume_run_id:
-                    try:
-                        mlflow.start_run(run_id=resume_run_id)
-                    except Exception:
-                        _TRACKING_LOGGER.warning(
-                            "Failed to resume MLflow run_id=%s; starting a new run.",
-                            resume_run_id,
-                        )
-                        mlflow.start_run(
-                            run_name=self.run_name or self.tracking.run_name
-                        )
-                else:
+                resume_run_id = self.run_id or os.environ.get(_ACTIVE_MLFLOW_RUN_ID_ENV)
+                if not (resume_run_id and self._resume(mlflow, resume_run_id)):
+                    name = self.tracking.experiment_name
+                    if mlflow.get_experiment_by_name(name) is None:
+                        location = _artifact_location(tracking_uri, name)
+                        mlflow.create_experiment(name, artifact_location=location)
+                    mlflow.set_experiment(name)
                     mlflow.start_run(run_name=self.run_name or self.tracking.run_name)
 
             self._mlflow = mlflow
@@ -95,9 +119,11 @@ class MlflowRunTracker:
 
             active_run = mlflow.active_run()
             if active_run is not None:
+                self.run_id = active_run.info.run_id
                 os.environ[_ACTIVE_MLFLOW_RUN_ID_ENV] = active_run.info.run_id
 
             mlflow.set_tag("pipeline.run_name", self.run_name)
+            mlflow.set_tags(dict(self.tags))
 
             self._log_reproducibility_report()
 
@@ -105,6 +131,20 @@ class MlflowRunTracker:
             _TRACKING_LOGGER.warning("Failed to start MLflow run: %s", e)
             self._run_active = False
             self._mlflow = None
+
+    @staticmethod
+    def _resume(mlflow: Any, run_id: str) -> bool:
+        """Reopen ``run_id`` in its own experiment, which may be another phase's."""
+        try:
+            experiment_id = mlflow.get_run(run_id).info.experiment_id
+            mlflow.set_experiment(experiment_id=experiment_id)
+            mlflow.start_run(run_id=run_id)
+        except Exception:
+            _TRACKING_LOGGER.warning(
+                "Failed to resume MLflow run_id=%s; starting a new run.", run_id
+            )
+            return False
+        return True
 
     def _log_reproducibility_report(self) -> None:
         """Persist the reproducibility snapshot as an MLflow artifact."""
@@ -119,10 +159,22 @@ class MlflowRunTracker:
                 json.dumps(payload, indent=2, sort_keys=True),
             )
 
-    def close(self) -> None:
-        """End the active MLflow run if one was started."""
+    @property
+    def artifact_dir(self) -> Path:
+        """Local artifact directory of the active run.
+
+        Raises:
+            RuntimeError: If no run is active (MLflow disabled or failed to start).
+        """
+        if not self._run_active or self._mlflow is None:
+            msg = "no active MLflow run; see the warning logged by start()"
+            raise RuntimeError(msg)
+        return artifact_path(self._mlflow.active_run().info.artifact_uri)
+
+    def close(self, status: str = "FINISHED") -> None:
+        """End the active MLflow run, if one was started, with ``status``."""
         if self._run_active and self._mlflow is not None:
-            self._mlflow.end_run()
+            self._mlflow.end_run(status=status)
             self._run_active = False
             self._mlflow = None
             os.environ.pop(_ACTIVE_MLFLOW_RUN_ID_ENV, None)
@@ -132,6 +184,9 @@ def build_mlflow_tracker(
     experiment_config: ExperimentConfig,
     run_name: str | None = None,
     model_adapter: Any = None,
+    *,
+    run_id: str | None = None,
+    tags: Mapping[str, str] | None = None,
 ) -> MlflowRunTracker:
     """Build an MLflow tracker from an experiment configuration."""
     return MlflowRunTracker(
@@ -139,4 +194,6 @@ def build_mlflow_tracker(
         experiment_config=experiment_config,
         run_name=run_name or experiment_config.name,
         model_adapter=model_adapter,
+        run_id=run_id,
+        tags=dict(tags or {}),
     )
