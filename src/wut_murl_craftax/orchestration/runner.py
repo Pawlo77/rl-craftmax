@@ -119,6 +119,9 @@ OWNER_FILE = "owner.json"
 run is closed, so a RUNNING run with a live owner is never trained twice."""
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 """Signals that stop the queue after the chunk; SIGHUP: the terminal or SSH closed."""
+ECHO_S = 1.0
+"""A repeat of the first signal within this many seconds is the same signal: ``uv run``
+forwards the terminal's Ctrl-C, which python also got (measured 0.2 s apart)."""
 REGISTRY = "wut_murl_craftax.training.interface:METHODS"
 """``module:attribute`` of the trainer registry a run's child process imports."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
@@ -304,15 +307,19 @@ def _snapshot(
 
 @dataclass
 class _Stop:
-    """Signal handler that records the first SIGINT or SIGTERM."""
+    """Signal handler that records the first stop signal (`STOP_SIGNALS`)."""
 
     signum: int | None = None
+    at: float = 0.0
+    """`time.monotonic` of the first signal."""
 
     def __call__(self, signum: int, _frame: FrameType | None) -> None:
-        """Record the signal; a second one stops at once."""
+        """Record the signal; a second one stops at once, unless it is its echo."""
         if self.signum is not None:
+            if signum == self.signum and time.monotonic() - self.at < ECHO_S:
+                return
             raise KeyboardInterrupt
-        self.signum = signum
+        self.signum, self.at = signum, time.monotonic()
         logger.warning("signal %d: stopping after the current chunk", signum)
 
 
@@ -776,7 +783,7 @@ class _Job:
     evaluate: str | None
 
 
-def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any) -> None:
+def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any, done: Any) -> None:
     """One run in a fresh process; the parent sets ``stop_set`` to forward a signal.
 
     The child also stops (saves the state, closes the run KILLED) when its parent
@@ -806,6 +813,7 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any) -> None:
     trained.value = _run_spec(
         job.spec, trainer, job.experiment, job.machine, evaluate, stop
     )
+    done.value = True  # the run is closed: a crash from here on is only a warning
 
 
 def _close_orphan(name: str, status: str, error: str) -> str:
@@ -832,23 +840,30 @@ def _in_child(job: _Job, stop: _Stop) -> bool:
             crash such as an OOM kill: the run is then closed FAILED here).
     """
     ctx = multiprocessing.get_context("spawn")
-    stop_set, signum, trained = ctx.Event(), ctx.Value("i", 0), ctx.Value("b", False)
-    child = ctx.Process(
-        target=_child, args=(job, stop_set, signum, trained), name=job.spec.name
-    )
-    child.start()
+    stop_set, signum = ctx.Event(), ctx.Value("i", 0)
+    trained, done = ctx.Value("b", False), ctx.Value("b", False)
+    args = (job, stop_set, signum, trained, done)
+    child = ctx.Process(target=_child, args=args, name=job.spec.name)
     try:
+        child.start()
         while child.exitcode is None:
             child.join(0.1)
             if stop.signum is not None and not stop_set.is_set():
                 signum.value = stop.signum
                 stop_set.set()
     except KeyboardInterrupt:  # a second signal: stop at once
-        child.kill()
-        child.join()
+        if child.is_alive():  # false while `start` had not returned
+            child.kill()
+            child.join()
         _close_orphan(job.spec.name, "KILLED", "killed by a second signal")
         raise
-    if child.exitcode:
+    if child.exitcode and done.value:
+        logger.warning(
+            "%s: child exited with %d after closing its run",
+            job.spec.name,
+            child.exitcode,
+        )
+    elif child.exitcode:
         crashed = f"child process exited with {child.exitcode}"
         if stop.signum is not None:
             _close_orphan(job.spec.name, "KILLED", crashed)
@@ -904,6 +919,8 @@ def _runs_in_children(
     def run(spec: RunSpec, stop: _Stop) -> bool:
         if (reason := _skip_reason(find_run(spec.name))) is not None:
             logger.warning("%s %s, skipped", spec.name, reason)
+            return False
+        if stop.signum is not None:  # stopped before the child: start none
             return False
         return _in_child(_Job(spec, experiment, machine, registry, evaluate), stop)
 

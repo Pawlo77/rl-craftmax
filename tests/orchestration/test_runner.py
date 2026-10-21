@@ -6,6 +6,7 @@ import inspect
 import json
 import math
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -1123,3 +1124,62 @@ def test_a_hangup_of_the_queue_stops_the_child_like_a_signal(store: Store) -> No
         _in_children(store, [hangup])
     assert exit_info.value.code == 128 + signal.SIGHUP
     assert store.runs()[hangup.name].info.status == "KILLED"
+
+
+def test_a_signal_before_the_child_starts_spawns_none(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def signalled(found: Any) -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(runner, "_skip_reason", signalled)
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit) as exit_info:
+        _in_children(store, [spec])
+    assert exit_info.value.code == 128 + signal.SIGTERM
+    assert store.runs() == {}
+
+
+def test_a_crash_at_exit_after_the_run_finished_is_only_a_warning(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    crash = _as(spec, "exit-crash")
+    _in_children(store, [crash])  # no failure is raised
+    assert store.runs()[crash.name].info.status == "FINISHED"
+    assert "exited with 3 after closing its run" in caplog.text
+
+
+def test_a_repeated_signal_within_a_second_is_one_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``uv run`` forwards the terminal's SIGINT that python also got: ~0.2 s apart."""
+    now = [100.0]
+    monkeypatch.setattr(runner.time, "monotonic", lambda: now[0])
+    stop = runner._Stop()
+    stop(signal.SIGINT, None)
+    now[0] += 0.5
+    stop(signal.SIGINT, None)  # the echo: ignored
+    assert stop.signum == signal.SIGINT
+    now[0] += 1.0
+    with pytest.raises(KeyboardInterrupt):  # a deliberate second Ctrl-C
+        stop(signal.SIGINT, None)
+
+
+def test_one_ctrl_c_under_uv_run_stops_the_child_cleanly(store: Store) -> None:
+    """A terminal's Ctrl-C reaches uv and python; uv forwards it a second time."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    slow = _as(spec, "slow")
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed")
+    queue_process = _start_queue(store, slow, (uv, "run", "--no-sync", "python"))
+    _training_pid(store, slow.name)
+    os.killpg(queue_process.pid, signal.SIGINT)  # the whole foreground job
+    _, stderr = queue_process.communicate()
+    assert queue_process.returncode == 128 + signal.SIGINT, stderr[-2000:]
+    assert "KeyboardInterrupt" not in stderr
+    assert stderr.count("signal 2: stopping") == 1
+    run = store.runs()[slow.name]
+    assert run.info.status == "KILLED"
+    assert (store.run_dir(slow.name) / "state" / "state.npz").is_file()

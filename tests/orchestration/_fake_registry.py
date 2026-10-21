@@ -1,5 +1,6 @@
 """Fake trainers a runner child process imports by reference: ``REGISTRY``."""
 
+import atexit
 import os
 import signal
 import time
@@ -45,6 +46,14 @@ class CrashTrainer(FakeTrainer):
         os.kill(os.getpid(), signal.SIGKILL)
 
 
+class ExitCrashTrainer(FakeTrainer):
+    """Trains normally; the process then dies at exit, as a native teardown might."""
+
+    def init(self, config: Any, key: jax.Array) -> dict[str, Any]:
+        atexit.register(os._exit, 3)
+        return super().init(config, key)
+
+
 def no_eval(run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]) -> None:
     """An `Evaluate` that writes nothing."""
 
@@ -55,5 +64,6 @@ METHODS = {
     "stop": FakeTrainer(signal_at=(2, signal.SIGINT), to_parent=True),
     "hangup": FakeTrainer(signal_at=(2, signal.SIGHUP), to_parent=True),
     "slow": SlowTrainer(),
+    "exit-crash": ExitCrashTrainer(),
 }
 """Registry name -> fake trainer; specs pick one by ``registry_name``."""
