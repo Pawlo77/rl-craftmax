@@ -1,0 +1,64 @@
+# PQN-RNN method config; the schema is documented in orchestration/queue.py.
+# `base` is the repo config (purejaxql pqn_rnn_craftax.yaml at 47af6d7) with the 1M rollout
+# shape (256 envs x 16 steps, PPO's 1M shape): the 1B shape gives only 7 updates at 1M.
+# `extra_obs_dim` is set by the methods that append network inputs, not here.
+base:
+  env: Craftax-Symbolic-v1
+  envs: 256
+  num_steps: 16
+  minibatches: 4
+  epochs: 4
+  lr: 3.0e-4
+  lr_linear_decay: true
+  max_grad_norm: 0.5
+  gamma: 0.99
+  lam: 0.5
+  eps_start: 1.0
+  eps_finish: 0.005
+  eps_decay: 0.1
+  hidden: 512
+  norm_input: true
+  norm_type: layer_norm
+  input_norm: batch_renorm
+  add_last_action: true
+  rew_scale: 1.0
+  reset_ratio: 16
+
+# Craftax-1B is the repo config: only the rollout shape differs from the 1M base.
+budgets:
+  1b: {envs: 1024, num_steps: 128}
+
+grid:
+  # Stage 1: one knob away from `base` per entry, 3 seeds each (the phase's count). There
+  # is no published 1M number, so the base is an ordinary entry (`base` itself is a
+  # reserved name); the 1M check is against the original code. 10 configs.
+  coarse:
+    - {name: base-1m}
+    - {name: shape-1024x128, envs: 1024, num_steps: 128}
+    - {name: shape-64x64, envs: 64, num_steps: 64}
+    - {name: lr-1.5e-4, lr: 1.5e-4}
+    - {name: lr-6e-4, lr: 6.0e-4}
+    - {name: lambda-0, lam: 0.0}
+    - {name: lambda-0.8, lam: 0.8}
+    - {name: eps-decay-0.25, eps_decay: 0.25}
+    - {name: norm-batch-hidden, norm_type: batch_norm}  # paper Table 4 literally
+    - {name: norm-layer-input, input_norm: layer_norm}  # no batch statistics
+  # Stage 2 (`--expand-fine pqn-rnn`): around the best coarse config, the 2 numeric knobs
+  # with the largest stage-1 effect, one knob at a time (4 configs); the rollout shape and
+  # the normalisation are categorical and never refined. Entries are generated.
+  fine:
+    rule: {select: 2, combine: each}
+    knobs:
+      - {key: lr, mul: [0.75, 1.5]}
+      - {key: lam, add: [-0.1, 0.1], clip: [0.0, 0.95]}
+      - {key: eps_decay, mul: [0.5, 2.0]}
+
+# Runner rules (orchestration/abort.py). A non-finite loss column (the trainer reports
+# the TD loss as `value_loss` and `grad_norm`; both are checked) or a metric in `finite`
+# aborts the run. `pqn/td_loss` is the name the PQN-RNN plan's Task 9 makes the trainer
+# emit; until then it adds nothing. Flags come with Task 10.
+abort:
+  finite: [pqn/td_loss]
+
+# written by `--mark-tuned pqn-rnn <hash8>`
+tuned: null

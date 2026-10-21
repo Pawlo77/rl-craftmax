@@ -5,3 +5,4 @@ env: Craftax-Classic-Symbolic-v1
 runs:
   ppo: {configs: [published-1m, lr-4e-4], seeds: 1}
   ppo-rnn: {configs: [published-1m, activation-tanh], seeds: 1}
+  pqn-rnn: {configs: [base, lambda-0], seeds: 1}
