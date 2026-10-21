@@ -464,6 +464,7 @@ class Store:
         phases: str = "tune-coarse",
         status: str = "FINISHED",
         budget: str = "1m",
+        extra_tags: dict[str, str] | None = None,
     ) -> str:
         tags = {
             queue.TAG_METHOD: method,
@@ -471,8 +472,10 @@ class Store:
             queue.TAG_PHASES: phases,
             queue.TAG_BUDGET: budget,
             "seed": str(seed),
+            **(extra_tags or {}),
         }
-        rid = self.client.create_run(self.exp, tags=tags).info.run_id
+        name = f"{method}-{budget}-{config_hash(cfg)}-s{seed}"
+        rid = self.client.create_run(self.exp, tags=tags, run_name=name).info.run_id
         self.client.log_metric(rid, queue.SCORE_METRIC, score)
         self.client.log_dict(rid, cfg, queue.CONFIG_ARTIFACT)
         self.client.set_terminated(rid, status)
@@ -494,20 +497,78 @@ def methods(tmp_path: Path) -> Path:
     return tmp_path / "methods"
 
 
-def test_coarse_results_are_seed_means_of_finished_tune_coarse_runs(
-    store: Store,
+@pytest.fixture
+def coarse_phase(tmp_path: Path) -> Path:
+    """A phases dir whose tune-coarse lists the toy published and lr-hi, 2 seeds."""
+    phases = tmp_path / "phases"
+    phases.mkdir()
+    body = {"budget": "1m", "eval": "final", "seeds": 2}
+    body["runs"] = {"toy": {"configs": [{"ref": "published", "seeds": 2}, "lr-hi"]}}
+    (phases / "tune-coarse.yaml").write_text(yaml.safe_dump(body))
+    return phases
+
+
+def _coarse(store: Store, phases: Path, **kw: Any) -> dict[str, float]:
+    return coarse_results(
+        "toy",
+        tracking_uri=store.tracking_uri,
+        methods_dir=METHODS,
+        phases_dir=phases,
+        **kw,
+    )
+
+
+def test_coarse_results_are_seed_means_of_complete_configs(
+    store: Store, coarse_phase: Path
 ) -> None:
     pub, hi = resolved("toy", "published"), resolved("toy", "lr-hi")
-    for seed, score in enumerate((10.0, 12.0)):
-        store.add("toy", pub, score, seed=seed)
-    store.add("toy", hi, 99.0, phases="final-1m")  # not a tune-coarse run
-    store.add("toy", hi, 7.0, status="FAILED")  # not finished
+    store.add("toy", pub, 10.0, seed=0)
+    store.add("toy", pub, 20.0, seed=1, phases="smoke,tune-coarse,final-1m")
+    store.add("toy", pub, 99.0, seed=7)  # a seed the phase does not list
     store.add("other", hi, 55.0)  # another method
-    store.add(
-        "toy", pub, 20.0, phases="smoke,tune-coarse,final-1m", seed=2
-    )  # several phases
-    got = coarse_results("toy", tracking_uri=store.tracking_uri, methods_dir=METHODS)
-    assert got == {config_hash(pub): pytest.approx(14.0)}
+    for seed in (0, 1):
+        store.add("toy", hi, 4.0 + seed, seed=seed)
+    got = _coarse(store, coarse_phase)
+    assert got == {config_hash(pub): pytest.approx(15.0), config_hash(hi): 4.5}
+
+
+@pytest.mark.parametrize(
+    "seed_1",
+    [
+        {"status": "FAILED"},  # not finished
+        {"phases": "final-1m"},  # not a tune-coarse run
+        {"score": float("nan")},  # no episodes
+        {"extra_tags": {"abort/bug": "true"}},
+        None,  # not started
+    ],
+)
+def test_an_incomplete_config_is_refused_unless_partial_results_are_allowed(
+    store: Store,
+    coarse_phase: Path,
+    caplog: pytest.LogCaptureFixture,
+    seed_1: dict[str, Any] | None,
+) -> None:
+    pub, hi = resolved("toy", "published"), resolved("toy", "lr-hi")
+    for seed in (0, 1):
+        store.add("toy", pub, 10.0, seed=seed)
+    store.add("toy", hi, 4.0, seed=0)
+    if seed_1 is not None:
+        store.add("toy", hi, **{"score": 5.0, **seed_1}, seed=1)
+    missing = f"toy-1m-{config_hash(hi)}-s1"
+    with pytest.raises(
+        ValueError, match=rf"allow-partial.*{config_hash(hi)}: {missing}"
+    ):
+        _coarse(store, coarse_phase)
+    assert _coarse(store, coarse_phase, allow_partial=True) == {config_hash(pub): 10.0}
+    assert missing in caplog.text
+
+
+def test_partial_results_expand_around_the_complete_configs() -> None:
+    partial = stage1("toy", {k: v for k, v in STAGE1.items() if k != "lr-hi"})
+    with pytest.raises(ValueError, match="lr-hi"):
+        expand_fine("toy", partial, methods_dir=METHODS)
+    fine = expand_fine("toy", partial, methods_dir=METHODS, allow_partial=True)
+    assert fine["toy"]  # ranked over the six complete configs
 
 
 def test_mark_tuned_writes_the_block_and_the_tag_together(
@@ -762,6 +823,23 @@ def test_cli_expand_fine_prints_the_configs_then_the_run_names(
     names = [ln for ln in lines if not ln.startswith("#")]
     assert (len(configs), len(names)) == (4, 12)
     assert json.loads(configs[0].split(" ", 4)[4]) == {"lr": 3.0e-4}
+
+
+def test_cli_allow_partial_reaches_the_coarse_results_and_the_expansion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[bool] = []
+
+    def results(slug: str, **kw: Any) -> dict[str, float]:
+        seen.append(kw["allow_partial"])
+        return stage1(slug, {k: v for k, v in STAGE1.items() if k != "shape"})
+
+    monkeypatch.setattr(queue, "coarse_results", results)
+    argv = ["--methods-dir", str(METHODS), "--expand-fine", "toy", "--dry-run"]
+    with pytest.raises(ValueError, match="shape"):
+        queue.main(argv)
+    queue.main([*argv, "--allow-partial"])
+    assert seen == [False, True]
 
 
 # --- shipped configs -----------------------------------------------------------

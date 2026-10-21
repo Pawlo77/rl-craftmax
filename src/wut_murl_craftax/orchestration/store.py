@@ -81,7 +81,11 @@ def phase_status(
     of that name outside the phase, such as one yet to join it, is pending.
     """
     args = argparse.Namespace(
-        phase=phase, method=method, expand_fine=expand_fine, methods_dir=methods_dir
+        phase=phase,
+        method=method,
+        expand_fine=expand_fine,
+        allow_partial=False,  # status shows an incomplete coarse stage as an error
+        methods_dir=methods_dir,
     )
     specs = phase_specs(args, tracking_uri) or []
     client = mlflow.MlflowClient(tracking_uri=_main_uri(tracking_uri))

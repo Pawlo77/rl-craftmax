@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from ..training.records import LOSS_COLUMNS
+from .queue import TAG_ABORT_BUG as TAG_ABORT_BUG  # queue reads it without this module
 
 TAG_ABORT_COUNT = "abort/count"
 """Run tag: how often the run was aborted on a non-finite loss."""
@@ -22,8 +23,6 @@ TAG_ABORT_METRIC = "abort/metric"
 """Run tag: the metric that was non-finite at the last abort."""
 TAG_ABORT_UPDATE = "abort/update"
 """Run tag: the update (1-based) whose loss was non-finite at the last abort."""
-TAG_ABORT_BUG = "abort/bug"
-"""Run tag: ``true`` after a second abort; the queue skips such a run."""
 FLAG_PREFIX = "flag/"
 """Prefix of the flag tags; the value is the update at which the rule first held."""
 MAX_ABORTS = 2

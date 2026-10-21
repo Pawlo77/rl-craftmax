@@ -18,6 +18,8 @@ import hashlib
 import importlib
 import itertools
 import json
+import logging
+import math
 import re
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -30,8 +32,11 @@ import yaml
 from ..config import load_experiment_config
 from .tracking import _resolve_tracking_uri
 
+logger = logging.getLogger(__name__)
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 METHODS_DIR = REPO_ROOT / "configs" / "methods"
+PHASES_DIR = REPO_ROOT / "configs" / "phases"
 EXPERIMENT_CONFIG = REPO_ROOT / "configs" / "experiment.yaml"
 DEFAULT_PROFILE = REPO_ROOT / "configs" / "profiles" / "laptop.yaml"
 TUNE_BUDGET = "1m"
@@ -48,6 +53,8 @@ TAG_SEED = "seed"
 """Run tag: the seed."""
 TAG_PHASES = "phases"
 """Run tag: comma-joined names of the phases that list the run."""
+TAG_ABORT_BUG = "abort/bug"
+"""Run tag: ``true`` after a second abort; the queue skips such a run."""
 TAG_BEST = "best"
 """Run tag set by `mark_tuned`: ``true`` on the tuned config's tuning runs."""
 CONFIG_ARTIFACT = "config.json"
@@ -543,7 +550,7 @@ def _effect(
 ) -> float:
     """Range of the mean stage-1 score over the values of ``key`` along its axis."""
     groups: dict[str, list[float]] = {}
-    for name in _axis(method, key):
+    for name in (n for n in _axis(method, key) if n in scores):
         if key not in cfgs[name]:
             _fail(f"{method.path.name}: fine knob {key!r} is not a key of the config")
         groups.setdefault(json.dumps(cfgs[name][key]), []).append(scores[name])
@@ -570,7 +577,11 @@ def _knob_values(knob: Mapping[str, Any], best: Any) -> list[Any]:
 
 
 def _fine_for(
-    method: Method, registry: str, results: Mapping[str, float], methods_dir: Path
+    method: Method,
+    registry: str,
+    results: Mapping[str, float],
+    methods_dir: Path,
+    allow_partial: bool,
 ) -> dict[str, dict[str, Any]]:
     cfgs = {
         e["name"]: resolve_config(
@@ -579,7 +590,9 @@ def _fine_for(
         for e in method.coarse
     }
     missing = [n for n, c in cfgs.items() if config_hash(c) not in results]
-    if missing or not cfgs:
+    if allow_partial:
+        cfgs = {n: c for n, c in cfgs.items() if n not in missing}
+    if (missing and not allow_partial) or not cfgs:
         _fail(
             f"{registry}: no stage-1 result for coarse config(s) {missing or 'at all'}"
         )
@@ -620,6 +633,7 @@ def expand_fine(
     *,
     method: str | None = None,
     methods_dir: Path = METHODS_DIR,
+    allow_partial: bool = False,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Generate the stage-2 configs: registry name -> {config name: overrides}.
 
@@ -631,7 +645,8 @@ def expand_fine(
     (``zero`` replaces them when it is 0; ``clip`` [low, high]; ``integer``), one knob
     at a time (``combine: each``) or all combined (``cross``). A config equal to the
     best coarse one hashes like it, so its stage-1 run is reused. ``method`` restricts
-    the registry entries (a registry name, or the slug for all).
+    the registry entries (a registry name, or the slug for all). A coarse config
+    without a result fails, unless ``allow_partial`` ranks the others only.
     """
     loaded = load_method(slug, methods_dir)
     if loaded.fine is None:
@@ -639,7 +654,7 @@ def expand_fine(
     names = [r for r in loaded.registry_names if method in (None, slug, r)]
     if not names:
         _fail(f"--method {method!r} is none of {loaded.registry_names}")
-    return {r: _fine_for(loaded, r, results, methods_dir) for r in names}
+    return {r: _fine_for(loaded, r, results, methods_dir, allow_partial) for r in names}
 
 
 # --- MLflow ---------------------------------------------------------------------
@@ -673,28 +688,52 @@ def coarse_results(
     method: str | None = None,
     tracking_uri: str | None = None,
     methods_dir: Path = METHODS_DIR,
+    phases_dir: Path = PHASES_DIR,
+    allow_partial: bool = False,
 ) -> dict[str, float]:
-    """Mean final score per config hash over finished ``tune-coarse`` runs."""
+    """Mean final score per config hash over its ``tune-coarse`` seeds, complete only.
+
+    A config is complete when every run the phase file lists for it is FINISHED in
+    the store with a finite ``final_score`` and is not marked ``abort/bug``.
+
+    Raises:
+        ValueError: Naming each incomplete config's missing runs, unless
+            ``allow_partial`` leaves those configs out with a warning.
+    """
     names = [
         r
         for r in load_method(slug, methods_dir).registry_names
         if method in (None, slug, r)
     ]
-    scores: dict[str, list[float]] = {}
+    expected: dict[str, list[str]] = {}
+    path = phases_dir / f"{COARSE_PHASE}.yaml"
+    for spec in expand_phase(path, method=slug, methods_dir=methods_dir):
+        if spec.registry_name in names:
+            expected.setdefault(spec.config_hash, []).append(spec.name)
+    done: dict[str, float] = {}
     for run in _runs(
         _client(tracking_uri),
         f"attributes.status = 'FINISHED' and tags.{TAG_PHASES} LIKE '%{COARSE_PHASE}%'",
     ):
-        tags = run.data.tags
+        tags, score = run.data.tags, run.data.metrics.get(SCORE_METRIC, math.nan)
         if (
-            tags.get(TAG_METHOD) in names
-            and COARSE_PHASE in tags[TAG_PHASES].split(",")
-            and SCORE_METRIC in run.data.metrics
+            COARSE_PHASE in tags[TAG_PHASES].split(",")
+            and tags.get(TAG_ABORT_BUG) != "true"
+            and math.isfinite(score)
         ):
-            scores.setdefault(tags[TAG_CONFIG_HASH], []).append(
-                run.data.metrics[SCORE_METRIC]
-            )
-    return {h: sum(v) / len(v) for h, v in scores.items()}
+            done[run.info.run_name] = score
+    missing = {h: [n for n in r if n not in done] for h, r in expected.items()}
+    missing = {h: runs for h, runs in missing.items() if runs}
+    if missing:
+        listing = "; ".join(f"{h}: {', '.join(runs)}" for h, runs in missing.items())
+        if not allow_partial:
+            _fail(f"incomplete {COARSE_PHASE} configs (see --allow-partial): {listing}")
+        logger.warning("left out incomplete %s configs: %s", COARSE_PHASE, listing)
+    return {
+        h: sum(done[n] for n in runs) / len(runs)
+        for h, runs in expected.items()
+        if h not in missing
+    }
 
 
 def _replace_tuned(text: str, tuned: Mapping[str, Any]) -> str:
@@ -845,21 +884,27 @@ def phase_specs(
 ) -> list[RunSpec] | None:
     """The specs of ``args.phase`` (None without one), after ``args.expand_fine``.
 
-    ``args`` carries ``phase``, ``method``, ``expand_fine`` and ``methods_dir``; the
-    stage-2 configs come from the coarse results in ``tracking_uri`` (the default
-    store when None) and are printed.
+    ``args`` carries ``phase``, ``method``, ``expand_fine``, ``allow_partial`` and
+    ``methods_dir``; the stage-2 configs come from the coarse results in
+    ``tracking_uri`` (the default store when None) and are printed.
     """
     fine = None
     if args.expand_fine:
         slug = args.expand_fine
+        partial = args.allow_partial
         results = coarse_results(
             slug,
             method=args.method,
             tracking_uri=tracking_uri,
             methods_dir=args.methods_dir,
+            allow_partial=partial,
         )
         fine = expand_fine(
-            slug, results, method=args.method, methods_dir=args.methods_dir
+            slug,
+            results,
+            method=args.method,
+            methods_dir=args.methods_dir,
+            allow_partial=partial,
         )
         _print_fine(fine, slug, args.methods_dir)
     if args.phase is None:
@@ -879,6 +924,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument(
         "--expand-fine", metavar="SLUG", help="generate the stage-2 configs of SLUG"
+    )
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="--expand-fine ranks only the coarse configs with all seeds finished",
     )
     parser.add_argument("--mark-tuned", nargs=2, metavar=("SLUG", "HASH8"))
     parser.add_argument("--methods-dir", type=Path, default=METHODS_DIR)
