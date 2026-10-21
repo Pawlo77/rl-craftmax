@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from _gameplay_run import classic_rollout
 
+from wut_murl_craftax.evaluation.milestones import achievement_names
 from wut_murl_craftax.visualisation.rollout import (
     FEATURES,
     HeuristicPolicy,
@@ -83,6 +84,7 @@ def test_craftax_features_track_floor_and_achievement_order() -> None:
     game = game_for("craftax", god_mode=True)
     names = game.achievement_names
     assert names[25] == "MAKE_DIAMOND_SWORD"  # enum order differs from value order
+    assert names == tuple(n.upper() for n in achievement_names("craftax"))
     r = play(game, HeuristicPolicy(game), seed=1, max_steps=60)
     level = r.features[:, FEATURES.index("level")]
     assert level.max() >= 1  # the god-mode dive descends at step 59

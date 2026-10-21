@@ -5,12 +5,14 @@ Layout of a run directory (see ``knowledge/visualisation/Recording training data
 finished training episode, achievements bit-packed) and ``ckpt/``.
 """
 
-import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from ..evaluation.milestones import achievement_names as _names
+from ..evaluation.milestones import constants, game_of
 
 BASE_COLUMNS = ("update", "env_steps", "wall_s", "n_episodes", "return", "length")
 """Leading columns of ``metrics.npz``; the losses and ``ach/<name>`` columns follow."""
@@ -20,27 +22,21 @@ LOSS_COLUMNS = ("policy_loss", "value_loss", "entropy", "approx_kl", "explained_
 
 def is_classic(env_name: str) -> bool:
     """Whether ``env_name`` is a Craftax-Classic variant."""
-    return "Classic" in env_name
-
-
-def _constants(env_name: str) -> Any:
-    """Craftax constants of ``env_name``'s game, imported on first use.
-
-    Importing them builds JAX arrays, which starts the backends; deferring it keeps
-    ``configure_runtime`` able to split the CPU after this module is imported.
-    """
-    game = "craftax_classic" if is_classic(env_name) else "craftax"
-    return importlib.import_module(f"craftax.{game}.constants")
+    return game_of(env_name) == "classic"
 
 
 def achievement_names(env_name: str) -> list[str]:
-    """Lower-case achievement names in enum order (22 Classic, 67 Craftax)."""
-    return [a.name.lower() for a in _constants(env_name).Achievement]
+    """Lower-case achievement names in ``.value`` order (22 Classic, 67 Craftax)."""
+    return list(_names(game_of(env_name)))
 
 
 def achievement_weights(env_name: str) -> np.ndarray:
-    """Reward per achievement: 1 each in Classic, tier rewards (sum 226) in Craftax."""
-    consts = _constants(env_name)
+    """Reward per achievement in ``.value`` order: 1 Classic, tiers (sum 226) Craftax.
+
+    The constants are imported on first use: they build JAX arrays, which starts the
+    backends; deferring it keeps ``configure_runtime`` able to split the CPU.
+    """
+    consts = constants(game_of(env_name))
     if is_classic(env_name):
         return np.ones(len(consts.Achievement))
     return np.asarray(consts.ACHIEVEMENT_REWARD_MAP, float)
@@ -118,7 +114,7 @@ class TrainingMetrics:
     data: np.ndarray
     names: list[str]
     weights: np.ndarray
-    """Reward per achievement."""
+    """Reward per achievement, aligned with ``names``."""
 
     def col(self, name: str) -> np.ndarray:
         """One column by name."""
@@ -151,7 +147,10 @@ def load_metrics(run_dir: Path) -> TrainingMetrics:
     env = str(z["env"])
     cols = [str(c) for c in z["cols"]]
     names = [c.removeprefix("ach/") for c in cols if c.startswith("ach/")]
-    return TrainingMetrics(env, cols, z["data"], names, achievement_weights(env))
+    # paired by name: files written before the switch to value order hold enum order
+    reward = dict(zip(achievement_names(env), achievement_weights(env), strict=True))
+    weights = np.array([reward[n] for n in names])
+    return TrainingMetrics(env, cols, z["data"], names, weights)
 
 
 @dataclass(frozen=True, slots=True)

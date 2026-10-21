@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+from craftax.craftax import constants as craftax_constants
 
 from wut_murl_craftax.training.records import (
     RunLog,
@@ -14,6 +15,7 @@ from wut_murl_craftax.training.records import (
 )
 
 CLASSIC = "Craftax-Classic-Symbolic-v1"
+CRAFTAX = "Craftax-Symbolic-v1"
 
 
 def test_achievement_tables() -> None:
@@ -21,6 +23,38 @@ def test_achievement_tables() -> None:
     assert achievement_weights(CLASSIC).sum() == 22
     assert len(achievement_names("Craftax-Symbolic-v1")) == 67
     assert achievement_weights("Craftax-Symbolic-v1").sum() == 226
+
+
+def test_craftax_names_and_weights_pair_by_value() -> None:
+    names, weights = achievement_names(CRAFTAX), achievement_weights(CRAFTAX)
+    reward = np.asarray(craftax_constants.ACHIEVEMENT_REWARD_MAP)
+    enum = craftax_constants.Achievement
+    assert [reward[enum[n.upper()].value] for n in names] == weights.tolist()
+    assert weights[names.index("defeat_knight")] == 5  # enum position 45 holds 8
+    assert names[enum.MAKE_DIAMOND_SWORD.value] == "make_diamond_sword"
+
+
+def test_load_metrics_pairs_weights_by_name_in_any_column_order(
+    tmp_path: Path,
+) -> None:
+    names = [a.name.lower() for a in craftax_constants.Achievement]  # enum order
+    log = RunLog(tmp_path, CRAFTAX, names)
+    shape = (1, 1, len(names))
+    log.add_update(
+        1,
+        1,
+        0.1,
+        np.zeros(5),
+        np.ones((1, 1), bool),
+        np.zeros(shape, bool),
+        np.zeros((1, 1)),
+        np.ones((1, 1)),
+    )
+    log.flush()
+    m = load_metrics(tmp_path)
+    assert m.names == names
+    assert m.weights[names.index("defeat_knight")] == 5
+    assert m.max_reward == 226
 
 
 def _log_two_updates(out: Path) -> RunLog:

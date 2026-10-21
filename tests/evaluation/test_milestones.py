@@ -18,6 +18,7 @@ from wut_murl_craftax.evaluation.milestones import (
     RADAR_AXES,
     TECH_LADDER,
     Game,
+    achievement_names,
     game_of,
     ladder,
 )
@@ -124,3 +125,20 @@ def test_importing_the_tables_leaves_craftax_unimported() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.strip() == "False"
+
+
+def test_achievement_names_are_in_value_order() -> None:
+    names = achievement_names("craftax")
+    enum = craftax_constants.Achievement
+    assert len(names) == 67
+    for a in (
+        enum.COLLECT_SAPPHIRE,
+        enum.MAKE_DIAMOND_SWORD,
+        enum.DEFEAT_KNIGHT,
+        enum.DEFEAT_ARCHER,
+        enum.ENCHANT_ARMOUR,
+    ):
+        assert a.value >= 25
+        assert names[a.value] == a.name.lower()
+    classic = [a.name.lower() for a in classic_constants.Achievement]
+    assert list(achievement_names("classic")) == classic

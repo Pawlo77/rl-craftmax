@@ -199,12 +199,15 @@ def test_skeleton_killed_by_an_arrow(craftax: Env) -> None:
     assert ev.unlocked[Achievement.DEFEAT_SKELETON.value]
 
 
-def test_slot_refilled_in_the_kill_step_still_counts_the_kill(craftax: Env) -> None:
+@pytest.mark.parametrize("refill_at", [(30, 30), (22, 24)])
+def test_slot_refilled_in_the_kill_step_still_counts_the_kill(
+    craftax: Env, refill_at: tuple[int, int]
+) -> None:
     s = put(quiet(craftax.start()), "melee_mobs", (23, 24), health=1.0, type_id=0)
-    m = s.melee_mobs  # a spawn refills slot 0 far away with a fresh zombie
+    m = s.melee_mobs  # a spawn refills slot 0 with a fresh zombie, far or next door
     s2 = s.replace(
         melee_mobs=m.replace(
-            position=m.position.at[0, 0].set(jnp.array([30, 30])),
+            position=m.position.at[0, 0].set(jnp.array(refill_at)),
             health=m.health.at[0, 0].set(5.0),
         )
     )
@@ -263,6 +266,39 @@ def test_walking_into_stone_is_wasted_unless_it_turns(
     ev, _ = craftax.play(s.replace(player_direction=direction), Action.UP.value)
     assert bool(ev.effective) is effective
     assert not ev.forced
+
+
+def _into_stone(s: Any) -> Any:
+    """Facing stone above, so ``UP`` changes nothing the player did."""
+    return block(s, (23, 24), BlockType.STONE)
+
+
+def test_passive_stat_decay_does_not_make_an_action_effective(craftax: Env) -> None:
+    s = _into_stone(quiet(craftax.start()))
+    s = s.replace(player_hunger=25.0, player_thirst=20.0, player_fatigue=30.0)
+    ev, _ = craftax.play(s, Action.UP.value)  # food, drink and energy all fall by 1
+    assert bool(ev.stat_low.any()) is False
+    assert not ev.effective
+
+
+def test_a_projectile_in_flight_does_not_make_an_action_effective(
+    craftax: Env,
+) -> None:
+    s = put(_into_stone(quiet(craftax.start())), "player_projectiles", (24, 26))
+    s = s.replace(
+        player_projectile_directions=s.player_projectile_directions.at[0, 0].set(
+            jnp.array([0, 1])
+        )
+    )
+    ev, _ = craftax.play(s, Action.UP.value)
+    assert not ev.effective
+
+
+def test_casting_a_fireball_is_effective(craftax: Env) -> None:
+    s = block(quiet(craftax.start()), (23, 24), BlockType.GRASS)
+    s = s.replace(learned_spells=s.learned_spells.at[0].set(True))
+    ev, _ = craftax.play(s, Action.CAST_FIREBALL.value)
+    assert ev.effective
 
 
 def test_any_action_while_sleeping_is_a_forced_noop(craftax: Env) -> None:

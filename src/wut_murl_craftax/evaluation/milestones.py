@@ -6,9 +6,8 @@ Facts: ``knowledge/game/`` and [[Craftax observations and actions]].
 """
 
 import importlib
+from types import ModuleType
 from typing import Literal
-
-from ..training.records import is_classic
 
 type Game = Literal["craftax", "classic"]
 
@@ -119,12 +118,28 @@ RADAR_AXES: tuple[str, ...] = (
 
 def game_of(env_name: str) -> Game:
     """Game of a Craftax env name."""
-    return "classic" if is_classic(env_name) else "craftax"
+    return "classic" if "Classic" in env_name else "craftax"
+
+
+def constants(game: Game) -> ModuleType:
+    """Craftax constants of ``game``, imported on first use."""
+    module = "craftax_classic" if game == "classic" else "craftax"
+    return importlib.import_module(f"craftax.{module}.constants")
+
+
+def achievement_names(game: Game) -> tuple[str, ...]:
+    """Lower-case achievement names in ``.value`` order.
+
+    The one index space of ``state.achievements``, the reward map,
+    ``StepEvents.unlocked`` and the training records; Craftax enum order differs
+    from value order from position 25 on.
+    """
+    enum = constants(game).Achievement
+    return tuple(a.name.lower() for a in sorted(enum, key=lambda a: a.value))
 
 
 def ladder(game: Game) -> tuple[int, ...]:
-    """Achievement ids of the tech ladder by ``.value`` (enum order is not id order)."""
-    module = "craftax_classic" if game == "classic" else "craftax"
-    enum = importlib.import_module(f"craftax.{module}.constants").Achievement
+    """Achievement ids of the tech ladder by ``.value``."""
+    enum = constants(game).Achievement
     names = TECH_LADDER[:9] if game == "classic" else TECH_LADDER
     return tuple(enum[name].value for name in names)

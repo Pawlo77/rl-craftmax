@@ -21,6 +21,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         RADAR_AXES,
         TECH_LADDER,
         Game,
+        achievement_names,
         game_of,
         ladder,
     )
@@ -39,6 +40,7 @@ _EXPORTS: dict[str, str] = {
     "StepEvents": "events",
     "TECH_LADDER": "milestones",
     "UNKNOWN": "events",
+    "achievement_names": "milestones",
     "game_of": "milestones",
     "ladder": "milestones",
     "step_events": "events",
@@ -60,6 +62,7 @@ __all__ = [
     "UNKNOWN",
     "Game",
     "StepEvents",
+    "achievement_names",
     "game_of",
     "ladder",
     "step_events",

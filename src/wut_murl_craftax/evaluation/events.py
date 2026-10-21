@@ -40,7 +40,8 @@ class StepEvents:
     """Events of one env step; under ``vmap`` every field gains the env axis."""
 
     unlocked: jax.Array
-    """Achievements first unlocked this step, bool (67; Classic 22), by ``.value``."""
+    """Achievements first unlocked this step, bool (67; Classic 22), by ``.value``
+    (names: ``milestones.achievement_names``)."""
     floor: jax.Array
     """``s2.player_level``, int8 (Classic 0)."""
     health_delta: jax.Array
@@ -72,8 +73,8 @@ class StepEvents:
     forced: jax.Array
     """The game replaced the action with ``NOOP`` (sleeping or resting), bool."""
     effective: jax.Array
-    """The action-relevant digest of the state changed, bool; wasted = not effective,
-    not ``NOOP``, not forced."""
+    """The action changed the player or the world (passive decay and projectiles in
+    flight excluded), bool; wasted = not effective, not ``NOOP``, not forced."""
     hostiles_on_screen: jax.Array
     hostiles_close: jax.Array
     """Melee, ranged mobs and enemy projectiles in the view and within 2 tiles, int8."""
@@ -102,8 +103,11 @@ class _View(NamedTuple):
     drink: jax.Array
     energy: jax.Array
     recover: jax.Array
+    mana: jax.Array
     sleeping: jax.Array
     resting: jax.Array
+    bolts: jax.Array
+    """Player projectile slots alive."""
     melee: _Group
     passive: _Group
     ranged: _Group
@@ -171,8 +175,7 @@ def _group(m: Any, lv: Any = None, heading: jax.Array | None = None) -> _Group:
 
 
 def _craftax_view(s: Any, lv: jax.Array) -> _View:
-    """Craftax state on floor ``lv``; player projectiles enter the digest masked."""
-    bolts = _group(s.player_projectiles, lv)
+    """Craftax state on floor ``lv``."""
     r, c = s.player_position
     digest = (
         s.map[lv],
@@ -186,8 +189,6 @@ def _craftax_view(s: Any, lv: jax.Array) -> _View:
         s.player_dexterity,
         s.player_strength,
         s.player_intelligence,
-        bolts.mask,
-        jnp.where(bolts.mask[:, None], bolts.pos, 0),  # dead slots keep drifting
     )
     return _View(
         s.player_level,
@@ -198,8 +199,10 @@ def _craftax_view(s: Any, lv: jax.Array) -> _View:
         s.player_drink,
         s.player_energy,
         s.player_recover,
+        s.player_mana,
         s.is_sleeping,
         s.is_resting,
+        s.player_projectiles.mask[lv],
         _group(s.melee_mobs, lv),
         _group(s.passive_mobs, lv),
         _group(s.ranged_mobs, lv),
@@ -224,8 +227,10 @@ def _classic_view(s: Any) -> _View:
         s.player_drink,
         s.player_energy,
         s.player_recover,
+        jnp.int32(0),
         s.is_sleeping,
         jnp.bool_(False),
+        jnp.zeros(0, bool),
         _group(s.zombies),
         _group(s.cows),
         _group(s.skeletons),
@@ -276,13 +281,14 @@ def _losses(
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Killed slots, health removed and the part off the ``DO`` target.
 
-    A live slot that is dead in ``s2`` or jumped more than one tile (refilled by a spawn
-    in the same step) was killed unless it was at despawn distance from the player
-    (never on the boss floor); a killed slot loses its remaining health.
+    A live slot that is dead in ``s2``, or was refilled by a spawn in the same step
+    (jumped more than one tile, or gained health: live mobs never heal), was killed
+    unless it was at despawn distance from the player (never on the boss floor); a
+    killed slot loses its remaining health.
     """
-    jump = jnp.abs(b.pos - a.pos).sum(-1) > 1
+    refilled = (jnp.abs(b.pos - a.pos).sum(-1) > 1) | (b.health > a.health)
     stays = (jnp.abs(a.pos - p).sum(-1) < DESPAWN_DISTANCE) | boss
-    killed = a.mask & stays & (~b.mask | jump)
+    killed = a.mask & stays & (~b.mask | refilled)
     lost = jnp.where(killed, a.health, jnp.maximum(a.health - b.health, 0.0))
     dealt = jnp.where(a.mask, lost, 0.0)
     return killed, dealt, jnp.where(target, 0.0, dealt)
@@ -291,13 +297,17 @@ def _losses(
 def _effective(a: _View, b: _View) -> jax.Array:
     """Whether the action changed the player or the world around it.
 
-    Compared: position, direction, floor, food, drink, sleeping, resting, the digest
-    and the health of the mobs alive in ``s``.
+    Changes: position, direction, floor, sleeping, resting, the digest, the health of
+    the mobs alive in ``s``; rises of food, drink, energy; a fall of mana; a player
+    projectile created. Passive decay, regeneration and projectiles already in flight
+    do not count, so the wasted share is not biased low.
     """
-    shared = (a.position, a.direction, a.level, a.food, a.drink, a.sleeping, a.resting)
-    mine = (b.position, b.direction, b.level, b.food, b.drink, b.sleeping, b.resting)
+    shared = (a.position, a.direction, a.level, a.sleeping, a.resting)
+    mine = (b.position, b.direction, b.level, b.sleeping, b.resting)
     pairs = zip((*shared, *a.digest), (*mine, *b.digest), strict=True)
     changed = [jnp.any(x != y) for x, y in pairs]
+    changed += [b.food > a.food, b.drink > a.drink, b.energy > a.energy]
+    changed += [b.mana < a.mana, jnp.any(~a.bolts & b.bolts)]
     for ga, gb in ((a.melee, b.melee), (a.passive, b.passive), (a.ranged, b.ranged)):
         changed.append(jnp.any(ga.mask & (ga.health != gb.health)))
     return jnp.stack(changed).any()
