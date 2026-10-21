@@ -876,10 +876,11 @@ def test_a_methods_knobs_reach_its_hooks_in_training_and_evaluation(
     store: Store,
 ) -> None:
     """Two grid entries of a hook method: the runner trains each entry's bonus and
-    evaluation opens each run with its own env wrapper (2 PPO-RNN updates)."""
+    evaluation opens each run with its own env wrapper (2 PPO-RNN updates); the hooks
+    read the method keys and the resolved base config (``gamma``)."""
     knobs = [
-        {"toy_bonus": 0.0, "toy_features": 0},
-        {"toy_bonus": 0.5, "toy_features": 3},
+        {"toy_bonus": 0.0, "toy_features": 0, "gamma": 0.99},
+        {"toy_bonus": 0.5, "toy_features": 3, "gamma": 0.5},
     ]
     specs = []
     for k in knobs:
@@ -893,11 +894,12 @@ def test_a_methods_knobs_reach_its_hooks_in_training_and_evaluation(
     for k, spec in zip(knobs, specs, strict=True):
         out = store.run_dir(spec.name)
         with np.load(out / runner.EXTRAS_FILE) as z:
-            per_update = 64 * k["toy_bonus"]  # 8 envs x 8 steps
+            per_update = 64 * k["toy_bonus"] * k["gamma"]  # 8 envs x 8 steps
             assert z["toy/bonus_sum"].tolist() == [per_update, 2 * per_update]
         run = eval_rollouts.EvalRun.load(out, {"toy": TOY})
         obs, _ = run.env.reset(jax.random.key(0), run.env_params)
         assert obs.shape == (width + k["toy_features"],)
+        assert (obs[width:] == k["gamma"]).all()  # the builder saw the base gamma
         policy, p = run.policy, run.params(run.updates[-1])
         act, _ = policy.step(
             p, policy.init_carry(1), obs[None], jax.random.key(1), True

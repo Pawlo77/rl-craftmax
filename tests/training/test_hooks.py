@@ -327,40 +327,89 @@ def _r_int(cfg: _Cfg) -> float:
     return float(fn({}, None, None, None, jnp.zeros(2, bool), 0)[0][0])
 
 
-def test_a_method_builds_its_hooks_from_its_own_keys(knob_method: HookMethod) -> None:
-    """Its keys configure the hooks; the others stay for the base trainer config."""
-    run = {"method": "knob", "knob_reward": 0.5, "lr": 1e-3}
-    cfg, rest = with_method(_Cfg(), knob_method, run)
-    assert _r_int(cfg) == 0.5
-    assert rest == {"method": "knob", "lr": 1e-3}
-    assert _r_int(with_method(_Cfg(), knob_method, {"knob_reward": 0.125})[0]) == 0.125
-    assert _r_int(with_method(_Cfg(), knob_method, {})[0]) == 0.0  # its default
+def _build(
+    config: dict[str, Any], method: HookMethod | None, base: _Cfg | None = None
+) -> _Cfg:
+    """`with_method` on `_Cfg`, whose ``from_config`` takes its own field names."""
+
+    def from_config(keys: Any, cfg: _Cfg) -> _Cfg:
+        if unknown := set(keys) - {"method", "lr", "envs"}:
+            msg = f"unknown keys: {sorted(unknown)}"
+            raise ValueError(msg)
+        return dataclasses.replace(
+            cfg, **{k: v for k, v in keys.items() if k != "method"}
+        )
+
+    return with_method(base or _Cfg(), method, config, from_config)
 
 
-def test_equal_method_keys_give_equal_configs(knob_method: HookMethod) -> None:
-    """One built hook set per distinct method config: trainer setups cache on it."""
-    a, _ = with_method(_Cfg(), knob_method, {"knob_reward": 0.5})
-    b, _ = with_method(_Cfg(), knob_method, {"knob_reward": 0.5})
-    c, _ = with_method(_Cfg(), knob_method, {"knob_reward": 0.25})
+def test_a_method_builds_its_hooks_from_its_keys_and_the_base(
+    knob_method: HookMethod,
+) -> None:
+    """Its keys and the resolved base config build the hooks; the rest is the base."""
+    cfg = _build({"method": "knob", "knob_reward": 0.5, "lr": 2.0}, knob_method)
+    assert (_r_int(cfg), cfg.lr) == (1.0, 2.0)
+    assert _r_int(_build({"knob_reward": 0.5, "lr": 0.5}, knob_method)) == 0.25
+    assert _r_int(_build({"lr": 1.0}, knob_method)) == 0.0  # its default knob
+
+
+def test_equal_keys_give_equal_configs(knob_method: HookMethod) -> None:
+    """One built hook set per method and base config: trainer setups cache on it."""
+    a = _build({"knob_reward": 0.5}, knob_method)
+    b = _build({"knob_reward": 0.5}, knob_method)
     assert a == b
     assert hash(a) == hash(b)
-    assert a != c
+    assert a != _build({"knob_reward": 0.25}, knob_method)
+    assert a != _build({"knob_reward": 0.5, "lr": 1.0}, knob_method)
 
 
 def test_the_method_hooks_replace_the_factory_hooks(knob_method: HookMethod) -> None:
-    base = _Cfg(**_all_hooks(), extra_steps=2)
-    cfg, _ = with_method(base, knob_method, {"knob_reward": 0.5})
+    base = _Cfg(**_all_hooks(), extra_steps=2, lr=1.0)
+    cfg = _build({"knob_reward": 0.5}, knob_method, base)
     assert _r_int(cfg) == 0.5
     assert resolve(cfg).active == ("intrinsic_reward_fn",)
     assert (cfg.extra_steps, cfg.lr) == (0, base.lr)
 
 
-def test_without_a_method_the_config_passes_unchanged() -> None:
-    base, run = _Cfg(lr=1.0), {"lr": 2.0, "method": "x"}
-    cfg, rest = with_method(base, None, run)
-    assert cfg is base
-    assert rest == run
-    assert rest is not run
+def test_without_a_method_the_keys_go_to_the_base() -> None:
+    assert _build({"lr": 2.0, "method": "x"}, None, _Cfg(lr=1.0)) == _Cfg(lr=2.0)
+
+
+def test_an_unknown_key_names_the_method_keys(knob_method: HookMethod) -> None:
+    with pytest.raises(ValueError, match="knob_rewrd") as info:
+        _build({"knob_rewrd": 0.5}, knob_method)
+    assert "method keys: ['knob_reward']" in "".join(info.value.__notes__)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Listed:
+    tiers: tuple[int, ...] = (1, 2)
+
+
+def _listed_hooks(cfg: _Listed, base: Any) -> HookFields:
+    return HookFields(extra_steps=len(cfg.tiers))
+
+
+def test_yaml_lists_become_tuples_and_mappings_are_refused() -> None:
+    listed = HookMethod(_Listed, _listed_hooks)
+    assert _build({"tiers": [1, [2, 3], 4]}, listed).extra_steps == 3
+    with pytest.raises(TypeError, match=r"'tiers'.*mapping"):
+        _build({"tiers": {"a": 1}}, listed)
+
+
+def _array_hooks(cfg: _Listed, base: Any) -> HookFields:
+    table = jnp.zeros(3)
+
+    def observe(s: Any, traj: Any) -> Any:
+        return s + table.sum()
+
+    return HookFields(observe=observe)
+
+
+def test_a_builder_that_creates_arrays_is_refused() -> None:
+    """Builders may run inside ``jax.eval_shape``: an array there is a tracer."""
+    with pytest.raises(ValueError, match=r"observe.*array"):
+        _build({}, HookMethod(_Listed, _array_hooks))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -369,7 +418,7 @@ class _Clash:
 
 
 def test_method_keys_that_shadow_base_keys_are_refused() -> None:
-    clash = HookMethod(_Clash, lambda cfg: HookFields())
+    clash = HookMethod(_Clash, lambda cfg, base: HookFields())
     with pytest.raises(ValueError, match="'lr'"):
         check_method_keys(clash, _Cfg)
     check_method_keys(None, _Cfg)

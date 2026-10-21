@@ -184,7 +184,7 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
   - The count table is part of the trainer state written by `save_state` and a run restored with `load_state` continues the same counts (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
   - Both entries pass the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
   - `configs/methods/count-bonus.yaml` loads with `base.ppo-rnn.base_from == "ppo-rnn.tuned"`, `base.pqn-rnn.base_from == "pqn-rnn.tuned"`, 24 `grid.coarse` entries, a `grid.fine` rule over `beta` and one categorical knob, and `tuned: null`.
-- [ ] **Step 2: Implement** the factories: `HookFields(init_state_fn=lambda key, spec: count_bonus.init(cfg, key, spec), intrinsic_reward_fn=count_bonus.intrinsic_reward, metrics_fn=count_bonus.metrics)` given to `PPORNNConfig` and to `PQNRNNConfig`; the extrinsic reward is kept separately for returns and metrics.
+- [ ] **Step 2: Implement** the factories: one `COUNT_BONUS = HookMethod(CountBonusConfig, hooks)` (`training/hooks.py`) in both entries, `make_ppo_rnn_trainer(PPORNNConfig(), method=COUNT_BONUS)` and `make_pqn_rnn_trainer(PQNRNNConfig(), method=COUNT_BONUS)`, where `hooks(cfg, base)` returns `HookFields(init_state_fn=lambda key, spec: count_bonus.init(cfg, key, spec), intrinsic_reward_fn=functools.partial(count_bonus.intrinsic_reward, cfg), metrics_fn=count_bonus.metrics)` and creates no arrays; the extrinsic reward is kept separately for returns and metrics.
 - [ ] **Step 3: Write** `configs/methods/count-bonus.yaml` with the grids above.
 - [ ] **Step 4: Run** `uv run pytest tests/training/test_count_bonus_variants.py -q`, then `make tests`.
 

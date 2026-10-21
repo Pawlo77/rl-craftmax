@@ -545,8 +545,8 @@ class PPORNNPolicy:
 class PPORNNTrainer:
     """A PPO-RNN registry entry (`orchestration.runner.Trainer`).
 
-    ``cfg`` is the factory config; ``method`` builds the hooks from its own keys of
-    each run config (`with_method`), the other keys override ``cfg``'s fields.
+    ``cfg`` is the factory config; the run config's base keys override its fields,
+    then ``method`` builds the hooks from its own keys and that config (`with_method`).
     """
 
     cfg: PPORNNConfig
@@ -557,9 +557,8 @@ class PPORNNTrainer:
         check_method_keys(self.method, PPORNNConfig)
 
     def config(self, config: Mapping[str, Any]) -> PPORNNConfig:
-        """The factory config with the method's hooks and the other keys on top."""
-        cfg, rest = with_method(self.cfg, self.method, config)
-        return PPORNNConfig.from_config(rest, cfg)
+        """The factory config with the base keys, then the method's hooks, on top."""
+        return with_method(self.cfg, self.method, config, PPORNNConfig.from_config)
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
         """Rollout batch: ``envs * num_steps``."""

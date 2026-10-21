@@ -159,7 +159,7 @@ Fixed SIL settings:
   - The buffer and the staging ring are part of the trainer state written by `save_state`; a run restored with `load_state` continues with the same buffer contents (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
   - The entry passes the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
   - `configs/methods/sil.yaml` loads with `base.base_from == "ppo-rnn.tuned"`, 18 `grid.coarse` entries, a `grid.fine` rule over two of `lambda_sil`, `S`, `K`, and `tuned: null`.
-- [ ] **Step 2: Implement** the factory: `HookFields(init_state_fn=lambda key, spec: sil.init(cfg, spec.n_envs, spec.n_achievements, spec.obs_dim), observe=sil.observe, extra_loss_fn=sil.extra_loss, extra_steps=cfg.sil_steps, metrics_fn=sil.metrics)` given to `PPORNNConfig`; the SIL state lives in the method state.
+- [ ] **Step 2: Implement** the factory: entry `make_ppo_rnn_trainer(PPORNNConfig(), method=HookMethod(SILConfig, hooks))` (`training/hooks.py`), where `hooks(cfg, base)` gets the SIL keys and the resolved PPO-RNN config and returns `HookFields(init_state_fn=lambda key, spec: sil.init(cfg, spec.n_envs, spec.n_achievements, spec.obs_dim), observe=functools.partial(sil.observe, base.gamma), extra_loss_fn=functools.partial(sil.extra_loss, net), extra_steps=cfg.sil_steps, metrics_fn=sil.metrics)` with `net = ppo_rnn.build_network(base, n_actions, obs_dim)` (dims from `ppo.make_env(base.env)`); the builder creates no arrays (it may run inside `jax.eval_shape`); the SIL state lives in the method state.
 - [ ] **Step 3: Write** `configs/methods/sil.yaml` with the grids above.
 - [ ] **Step 4: Run** `uv run pytest tests/training/test_sil_trainer.py -q`, then `make tests`.
 

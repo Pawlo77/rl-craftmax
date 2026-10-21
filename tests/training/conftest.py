@@ -29,20 +29,22 @@ class KnobConfig:
     """Constant intrinsic reward of every step."""
 
 
-def _knob_hooks(cfg: KnobConfig) -> HookFields:
+def _knob_hooks(cfg: KnobConfig, base: Any) -> HookFields:
+    r_int = cfg.knob_reward * base.lr  # reads the resolved base config
+
     def reward(s: Any, e: Any, e2: Any, o: Any, d: jax.Array, t: Any) -> Any:
-        return jnp.full(d.shape, cfg.knob_reward, jnp.float32), s
+        return jnp.full(d.shape, r_int, jnp.float32), s
 
     return HookFields(intrinsic_reward_fn=reward)
 
 
 KNOB = HookMethod(KnobConfig, _knob_hooks)
-"""A hook method whose ``knob_reward`` key sets its intrinsic reward."""
+"""A hook method: intrinsic reward ``knob_reward`` times the base config's ``lr``."""
 
 
 @pytest.fixture(scope="session")
 def knob_method() -> HookMethod[KnobConfig]:
-    """`KNOB`: the intrinsic reward is the run config's ``knob_reward``."""
+    """`KNOB`: the intrinsic reward is ``knob_reward * lr`` of the run config."""
     return KNOB
 
 

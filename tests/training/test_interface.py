@@ -204,15 +204,15 @@ def test_a_hook_method_takes_its_knobs_from_the_run_config(
     make, config_cls = BASES[base]
     trainer = make(config_cls(), method=knob_method)
     for value in (0.0, 0.25):
-        cfg = trainer.config({"method": "knob", "knob_reward": value, "lr": 1e-3})
+        cfg = trainer.config({"method": "knob", "knob_reward": value, "lr": 0.5})
         assert cfg.intrinsic_reward_fn is not None
         r_int, _ = cfg.intrinsic_reward_fn({}, None, None, None, jnp.zeros(2, bool), 0)
-        assert r_int.tolist() == [value, value]
-        assert cfg.lr == 1e-3
+        assert r_int.tolist() == [value * 0.5] * 2  # the knob times the base lr
+        assert cfg.lr == 0.5
     with pytest.raises(ValueError, match="knob_rewrd"):
         trainer.config({"method": "knob", "knob_rewrd": 0.25})
     with pytest.raises(ValueError, match="'lr'"):
-        make(config_cls(), method=HookMethod(_ShadowsLr, lambda c: HookFields()))
+        make(config_cls(), method=HookMethod(_ShadowsLr, lambda c, b: HookFields()))
 
 
 @pytest.mark.parametrize(

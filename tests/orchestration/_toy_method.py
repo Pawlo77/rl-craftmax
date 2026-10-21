@@ -33,14 +33,15 @@ class ToyConfig:
 
 
 class Widen(GymnaxWrapper):
-    """Appends ``k`` ones to every observation; the Craftax state passes through."""
+    """Appends ``k`` features ``fill`` to each observation; the state passes through."""
 
-    def __init__(self, env: Any, k: int) -> None:
+    def __init__(self, env: Any, k: int, fill: float) -> None:
         super().__init__(env)
-        self.k = k
+        self.k, self.fill = k, fill
 
     def _pad(self, obs: jax.Array) -> jax.Array:
-        return jnp.concatenate([obs, jnp.ones((*obs.shape[:-1], self.k))], -1)
+        pad = jnp.full((*obs.shape[:-1], self.k), self.fill, obs.dtype)
+        return jnp.concatenate([obs, pad], -1)
 
     def reset(self, key: jax.Array, params: Any = None) -> Any:
         obs, state = self._env.reset(key, params)
@@ -55,17 +56,19 @@ class Widen(GymnaxWrapper):
         return type(space)(0.0, 1.0, (space.shape[0] + self.k,), space.dtype)
 
 
-def _widen(k: int, env: Any, params: Any) -> tuple[Widen, Any]:
-    return Widen(env, k), params
+def _widen(k: int, fill: float, env: Any, params: Any) -> tuple[Widen, Any]:
+    return Widen(env, k, fill), params
 
 
-def toy_hooks(cfg: ToyConfig) -> HookFields:
-    """Reward ``toy_bonus`` per step, sum it in the state, widen by ``toy_features``."""
+def toy_hooks(cfg: ToyConfig, base: PPORNNConfig) -> HookFields:
+    """Reward ``toy_bonus * gamma`` per step, summed in the state; append
+    ``toy_features`` features ``gamma`` (both read from the resolved base config)."""
+    r_int = cfg.toy_bonus * base.gamma
 
     def bonus(
         s: jax.Array, e: Any, e2: Any, o: Any, d: jax.Array, t: Any
     ) -> tuple[jax.Array, jax.Array]:
-        r = jnp.full(d.shape, cfg.toy_bonus, jnp.float32)
+        r = jnp.full(d.shape, r_int, jnp.float32)
         return r, s + r.sum()
 
     def init(key: jax.Array, spec: HookSpec) -> jax.Array:
@@ -75,7 +78,7 @@ def toy_hooks(cfg: ToyConfig) -> HookFields:
     return HookFields(
         init_state_fn=init,
         intrinsic_reward_fn=bonus,
-        env_wrapper_fn=functools.partial(_widen, k) if k else None,
+        env_wrapper_fn=functools.partial(_widen, k, base.gamma) if k else None,
         metrics_fn=lambda s: {"toy/bonus_sum": s},
     )
 

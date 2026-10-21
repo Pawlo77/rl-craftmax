@@ -1,8 +1,10 @@
 """Golden numbers of the three controls: a refactor that moves them fails here.
 
 Each control trains 2 updates on Craftax-Classic at tiny sizes on one CPU device (a
-fresh interpreter, so the test process's backends do not matter); the SHA-256 of its
-params and per-update losses is pinned. A deliberate numeric change updates `GOLDEN`.
+fresh interpreter, so the test process's backends do not matter). The SHA-256 of its
+params and losses is pinned on the recording machine (`GOLDEN`); a few losses and the
+params' norm are pinned to a tolerance everywhere (`VALUES`). A deliberate numeric
+change updates both.
 """
 
 import json
@@ -23,6 +25,54 @@ GOLDEN = {
     "pqn-rnn": "8bf2ef28f730fc057a9992c0849ffca78b5ba8a1f26e999d1b3d290c0721dd51",
 }
 """Registry name -> SHA-256 of params and losses after 2 updates (from a968039)."""
+VALUES = {
+    "ppo": [
+        -0.0025813993997871876,
+        0.026626795530319214,
+        2.833191156387329,
+        1.6937607142608613e-05,
+        -0.4402965307235718,
+        0.0,
+        0.568393349647522,
+        -0.0009738719090819359,
+        0.07597976922988892,
+        2.8331620693206787,
+        2.4588514406787e-06,
+        0.19728237390518188,
+        0.0,
+        0.8495850563049316,
+        19.623379297166906,
+    ],
+    "ppo-rnn": [
+        -0.0010810387320816517,
+        0.01780412718653679,
+        2.833204746246338,
+        8.218263246817514e-06,
+        0.08304870128631592,
+        0.0,
+        0.4543517827987671,
+        -0.0006069457158446312,
+        0.07610353082418442,
+        2.8331737518310547,
+        1.057992449204903e-06,
+        -0.1433274745941162,
+        0.0,
+        0.9062970876693726,
+        27.759996577212686,
+    ],
+    "pqn-rnn": [
+        0.10180967301130295,
+        0.7134021520614624,
+        0.0019197575747966766,
+        0.15152806043624878,
+        57.22927456192564,
+    ],
+}
+"""Registry name -> the finite losses of both updates, then the params' L2 norm: the
+portable check, at a relative tolerance that XLA's rounding on other CPUs stays in."""
+RTOL, ATOL = 1e-4, 1e-6
+"""Tolerance of `VALUES` (absolute for the near-zero KL and clip terms)."""
+_SETUP = (platform.system(), platform.machine())
 
 _TRAIN = """
 import hashlib, json
@@ -49,14 +99,17 @@ for name, cfg in CONFIGS.items():
         x = np.asarray(x)
         h.update(f"{x.dtype}{x.shape}".encode())
         h.update(x.tobytes())
-    out[name] = {"sha256": h.hexdigest(), "losses": losses[0].tolist()}
+    leaves = [np.asarray(x, np.float64) for x in jax.tree.leaves(trainer.params(state))]
+    norm = float(np.sqrt(sum((x**2).sum() for x in leaves)))
+    values = [v for v in losses.ravel().tolist() if np.isfinite(v)] + [norm]
+    out[name] = {"sha256": h.hexdigest(), "values": values}
 print(json.dumps(out))
 """
 
 
 @pytest.fixture(scope="module")
 def trained() -> dict[str, dict[str, object]]:
-    """Hash and first-update losses of each control, from one CPU-only interpreter."""
+    """Hash and values of each control, from one CPU-only interpreter."""
     result = subprocess.run(
         [sys.executable, "-c", _TRAIN],
         env={**os.environ, "JAX_PLATFORMS": "cpu", "XLA_FLAGS": ""},
@@ -69,13 +122,21 @@ def trained() -> dict[str, dict[str, object]]:
     return dict(json.loads(result.stdout.strip().splitlines()[-1]))
 
 
+@pytest.mark.skipif(
+    RECORDED_ON[:2] != _SETUP, reason=f"hashes recorded on {RECORDED_ON[:2]}"
+)
 @pytest.mark.parametrize("name", list(GOLDEN))
-def test_two_classic_updates_reproduce_the_golden_numbers(
+def test_two_classic_updates_reproduce_the_golden_hash(
     trained: dict[str, dict[str, object]], name: str
 ) -> None:
-    setup = (platform.system(), platform.machine(), jax.__version__)
-    if setup[:2] != RECORDED_ON[:2]:
-        pytest.skip(f"golden numbers recorded on {RECORDED_ON[:2]}, not {setup[:2]}")
-    assert setup[2] == RECORDED_ON[2], "JAX changed: re-record GOLDEN deliberately"
+    assert jax.__version__ == RECORDED_ON[2], "JAX changed: re-record deliberately"
     got = trained[name]
-    assert got["sha256"] == GOLDEN[name], f"first-update losses {got['losses']}"
+    assert got["sha256"] == GOLDEN[name], f"values {got['values']}"
+
+
+@pytest.mark.parametrize("name", list(VALUES))
+def test_two_classic_updates_reproduce_the_golden_values(
+    trained: dict[str, dict[str, object]], name: str
+) -> None:
+    """The portable guard: Linux and CUDA nodes run it on their CPU too."""
+    assert trained[name]["values"] == pytest.approx(VALUES[name], rel=RTOL, abs=ATOL)
