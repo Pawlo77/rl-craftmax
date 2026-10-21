@@ -33,7 +33,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 199 | [[training]] |
 | [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. | 350 |  |
-| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. | 863 |  |
+| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. | 879 |  |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 374 | [[training]] |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 68 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 726 | [[training]] |
@@ -43,7 +43,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 186 | [[training]] |
 | [[src/wut_murl_craftax/training/sil.py]] | Self-Imitation Learning: a per-env staging ring and a buffer of unlock windows. | 631 |  |
 | [[src/wut_murl_craftax/training/skills.py]] | Skill library of the skill methods: observation decoder, key, masks, skill ends. | 569 |  |
-| [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. | 1375 |  |
+| [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. | 1384 |  |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 | [[training]] |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 113 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |

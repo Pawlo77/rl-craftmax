@@ -12,6 +12,7 @@ Design: [[Dyna-Q over a Skill-Level Progress Model design]].
 """
 
 import functools
+import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
@@ -715,13 +716,28 @@ def train_chunk(state: DynaState, n_updates: int) -> tuple[DynaState, "ChunkMetr
         chunks.append(chunk)
         dyna.append(d)
     state = state.replace(smdp=state.smdp.replace(carry=carry), model=model)
-    metrics = _chunk_metrics(records, chunks, carry.shared.q.shape[0])
+    bound = max_q(state.cfg.plan_kappa, state.smdp.cfg.top.gamma_top)
+    metrics = _chunk_metrics(records, chunks, carry.shared.q.shape[0], bound)
     host = jax.device_get(dyna)
     stacked = {k: np.stack([r[k] for r in host]) for k in host[0]}
-    return state, cast("ChunkMetrics", metrics | method_metrics(stacked))
+    own = method_metrics(stacked, max_q=bound)
+    return state, cast("ChunkMetrics", metrics | own)
 
 
-def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+def max_q(kappa: float, gamma_top: float) -> float:
+    """Divergence bound of a Dyna run: `smdp.MAX_Q` plus the largest Dyna-Q+ return.
+
+    A planned bonus is at most ``kappa sqrt(TIME_UNITS)`` (no pair is untried for
+    longer than the budget) and a decision takes at least one step, so bonuses add
+    at most that over ``1 - gamma_top``: a stale ``tau = 1`` self-loop settles near
+    it. ``kappa`` 0 keeps `smdp.MAX_Q`.
+    """
+    return MAX_Q + kappa * math.sqrt(TIME_UNITS) / (1 - gamma_top)
+
+
+def method_metrics(
+    r: Mapping[str, np.ndarray], *, max_q: float
+) -> dict[str, np.ndarray]:
     """The ``dyna/...`` metrics of stacked update records, ``(updates,)`` each.
 
     Model after the rollout: ``pairs_visited``, ``pairs_full_share`` (pairs with M
@@ -732,8 +748,8 @@ def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
     variants), ``plan_seconds`` and ``plan_wall_share`` (of the update's wall time).
     Empty shares are 0, so every value is finite. The guards ``dyna/nan`` (a
     non-finite planned value), ``dyna/model_full`` (all P pair slots taken) and
-    ``dyna/divergence`` (a planned value above `smdp.MAX_Q`) are 0, or NaN once
-    broken, for ``abort.finite``.
+    ``dyna/divergence`` (a planned value above ``max_q``, the run's `max_q`) are 0,
+    or NaN once broken, for ``abort.finite``.
     """
     pairs, td_n = r["n_pairs"], r["td_n"]
 
@@ -743,7 +759,7 @@ def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
     return {
         "dyna/nan": guard(r["q_bad"]),
         "dyna/model_full": guard(r["full"]),
-        "dyna/divergence": guard(r["q_upd"] > MAX_Q),
+        "dyna/divergence": guard(r["q_upd"] > max_q),
         "dyna/pairs_visited": pairs,
         "dyna/pairs_full_share": _share(r["full_pairs"], pairs),
         "dyna/model_accuracy": _share(r["hits"], r["ends"]),

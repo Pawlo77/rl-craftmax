@@ -1017,9 +1017,15 @@ def train_chunk(state: SMDPState, n_updates: int) -> tuple[SMDPState, "ChunkMetr
 
 
 def _chunk_metrics(
-    records: list[dict[str, Any]], chunks: list[dict[str, jax.Array]], rows: int
+    records: list[dict[str, Any]],
+    chunks: list[dict[str, jax.Array]],
+    rows: int,
+    max_q: float | None = None,
 ) -> "ChunkMetrics":
-    """The `ChunkMetrics` and ``smdp/...`` metrics of the updates' records."""
+    """The `ChunkMetrics` and ``smdp/...`` metrics of the updates' records.
+
+    ``max_q`` is the divergence bound (`method_metrics`).
+    """
     host = jax.device_get(records)
     stacked = {k: np.stack([r[k] for r in host]) for k in host[0]}
     cols = {"value_loss": stacked["td_loss"], "grad_norm": stacked["grad_norm"]}
@@ -1031,7 +1037,7 @@ def _chunk_metrics(
         "ret": jnp.stack([c["ret"] for c in chunks]),
         "length": jnp.stack([c["length"] for c in chunks]),
     }
-    metrics |= method_metrics(stacked, rows)
+    metrics |= method_metrics(stacked, rows, max_q)
     return cast("ChunkMetrics", metrics)
 
 
@@ -1050,7 +1056,9 @@ def _share(n: np.ndarray, total: np.ndarray, empty: float = 0.0) -> np.ndarray:
     return np.where(total > 0, n / np.maximum(total, 1), empty)
 
 
-def method_metrics(r: Mapping[str, np.ndarray], rows: int) -> dict[str, np.ndarray]:
+def method_metrics(
+    r: Mapping[str, np.ndarray], rows: int, max_q: float | None = None
+) -> dict[str, np.ndarray]:
     """The ``smdp/...`` metrics of stacked update records, ``(updates,)`` each.
 
     Per skill, over the update's skill ends: ``chosen_share`` (of the decisions),
@@ -1060,7 +1068,8 @@ def method_metrics(r: Mapping[str, np.ndarray], rows: int) -> dict[str, np.ndarr
     ``decisions_per_episode`` is the update's skill ends per episode it finished. The
     guards ``smdp/nan`` (a non-finite table update, loss or parameter),
     ``smdp/table_full`` (occupancy above `MAX_OCCUPANCY`) and ``smdp/divergence``
-    (an updated entry above `MAX_Q`) are 0, or NaN once broken, for ``abort.finite``.
+    (an updated entry above ``max_q``, default `MAX_Q`; Dyna-Q+ raises it) are 0, or
+    NaN once broken, for ``abort.finite``.
     """
     ends, agree, chosen = r["ends"], r["agreement"], r["chosen"]
     n_ends = ends.sum(-1)
@@ -1102,7 +1111,7 @@ def method_metrics(r: Mapping[str, np.ndarray], rows: int) -> dict[str, np.ndarr
         "smdp/diamond_tenth_step": r["found"][:, 2],
         "smdp/nan": guard(bad),
         "smdp/table_full": guard(visited > MAX_OCCUPANCY * rows),
-        "smdp/divergence": guard(q_upd > MAX_Q),
+        "smdp/divergence": guard(q_upd > (MAX_Q if max_q is None else max_q)),
     }
 
 

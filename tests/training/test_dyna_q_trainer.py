@@ -21,6 +21,7 @@ from _contract import assert_done_step_unlock_counted
 
 from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
 from wut_murl_craftax.orchestration.queue import (
+    _knob_values,
     expand_phase,
     load_method,
     resolve_config,
@@ -324,7 +325,7 @@ def _record(**over: Any) -> dict[str, np.ndarray]:
 
 
 def test_method_metrics_are_shares_of_the_update_counts() -> None:
-    m = dyna_q.method_metrics(_record())
+    m = dyna_q.method_metrics(_record(), max_q=300.0)
     assert m["dyna/pairs_visited"][0] == 4
     assert m["dyna/pairs_full_share"][0] == 0.25
     assert m["dyna/model_accuracy"][0] == 0.75
@@ -336,10 +337,13 @@ def test_method_metrics_are_shares_of_the_update_counts() -> None:
     assert (m["dyna/vi_sweeps"][0], m["dyna/vi_residual"][0]) == (3, 2e-4)
     assert m["dyna/plan_seconds"][0] == 0.5
     assert m["dyna/plan_wall_share"][0] == 0.25
-    fast = dyna_q.method_metrics(_record(plan_seconds=[0.01], update_seconds=[0.02]))
+    fast = dyna_q.method_metrics(
+        _record(plan_seconds=[0.01], update_seconds=[0.02]), max_q=300.0
+    )
     assert fast["dyna/plan_wall_share"][0] == 0.5  # seconds, not counts: no floor 1
     empty = dyna_q.method_metrics(
-        _record(ends=[0], hits=[0], td_n=[0], n_pairs=[0.0], full_pairs=[0], stale=[0])
+        _record(ends=[0], hits=[0], td_n=[0], n_pairs=[0.0], full_pairs=[0], stale=[0]),
+        max_q=300.0,
     )
     for k in ("model_accuracy", "plan_td_abs", "pairs_full_share", "stale_share"):
         assert empty[f"dyna/{k}"][0] == 0.0, k
@@ -432,10 +436,96 @@ def test_the_abort_list_holds_only_the_guards_and_flags_slow_planning() -> None:
     ],
 )
 def test_each_guard_turns_nan_on_its_rule(over: dict[str, Any], guard: str) -> None:
-    m = dyna_q.method_metrics(_record(**over))
+    m = dyna_q.method_metrics(_record(**over), max_q=300.0)
     assert {g for g in DYNA_GUARDS if np.isnan(m[g][0])} == {guard}
-    fine = dyna_q.method_metrics(_record(q_upd=[300.0]))
+    fine = dyna_q.method_metrics(_record(q_upd=[300.0]), max_q=300.0)
     assert not any(np.isnan(fine[g][0]) for g in DYNA_GUARDS)
+
+
+def test_the_divergence_bound_adds_the_largest_dyna_q_plus_return() -> None:
+    """kappa sqrt(1000) per decision at most, a decision at least one step."""
+    assert dyna_q.max_q(0.0, 0.999) == smdp.MAX_Q == 300.0
+    bound = dyna_q.max_q(0.03, 0.999)
+    assert bound == pytest.approx(300.0 + 0.03 * np.sqrt(1000.0) / 0.001)
+    m = dyna_q.method_metrics(_record(q_upd=[0.9 * bound]), max_q=bound)
+    assert m["dyna/divergence"][0] == 0.0
+    m = dyna_q.method_metrics(_record(q_upd=[1.1 * bound]), max_q=bound)
+    assert np.isnan(m["dyna/divergence"][0])
+    real = smdp.method_metrics(_smdp_record(q_upd=400.0), rows=1000, max_q=bound)
+    assert real["smdp/divergence"][0] == 0.0
+    real = smdp.method_metrics(_smdp_record(q_upd=1e6), rows=1000, max_q=bound)
+    assert np.isnan(real["smdp/divergence"][0])
+    plain = smdp.method_metrics(_smdp_record(q_upd=400.0), rows=1000)
+    assert np.isnan(plain["smdp/divergence"][0])  # smdp-skills keeps 300
+
+
+def _smdp_record(q_upd: float) -> dict[str, np.ndarray]:
+    """A minimal `smdp.method_metrics` record with one updated value ``q_upd``."""
+    z, n = np.zeros, smdp.NUM_SKILLS
+    r = {
+        "ends": z((1, n, 7), int), "agreement": z((1, n, 2), int),
+        "chosen": z((1, n), int), "length": z((1, n), int),
+        "td_abs": [0.0], "td_n": [0], "q_upd": [q_upd], "q_bad": [False],
+        "q_mean": [0.0], "episodes": [0], "visited": [1], "q_start": [10.0],
+        "td_loss": [0.0], "grad_norm": [0.0], "finite": [True], "found": [[0, -1, -1]],
+        "eps_top": [0.5], "eps": [0.5],
+    }  # fmt: skip
+    return {k: np.asarray(v) for k, v in r.items()}
+
+
+def test_a_stale_self_loop_settles_past_300_but_below_the_bound() -> None:
+    """level_up-like pair (tau 1, back to its own key, R 0), 1000 units untried,
+    kappa 0.03, horizon 1000: value iteration heads for 0.03 sqrt(1000) / 0.001 =
+    949, a healthy Dyna-Q+ value that the plain 300 guard would abort."""
+    m = dyna_q.init_model(4, 2, 8, 4)
+    rec = dyna_q.Outcome(
+        jnp.array([1]), jnp.array([0]), jnp.array([0.0]), jnp.array([0.999]),
+        jnp.array([1]), jnp.array([False]), jnp.ones((1, 2), bool),
+    )  # fmt: skip
+    m = dyna_q.write(m, rec, jnp.array([True]), jnp.float32(0.0))
+    q = smdp.init_table(4, 2, 0.0)
+    q, stats = dyna_q.plan(
+        q, m, 0, "value_iteration", 0.03, 1000.0, jax.random.key(0), alpha=1.0,
+        batch=1024, theta=1e-4, tol=1e-3, max_sweeps=5000,
+    )  # fmt: skip
+    fixed = 0.03 * np.sqrt(1000.0) / (1 - 0.999)
+    assert 300.0 < float(stats["q_upd"]) <= fixed
+    record = _record(q_upd=[float(stats["q_upd"])])
+    bound = dyna_q.max_q(0.03, 0.999)
+    assert dyna_q.method_metrics(record, max_q=bound)["dyna/divergence"][0] == 0.0
+    assert np.isnan(dyna_q.method_metrics(record, max_q=300.0)["dyna/divergence"][0])
+
+
+def _configured_kappas_and_horizons() -> tuple[set[float], set[float]]:
+    """Every kappa dyna-q.yaml can run (coarse, fine rule around each coarse value,
+    the kappa ablation, the 1B finals' tuned value) and every smdp-skills horizon."""
+    method, top = load_method(NAME), load_method("smdp-skills")
+    coarse = {float(e["plan_kappa"]) for e in method.coarse}
+    knobs = {k["key"]: k for k in (method.fine or {})["knobs"]}
+    fine = {v for best in coarse for v in _knob_values(knobs["plan_kappa"], best)}
+    ablation = {0.0} | coarse  # kappa 0, or the best nonzero stage-1 kappa
+    kappas = coarse | fine | ablation  # the 1B finals take the tuned (fine) value
+    horizons = {float(top.base["top_horizon"])} | {
+        float(e["top_horizon"]) for e in top.coarse
+    }
+    h_knob = {k["key"]: k for k in (top.fine or {})["knobs"]}["top_horizon"]
+    horizons |= {v for h in set(horizons) for v in _knob_values(h_knob, h)}
+    return kappas, horizons
+
+
+def test_every_configured_kappa_keeps_healthy_runs_below_the_bound() -> None:
+    """The largest healthy planned value: real returns up to 300 plus a tau = 1
+    self-loop collecting the full bonus every step."""
+    kappas, horizons = _configured_kappas_and_horizons()
+    assert max(kappas) >= 0.06
+    assert 0.0 in kappas
+    for kappa, h in itertools.product(kappas, horizons):
+        gamma = 1 - 1 / h
+        healthy = smdp.MAX_Q + kappa * np.sqrt(dyna_q.TIME_UNITS) / (1 - gamma)
+        assert healthy <= dyna_q.max_q(kappa, gamma) * (1 + 1e-12), (kappa, h)
+        loop = kappa * np.sqrt(dyna_q.TIME_UNITS) / (1 - gamma)
+        if loop > smdp.MAX_Q:  # the cases the plain guard would abort
+            assert loop < dyna_q.max_q(kappa, gamma), (kappa, h)
 
 
 def _aborted(run: Any) -> tuple[str, str, str]:
@@ -453,9 +543,12 @@ def test_a_nan_after_planning_aborts_the_run(
     monkeypatch.setattr(
         dyna_q, "_records", lambda *a: real(*a)._replace(ret=jnp.float32(jnp.nan))
     )
-    # a batch no other test plans with, so the patch is traced
-    (spec,) = _phase(tmp_path, methods_dir, plan_batch=1000)
-    run = run_store.run([spec])[spec.name]
+    dyna_q._planner.cache_clear()  # trace the patch; drop the patched planner after
+    try:
+        (spec,) = _phase(tmp_path, methods_dir)
+        run = run_store.run([spec])[spec.name]
+    finally:
+        dyna_q._planner.cache_clear()
     assert _aborted(run) == ("FAILED", "dyna/nan", "1")
 
 
@@ -468,13 +561,33 @@ def test_a_full_model_aborts_the_run(
 
 
 def test_a_planned_value_above_the_return_bound_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored returns of 1e6 in planning only: planned entries pass the bound, real
+    updates do not."""
+    real = dyna_q._records
+    monkeypatch.setattr(
+        dyna_q, "_records", lambda *a: real(*a)._replace(ret=jnp.float32(1e6))
+    )
+    dyna_q._planner.cache_clear()  # trace the patch; drop the patched planner after
+    try:
+        (spec,) = _phase(tmp_path, methods_dir, plan_kappa=0.03)
+        run = run_store.run([spec])[spec.name]
+    finally:
+        dyna_q._planner.cache_clear()
+    assert _aborted(run) == ("FAILED", "dyna/divergence", "1")
+
+
+def test_table_values_between_300_and_the_bound_do_not_abort(
     methods_dir: Path, run_store: Any, tmp_path: Path
 ) -> None:
-    """A Dyna-Q+ bonus of 1000 sqrt(age): planned entries pass `smdp.MAX_Q`, real
-    updates (no bonus) do not."""
-    (spec,) = _phase(tmp_path, methods_dir, plan_kappa=1000.0)
+    """kappa 0.03 at horizon 1000: entries of 400 (optimistic start) are healthy
+    for Dyna-Q+ (bound 1249); `smdp-skills` alone would abort on smdp/divergence."""
+    (spec,) = _phase(tmp_path, methods_dir, plan_kappa=0.03, q_init=400.0)
     run = run_store.run([spec])[spec.name]
-    assert _aborted(run) == ("FAILED", "dyna/divergence", "1")
+    assert run.info.status == "FINISHED"
+    assert run.data.metrics["smdp/divergence"] == 0.0
+    assert run.data.metrics["dyna/divergence"] == 0.0
 
 
 def test_slow_planning_is_flagged_without_stopping_the_run(
