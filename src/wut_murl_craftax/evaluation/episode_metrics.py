@@ -40,6 +40,8 @@ class UpdateSummary(NamedTuple):
     length: float
     success: np.ndarray
     """Per achievement, % of the finished episodes that unlocked it."""
+    ach: np.ndarray
+    """Flags of the finished episodes, bool (n_episodes, achievements)."""
 
 
 def init_acc(envs: int, n_ach: int) -> EpisodeAcc:
@@ -110,11 +112,10 @@ def update_summary(
     got = np.asarray(ach)[d]
     nan = float("nan")
     if not n:
-        return UpdateSummary(0, nan, nan, np.full(got.shape[-1], nan))
+        return UpdateSummary(0, nan, nan, np.full(got.shape[-1], nan), got)
     ret_mean = float(np.asarray(ret)[d].mean())
-    return UpdateSummary(
-        n, ret_mean, float(np.asarray(length)[d].mean()), got.mean(0) * 100
-    )
+    mean_len = float(np.asarray(length)[d].mean())
+    return UpdateSummary(n, ret_mean, mean_len, got.mean(0) * 100, got)
 
 
 @overload

@@ -77,13 +77,12 @@ class RunLog:
         steps with ``done`` count, where they are the finished episode.
         """
         d = done.astype(bool)
-        got = ach[d]
         s = update_summary(d, ret, length, ach)
         self.episodes.append({
             "update": np.full(s.n_episodes, update, np.int32),
             "ret": ret[d].astype(np.float32),
             "length": length[d].astype(np.int32),
-            "ach": np.packbits(got, axis=-1),
+            "ach": np.packbits(s.ach, axis=-1),
         })
         self.rows.append([
             update,

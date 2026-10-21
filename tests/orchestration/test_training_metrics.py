@@ -1,12 +1,17 @@
 """Tests for the training metrics the runner logs to MLflow: windows, facts, e2e."""
 
 import math
+import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import yaml
+from _fake_trainer import STEPS_PER_UPDATE, FakeTrainer
 from test_runner import PROFILE, Store
 
 from wut_murl_craftax.config import MLflowTrackingConfig, load_experiment_config
@@ -137,7 +142,9 @@ def tiny(
         "ppo", "tiny", BUDGET, CLASSIC, 0, TINY, queue.config_hash(TINY), "smoke",
         "final",
     )  # fmt: skip
+    t0 = time.monotonic()
     runner.main([spec], PROFILE, experiment_config=store.config, methods=METHODS)
+    store.elapsed = time.monotonic() - t0
     yield store, spec, store.runs()[spec.name]
     mp.undo()
 
@@ -213,3 +220,73 @@ def test_experiment_yaml_turns_system_metrics_on() -> None:
     shipped = load_experiment_config(queue.EXPERIMENT_CONFIG)
     assert shipped.mlflow.log_system_metrics is True
     assert MLflowTrackingConfig().log_system_metrics is False
+
+
+# --- wall clock and steps per second ---------------------------------------------
+
+
+@pytest.fixture
+def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
+    return Store(tmp_path, monkeypatch)
+
+
+@jax.jit
+def _work(a: jax.Array) -> jax.Array:
+    """About 0.03 s of device work that the host does not wait for."""
+    return jax.lax.fori_loop(0, 150, lambda _, x: jnp.tanh(x @ a), a)
+
+
+class SlowTrainer(FakeTrainer):
+    """Returns its metrics before they exist: each update queues `_work`."""
+
+    def train_chunk(self, state: Any, n_updates: int) -> tuple[Any, Any]:
+        state, metrics = super().train_chunk(state, n_updates)
+        a = jnp.full((512, 512), 1e-3)
+        for _ in range(n_updates):
+            a = _work(a)
+        return state, {**metrics, "ret": metrics["ret"] + 0 * a.sum()}
+
+
+def test_wall_clock_and_sps_wait_for_the_chunks_computation(
+    store: Store, tmp_path: Path
+) -> None:
+    """40 updates of `_work`, in chunks of up to 13: wall_s counts all of it."""
+    a = jnp.full((512, 512), 1e-3)
+    _work(a).block_until_ready()
+    t0 = time.monotonic()
+    _work(a).block_until_ready()
+    nap = time.monotonic() - t0
+    profile = tmp_path / "long-chunks.yaml"
+    profile.write_text(
+        PROFILE.read_text().replace("checkpoint_every: 2", "checkpoint_every: 100")
+    )
+    spu = STEPS_PER_UPDATE // 13  # 1m budget: 39 updates
+    (spec,) = store.phase("tune-coarse", ["published"])
+    trainer = SlowTrainer(steps_per_update=spu)
+    runner.main(
+        [spec],
+        profile,
+        experiment_config=store.config,
+        methods={"toy": trainer},
+        evaluate=store.evaluate,
+    )
+    n = 1_000_000 // spu
+    wall = load_metrics(store.run_dir(spec.name)).col("wall_s")
+    assert wall[-1] >= 0.95 * n * nap
+    sps = [p.value for p in _hist(store, spec, "train/sps")]
+    assert sps
+    assert max(sps) <= spu / (0.9 * nap)
+
+
+def _hist(store: Store, spec: RunSpec, key: str) -> list[Any]:
+    rid = store.runs()[spec.name].info.run_id
+    return store.client.get_metric_history(rid, key)
+
+
+def test_a_real_runs_wall_clock_covers_its_training(
+    tiny: tuple[Store, RunSpec, Any],
+) -> None:
+    """wall_s ends close to the time the whole runner call took, not a dispatch time."""
+    store, spec, _ = tiny
+    wall = load_metrics(store.run_dir(spec.name)).col("wall_s")[-1]
+    assert 0.4 * store.elapsed < wall <= store.elapsed

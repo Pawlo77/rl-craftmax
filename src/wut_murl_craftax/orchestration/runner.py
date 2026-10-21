@@ -78,25 +78,36 @@ _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
 
 
 class ChunkMetrics(TypedDict):
-    """What `Trainer.train_chunk` reports; every array has a leading update axis."""
+    """What `Trainer.train_chunk` reports; every array has a leading update axis.
+
+    ``ach``, ``ret`` and ``length`` are read on done steps only, and there they are
+    the WHOLE finished episode, the done step included: its reward, its step and
+    its unlocks, taken from ``StepEvents.unlocked`` (``info["events"]``, the
+    pre-reset state). Never rebuild them from env-state comparisons or Craftax's
+    ``Achievements/*`` info. Every trainer accumulates them with
+    ``evaluation.episode_metrics.episode_step`` and ``events_of``, and its test
+    calls ``tests/training/_contract.assert_done_step_unlock_counted``.
+    """
 
     losses: jax.Array | np.ndarray
     """(updates, len(LOSS_COLUMNS)) floats in `LOSS_COLUMNS` order."""
     done: jax.Array | np.ndarray
     """(updates, steps, envs) bools: the episode ended at this step."""
     ach: jax.Array | np.ndarray
-    """(updates, steps, envs, achievements) bools, read on done steps only."""
+    """(updates, steps, envs, achievements) bools: the episode flags, by ``.value``."""
     ret: jax.Array | np.ndarray
-    """(updates, steps, envs) episode return so far, read on done steps only."""
+    """(updates, steps, envs) episode return so far, incl. this step."""
     length: jax.Array | np.ndarray
-    """(updates, steps, envs) episode length so far, read on done steps only."""
+    """(updates, steps, envs) episode length so far, incl. this step."""
 
 
 class Trainer(Protocol):
     """A registry entry: one method's training, as the runner drives it.
 
     The state is one pytree (`save_state` round-trips it); ``train_chunk`` called
-    with n then m updates must equal one call with n + m.
+    with n then m updates must equal one call with n + m. Its `ChunkMetrics` must
+    follow that class's episode rules; the runner times the chunk after
+    ``jax.block_until_ready`` on the returned state and metrics.
     """
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
@@ -316,6 +327,8 @@ def _train(
         n = _chunk_size(update, n_updates, ckpts, profile.checkpoint_every)
         start = time.monotonic() - t0
         state, metrics = trainer.train_chunk(state, n)
+        # dispatch is asynchronous: without waiting, wall_s and SPS time the dispatch
+        jax.block_until_ready((state, metrics))  # type: ignore[no-untyped-call]  # jax API
         wall = time.monotonic() - t0
         chunks.append((n, wall - start))
         _add_updates(log, update, spu, np.linspace(start, wall, n + 1)[1:], metrics)

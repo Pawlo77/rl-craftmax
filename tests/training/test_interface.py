@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import numpy as np
 import pytest
+from _contract import assert_done_step_unlock_counted
 
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training.checkpoints import load_state, save_state
@@ -148,6 +149,14 @@ def test_the_state_round_trips_through_save_state(
     restored = load_state(tmp_path, ppo.init(_config(), jax.random.key(1)))
     assert _same(restored, state)
     assert _same(ppo.train_chunk(restored, 1), ppo.train_chunk(state, 1))
+
+
+def test_a_done_step_unlock_reaches_the_chunk_metrics(
+    ppo: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared trainer contract: whole-episode flags with the done step's unlocks."""
+    config = _config(envs=16, num_steps=32, width=17)  # a config no other test compiles
+    assert_done_step_unlock_counted(ppo, config, monkeypatch)
 
 
 def test_the_policy_acts_on_observations(
