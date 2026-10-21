@@ -356,6 +356,47 @@ def test_learn_on_a_hand_built_traj_equals_one_train_chunk_update(
     assert same(ts, trained.train_state)
 
 
+def _envs(tree: Any, n: int) -> Any:
+    """Every env-axis leaf cut or tiled to ``n`` envs (time-major, axis 1)."""
+    return jax.tree.map(lambda x: jnp.resize(x, (x.shape[0], n, *x.shape[2:])), tree)
+
+
+@pytest.mark.parametrize("n", [2 * B, B // 2])
+def test_learn_refuses_a_traj_of_another_env_count(
+    one_step: tuple[Any, ...], n: int
+) -> None:
+    """Too many or too few envs: an error naming the shapes, never a silent drop
+    or duplicate."""
+    _, ts, traj, h0 = one_step
+    key, other = jax.random.key(5), _envs(traj, n)
+    with pytest.raises(ValueError, match=rf"\(8, {n}\).*\(8, 8\)"):
+        learn(ts, other, key, h0=h0)
+    other_h0 = jax.tree.map(lambda x: jnp.resize(x, (n, H)), h0)
+    with pytest.raises(ValueError, match=rf"h0.*\({n}, {H}\)"):
+        learn(ts, traj, key, h0=other_h0)
+    with pytest.raises(ValueError, match=rf"loss_mask.*\(8, {n}\)"):
+        learn(ts, traj, key, jnp.ones((T, n)), h0=h0)
+
+
+def test_learn_without_h0_starts_from_the_float16_traj_hidden(
+    cfg: PQNRNNConfig, same: Callable[[Any, Any], bool]
+) -> None:
+    """The fallback start carry is ``traj.hidden[0]``: the explicit float32 one
+    rounded to float16; without a recorded hidden ``h0`` is required."""
+    state = init_state(cfg, jax.random.key(0))
+    state = state.replace(hidden=jax.tree.map(lambda x: x + 0.3, state.hidden))
+    _, traj, h0, _ = collect(state, with_traj=True)
+    key = jax.random.key(5)
+    rounded = jax.tree.map(lambda x: x.astype(jnp.float16).astype(jnp.float32), h0)
+    fallback, _ = learn(state.train_state, traj, key)
+    assert same(fallback, learn(state.train_state, traj, key, h0=rounded)[0])
+    exact, _ = learn(state.train_state, traj, key, h0=h0)
+    for a, b in zip(jax.tree.leaves(fallback), jax.tree.leaves(exact), strict=True):
+        np.testing.assert_allclose(a, b, atol=1e-3)
+    with pytest.raises(ValueError, match="h0"):
+        learn(state.train_state, traj.replace(hidden=None), key)
+
+
 def test_q_lambda_targets_run_without_a_trainer() -> None:
     script = (
         "import jax.numpy as jnp\n"

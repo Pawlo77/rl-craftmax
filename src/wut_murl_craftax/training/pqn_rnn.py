@@ -609,12 +609,53 @@ def learn(
     ``(steps, envs)`` drops transitions from the loss. ``h0`` is the float32 start
     carry after step 0's reset (default: ``traj.hidden[0]``, rounded to float16).
     Returns the train state and the mean ``td_loss`` and ``grad_norm`` of its steps.
+
+    Raises:
+        ValueError: If the rollout, ``loss_mask`` or ``h0`` is not ``(num_steps,
+            envs)`` / ``(envs, hidden)`` of the config, or ``h0`` is missing while
+            ``traj.hidden`` is None.
     """
     s = _setup(train_state.cfg)
+    _check_rollout(train_state.cfg, traj, loss_mask, h0)
     return cast(
         tuple[QTrainState, dict[str, jax.Array]],
         s.learn(train_state, traj, key, loss_mask, h0),
     )
+
+
+def _check_rollout(
+    cfg: PQNRNNConfig, traj: Traj, loss_mask: jax.Array | None, h0: Carry | None
+) -> None:
+    """Refuse shapes `learn` would silently mishandle (its env shuffle is per config).
+
+    Raises:
+        ValueError: On any mismatch, naming the shapes.
+    """
+    want = (cfg.num_steps, cfg.envs)
+    arrays = {
+        "traj.obs": traj.obs,
+        "traj.actions": traj.actions,
+        "traj.rewards": traj.rewards,
+        "traj.dones": traj.dones,
+        'traj.extra["last_actions"]': traj.extra["last_actions"],
+    }
+    if loss_mask is not None:
+        arrays["loss_mask"] = loss_mask
+    errors = [
+        f"{name} has steps x envs {tuple(x.shape[:2])}, the config needs {want}"
+        for name, x in arrays.items()
+        if tuple(x.shape[:2]) != want
+    ]
+    if h0 is None and traj.hidden is None:
+        errors.append("h0 is required when traj.hidden is None")
+    carry = (cfg.envs, cfg.hidden)
+    errors += [
+        f"h0 leaves must be (envs, hidden) = {carry}, got {tuple(x.shape)}"
+        for x in jax.tree.leaves(h0)
+        if tuple(x.shape) != carry
+    ]
+    if errors:
+        raise ValueError("; ".join(errors))
 
 
 def _on_actor(tree: Any, s: _Setup, envs: int) -> Any:
