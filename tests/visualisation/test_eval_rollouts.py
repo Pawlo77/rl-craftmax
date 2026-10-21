@@ -85,6 +85,9 @@ class _CountingTrainer:
     def policy(self, state: dict[str, jax.Array]) -> _CountingPolicy:
         return _CountingPolicy()
 
+    def env_wrapper(self, state: dict[str, jax.Array]) -> None:
+        return None
+
 
 @pytest.fixture
 def counting_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

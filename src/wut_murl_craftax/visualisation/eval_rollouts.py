@@ -22,7 +22,6 @@ from typing import Any, Literal, NamedTuple, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
-from craftax.craftax_env import make_craftax_env_from_name
 from jax.sharding import NamedSharding, PartitionSpec
 
 from ..evaluation.episode_metrics import score_pct
@@ -39,9 +38,9 @@ from ..orchestration.queue import RunSpec
 from ..orchestration.runner import Trainer
 from ..training.checkpoints import CheckpointEntry, load_index, load_params
 from ..training.interface import METHODS, Policy
-from ..training.ppo import PPOPolicy, policy_value
+from ..training.ppo import PPOPolicy, make_env, policy_value
 from ..training.records import achievement_weights, is_classic
-from ..training.wrappers import LogWrapper, unwrap_state
+from ..training.wrappers import unwrap_state
 from .rollout import FEATURES, GameKind, Rollout, game_for, keys
 
 logger = logging.getLogger(__name__)
@@ -97,14 +96,19 @@ class EvalRun:
     template: Any
     """Params structure of the checkpoints (abstract leaves)."""
     env: Any
-    """The training env chain without resets: ``auto_reset=False`` in `LogWrapper`."""
+    """The training env chain without resets: the bare env (``auto_reset=False``)
+    with the method's ``env_wrapper_fn`` inside `LogWrapper` (`make_env`)."""
     env_params: Any
 
     @classmethod
     def load(
         cls, run_dir: Path, methods: Mapping[str, Trainer] | None = None
     ) -> "EvalRun":
-        """Open ``run_dir``; the policy is ``methods[cfg["method"]]`` (`METHODS`)."""
+        """Open ``run_dir`` with ``methods[cfg["method"]]`` (`METHODS`).
+
+        The trainer is set up from ``config.json`` as the runner trained it: the
+        method's own keys build its hooks, its ``env_wrapper_fn`` wraps the env.
+        """
         run_dir = Path(run_dir)
         cfg = json.loads((run_dir / "config.json").read_text())
         trainer = (METHODS if methods is None else methods)[cfg["method"]]
@@ -113,7 +117,7 @@ class EvalRun:
         import_craftax()  # not inside the trace below: Craftax would keep its tracers
         # shapes only: acting needs the params structure, not an env batch or values
         state = jax.eval_shape(lambda: trainer.init(config, jax.random.key(0)))
-        env = LogWrapper(make_craftax_env_from_name(cfg["env"], auto_reset=False))
+        env, env_params = make_env(cfg["env"], trainer.env_wrapper(state))
         return cls(
             run_dir,
             cfg,
@@ -121,7 +125,7 @@ class EvalRun:
             trainer.policy(state),
             trainer.params(state),
             env,
-            env.default_params,
+            env_params,
         )
 
     @property

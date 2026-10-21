@@ -171,6 +171,14 @@ class Trainer(Protocol):
         """
         ...
 
+    def env_wrapper(self, state: Any) -> Callable[[Any, Any], tuple[Any, Any]] | None:
+        """The method's ``env_wrapper_fn``, None without one (abstract state as above).
+
+        Evaluation applies it inside ``LogWrapper`` as training does
+        (``training.ppo.make_env``).
+        """
+        ...
+
 
 Evaluate = Callable[[Path, RunSpec, Callable[[], bool]], None]
 """Evaluates a run directory's checkpoints for its spec, skipping finished files;

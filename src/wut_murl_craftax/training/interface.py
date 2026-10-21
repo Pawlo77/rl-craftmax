@@ -1,5 +1,8 @@
 """Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`.
 
+A hook method registers its base's trainer with a `HookMethod`, for example
+``make_ppo_rnn_trainer(PPORNNConfig(), method=HookMethod(CountBonusConfig, hooks))``:
+each run config's method keys build its hooks, the other keys configure the base.
 The runner imports this module after ``configure_runtime``, so it and the trainers
 may import Craftax (which starts the JAX backends) at module top.
 """
@@ -11,7 +14,8 @@ import jax
 
 from ..orchestration.runner import Trainer
 from .ppo import PPOTrainer
-from .ppo_rnn import PPORNNConfig, make_trainer
+from .ppo_rnn import PPORNNConfig
+from .ppo_rnn import make_trainer as make_ppo_rnn_trainer
 from .pqn_rnn import PQNRNNConfig
 from .pqn_rnn import make_trainer as make_pqn_rnn_trainer
 
@@ -36,7 +40,7 @@ class Policy(Protocol):
 
 METHODS: Mapping[str, Trainer] = {
     "ppo": PPOTrainer(),
-    "ppo-rnn": make_trainer(PPORNNConfig()),
+    "ppo-rnn": make_ppo_rnn_trainer(PPORNNConfig()),
     "pqn-rnn": make_pqn_rnn_trainer(PQNRNNConfig()),
 }
 """Registry name (`RunSpec.registry_name`, ``config["method"]``) -> trainer; each

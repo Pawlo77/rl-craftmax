@@ -4,18 +4,46 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from wut_murl_craftax.training.hooks import HookFields, HookMethod
 from wut_murl_craftax.training.ppo_rnn import PPORNNConfig
 from wut_murl_craftax.training.pqn_rnn import PQNRNNConfig
 
 TEST_ENV = os.environ.get("CRAFTAX_TEST_ENV", "Craftax-Classic-Symbolic-v1")
 """Env of the recurrent tests; Craftax-Symbolic reruns them at the real scale."""
+
+
+@dataclass(frozen=True, slots=True)
+class KnobConfig:
+    """A hook method's own config: one YAML knob."""
+
+    knob_reward: float = 0.0
+    """Constant intrinsic reward of every step."""
+
+
+def _knob_hooks(cfg: KnobConfig) -> HookFields:
+    def reward(s: Any, e: Any, e2: Any, o: Any, d: jax.Array, t: Any) -> Any:
+        return jnp.full(d.shape, cfg.knob_reward, jnp.float32), s
+
+    return HookFields(intrinsic_reward_fn=reward)
+
+
+KNOB = HookMethod(KnobConfig, _knob_hooks)
+"""A hook method whose ``knob_reward`` key sets its intrinsic reward."""
+
+
+@pytest.fixture(scope="session")
+def knob_method() -> HookMethod[KnobConfig]:
+    """`KNOB`: the intrinsic reward is the run config's ``knob_reward``."""
+    return KNOB
 
 
 @pytest.fixture(scope="session")

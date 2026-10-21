@@ -3,16 +3,20 @@
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from _contract import assert_done_step_unlock_counted
 
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
+from wut_murl_craftax.training import ppo_rnn, pqn_rnn
 from wut_murl_craftax.training.checkpoints import load_state, save_state
+from wut_murl_craftax.training.hooks import HookFields, HookMethod
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.records import LOSS_COLUMNS
 
@@ -100,6 +104,7 @@ def two_updates(ppo: Any, start: Any) -> tuple[Any, Any]:
 def test_every_method_exposes_the_trainer_interface() -> None:
     assert next(iter(METHODS)) == "ppo"
     names = ("steps_per_update", "init", "train_chunk", "params", "policy")
+    names += ("env_wrapper",)
     for trainer in METHODS.values():
         assert all(callable(getattr(trainer, n, None)) for n in names)
 
@@ -177,6 +182,37 @@ def test_the_policy_acts_on_observations(
         for k in (0, 1)
     ]
     assert _same(greedy[0], greedy[1])
+
+
+@dataclass(frozen=True, slots=True)
+class _ShadowsLr:
+    lr: float = 1.0
+
+
+BASES = {
+    "ppo-rnn": (ppo_rnn.make_trainer, ppo_rnn.PPORNNConfig),
+    "pqn-rnn": (pqn_rnn.make_trainer, pqn_rnn.PQNRNNConfig),
+}
+"""The base trainers a hook method builds on: factory and config class."""
+
+
+@pytest.mark.parametrize("base", list(BASES))
+def test_a_hook_method_takes_its_knobs_from_the_run_config(
+    base: str, knob_method: HookMethod
+) -> None:
+    """Grid entries of one method train different hooks; base keys reach the base."""
+    make, config_cls = BASES[base]
+    trainer = make(config_cls(), method=knob_method)
+    for value in (0.0, 0.25):
+        cfg = trainer.config({"method": "knob", "knob_reward": value, "lr": 1e-3})
+        assert cfg.intrinsic_reward_fn is not None
+        r_int, _ = cfg.intrinsic_reward_fn({}, None, None, None, jnp.zeros(2, bool), 0)
+        assert r_int.tolist() == [value, value]
+        assert cfg.lr == 1e-3
+    with pytest.raises(ValueError, match="knob_rewrd"):
+        trainer.config({"method": "knob", "knob_rewrd": 0.25})
+    with pytest.raises(ValueError, match="'lr'"):
+        make(config_cls(), method=HookMethod(_ShadowsLr, lambda c: HookFields()))
 
 
 @pytest.mark.parametrize(

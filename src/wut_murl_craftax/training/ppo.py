@@ -59,7 +59,12 @@ from ..orchestration import (
 from .checkpoints import checkpoint_schedule, save_checkpoint
 from .hooks import HOOK_NAMES
 from .records import LOSS_COLUMNS, RunLog, achievement_names
-from .wrappers import BatchEnvWrapper, LogWrapper, OptimisticResetVecEnvWrapper
+from .wrappers import (
+    BatchEnvWrapper,
+    LogWrapper,
+    OptimisticResetVecEnvWrapper,
+    unwrap_state,
+)
 
 if TYPE_CHECKING:  # the runner imports mlflow; the standalone CLI does not need it
     from ..orchestration.runner import ChunkMetrics
@@ -196,20 +201,56 @@ class TrainEnvConfig(Protocol):
         ...
 
 
+def _check_wrapped(bare: Any, env: Any, params: Any) -> None:
+    """Refuse a wrapped env without ``name`` or that hides the Craftax state."""
+    key = jax.random.key(0)
+    want = jax.eval_shape(bare.reset, key, bare.default_params)[1]
+    got = unwrap_state(jax.eval_shape(env.reset, key, params)[1])
+    if type(got) is not type(want):
+        msg = (
+            f"env_wrapper_fn hides the Craftax state: unwrap_state gives "
+            f"{type(got).__name__}; keep the inner state as `.env_state`"
+        )
+        raise ValueError(msg)
+    if getattr(env, "name", None) != bare.name:
+        msg = f"env_wrapper_fn must proxy the env name {bare.name!r}"
+        raise ValueError(msg)
+
+
+def make_env(
+    name: str,
+    wrap: Callable[[Any, Any], tuple[Any, Any]] | None = None,
+    *,
+    auto_reset: bool = False,
+) -> tuple[Any, Any]:
+    """The Craftax env with a method's ``env_wrapper_fn`` inside `LogWrapper`.
+
+    Training (`make_train_env`) and evaluation build their envs here, so both apply
+    the same wrapper chain.
+
+    Raises:
+        ValueError: If the wrapped env does not proxy ``name`` or `unwrap_state`
+            cannot reach the Craftax state of its states.
+    """
+    env = make_craftax_env_from_name(name, auto_reset=auto_reset)
+    params = env.default_params
+    if wrap is not None:
+        bare = env
+        env, params = wrap(env, params)
+        _check_wrapped(bare, env, params)
+    return LogWrapper(env), params
+
+
 def make_train_env(
     cfg: TrainEnvConfig, wrap: Callable[[Any, Any], tuple[Any, Any]] | None = None
 ) -> tuple[Any, Any]:
     """Batched training env and its params, built as Craftax_Baselines ``ppo.py``.
 
     ``wrap`` (a method's ``env_wrapper_fn``) wraps the bare env, inside the logging
-    and reset wrappers.
+    and reset wrappers (`make_env`).
     """
     optimistic = cfg.resets == "optimistic"
-    env = make_craftax_env_from_name(cfg.env, auto_reset=not optimistic)
-    params = env.default_params
-    if wrap is not None:
-        env, params = wrap(env, params)
-    env = LogWrapper(env)
+    env, params = make_env(cfg.env, wrap, auto_reset=not optimistic)
     if optimistic:
         ratio = min(cfg.reset_ratio, cfg.envs)
         return OptimisticResetVecEnvWrapper(env, cfg.envs, ratio), params
@@ -611,6 +652,9 @@ class PPOTrainer:
     def policy(self, state: PPOState) -> PPOPolicy:
         """The acting policy of this config's network."""
         return PPOPolicy(_setup(state.cfg).net)
+
+    def env_wrapper(self, state: PPOState) -> None:  # protocol
+        """No env wrapper: PPO has no hooks."""
 
 
 def train(cfg: PPOConfig, out: Path) -> Path:

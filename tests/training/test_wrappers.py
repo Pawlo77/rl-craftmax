@@ -1,7 +1,7 @@
 """Tests for the vendored Craftax_Baselines wrappers and their step events."""
 
 import functools
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +12,7 @@ from craftax.craftax.constants import Action as CraftaxAction
 from craftax.craftax_env import make_craftax_env_from_name
 
 from wut_murl_craftax.evaluation.events import step_events
-from wut_murl_craftax.training.ppo import PPOConfig, make_train_env
+from wut_murl_craftax.training.ppo import PPOConfig, make_env, make_train_env
 from wut_murl_craftax.training.wrappers import (
     BatchEnvWrapper,
     GymnaxWrapper,
@@ -131,6 +131,62 @@ def test_auto_resets_keep_craftax_auto_reset() -> None:
     assert np.flatnonzero(done).tolist() == [2]
     assert int(unwrap_state(st2).timestep[2]) == 0
     assert "events" not in info
+
+
+class _Widen(GymnaxWrapper):
+    """Appends 3 ones to every observation; the Craftax state passes through."""
+
+    def _pad(self, obs: jax.Array) -> jax.Array:
+        return jnp.concatenate([obs, jnp.ones((*obs.shape[:-1], 3))], -1)
+
+    def reset(self, key: jax.Array, params: Any = None) -> Any:
+        obs, state = self._env.reset(key, params)
+        return self._pad(obs), state
+
+    def observation_space(self, params: Any) -> Any:
+        space = self._env.observation_space(params)
+        return type(space)(0.0, 1.0, (space.shape[0] + 3,), space.dtype)
+
+
+class _Boxed(NamedTuple):
+    inner: Any
+
+
+class _Hides(GymnaxWrapper):
+    """Wraps the state under another name: `unwrap_state` cannot reach it."""
+
+    def reset(self, key: jax.Array, params: Any = None) -> Any:
+        obs, state = self._env.reset(key, params)
+        return obs, _Boxed(state)
+
+
+class _Renamed(GymnaxWrapper):
+    name = "Toy-v1"
+
+
+def _wrap(cls: type) -> Any:
+    return lambda env, params: (cls(env), params)
+
+
+def test_training_and_evaluation_envs_apply_the_same_wrapper() -> None:
+    """`make_env` (evaluation) is the inside of `make_train_env` (training)."""
+    plain, params = make_env(CLASSIC)
+    dim = plain.observation_space(params).shape[0]
+    env, params = make_env(CLASSIC, _wrap(_Widen))
+    assert isinstance(env, LogWrapper)
+    assert isinstance(env._env, _Widen)
+    obs, st = env.reset(jax.random.key(0), params)
+    assert obs.shape == (dim + 3,)
+    assert unwrap_state(st).timestep == 0
+    train_env, _ = make_train_env(PPOConfig(env=CLASSIC, envs=8), _wrap(_Widen))
+    assert isinstance(train_env._env._env, _Widen)
+
+
+@pytest.mark.parametrize(("cls", "error"), [(_Hides, "env_state"), (_Renamed, "name")])
+def test_a_wrapper_must_keep_the_craftax_state_and_name(cls: type, error: str) -> None:
+    """Step events and the episode metrics read the Craftax state and the env name."""
+    with pytest.raises(ValueError, match=error):
+        make_env(CLASSIC, _wrap(cls))
 
 
 @pytest.mark.parametrize("ratio", [0, -2, 1.5, True])

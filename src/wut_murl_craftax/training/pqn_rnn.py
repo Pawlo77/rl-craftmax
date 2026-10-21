@@ -40,11 +40,14 @@ from .batch_renorm import BatchRenorm
 from .hooks import (
     HOOK_NAMES,
     HookFields,
+    HookMethod,
     HookSpec,
     ResolvedHooks,
     Traj,
+    check_method_keys,
     check_metric_names,
     resolve,
+    with_method,
 )
 from .ppo import env_placement, make_train_env, place_on_actor
 from .ppo_rnn import minibatches
@@ -895,17 +898,23 @@ class PQNRNNPolicy:
 class PQNRNNTrainer:
     """A PQN-RNN registry entry (`orchestration.runner.Trainer`).
 
-    ``cfg`` is the method's factory config (its hooks); run-config keys override its
-    fields.
+    ``cfg`` is the factory config; ``method`` builds the hooks from its own keys of
+    each run config (`with_method`), the other keys override ``cfg``'s fields.
     """
 
     cfg: PQNRNNConfig
+    method: HookMethod[Any] | None = None
     loss_columns: ClassVar[tuple[str, ...]] = FILLED_LOSS_COLUMNS
     """The runner logs and abort-checks only these (the others are NaN)."""
 
+    def __post_init__(self) -> None:
+        """Refuse method keys that shadow PQNRNNConfig keys."""
+        check_method_keys(self.method, PQNRNNConfig)
+
     def config(self, config: Mapping[str, Any]) -> PQNRNNConfig:
-        """The factory config with the run config's keys on top."""
-        return PQNRNNConfig.from_config(config, self.cfg)
+        """The factory config with the method's hooks and the other keys on top."""
+        cfg, rest = with_method(self.cfg, self.method, config)
+        return PQNRNNConfig.from_config(rest, cfg)
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
         """Rollout batch: ``envs * num_steps``."""
@@ -937,7 +946,19 @@ class PQNRNNTrainer:
         """The acting policy of this config's network (reads no state values)."""
         return PQNRNNPolicy(_setup(state.cfg).net)
 
+    def env_wrapper(
+        self, state: PQNRNNState
+    ) -> Callable[[Any, Any], tuple[Any, Any]] | None:
+        """The config's ``env_wrapper_fn``; evaluation wraps its env the same way."""
+        return state.cfg.env_wrapper_fn
 
-def make_trainer(cfg: PQNRNNConfig) -> PQNRNNTrainer:
-    """The trainer of a method built on PQN-RNN: ``cfg`` carries its hooks."""
-    return PQNRNNTrainer(cfg)
+
+def make_trainer(
+    cfg: PQNRNNConfig, method: HookMethod[Any] | None = None
+) -> PQNRNNTrainer:
+    """The trainer of a method built on PQN-RNN: ``method`` builds its hooks per run.
+
+    Raises:
+        ValueError: If a method key shadows a `PQNRNNConfig` key.
+    """
+    return PQNRNNTrainer(cfg, method)

@@ -19,11 +19,14 @@ from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.hooks import (
     HOOK_NAMES,
     HookFields,
+    HookMethod,
     HookSpec,
     Traj,
+    check_method_keys,
     check_metric_names,
     config_dict,
     resolve,
+    with_method,
 )
 
 CLASSIC = "Craftax-Classic-Symbolic-v1"
@@ -316,6 +319,60 @@ def test_method_state_survives_save_and_load(tmp_path: Path) -> None:
         jax.random.key_data(got["method"]["key"]), jax.random.key_data(state["key"])
     )
     assert int(got["update"]) == 3
+
+
+def _r_int(cfg: _Cfg) -> float:
+    fn = cfg.intrinsic_reward_fn
+    assert fn is not None
+    return float(fn({}, None, None, None, jnp.zeros(2, bool), 0)[0][0])
+
+
+def test_a_method_builds_its_hooks_from_its_own_keys(knob_method: HookMethod) -> None:
+    """Its keys configure the hooks; the others stay for the base trainer config."""
+    run = {"method": "knob", "knob_reward": 0.5, "lr": 1e-3}
+    cfg, rest = with_method(_Cfg(), knob_method, run)
+    assert _r_int(cfg) == 0.5
+    assert rest == {"method": "knob", "lr": 1e-3}
+    assert _r_int(with_method(_Cfg(), knob_method, {"knob_reward": 0.125})[0]) == 0.125
+    assert _r_int(with_method(_Cfg(), knob_method, {})[0]) == 0.0  # its default
+
+
+def test_equal_method_keys_give_equal_configs(knob_method: HookMethod) -> None:
+    """One built hook set per distinct method config: trainer setups cache on it."""
+    a, _ = with_method(_Cfg(), knob_method, {"knob_reward": 0.5})
+    b, _ = with_method(_Cfg(), knob_method, {"knob_reward": 0.5})
+    c, _ = with_method(_Cfg(), knob_method, {"knob_reward": 0.25})
+    assert a == b
+    assert hash(a) == hash(b)
+    assert a != c
+
+
+def test_the_method_hooks_replace_the_factory_hooks(knob_method: HookMethod) -> None:
+    base = _Cfg(**_all_hooks(), extra_steps=2)
+    cfg, _ = with_method(base, knob_method, {"knob_reward": 0.5})
+    assert _r_int(cfg) == 0.5
+    assert resolve(cfg).active == ("intrinsic_reward_fn",)
+    assert (cfg.extra_steps, cfg.lr) == (0, base.lr)
+
+
+def test_without_a_method_the_config_passes_unchanged() -> None:
+    base, run = _Cfg(lr=1.0), {"lr": 2.0, "method": "x"}
+    cfg, rest = with_method(base, None, run)
+    assert cfg is base
+    assert rest == run
+    assert rest is not run
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Clash:
+    lr: float = 0.1
+
+
+def test_method_keys_that_shadow_base_keys_are_refused() -> None:
+    clash = HookMethod(_Clash, lambda cfg: HookFields())
+    with pytest.raises(ValueError, match="'lr'"):
+        check_method_keys(clash, _Cfg)
+    check_method_keys(None, _Cfg)
 
 
 def test_module_has_no_craftax_import_at_the_top() -> None:

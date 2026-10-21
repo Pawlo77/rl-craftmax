@@ -136,3 +136,6 @@ class FakeTrainer:
 
     def policy(self, state: dict[str, Any]) -> RandomPolicy:
         return RandomPolicy()
+
+    def env_wrapper(self, state: dict[str, Any]) -> None:
+        return None

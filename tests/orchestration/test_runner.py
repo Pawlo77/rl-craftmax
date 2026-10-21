@@ -18,10 +18,11 @@ import numpy as np
 import pytest
 import yaml
 from _fake_trainer import STEPS_PER_UPDATE, FakeTrainer
+from _toy_method import TINY, TOY
 
 from wut_murl_craftax.orchestration import queue, runner
 from wut_murl_craftax.orchestration.profiles import Profile, load_profile
-from wut_murl_craftax.orchestration.queue import RunSpec, expand_phase
+from wut_murl_craftax.orchestration.queue import RunSpec, config_hash, expand_phase
 from wut_murl_craftax.orchestration.runner import final_score, worker_specs
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training.checkpoints import (
@@ -30,6 +31,7 @@ from wut_murl_craftax.training.checkpoints import (
     load_params,
     load_state,
 )
+from wut_murl_craftax.training.ppo import make_env
 from wut_murl_craftax.training.records import LOSS_COLUMNS
 from wut_murl_craftax.visualisation import eval_rollouts
 
@@ -90,7 +92,7 @@ class Store:
         files = sorted(p.name for p in run_dir.iterdir())
         self.evaluated.append((spec.name, spec.phase, status, files))
 
-    def run(self, specs: list[RunSpec], trainer: FakeTrainer, **kw: Any) -> None:
+    def run(self, specs: list[RunSpec], trainer: Any, **kw: Any) -> None:
         runner.main(
             specs,
             PROFILE,
@@ -834,3 +836,36 @@ def test_a_lost_checkpoint_of_a_run_in_progress_stays_tagged_and_fails_at_the_en
         run = store.runs()[spec.name]
         assert (run.info.status, run.data.tags["ckpt/missing"]) == ("FAILED", "1")
     assert _ckpt(store, spec.name, 40).is_file()
+
+
+def test_a_methods_knobs_reach_its_hooks_in_training_and_evaluation(
+    store: Store,
+) -> None:
+    """Two grid entries of a hook method: the runner trains each entry's bonus and
+    evaluation opens each run with its own env wrapper (2 PPO-RNN updates)."""
+    knobs = [
+        {"toy_bonus": 0.0, "toy_features": 0},
+        {"toy_bonus": 0.5, "toy_features": 3},
+    ]
+    specs = []
+    for k in knobs:
+        cfg = {"method": "toy", **TINY, **k}
+        specs.append(
+            RunSpec("toy", "a", "0.128k", ENV, 0, cfg, config_hash(cfg), "x", "final")
+        )
+    store.run(specs, TOY)
+    plain, params = make_env(ENV)
+    width = plain.observation_space(params).shape[0]
+    for k, spec in zip(knobs, specs, strict=True):
+        out = store.run_dir(spec.name)
+        with np.load(out / runner.EXTRAS_FILE) as z:
+            per_update = 64 * k["toy_bonus"]  # 8 envs x 8 steps
+            assert z["toy/bonus_sum"].tolist() == [per_update, 2 * per_update]
+        run = eval_rollouts.EvalRun.load(out, {"toy": TOY})
+        obs, _ = run.env.reset(jax.random.key(0), run.env_params)
+        assert obs.shape == (width + k["toy_features"],)
+        policy, p = run.policy, run.params(run.updates[-1])
+        act, _ = policy.step(
+            p, policy.init_carry(1), obs[None], jax.random.key(1), True
+        )
+        assert act.shape == (1,)
