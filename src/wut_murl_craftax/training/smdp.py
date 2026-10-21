@@ -1112,6 +1112,15 @@ FLAG_NAMES = ("low_food", "low_drink", "low_energy", "low_health")
 """Columns of the low-stat flags in `key_vector` order."""
 
 
+def field_names(width: int) -> list[str]:
+    """Names of a `key_vector` of ``width``: progress-key fields, then `FLAG_NAMES`.
+
+    Classic keys are 12 wide (16 with flags), Craftax keys 23 (27).
+    """
+    base = CLASSIC_FIELDS if width in (12, 16) else FIELDS
+    return [*base, *FLAG_NAMES][:width]
+
+
 def greedy_table(params: Mapping[str, Any], q_init: float) -> dict[str, np.ndarray]:
     """Columns per stored key: ``key``, fields, greedy and greedy tried skill.
 
@@ -1128,8 +1137,7 @@ def greedy_table(params: Mapping[str, Any], q_init: float) -> dict[str, np.ndarr
     real = np.asarray(params["rows"]) != SENTINEL_ROW
     fields_ = np.asarray(params["fields"])[real]
     q = np.asarray(params["q_rows"])[real]
-    base = CLASSIC_FIELDS if fields_.shape[1] in (12, 16) else FIELDS
-    names = [*base, *FLAG_NAMES][: fields_.shape[1]]
+    names = field_names(fields_.shape[1])
     cols = {"key": np.asarray(params["rows"], np.int32)[real]}
     cols |= {n: fields_[:, i] for i, n in enumerate(names)}
     skill_names = np.array([s.name for s in SKILLS], object)
@@ -1210,9 +1218,18 @@ def write_greedy_table(
     Rows of an earlier call for the same update are replaced.
     """
     path = Path(run_dir) / "eval" / GREEDY_TABLE_FILE
+    return write_update_rows(path, update, greedy_table(params, q_init))
+
+
+def write_update_rows(path: Path, update: int, cols: Mapping[str, Any]) -> Path:
+    """Put the rows ``cols`` of ``update`` into the parquet file ``path``, atomically.
+
+    An ``update`` column comes first; rows of an earlier call for the same update
+    are replaced.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    cols = greedy_table(params, q_init)
-    new = pa.table({"update": np.full(len(cols["key"]), update, np.int32), **cols})
+    n = len(next(iter(cols.values())))
+    new = pa.table({"update": np.full(n, update, np.int32), **cols})
     if path.is_file():
         old = pq.read_table(path)
         keep = pc.not_equal(old["update"], pa.scalar(update, pa.int32()))

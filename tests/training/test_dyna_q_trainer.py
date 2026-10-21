@@ -12,6 +12,7 @@ from typing import Any
 
 import jax
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
@@ -25,6 +26,8 @@ from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import dyna_q, smdp
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.training.progress_key import CLASSIC_FIELDS
+from wut_murl_craftax.training.skills import SKILLS
 from wut_murl_craftax.visualisation import eval_rollouts
 
 REPO = Path(__file__).resolve().parents[2]
@@ -59,6 +62,25 @@ DYNA_KNOBS = {
 """The method's own run-config keys (`dyna_q.DYNA_KEYS`)."""
 TIMED = {"dyna/plan_seconds", "dyna/plan_wall_share"}
 """Wall-clock metrics: not reproducible across runs."""
+DYNA_METRICS = TIMED | {
+    "dyna/pairs_visited",
+    "dyna/pairs_full_share",
+    "dyna/model_accuracy",
+    "dyna/backups",
+    "dyna/plan_td_abs",
+    "dyna/bonus_mean",
+    "dyna/stale_share",
+    "dyna/ps_above_theta",
+    "dyna/vi_sweeps",
+    "dyna/vi_residual",
+}
+"""Every ``dyna/...`` metric but the guards."""
+SHARES = (
+    "dyna/pairs_full_share",
+    "dyna/model_accuracy",
+    "dyna/stale_share",
+    "dyna/plan_wall_share",
+)
 
 
 @pytest.fixture(scope="module")
@@ -249,6 +271,99 @@ def test_a_done_step_unlock_reaches_the_chunk_metrics(
 ) -> None:
     cfg = _config(methods_dir, envs=16, num_steps=32, hidden=17)  # uncompiled
     assert_done_step_unlock_counted(METHODS[NAME], cfg, monkeypatch)
+
+
+# --- method metrics ------------------------------------------------------------------
+
+
+def test_one_update_logs_every_method_metric(entry: Any) -> None:
+    _, _, _, (state, m) = entry
+    episode = {"losses", "done", "ach", "ret", "length"}
+    new = {k for k in m if not k.startswith("smdp/")} - episode
+    assert new >= DYNA_METRICS
+    assert all(k.startswith("dyna/") for k in new)
+    for k in new:
+        v = np.asarray(m[k], float)
+        assert v.shape == (2,), k
+        assert np.isfinite(v).all(), k
+    for k in SHARES:
+        v = np.asarray(m[k])
+        assert ((v >= 0) & (v <= 1)).all(), k
+    pairs = np.asarray(m["dyna/pairs_visited"])
+    model = jax.device_get(state.model)
+    n = int(model.n_pairs)
+    assert (np.diff(pairs) >= 0).all()
+    assert pairs[-1] == n > 0
+    count, slots = model.count[:n], model.m_R.shape[1]
+    assert m["dyna/pairs_full_share"][-1] == pytest.approx((count >= slots).mean())
+    stale = 1000.0 - model.last_tried[:n] > 100  # time at the end: the whole budget
+    assert m["dyna/stale_share"][-1] == pytest.approx(stale.mean())
+    assert (np.asarray(m["dyna/plan_td_abs"]) > 0).all()
+    np.testing.assert_array_equal(m["dyna/bonus_mean"], 0.0)  # kappa 0
+    for k in ("dyna/vi_sweeps", "dyna/vi_residual", "dyna/ps_above_theta"):
+        np.testing.assert_array_equal(m[k], 0)  # uniform
+
+
+def _record(**over: Any) -> dict[str, np.ndarray]:
+    """One update's stacked Dyna record (`dyna_q.method_metrics`)."""
+    r = {
+        "backups": [10], "sweeps": [3], "td_abs": [3.0], "td_n": [6], "bonus": [1.2],
+        "q_upd": [12.0], "q_bad": [False], "above_theta": [7], "residual": [2e-4],
+        "n_pairs": [4.0], "full_pairs": [1], "stale": [2], "full": [False],
+        "hits": [3], "ends": [4], "plan_seconds": [0.5], "update_seconds": [2.0],
+    }  # fmt: skip
+    return {k: np.asarray(v) for k, v in (r | over).items()}
+
+
+def test_method_metrics_are_shares_of_the_update_counts() -> None:
+    m = dyna_q.method_metrics(_record())
+    assert m["dyna/pairs_visited"][0] == 4
+    assert m["dyna/pairs_full_share"][0] == 0.25
+    assert m["dyna/model_accuracy"][0] == 0.75
+    assert m["dyna/backups"][0] == 10
+    assert m["dyna/plan_td_abs"][0] == 0.5
+    assert m["dyna/bonus_mean"][0] == pytest.approx(0.2)
+    assert m["dyna/stale_share"][0] == 0.5
+    assert m["dyna/ps_above_theta"][0] == 7
+    assert (m["dyna/vi_sweeps"][0], m["dyna/vi_residual"][0]) == (3, 2e-4)
+    assert m["dyna/plan_seconds"][0] == 0.5
+    assert m["dyna/plan_wall_share"][0] == 0.25
+    empty = dyna_q.method_metrics(
+        _record(ends=[0], hits=[0], td_n=[0], n_pairs=[0.0], full_pairs=[0], stale=[0])
+    )
+    for k in ("model_accuracy", "plan_td_abs", "pairs_full_share", "stale_share"):
+        assert empty[f"dyna/{k}"][0] == 0.0, k
+
+
+def test_the_model_graph_lists_every_visited_pair(entry: Any, tmp_path: Path) -> None:
+    _, _, _, (state, _) = entry
+    path = dyna_q.write_model_graph(tmp_path, 2, state)
+    assert path == tmp_path / "eval" / dyna_q.MODEL_GRAPH_FILE
+    dyna_q.write_model_graph(tmp_path, 4, state)
+    dyna_q.write_model_graph(tmp_path, 2, state)  # rewritten, not duplicated
+    table = pq.read_table(path).to_pydict()
+    model = jax.device_get(state.model)
+    n = int(model.n_pairs)
+    assert sorted(set(table["update"])) == [2, 4]
+    rows = [i for i, u in enumerate(table["update"]) if u == 2]
+    assert len(rows) == n > 0
+    seen = np.asarray(state.smdp.carry.shared.seen)
+    gamma = state.smdp.cfg.top.gamma_top
+    names = [*CLASSIC_FIELDS, *smdp.FLAG_NAMES]
+    for p, i in enumerate(rows):
+        k, o, c = int(model.pair_k[p]), int(model.pair_o[p]), int(model.count[p])
+        filled = min(c, model.m_R.shape[1])
+        nxt = model.m_next[p, :filled].tolist()
+        assert (table["pair"][i], table["key"][i], table["count"][i]) == (p, k, c)
+        assert table["skill"][i] == SKILLS[o].name
+        assert [table[f][i] for f in names] == seen[k].tolist()
+        assert nxt.count(table["next_key"][i]) == max(nxt.count(x) for x in nxt)
+        nk = table["next_key"][i]
+        assert [table[f"next_{f}"][i] for f in names] == seen[nk].tolist()
+        r, disc = model.m_R[p, :filled], model.m_disc[p, :filled]
+        assert table["mean_return"][i] == pytest.approx(float(r.mean()), rel=1e-5)
+        tau = np.log(disc.astype(float)) / np.log(gamma)
+        assert table["mean_tau"][i] == pytest.approx(float(tau.mean()), rel=1e-3)
 
 
 # --- through the runner ---------------------------------------------------------------

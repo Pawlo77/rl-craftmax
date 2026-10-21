@@ -15,6 +15,7 @@ import functools
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, cast
 
 import jax
@@ -24,7 +25,7 @@ from flax import struct
 
 from .pqn_rnn import FILLED_LOSS_COLUMNS
 from .records import achievement_names
-from .skills import NUM_SKILLS
+from .skills import NUM_SKILLS, SKILLS
 from .smdp import (
     RolloutCarry,
     SMDPPolicy,
@@ -36,8 +37,12 @@ from .smdp import (
     _make_collect,
     _rollout_inputs,
     _setup,
+    _share,
+    _smdp_step,
+    _update_stats,
+    field_names,
     smdp_target,
-    smdp_update,
+    write_update_rows,
 )
 from .smdp import init_state as smdp_init_state
 
@@ -201,20 +206,73 @@ def model_accuracy(
     return jnp.sum(ended & seen & hit), jnp.sum(ended)
 
 
+def _bonus(model: ModelState, p: jax.Array, kappa: float, t: jax.Array) -> jax.Array:
+    """Dyna-Q+ bonus ``kappa sqrt(t - last_tried)`` of pair slots ``p``."""
+    return kappa * jnp.sqrt(jnp.maximum(t - model.last_tried[p], 0.0))
+
+
 def _records(
     model: ModelState, p: jax.Array, m: jax.Array, kappa: float, t: jax.Array
 ) -> Outcome:
     """Stored outcomes at pair slots ``p`` and ring slots ``m``, bonus in ``ret``."""
-    age = jnp.maximum(t - model.last_tried[p], 0.0)
     return Outcome(
         k=model.pair_k[p],
         o=model.pair_o[p],
-        ret=model.m_R[p, m] + kappa * jnp.sqrt(age),
+        ret=model.m_R[p, m] + _bonus(model, p, kappa, t),
         disc=model.m_disc[p, m],
         k_next=model.m_next[p, m],
         done=model.m_done[p, m],
         avail=unpack_mask(model.m_avail[p, m], model.pair_id.shape[1]),
     )
+
+
+PlanStats = dict[str, jax.Array]
+"""Backups' ``td_abs`` (sum of ``|y - Q|``), ``td_n`` (outcomes), ``bonus`` (sum),
+``q_upd`` (largest finite new value, -inf for none), ``q_bad`` (a non-finite one)."""
+
+
+def _no_stats() -> PlanStats:
+    """`PlanStats` of no backup."""
+    zero = jnp.float32(0.0)
+    return {
+        "td_abs": zero,
+        "td_n": jnp.int32(0),
+        "bonus": zero,
+        "q_upd": jnp.float32(-jnp.inf),
+        "q_bad": jnp.bool_(False),
+    }
+
+
+def _merge(a: PlanStats, b: PlanStats) -> PlanStats:
+    """`PlanStats` of the backups of ``a`` and ``b``."""
+    return {
+        **{k: a[k] + b[k] for k in ("td_abs", "td_n", "bonus")},
+        "q_upd": jnp.maximum(a["q_upd"], b["q_upd"]),
+        "q_bad": a["q_bad"] | b["q_bad"],
+    }
+
+
+def _backup(
+    q: jax.Array,
+    model: ModelState,
+    pm: tuple[jax.Array, jax.Array],
+    valid: jax.Array,
+    kappa: float,
+    t: jax.Array | float,
+    alpha: float,
+) -> tuple[jax.Array, PlanStats]:
+    """`sample_backup` of the outcomes ``pm = (p, m)`` and its `PlanStats`."""
+    p, m = pm
+    t = jnp.asarray(t, jnp.float32)
+    r = _records(model, p, m, kappa, t)
+    q, td = _smdp_step(
+        q, r.k, r.o, r.ret, r.disc, r.k_next, r.avail, r.done, valid, alpha
+    )
+    per_batch = _update_stats(td[None], q[r.k, r.o][None], valid[None])
+    td_abs, n, q_upd, q_bad = (x[0] for x in per_batch)
+    bonus = jnp.sum(jnp.where(valid, _bonus(model, p, kappa, t), 0.0))
+    stats = {"td_abs": td_abs, "td_n": n, "bonus": bonus, "q_upd": q_upd}
+    return q, stats | {"q_bad": q_bad}
 
 
 def sample_backup(
@@ -232,16 +290,30 @@ def sample_backup(
     The SMDP target of `smdp.smdp_update` plus ``kappa sqrt(t - last_tried)``;
     duplicates averaged.
     """
-    r = _records(model, p, m, kappa, jnp.asarray(t, jnp.float32))
-    return smdp_update(
-        q, r.k, r.o, r.ret, r.disc, r.k_next, r.avail, r.done, valid, alpha
-    )
+    return _backup(q, model, (p, m), valid, kappa, t, alpha)[0]
 
 
 def _filled(model: ModelState, p: jax.Array) -> jax.Array:
     """Ring slots holding an outcome, bool ``[len(p), M]``."""
     slots = model.m_R.shape[1]
     return jnp.arange(slots) < jnp.minimum(model.count[p], slots)[:, None]
+
+
+def _full(
+    q: jax.Array,
+    model: ModelState,
+    p: jax.Array,
+    valid: jax.Array,
+    kappa: float,
+    t: jax.Array | float,
+    alpha: float,
+) -> tuple[jax.Array, PlanStats]:
+    """`full_backup` and its `PlanStats` (over the stored outcomes)."""
+    slots = model.m_R.shape[1]
+    pp = jnp.repeat(p, slots)
+    mm = jnp.tile(jnp.arange(slots), p.shape[0])
+    mask = (valid[:, None] & _filled(model, p)).ravel()
+    return _backup(q, model, (pp, mm), mask, kappa, t, alpha)
 
 
 def full_backup(
@@ -258,11 +330,7 @@ def full_backup(
     A `sample_backup` of every filled slot: the duplicate-mean rule of
     `smdp.smdp_update` averages them.
     """
-    slots = model.m_R.shape[1]
-    pp = jnp.repeat(p, slots)
-    mm = jnp.tile(jnp.arange(slots), p.shape[0])
-    mask = (valid[:, None] & _filled(model, p)).ravel()
-    return sample_backup(q, model, pp, mm, mask, kappa, t, alpha)
+    return _full(q, model, p, valid, kappa, t, alpha)[0]
 
 
 def uniform_batch(
@@ -294,6 +362,12 @@ def priorities(
     return jnp.where(p < model.n_pairs, prio, -1.0)
 
 
+def _top(prio: jax.Array, size: int, theta: float) -> tuple[jax.Array, jax.Array]:
+    """The ``size`` pairs of highest priority and which of them exceed ``theta``."""
+    top, p = jax.lax.top_k(prio, size)
+    return p, top > theta
+
+
 def prioritized_batch(
     q: jax.Array,
     model: ModelState,
@@ -303,8 +377,33 @@ def prioritized_batch(
     theta: float,
 ) -> tuple[jax.Array, jax.Array]:
     """The ``size`` pairs of highest priority and which of them exceed ``theta``."""
-    prio, p = jax.lax.top_k(priorities(q, model, kappa, t), size)
-    return p, prio > theta
+    return _top(priorities(q, model, kappa, t), size, theta)
+
+
+def _value_iteration(
+    q: jax.Array,
+    model: ModelState,
+    kappa: float,
+    t: jax.Array | float,
+    tol: float,
+    max_sweeps: int,
+) -> tuple[jax.Array, jax.Array, jax.Array, PlanStats]:
+    """`value_iteration`, the last sweep's largest change and all sweeps' stats."""
+    p = jnp.arange(model.m_R.shape[0])
+    visited = p < model.n_pairs
+
+    def body(c: tuple[jax.Array, jax.Array, jax.Array, PlanStats]) -> Any:
+        q, _, n, stats = c
+        q2, s = _full(q, model, p, visited, kappa, t, 1.0)
+        return q2, jnp.max(jnp.abs(q2 - q)), n + 1, _merge(stats, s)
+
+    def more(c: tuple[jax.Array, jax.Array, jax.Array, PlanStats]) -> jax.Array:
+        _, change, n, _ = c
+        return (change >= tol) & (n < max_sweeps)
+
+    start = (q, jnp.float32(jnp.inf), jnp.int32(0), _no_stats())
+    q, change, sweeps, stats = jax.lax.while_loop(more, body, start)
+    return q, sweeps, change, stats
 
 
 def value_iteration(
@@ -317,23 +416,10 @@ def value_iteration(
 ) -> tuple[jax.Array, jax.Array]:
     """Synchronous full backups (step 1) of all visited pairs, and the sweeps run.
 
-    Stops when the largest change is below ``tol`` or after ``max_sweeps``.
+    Stops when the largest change of a sweep is below ``tol`` (a change, not an
+    error bound) or after ``max_sweeps``.
     """
-    p = jnp.arange(model.m_R.shape[0])
-    visited = p < model.n_pairs
-
-    def body(c: tuple[jax.Array, jax.Array, jax.Array]) -> Any:
-        q, _, n = c
-        q2 = full_backup(q, model, p, visited, kappa, t, 1.0)
-        return q2, jnp.max(jnp.abs(q2 - q)), n + 1
-
-    def more(c: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
-        _, change, n = c
-        return (change >= tol) & (n < max_sweeps)
-
-    start = (q, jnp.float32(jnp.inf), jnp.int32(0))
-    q, _, sweeps = jax.lax.while_loop(more, body, start)
-    return q, sweeps
+    return _value_iteration(q, model, kappa, t, tol, max_sweeps)[:2]
 
 
 def plan(
@@ -356,40 +442,51 @@ def plan(
     ``uniform``: sample backups of random stored outcomes; ``prioritized``: full
     backups of the top pairs by recomputed priority (above ``theta``), priorities
     recomputed per batch; ``value_iteration``: sweeps to ``tol`` (``n_backups``
-    unused). ``kappa`` is the Dyna-Q+ bonus per ``sqrt`` time unit. Returns the table
-    and ``backups`` (pairs or outcomes backed up) and ``sweeps``. The keyword
-    settings come from the method config (no defaults to drift from it).
+    unused). ``kappa`` is the Dyna-Q+ bonus per ``sqrt`` time unit. The keyword
+    settings come from the method config (no defaults to drift from it). Returns
+    the table and statistics: ``backups`` (outcomes, pairs or sweeps x visited
+    pairs), ``sweeps`` and ``residual`` (value iteration's last change),
+    ``above_theta`` (pairs above ``theta`` before planning, prioritized) and the
+    `PlanStats` of every backup.
     """
     n = jnp.asarray(n_backups, jnp.int32)
     zero = jnp.int32(0)
+    none = {"sweeps": zero, "above_theta": zero, "residual": jnp.float32(0.0)}
     if variant == "prioritized":  # top_k cannot take more than the pair slots
         batch = min(batch, model.m_R.shape[0])
     if variant == "value_iteration":
-        q, sweeps = value_iteration(q, model, kappa, t, tol, max_sweeps)
-        return q, {"backups": sweeps * model.n_pairs, "sweeps": sweeps}
+        q, sweeps, change, stats = _value_iteration(q, model, kappa, t, tol, max_sweeps)
+        backups = sweeps * model.n_pairs
+        out = {"backups": backups, "sweeps": sweeps, "residual": change}
+        return q, stats | none | out
 
-    def body(i: jax.Array, c: tuple[jax.Array, jax.Array]) -> Any:
-        q, done = c
+    def body(i: jax.Array, c: tuple[jax.Array, jax.Array, Any, jax.Array]) -> Any:
+        q, done, stats, above = c
         left = jnp.arange(batch) < n - i * batch
         if variant == "uniform":
             p, m, valid = uniform_batch(model, jax.random.fold_in(key, i), batch)
             valid &= left
-            q = sample_backup(q, model, p, m, valid, kappa, t, alpha)
+            q, s = _backup(q, model, (p, m), valid, kappa, t, alpha)
         else:
-            p, valid = prioritized_batch(q, model, kappa, t, batch, theta)
+            prio = priorities(q, model, kappa, t)
+            above = jnp.where(i == 0, jnp.sum(prio > theta), above)
+            p, valid = _top(prio, batch, theta)
             valid &= left
-            q = full_backup(q, model, p, valid, kappa, t, alpha)
-        return q, done + jnp.sum(valid)
+            q, s = _full(q, model, p, valid, kappa, t, alpha)
+        return q, done + jnp.sum(valid), _merge(stats, s), above
 
     batches = (n + batch - 1) // batch
-    q, backups = jax.lax.fori_loop(0, batches, body, (q, zero))
-    return q, {"backups": backups, "sweeps": zero}
+    start = (q, zero, _no_stats(), zero)
+    q, backups, stats, above = jax.lax.fori_loop(0, batches, body, start)
+    return q, stats | none | {"backups": backups, "above_theta": above}
 
 
 VARIANTS = ("uniform", "prioritized", "value_iteration")
 """The `Variant` values."""
 TIME_UNITS = 1000
 """Dyna-Q+ time units per run budget: κ transfers between budgets."""
+STALE_UNITS = 100.0
+"""Time units without a real outcome after which ``dyna/stale_share`` counts a pair."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -516,14 +613,25 @@ def _planner(cfg: DynaConfig, alpha: float, steps: int) -> Callable[..., Any]:
             alpha=alpha, batch=cfg.plan_batch, theta=cfg.ps_theta, tol=cfg.vi_tol,
             max_sweeps=cfg.vi_max_sweeps,
         )  # fmt: skip
-        return q, stats | _model_stats(model)
+        return q, stats | _model_stats(model, t)
 
     return cast(Callable[..., Any], run)
 
 
-def _model_stats(model: ModelState) -> dict[str, jax.Array]:
-    """Counts of the model after a rollout, new arrays (the model is donated next)."""
-    return {"n_pairs": model.n_pairs.astype(jnp.float32)}
+def _model_stats(model: ModelState, t: jax.Array) -> dict[str, jax.Array]:
+    """Visited, full (M outcomes) and stale pairs at time ``t``, and ``full``.
+
+    New arrays: the model itself is donated to the next rollout.
+    """
+    pairs, slots = model.m_R.shape
+    visited = jnp.arange(pairs) < model.n_pairs
+    stale = visited & (t - model.last_tried > STALE_UNITS)
+    return {
+        "n_pairs": model.n_pairs.astype(jnp.float32),
+        "full_pairs": jnp.sum(visited & (model.count >= slots)),
+        "stale": jnp.sum(stale),
+        "full": model.full | False,
+    }
 
 
 def init_state(cfg: DynaTrainConfig, key: jax.Array) -> DynaState:
@@ -613,8 +721,86 @@ def train_chunk(state: DynaState, n_updates: int) -> tuple[DynaState, "ChunkMetr
 
 
 def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """The ``dyna/...`` metrics of stacked update records, ``(updates,)`` each."""
-    return {"dyna/backups": r["backups"], "dyna/vi_sweeps": r["sweeps"]}
+    """The ``dyna/...`` metrics of stacked update records, ``(updates,)`` each.
+
+    Model after the rollout: ``pairs_visited``, ``pairs_full_share`` (pairs with M
+    outcomes), ``stale_share`` (no real outcome for `STALE_UNITS`) and
+    ``model_accuracy`` (the rollout's real outcomes whose next key the pair already
+    held). Planning: ``backups``, ``plan_td_abs`` and ``bonus_mean`` per backed-up
+    outcome, ``ps_above_theta``, ``vi_sweeps``, ``vi_residual`` (0 for the other
+    variants), ``plan_seconds`` and ``plan_wall_share`` (of the update's wall time).
+    Empty shares are 0, so every value is finite.
+    """
+    pairs, td_n = r["n_pairs"], r["td_n"]
+    return {
+        "dyna/pairs_visited": pairs,
+        "dyna/pairs_full_share": _share(r["full_pairs"], pairs),
+        "dyna/model_accuracy": _share(r["hits"], r["ends"]),
+        "dyna/backups": r["backups"],
+        "dyna/plan_td_abs": _share(r["td_abs"], td_n),
+        "dyna/bonus_mean": _share(r["bonus"], td_n),
+        "dyna/stale_share": _share(r["stale"], pairs),
+        "dyna/ps_above_theta": r["above_theta"],
+        "dyna/vi_sweeps": r["sweeps"],
+        "dyna/vi_residual": r["residual"],
+        "dyna/plan_seconds": r["plan_seconds"],
+        "dyna/plan_wall_share": _share(r["plan_seconds"], r["update_seconds"]),
+    }
+
+
+MODEL_GRAPH_FILE = "dyna_model_graph.parquet"
+"""File in the run directory's ``eval/``: `model_graph` rows of each checkpoint."""
+
+
+def model_graph(state: DynaState) -> dict[str, np.ndarray]:
+    """The learned skill graph: one row per visited pair (key, skill) -> next key.
+
+    Columns: ``pair``, ``key`` and its fields, ``skill``, ``next_key`` (the most
+    frequent next key of the stored outcomes, the lowest slot on ties) and its
+    fields as ``next_<field>``, ``mean_return``, ``mean_tau`` (from ``gamma^tau``)
+    and ``count`` (real outcomes, the ring keeps the last M). Fields as in
+    `smdp.greedy_table`, read from the table's decided keys.
+    """
+    m = jax.device_get(state.model)
+    seen = np.asarray(state.smdp.carry.shared.seen)
+    n, slots = int(m.n_pairs), m.m_R.shape[1]
+    count = np.asarray(m.count[:n])
+    filled = np.arange(slots) < np.minimum(count, slots)[:, None]
+    n_filled = filled.sum(1)
+    nxt = np.asarray(m.m_next[:n])
+    votes = ((nxt[:, :, None] == nxt[:, None, :]) & filled[:, None, :]).sum(-1)
+    pick = np.where(filled, votes, -1).argmax(1)
+    next_key = np.take_along_axis(nxt, pick[:, None], 1)[:, 0]
+    k = np.asarray(m.pair_k[:n])
+    disc = np.where(filled, np.asarray(m.m_disc[:n], np.float64), 1.0)  # no log 0
+    tau = np.log(disc) / np.log(state.smdp.cfg.top.gamma_top)
+
+    def mean(x: np.ndarray) -> np.ndarray:
+        return np.asarray(np.where(filled, x, 0.0).sum(1) / np.maximum(n_filled, 1))
+
+    names = field_names(seen.shape[1])
+    skill_names = np.array([s.name for s in SKILLS], object)
+    return {
+        "pair": np.arange(n, dtype=np.int32),
+        "key": k,
+        **{f: seen[k, i] for i, f in enumerate(names)},
+        "skill": skill_names[np.asarray(m.pair_o[:n])],
+        "next_key": next_key,
+        **{f"next_{f}": seen[next_key, i] for i, f in enumerate(names)},
+        "mean_return": mean(np.asarray(m.m_R[:n])),
+        "mean_tau": mean(tau),
+        "count": count,
+    }
+
+
+def write_model_graph(run_dir: Path, update: int, state: DynaState) -> Path:
+    """Put `model_graph` of ``update`` into the run's ``eval/`` file, atomically.
+
+    Rows of an earlier call for the same update are replaced. The model is in the
+    training state only (``state/``, not ``ckpt/``), so this runs at training time.
+    """
+    path = Path(run_dir) / "eval" / MODEL_GRAPH_FILE
+    return write_update_rows(path, update, model_graph(state))
 
 
 _SMDP = SMDPTrainer()
