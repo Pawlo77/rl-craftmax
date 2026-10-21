@@ -33,7 +33,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 199 | [[training]] |
 | [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. | 134 |  |
-| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model and planning updates. | 348 |  |
+| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model and planning updates. | 360 |  |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 341 | [[training]] |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 47 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 722 | [[training]] |

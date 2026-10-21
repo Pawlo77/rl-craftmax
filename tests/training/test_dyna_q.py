@@ -150,6 +150,14 @@ def test_write_jits_and_vmaps() -> None:
 G2, ONE = 0.95, jnp.ones((1, 2), bool)
 
 
+PLAN = {"batch": 1024, "theta": 1e-4, "tol": 1e-3, "max_sweeps": 50}
+"""The plan's fixed planning settings; `plan` takes them from the config."""
+
+
+def plan_(*args: Any, **kw: Any) -> tuple[jax.Array, dict[str, jax.Array]]:
+    return plan(*args, **(PLAN | kw))
+
+
 def one(k: int, o: int, r: float = 0.0, k_next: int = 0, done: bool = False) -> Outcome:
     """A single finished skill (gamma^tau 0.95, every next skill available)."""
     a = jnp.array
@@ -185,7 +193,7 @@ def test_prioritized_sweeping_carries_the_goal_back_in_one_episode() -> None:
     np.testing.assert_array_equal(q[:5, 0], [0, 0, 0, 0, 1])  # model-free, n = 0
     order = []
     for i in range(4):
-        q2, stats = plan(q, m, 1, "prioritized", 0.0, 5.0, jax.random.key(i),
+        q2, stats = plan_(q, m, 1, "prioritized", 0.0, 5.0, jax.random.key(i),
                          alpha=1.0, batch=1)  # fmt: skip
         changed = np.flatnonzero(np.asarray(q2[:, 0] != q[:, 0]))
         order.append(int(changed[0]))
@@ -196,14 +204,14 @@ def test_prioritized_sweeping_carries_the_goal_back_in_one_episode() -> None:
         q[:5, 0], [0.81450625, 0.857375, 0.9025, 0.95, 1.0], rtol=1e-6
     )
     q0, m0 = chain(5, 1.0)
-    q4, _ = plan(q0, m0, 4, "prioritized", 0.0, 5.0, jax.random.key(0), alpha=1.0,
+    q4, _ = plan_(q0, m0, 4, "prioritized", 0.0, 5.0, jax.random.key(0), alpha=1.0,
                  batch=1)  # fmt: skip
     np.testing.assert_array_equal(q4, q)
 
 
 def test_value_iteration_converges_to_the_discounted_goal() -> None:
     q, m = chain(5, 1.0)
-    q, stats = plan(q, m, 0, "value_iteration", 0.0, 5.0, jax.random.key(0),
+    q, stats = plan_(q, m, 0, "value_iteration", 0.0, 5.0, jax.random.key(0),
                     alpha=1.0)  # fmt: skip
     want = [G2 ** (4 - i) for i in range(5)]
     np.testing.assert_allclose(q[:5, 0], want, atol=1e-3)
@@ -233,7 +241,7 @@ def test_dyna_q_plus_bonus_on_simulated_backups_only() -> None:
     q = sample_backup(q0, m, jnp.array([0]), jnp.array([0]), jnp.array([True]), 0.01,
                       20.0, 1.0)  # fmt: skip
     assert float(q[2, 1]) == pytest.approx(0.04)
-    planned, _ = plan(q0, m, 1, "uniform", 0.01, 20.0, jax.random.key(0), alpha=1.0)
+    planned, _ = plan_(q0, m, 1, "uniform", 0.01, 20.0, jax.random.key(0), alpha=1.0)
     assert float(planned[2, 1]) == pytest.approx(0.04)
     assert "kappa" not in inspect.signature(smdp_update).parameters
     real = smdp_update(q0, rec.k, rec.o, rec.ret, rec.disc, rec.k_next, rec.avail,
@@ -244,7 +252,7 @@ def test_dyna_q_plus_bonus_on_simulated_backups_only() -> None:
 @pytest.mark.parametrize("variant", ["uniform", "prioritized"])
 def test_no_planning_is_the_smdp_skills_table(variant: str) -> None:
     q, m = chain(5, 0.5)
-    q2, stats = plan(q, m, 0, variant, 0.03, 5.0, jax.random.key(1), alpha=0.5)
+    q2, stats = plan_(q, m, 0, variant, 0.03, 5.0, jax.random.key(1), alpha=0.5)
     assert np.asarray(q2).tobytes() == np.asarray(q).tobytes()
     assert int(stats["backups"]) == 0
 
@@ -268,8 +276,63 @@ def test_plan_jits_with_a_traced_backup_count() -> None:
     q, m = chain(5, 1.0)
     run = jax.jit(plan, static_argnames=("variant", "batch"))
     for variant in ("uniform", "prioritized", "value_iteration"):
+        kw = PLAN | {"batch": 2}
         got, _ = run(q, m, jnp.int32(3), variant, 0.0, 5.0, jax.random.key(0),
-                     alpha=1.0, batch=2)  # fmt: skip
-        eager, _ = plan(q, m, 3, variant, 0.0, 5.0, jax.random.key(0), alpha=1.0,
+                     alpha=1.0, **kw)  # fmt: skip
+        eager, _ = plan_(q, m, 3, variant, 0.0, 5.0, jax.random.key(0), alpha=1.0,
                         batch=2)  # fmt: skip
         np.testing.assert_allclose(got, eager, rtol=1e-6)
+
+
+def test_prioritized_sweeping_skips_pairs_below_theta() -> None:
+    q, m = chain(5, 1.0)
+    q = q.at[3, 0].set(0.95 - 5e-5)  # the only priority left is 5e-5
+    for i in (2, 1, 0):  # the rest already consistent with it
+        q = q.at[i, 0].set(0.95 * q[i + 1, 0])
+    key = jax.random.key(0)
+    gated, stats = plan_(q, m, 4, "prioritized", 0.0, 5.0, key, alpha=1.0)
+    assert int(stats["backups"]) == 0
+    np.testing.assert_array_equal(gated, q)
+    loose, stats = plan_(q, m, 1, "prioritized", 0.0, 5.0, key, alpha=1.0, theta=1e-5)
+    assert int(stats["backups"]) == 1
+    assert float(loose[3, 0]) == pytest.approx(0.95)
+
+
+def test_value_iteration_stops_at_max_sweeps() -> None:
+    q, m = chain(5, 1.0)
+    q, stats = plan_(q, m, 0, "value_iteration", 0.0, 5.0, jax.random.key(0),
+                     alpha=1.0, max_sweeps=2)  # fmt: skip
+    assert int(stats["sweeps"]) == 2
+    np.testing.assert_allclose(q[:5, 0], [0, 0, 0.9025, 0.95, 1], rtol=1e-6)
+
+
+def test_plan_needs_every_planning_setting() -> None:
+    q, m = chain(2, 1.0)
+    with pytest.raises(TypeError, match="theta"):
+        plan(q, m, 1, "uniform", 0.0, 0.0, jax.random.key(0), alpha=1.0, batch=4,
+             tol=1e-3, max_sweeps=50)  # fmt: skip
+
+
+def test_more_than_m_envs_on_one_pair_keep_the_last_m_whole() -> None:
+    """12 envs end one pair with M = 8: the last 8 envs fill the ring, each row from
+    one env (R, next key and done all encode the env index)."""
+    n = 12
+    rec = Outcome(
+        k=jnp.full(n, 4), o=jnp.full(n, 1), ret=jnp.arange(n, dtype=jnp.float32),
+        disc=jnp.full(n, G2), k_next=jnp.arange(n), done=jnp.arange(n) % 2 == 0,
+        avail=jnp.ones((n, 2), bool),
+    )  # fmt: skip
+    m = write(init_model(4, 2, 8, 8), rec, jnp.ones(n, bool), jnp.float32(0.0))
+    p = int(m.pair_id[4, 1])
+    assert int(m.count[p]) == n
+    r = np.asarray(m.m_R[p]).astype(int)
+    assert sorted(r.tolist()) == list(range(4, 12))
+    np.testing.assert_array_equal(np.asarray(m.m_next[p]), r)
+    np.testing.assert_array_equal(np.asarray(m.m_done[p]), r % 2 == 0)
+    # ring order: slot (count_before + rank) % M, as twelve sequential writes
+    np.testing.assert_array_equal(r, [8, 9, 10, 11, 4, 5, 6, 7])
+
+
+def test_pack_mask_refuses_more_than_31_skills() -> None:
+    with pytest.raises(ValueError, match="31"):
+        pack_mask(jnp.ones(32, bool))

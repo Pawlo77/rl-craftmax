@@ -93,7 +93,14 @@ def init_model(
 
 
 def pack_mask(avail: jax.Array) -> jax.Array:
-    """Bool masks on the last axis (at most 31 skills) as int32 bit sets."""
+    """Bool masks on the last axis as int32 bit sets.
+
+    Raises:
+        ValueError: On more than 31 skills (the sign bit is not used).
+    """
+    if avail.shape[-1] > 31:
+        msg = f"pack_mask holds at most 31 skills, got {avail.shape[-1]}"
+        raise ValueError(msg)
     bits = jnp.left_shift(1, jnp.arange(avail.shape[-1], dtype=jnp.int32))
     return jnp.sum(jnp.where(avail, bits, 0), -1, dtype=jnp.int32)
 
@@ -110,8 +117,10 @@ def write(
     """Store the outcomes of the envs whose skill ``ended`` at time ``t``.
 
     A new pair takes the next free slot, envs in order; envs ending one pair in the
-    same step share its slot and take consecutive ring slots (more than M of them
-    overwrite each other). With all P slots taken, new pairs are dropped.
+    same step share its slot and take consecutive ring slots. Of more than M such
+    envs only the last M are written (as M sequential writes would leave), so no two
+    scatters hit one ring slot and every row comes from one env; ``count`` counts
+    them all. With all P slots taken, new pairs are dropped.
     """
     pairs, slots = model.m_R.shape
     n_skills = model.pair_id.shape[1]
@@ -119,6 +128,7 @@ def write(
     same = (flat[:, None] == flat[None, :]) & ended[:, None] & ended[None, :]
     first = jnp.argmax(same, axis=1)  # lowest env index on the same pair
     rank = jnp.sum(jnp.tril(same, -1), axis=1)  # earlier envs on the same pair
+    last = rank >= jnp.sum(same, axis=1) - slots  # the last M of each pair group
     known = model.pair_id[rec.k, rec.o]
     opens = ended & (known < 0) & (first == jnp.arange(flat.shape[0]))
     new_id = model.n_pairs + jnp.cumsum(opens) - 1
@@ -127,9 +137,10 @@ def write(
     pid = jnp.where(ok, pid, pairs)  # out of bounds: dropped by every scatter
     slot = (model.count.at[pid].get(mode="fill", fill_value=0) + rank) % slots
     rows = jnp.where(opens & ok, rec.k, model.pair_id.shape[0])
+    rid = jnp.where(last, pid, pairs)
 
     def ring(a: jax.Array, x: jax.Array) -> jax.Array:
-        return a.at[pid, slot].set(x.astype(a.dtype), mode="drop")
+        return a.at[rid, slot].set(x.astype(a.dtype), mode="drop")
 
     n_new = model.n_pairs + jnp.sum(opens)
     return ModelState(
@@ -309,10 +320,10 @@ def plan(
     key: jax.Array,
     *,
     alpha: float,
-    batch: int = 1024,
-    theta: float = 1e-4,
-    tol: float = 1e-3,
-    max_sweeps: int = 50,
+    batch: int,
+    theta: float,
+    tol: float,
+    max_sweeps: int,
 ) -> tuple[jax.Array, dict[str, jax.Array]]:
     """Planning on ``q`` after a rollout: ``n_backups`` backups in batches.
 
@@ -320,7 +331,8 @@ def plan(
     backups of the top pairs by recomputed priority (above ``theta``), priorities
     recomputed per batch; ``value_iteration``: sweeps to ``tol`` (``n_backups``
     unused). ``kappa`` is the Dyna-Q+ bonus per ``sqrt`` time unit. Returns the table
-    and ``backups`` (pairs or outcomes backed up) and ``sweeps``.
+    and ``backups`` (pairs or outcomes backed up) and ``sweeps``. The keyword
+    settings come from the method config (no defaults to drift from it).
     """
     n = jnp.asarray(n_backups, jnp.int32)
     zero = jnp.int32(0)
