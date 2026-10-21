@@ -664,6 +664,23 @@ def tags_of(store: Store, name: str, prefix: str) -> dict[str, str]:
     return {k: v for k, v in tags.items() if k.startswith(prefix)}
 
 
+def test_abort_metrics_the_trainer_never_reports_are_tagged_once(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A typo in ``abort.finite`` or a flag metric would disable its guard silently."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer(extra=lambda u: {"ppo/entropy": 0.5}))
+    unreported = "ppo/approx_kl,ppo/explained_variance,ppo/value_loss"
+    tags = tags_of(store, spec.name, "warn/")
+    assert tags == {"warn/abort_unreported": unreported}
+    assert caplog.text.count("never reports") == 1
+    (other,) = store.phase("tune-coarse", ["lr-hi"])
+    every = {"ppo/entropy": 0.5, "ppo/approx_kl": 0.0}
+    every |= {"ppo/explained_variance": 1.0, "ppo/value_loss": 0.1}
+    store.run([other], FakeTrainer(extra=lambda u: every))
+    assert tags_of(store, other.name, "warn/") == {}
+
+
 def test_a_non_finite_loss_fails_the_run_and_keeps_its_last_state(store: Store) -> None:
     specs = store.phase("tune-coarse", ["published", "lr-hi"])
     trainer = FakeTrainer(extra=nan_at(3))

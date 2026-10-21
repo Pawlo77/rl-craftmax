@@ -33,6 +33,16 @@ def checkpoint_schedule(n_updates: int, n_ckpt: int) -> list[int]:
     return sorted({0, n_updates, *spaced.tolist()})
 
 
+def _write_atomic(path: Path, data: bytes) -> None:
+    """Write ``data`` to a temporary file, then rename it to ``path``.
+
+    A kill at any point leaves the old file or the new one, never half of it.
+    """
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
 def load_index(run_dir: Path) -> list[CheckpointEntry]:
     """Checkpoints of a run in the order they were written; empty if none."""
     path = Path(run_dir) / "ckpt" / "index.json"
@@ -56,23 +66,27 @@ def drop_missing_checkpoints(run_dir: Path) -> list[int]:
     lost = missing_checkpoints(run_dir)
     if lost:
         kept = [e for e in load_index(run_dir) if e["update"] not in lost]
-        (Path(run_dir) / "ckpt" / "index.json").write_text(json.dumps(kept, indent=1))
+        index = Path(run_dir) / "ckpt" / "index.json"
+        _write_atomic(index, json.dumps(kept, indent=1).encode())
     return lost
 
 
 def save_checkpoint[T](
     run_dir: Path, update: int, env_steps: int, wall_s: float, params: T
 ) -> Path:
-    """Write ``ckpt/<update>.msgpack`` (params only) and append it to the index."""
+    """Write ``ckpt/<update>.msgpack`` (params only) and append it to the index.
+
+    Both files are replaced atomically (`_write_atomic`), params first.
+    """
     ckpt = Path(run_dir) / "ckpt"
     ckpt.mkdir(parents=True, exist_ok=True)
     path = ckpt / f"{update:05d}.msgpack"
-    path.write_bytes(serialization.to_bytes(params))
+    _write_atomic(path, serialization.to_bytes(params))
     entry = CheckpointEntry(
         update=update, env_steps=env_steps, wall_s=round(wall_s, 1), file=path.name
     )
     index = sorted([*load_index(run_dir), entry], key=lambda e: e["update"])
-    (ckpt / "index.json").write_text(json.dumps(index, indent=1))
+    _write_atomic(ckpt / "index.json", json.dumps(index, indent=1).encode())
     return path
 
 

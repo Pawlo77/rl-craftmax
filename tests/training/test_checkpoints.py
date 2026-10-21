@@ -12,6 +12,7 @@ import pytest
 from wut_murl_craftax.training import checkpoints
 from wut_murl_craftax.training.checkpoints import (
     checkpoint_schedule,
+    drop_missing_checkpoints,
     load_index,
     load_params,
     load_state,
@@ -160,6 +161,27 @@ def test_a_state_saved_without_the_tree_paths_still_loads(tmp_path: Path) -> Non
         old = {k: z[k] for k in z.files if k != "paths"}
     np.savez(path, **old)
     _assert_identical(load_state(tmp_path, _zeros_like(state)), state)
+
+
+def test_a_checkpoint_killed_half_way_leaves_the_previous_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Params and index are renamed into place: a kill never leaves half a file."""
+    params = {"w": jnp.ones(3)}
+    save_checkpoint(tmp_path, 0, 0, 0.0, params)
+    before = (tmp_path / "ckpt" / "index.json").read_bytes()
+
+    def killed(*_: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(checkpoints.os, "replace", killed)
+    with pytest.raises(KeyboardInterrupt):
+        save_checkpoint(tmp_path, 1, 10, 1.0, params)
+    assert not (tmp_path / "ckpt" / "00001.msgpack").exists()
+    (tmp_path / "ckpt" / "00000.msgpack").unlink()
+    with pytest.raises(KeyboardInterrupt):  # cleaning the index is atomic too
+        drop_missing_checkpoints(tmp_path)
+    assert (tmp_path / "ckpt" / "index.json").read_bytes() == before
 
 
 def test_params_checkpoints_and_state_live_apart(tmp_path: Path) -> None:

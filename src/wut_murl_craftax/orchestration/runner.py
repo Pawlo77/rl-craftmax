@@ -57,9 +57,11 @@ from .abort import (
     TAG_ABORT_BUG,
     TAG_ABORT_COUNT,
     TAG_ABORT_METRIC,
+    TAG_ABORT_UNREPORTED,
     TAG_ABORT_UPDATE,
     first_nonfinite,
     flag_hits,
+    unreported,
 )
 from .profiles import Profile, load_profile
 from .queue import (
@@ -469,6 +471,21 @@ def _set_up_jax(
     return trainers, evaluate or functools.partial(evaluate_fixed_seeds, trainers)
 
 
+def _tag_flags(hits: Mapping[str, int], flagged: set[str]) -> None:
+    """Tag each flag at the first update its rule held at, once per call."""
+    for name, at in hits.items():
+        if name not in flagged:
+            mlflow.set_tag(f"{FLAG_PREFIX}{name}", str(at))
+            flagged.add(name)
+
+
+def _tag_unreported(names: Sequence[str]) -> None:
+    """Tag and log abort metrics the trainer never reports: their guard is off."""
+    if names:
+        mlflow.set_tag(TAG_ABORT_UNREPORTED, ",".join(names))
+        logger.warning("the trainer never reports abort metrics %s", names)
+
+
 def _chunk_size(update: int, n_updates: int, ckpts: list[int], every: int) -> int:
     """Updates to the next log-spaced checkpoint, multiple of ``every`` or the end."""
     stops = [u for u in ckpts if u > update]
@@ -546,11 +563,12 @@ def _train(
         chunks.append((n, wall - start))
         _add_updates(log, update, spu, np.linspace(start, wall, n + 1)[1:], metrics)
         extras.extend(update, _method_metrics(metrics))
+        if not chunks[
+            1:
+        ]:  # the first chunk of this call shows what the trainer reports
+            _tag_unreported(unreported(rules, finite, extras.series))
         update += n
-        for name, at in flag_hits(rules, extras.series, n_updates).items():
-            if name not in flagged:  # the first update the rule held at
-                mlflow.set_tag(f"{FLAG_PREFIX}{name}", str(at))
-                flagged.add(name)
+        _tag_flags(flag_hits(rules, extras.series, n_updates), flagged)
         if update in ckpts and update not in written:
             save_checkpoint(out, update, update * spu, wall, trainer.params(state))
         extras.save()
