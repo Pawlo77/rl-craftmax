@@ -37,9 +37,10 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 | Package | Responsibility |
 |---|---|
-| [[training]] | baseline PPO, checkpoints, training records |
+| [[training]] | PPO, PPO-RNN and PQN-RNN controls, trainer registry, checkpoints, resume state, training records |
 | [[visualisation]] | gameplay highlights and learning-process videos, GIFs, ffmpeg cuts |
-| [[orchestration]] | fast JAX runtime (compile cache, CPU shards, device roles, textures), run snapshots, MLflow tracking |
+| [[orchestration]] | fast JAX runtime (compile cache, CPU shards, device roles, textures), run queue, resumable runner, MLflow tracking |
+| [[evaluation]] | game tables, per-step events, online episode metrics, reproduction check |
 
 ## Concepts
 

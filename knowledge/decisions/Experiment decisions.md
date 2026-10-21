@@ -184,3 +184,17 @@ Decision: `final-1m` and `combo-1m` keep 10 seeds per configuration; `final-1b` 
 Why: the 1B runs are about 99% of all environment steps; the user chose to cut compute (runs 888 -> 825; the 1B training and evaluation hours fall to 3/10, about 83 GPU hours in [[2026-10-20-craftax-compute-budget]]).
 
 Consequences: 1B results are indicative; significance is tested at 1M (with 3 against 3 seeds a two-sided Mann-Whitney U cannot reach 0.05); the IQM of 3 seeds equals the median, so 1B tables report mean and median; the 1B reproduction band of each control is computed with n = 3 on our side and is wider ([[2026-10-20-craftax-method-ppo]] Task 5, `evaluation.reproduction`); the combination pair is ranked by the 1M IQM and the 1B mean ([[2026-10-20-craftax-project]] Phase 3); run counts and hours in [[2026-10-20-craftax-compute-budget]], statistics in [[2026-10-20-craftax-evaluation-and-metrics]] and [[2026-10-20-craftax-comparison-and-results]]. Rejected: 10 seeds at 1B; adaptive 5 + 5 seeds at 1B; 5 seeds everywhere.
+
+## 2026-10-21 - Phase 0 implementation rulings
+
+Why: each came up while implementing [[2026-10-20-craftax-infrastructure]] and the controls; code in [[orchestration]], [[training]] and [[evaluation]].
+
+- The run budget is injected as `steps` into the config given to `init` and is not part of the config hash.
+- Trainers declare `loss_columns`; only those columns are logged and abort-checked.
+- Method-metric NaN aborts are opt-in: a metric aborts a run only if the method YAML lists it under `abort.finite`.
+- The epsilon is stored in the `ckpt/` params payload (`{"variables", "eps"}` for PQN-RNN), because evaluation builds one policy from `jax.eval_shape(init)` ([[Recording training data]]).
+- Eval files carry the provenance keys `method` and `devices` next to `seeds`, `actions` and `length`.
+- Tests run on a temporary MLflow store and never touch the repo store; the template's cleanup fixture deleted live checkpoints and was removed.
+- Craftax is imported eagerly after `configure_runtime` (`import_craftax`): a first import inside a trace leaks tracers.
+- The laptop profile sets `JAX_PLATFORMS=metal,cpu` (`select_platforms`) so a metal learner is found, unless the variable is already set.
+- Tuning never overlaps heavy test runs on the laptop: the memory ceiling is shared.

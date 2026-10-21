@@ -177,11 +177,20 @@ Fixed method settings:
 - Test: `tests/training/test_smdp_trainer.py`
 
 - [ ] **Step 1: Check** the contract with [[2026-10-20-craftax-method-pqn-rnn]]: `PQNRNNConfig.extra_obs_dim`, `build_network(cfg, n_actions, obs_dim)`, the backward Q($\lambda$) target and `learn(train_state, traj, key, loss_mask)` are callable from another rollout; `HookFields` is not used (the skill reward replaces the reward and the rollout is this method's own; only the optional `intrinsic_reward_fn` of Task 3 exists for a combination); any missing piece is added in that plan's module in the same change.
+
+Contract with `pqn_rnn.learn` (checked 2026-10-21 against `training/pqn_rnn.py`):
+
+- `loss_mask` only removes steps from the loss; an all-zero mask still moves params through RAdam momentum, so a method that wants no update skips `learn`.
+- The LR schedule assumes one `learn` call per update; extra calls shift it.
+- The `Traj` needs `extra["last_actions"]` and observations already widened to the network input.
+- `extra_obs_dim` stays 0 when an env wrapper widens the observations; it only appends zero features.
+- `learn` raises `ValueError` on a `Traj` (or `loss_mask`, `h0`) whose `(steps, envs)` differ from the config.
+
 - [ ] **Step 2: Write the failing tests**:
   - 2 updates on Craftax-Classic pass the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
   - The Q($\lambda$) target on a 1-env, 4-step batch with a skill end at step 2 equals a hand-computed one (γ 0.99, λ 0.5; no value crosses the skill end).
   - `Q_top` and the skill state are part of the trainer state written by `save_state`; a run restored with `load_state` equals an uninterrupted one (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
-  - `policy(state)` returns a `Policy` whose `init_carry(n)` holds the LSTM state and the skill state and whose `step` returns the primitive action and the running skill id, for `visualisation/eval_rollouts.py` ([[2026-10-20-craftax-evaluation-and-metrics]]).
+  - `policy(state)` returns a `Policy` whose `init_carry(n)` holds the LSTM state and the skill state and whose `step` returns the primitive action and the running skill id (stochastic steps act at the checkpoint's epsilons, stored in the `ckpt/` params payload as in `pqn-rnn`: evaluation builds one policy from `jax.eval_shape(init)`, ruling 2026-10-21), for `visualisation/eval_rollouts.py` ([[2026-10-20-craftax-evaluation-and-metrics]]).
   - `configs/methods/smdp-skills.yaml` loads with `base.base_from == "pqn-rnn.tuned"`, 48 `grid.coarse` entries, a `grid.fine` rule over two numeric knobs, and `tuned: null`.
 - [ ] **Step 3: Implement** `init`, `train_chunk` (rollout `scan` of Task 3, then `learn` on the skill transitions) and `policy`; device roles from `orchestration.device_roles()`.
 - [ ] **Step 4: Write** `configs/methods/smdp-skills.yaml` with the grids above.

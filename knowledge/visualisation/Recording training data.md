@@ -5,7 +5,7 @@ domain: visualisation
 parent: "[[Visualisation]]"
 tags: [handbook, visualisation, training, logging, ppo, determinism]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 related-code:
   - "[[src/wut_murl_craftax/training/ppo.py]]"
   - "[[src/wut_murl_craftax/training/checkpoints.py]]"
@@ -33,23 +33,28 @@ What a training run saves so that [[Checkpoint comparison grid]], [[Animated tra
 
    | File | Grain | Feeds |
    |---|---|---|
-   | `config.json` | run: `PPOConfig`, `n_updates`, `batch`, achievement names, `ckpt_updates`, actor and learner devices | all |
+   | `config.json` | run: the method's config, `n_updates`, `batch`, achievement names, `ckpt_updates`, actor and learner devices | all |
    | `metrics.npz` | one row per update: `update, env_steps, wall_s, n_episodes, return, length`, 5 losses, `ach/<name>` (% of episodes finished in the update) | curves, timeline |
    | `episodes.npz` | one row per finished episode: `update, ret, length`, achievements bit-packed (`np.packbits`) | timeline (first unlock) |
-   | `ckpt/<update>.msgpack`, `ckpt/index.json` | params only (`flax.serialization`), with `env_steps` and `wall_s` | grid, overlay, eval |
+   | `extras.npz` | one series per method metric, one value per update, NaN where absent (runner only) | method analysis |
+   | `ckpt/<update>.msgpack`, `ckpt/index.json` | log-spaced params only (`flax.serialization`), with `env_steps` and `wall_s` | grid, overlay, eval |
+   | `state/state.npz` | full resume state of the last save (trainer state, update, run log), replaced atomically | resuming |
+   | `eval/<mode>/<update>.npz` | step 5 | grid, overlay, analysis |
 
-3. Checkpoints are log-spaced (`checkpoint_schedule`), since learning is fastest early: 122 updates and 12 checkpoints give `[0, 1, 2, 4, 6, 9, 14, 21, 33, 51, 79, 122]`.
+   The runner ([[orchestration]]) writes all of them; the `training.ppo` CLI writes the first four rows.
+
+3. Checkpoints are log-spaced (`checkpoint_schedule`), since learning is fastest early: 122 updates and 12 checkpoints give `[0, 1, 2, 4, 6, 9, 14, 21, 33, 51, 79, 122]`. The payload is the method's `ckpt` tree; PQN-RNN stores `{"variables", "eps"}`, since evaluation builds one policy from `jax.eval_shape(init)` and acts at the checkpoint's epsilon (`params["eps"]`; [[Experiment decisions]]).
 4. `RunLog.flush` rewrites `metrics.npz` and `episodes.npz` at every checkpoint, so a killed run keeps its curves up to the last checkpoint.
-5. Evaluate every checkpoint on fixed seeds; trajectories are stored, frames are not:
+5. Evaluate every checkpoint on fixed seeds (default 64, `10000-10063`); trajectories are stored, frames and observations are not:
 
    ```bash
-   uv run python -m wut_murl_craftax.visualisation.eval_rollouts outputs/runs/classic --seeds 0-15 --steps 1000
+   uv run python -m wut_murl_craftax.visualisation.eval_rollouts outputs/runs/classic [--mode greedy] [--seeds 10000-10015]
    ```
 
-   - `eval/<update>.npz`: `act, probs (float16), value, reward, done, alive, ach, obs (float16)` per seed and step, plus a per-step state `digest`.
-   - Key streams per seed are those of `rollout.keys` (reset = `PRNGKey(seed)`, env step `t` = `fold_in(fold_in(base, 1), t)`), plus actions `fold_in(fold_in(base, 2), t)`; every checkpoint starts in the same world.
+   - `eval/<mode>/<update>.npz` (mode `stochastic` or `greedy`): `seeds`, `actions` (-1 after the episode ends), `length`, per step the `events/<StepEvents field>` ([[2026-10-20-craftax-evaluation-and-metrics]]) and the method's `extras/<name>`. Provenance keys: `method` (registry name) and `devices` (JSON of actor, learner, shards; results are bit-exact per device setup only).
+   - Every seed plays until its episode ends, in jitted chunks of 1,000 steps. Key streams per seed are those of `rollout.keys` (reset = `PRNGKey(seed)`, env step `t` = `fold_in(fold_in(base, 1), t)`), plus actions `fold_in(fold_in(base, 2), t)`; every checkpoint starts in the same world.
 
-6. Rebuild frames by replaying the stored actions: `episode_frames(run, update, seed, bps)`; `as_rollout(...)` exports the episode in the gameplay `Rollout` format of [[Rendering Craftax frames]] (highlights, masters, cuts).
+6. Replaying seed + actions (`replay_episode`) rebuilds observations, rewards, events and states; it pads to the episode length rounded up to 1,000 steps, so one compile serves a bucket. Probabilities and values come from re-running the network (`network_outputs`, PPO only so far). Frames: `episode_frames(run, update, seed, bps)`; `as_rollout(...)` exports the episode in the gameplay `Rollout` format of [[Rendering Craftax frames]] (highlights, masters, cuts).
 
 ## Results
 
@@ -84,7 +89,7 @@ Storage:
 | Checkpoint, Craftax-Symbolic, width 256 / 512 | 18,033,349 B / 38,163,145 B |
 | `metrics.npz`, 122 updates x 33 columns | 13,614 B |
 | `episodes.npz`, 12,983 episodes | 47,151 B |
-| `eval/<update>.npz`, 16 seeds x 1000 steps | 1.03 to 1.27 MB |
+| `eval/<update>.npz`, 16 seeds x 1000 steps (prototype format with observations) | 1.03 to 1.27 MB |
 | Rendered frames of one episode, 144 x 144 RGB | 11.9 to 19.3 MB (replay instead) |
 
 - Eval of 9 checkpoints x 16 seeds x 1000 steps (repo CLI): 13.0 s.
@@ -98,13 +103,12 @@ Storage:
 - Training-episode score and fixed-seed eval score differ (24.0% vs 27.2% at 2M steps); label which one a graphic shows.
 - Same seed means the same world and env random stream; trajectories diverge once two checkpoints act differently.
 - The frame for step `t` is the state before action `t`.
-- A fixed-length eval scan keeps stepping after death, masked by `alive`; `episode_frames` stops one frame after the last step.
+- A seed that ends early keeps -1 actions up to the file's longest episode; `episode_frames` stops one frame after the last step.
 - All-Metal PPO is 4 to 6 times slower than CPU because env stepping is slow on metaljax; only the learner belongs on the GPU.
 - The renderer textures exist for 7, 16 and 64 px tiles; other sizes go through `Game.renderer`, which builds them.
 
 ## Not tested
 
 - Replay determinism across machines, OS or jax versions, and replay of a CPU-recorded trajectory on Metal.
-- Greedy (argmax) eval rollouts (`--greedy`).
+- Greedy (argmax) eval rollouts (`--mode greedy`).
 - Recording RNN hidden states or intrinsic rewards (`reward_i` of Craftax_Baselines `ppo_rnd.py`).
-- Checkpoints with optimizer state for resuming.

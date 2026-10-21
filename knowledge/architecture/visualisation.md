@@ -33,7 +33,7 @@ related-code:
 
 - Shared: `ffmpeg` (encode, GIF, stacks, audio mix, YouTube checks), `text` (Pillow captions and cards), `rollout` (`Rollout`, `play`, `replay`, policies `RandomPolicy`, `HeuristicPolicy`, `NetworkPolicy`).
 - Gameplay: `render_master`, `render_kept`, `detect`, `candidates`, `build_assets`, `write_page`, `short_cut`, `long_cut`, `gif`.
-- Learning process: `evaluate`, `load_eval`, `build_grid`, `render_curves`, `render_timeline`, `render_overlay`, `sequence`.
+- Learning process: `EvalRun`, `evaluate`, `evaluate_spec`, `load_eval`, `replay_episode` (eval file format: [[Recording training data]]), `build_grid`, `render_curves`, `render_timeline`, `render_overlay`, `sequence`.
 - Every step runs as `python -m wut_murl_craftax.visualisation.<step>` (`make vis STEP=<step> ARGS=...`).
 
 ## Data flow
