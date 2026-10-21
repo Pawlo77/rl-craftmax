@@ -438,17 +438,18 @@ class Store:
         seed: int = 0,
         phases: str = "tune-coarse",
         status: str = "FINISHED",
+        budget: str = "1m",
     ) -> str:
         tags = {
-            "method": method,
-            "config_hash": config_hash(cfg),
-            "phases": phases,
-            "budget": "1m",
+            queue.TAG_METHOD: method,
+            queue.TAG_CONFIG_HASH: config_hash(cfg),
+            queue.TAG_PHASES: phases,
+            queue.TAG_BUDGET: budget,
             "seed": str(seed),
         }
         rid = self.client.create_run(self.exp, tags=tags).info.run_id
-        self.client.log_metric(rid, "final_score", score)
-        self.client.log_dict(rid, cfg, "config.json")
+        self.client.log_metric(rid, queue.SCORE_METRIC, score)
+        self.client.log_dict(rid, cfg, queue.CONFIG_ARTIFACT)
         self.client.set_terminated(rid, status)
         return rid
 
@@ -542,6 +543,63 @@ def test_mark_tuned_fills_only_its_registry_entrys_part(
         ]
         == 0.3
     )
+
+
+def test_mark_tuned_tags_only_the_tuning_runs_of_the_hash(
+    store: Store, methods: Path
+) -> None:
+    cfg = resolved("toy", "lr-hi", methods_dir=methods)
+    tune = store.add("toy", cfg, 14.0)
+    fine = store.add("toy", cfg, 13.0, seed=1, phases="tune-coarse,tune-fine")
+    final_1m = store.add("toy", cfg, 15.0, phases="final-1m")
+    final_1b = store.add("toy", cfg, 16.0, phases="final-1b", budget="1b")
+    mark_tuned(
+        "toy", config_hash(cfg), tracking_uri=store.tracking_uri, methods_dir=methods
+    )
+    assert (store.tag(tune, "best"), store.tag(fine, "best")) == ("true", "true")
+    assert store.tag(final_1m, "best") is None
+    assert store.tag(final_1b, "best") is None
+
+
+def test_mark_tuned_without_a_tuning_run_fails(store: Store, methods: Path) -> None:
+    cfg = resolved("toy", "lr-hi", methods_dir=methods)
+    store.add("toy", cfg, 15.0, phases="final-1m")
+    with pytest.raises(ValueError, match="no tuning run"):
+        mark_tuned(
+            "toy",
+            config_hash(cfg),
+            tracking_uri=store.tracking_uri,
+            methods_dir=methods,
+        )
+
+
+def test_mark_tuned_leaves_yaml_and_tags_alone_when_tagging_fails(
+    store: Store, methods: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = resolved("toy", "lr-hi", methods_dir=methods)
+    rids = [store.add("toy", cfg, 14.0, seed=i) for i in range(2)]
+    before = (methods / "toy.yaml").read_text()
+    real = mlflow.MlflowClient.set_tag
+    calls: list[str] = []
+
+    def flaky(self: Any, run_id: str, key: str, value: str, *a: Any, **kw: Any) -> None:
+        calls.append(run_id)
+        if len(calls) == 2:  # the second run: the first is already tagged
+            msg = "mlflow down"
+            raise RuntimeError(msg)
+        real(self, run_id, key, value, *a, **kw)
+
+    monkeypatch.setattr(mlflow.MlflowClient, "set_tag", flaky)
+    with pytest.raises(RuntimeError, match="mlflow down"):
+        mark_tuned(
+            "toy",
+            config_hash(cfg),
+            tracking_uri=store.tracking_uri,
+            methods_dir=methods,
+        )
+    monkeypatch.undo()
+    assert (methods / "toy.yaml").read_text() == before
+    assert [store.tag(r, "best") for r in rids] == [None, None]
 
 
 def test_mark_tuned_refuses_an_unknown_hash_and_writes_nothing(

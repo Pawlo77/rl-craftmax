@@ -20,7 +20,7 @@ import itertools
 import json
 import re
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, NoReturn
@@ -36,6 +36,21 @@ TUNE_BUDGET = "1m"
 """Budget of the tuning stages; `expand_fine` resolves the stage-1 configs at it."""
 SCORE_METRIC = "final_score"
 """MLflow metric holding a run's final score."""
+TAG_METHOD = "method"
+"""Run tag: the registry name."""
+TAG_BUDGET = "budget"
+"""Run tag: the budget label."""
+TAG_CONFIG_HASH = "config_hash"
+"""Run tag: the 8-hex config hash."""
+TAG_PHASES = "phases"
+"""Run tag: comma-joined names of the phases that list the run."""
+TAG_BEST = "best"
+"""Run tag set by `mark_tuned`: ``true`` on the tuned config's tuning runs."""
+CONFIG_ARTIFACT = "config.json"
+"""Run artifact holding the run's `RunSpec.config`."""
+COARSE_PHASE = "tune-coarse"
+TUNING_PHASES = (COARSE_PHASE, "tune-fine")
+"""Phases whose runs are the 1M tuning runs `mark_tuned` may tag."""
 
 EvalMode = Literal["final", "log_spaced"]
 _EVAL_MODES = ("final", "log_spaced")
@@ -611,7 +626,7 @@ def coarse_results(
     tracking_uri: str | None = None,
     methods_dir: Path = METHODS_DIR,
 ) -> dict[str, float]:
-    """Mean final score per config hash over finished runs tagged ``tune-coarse``."""
+    """Mean final score per config hash over finished ``tune-coarse`` runs."""
     names = [
         r
         for r in load_method(slug, methods_dir).registry_names
@@ -620,15 +635,15 @@ def coarse_results(
     scores: dict[str, list[float]] = {}
     for run in _runs(
         _client(tracking_uri),
-        "attributes.status = 'FINISHED' and tags.phases LIKE '%tune-coarse%'",
+        f"attributes.status = 'FINISHED' and tags.{TAG_PHASES} LIKE '%{COARSE_PHASE}%'",
     ):
         tags = run.data.tags
         if (
-            tags.get("method") in names
-            and "tune-coarse" in tags["phases"].split(",")
+            tags.get(TAG_METHOD) in names
+            and COARSE_PHASE in tags[TAG_PHASES].split(",")
             and SCORE_METRIC in run.data.metrics
         ):
-            scores.setdefault(tags["config_hash"], []).append(
+            scores.setdefault(tags[TAG_CONFIG_HASH], []).append(
                 run.data.metrics[SCORE_METRIC]
             )
     return {h: sum(v) / len(v) for h, v in scores.items()}
@@ -651,6 +666,26 @@ def _replace_tuned(text: str, tuned: Mapping[str, Any]) -> str:
     return "".join(lines[:start]) + block + "".join(lines[end:])
 
 
+def _set_best(
+    client: Any, changes: list[tuple[Any, str]], then: Callable[[], Any]
+) -> None:
+    """Set ``best`` per (run, value), then call ``then``; on error restore the tags."""
+    done: list[tuple[Any, str | None]] = []
+    try:
+        for run, value in changes:
+            old = run.data.tags.get(TAG_BEST)
+            client.set_tag(run.info.run_id, TAG_BEST, value)
+            done.append((run, old))
+        then()
+    except Exception:
+        for run, old in reversed(done):
+            if old is None:
+                client.delete_tag(run.info.run_id, TAG_BEST)
+            else:
+                client.set_tag(run.info.run_id, TAG_BEST, old)
+        raise
+
+
 def mark_tuned(
     slug: str,
     config_hash8: str,
@@ -663,7 +698,10 @@ def mark_tuned(
     The runs of ``config_hash8`` supply the config (artifact ``config.json``); the block
     holds the keys that differ from the resolved base and must resolve back to the same
     hash. The registry entry comes from the runs' ``method`` tag, so a slug with
-    variants fills only that variant's part. Re-marking moves ``best`` to the new runs.
+    variants fills only that variant's part. Only the tuning runs (phases tune-coarse or
+    tune-fine) of the hash are tagged; re-marking moves ``best`` to the new ones.
+    Tags are set first; if tagging or the write fails, the tags are restored and the
+    file is left as it was.
     """
     if not _HASH8.fullmatch(config_hash8):
         _fail(f"{config_hash8!r} is not a config hash (8 hex digits)")
@@ -671,16 +709,19 @@ def mark_tuned(
     client = _client(tracking_uri)
     runs = [
         r
-        for r in _runs(client, f"tags.config_hash = '{config_hash8}'")
-        if r.data.tags.get("method") in method.registry_names
+        for r in _runs(client, f"tags.{TAG_CONFIG_HASH} = '{config_hash8}'")
+        if r.data.tags.get(TAG_METHOD) in method.registry_names
+        and set(r.data.tags.get(TAG_PHASES, "").split(",")) & set(TUNING_PHASES)
     ]
     if not runs:
-        _fail(f"no run of {slug} has config hash {config_hash8}")
-    registry, budget = runs[0].data.tags["method"], runs[0].data.tags["budget"]
+        _fail(
+            f"no tuning run ({TUNING_PHASES}) of {slug} has config hash {config_hash8}"
+        )
+    registry, budget = runs[0].data.tags[TAG_METHOD], runs[0].data.tags[TAG_BUDGET]
     with tempfile.TemporaryDirectory() as tmp:
         cfg = json.loads(
             Path(
-                client.download_artifacts(runs[0].info.run_id, "config.json", tmp)
+                client.download_artifacts(runs[0].info.run_id, CONFIG_ARTIFACT, tmp)
             ).read_text()
         )
     base = resolve_config(method, registry, budget, methods_dir=methods_dir)
@@ -706,12 +747,14 @@ def mark_tuned(
     new = _replace_tuned(old, tuned)
     if _load_yaml(new)["tuned"] != tuned:
         _fail(f"could not rewrite the tuned block of {method.path.name}")
-    method.path.write_text(new, encoding="utf-8")
-    for run in _runs(client, f"tags.best = 'true' and tags.method = '{registry}'"):
-        if run.data.tags.get("config_hash") != config_hash8:
-            client.set_tag(run.info.run_id, "best", "false")
-    for run in runs:
-        client.set_tag(run.info.run_id, "best", "true")
+    stale = _runs(
+        client, f"tags.{TAG_BEST} = 'true' and tags.{TAG_METHOD} = '{registry}'"
+    )
+    changes = [
+        (r, "false") for r in stale if r.data.tags[TAG_CONFIG_HASH] != config_hash8
+    ]
+    changes += [(r, "true") for r in runs]
+    _set_best(client, changes, lambda: method.path.write_text(new, encoding="utf-8"))
     name = method.path.name
     return "".join(
         difflib.unified_diff(
