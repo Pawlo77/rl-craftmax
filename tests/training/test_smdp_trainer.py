@@ -403,8 +403,13 @@ def test_the_checkpoint_stores_the_table_sparsely_and_rebuilds_it_exactly(
     q, seen = np.asarray(state.carry.shared.q), np.asarray(state.carry.shared.seen)
     rows = np.flatnonzero((q != 10.0).any(1))
     assert 0 < len(rows) < len(q)
-    np.testing.assert_array_equal(params["rows"], rows)
-    assert params["rows"].dtype == np.int32
+    stored = params["rows"]
+    assert stored.dtype == np.int32
+    # padded to a power of two (at least 1024) by sentinel rows, so eval compiles once
+    assert len(stored) == 1024
+    np.testing.assert_array_equal(stored[: len(rows)], rows)
+    assert (stored[len(rows) :] == smdp.SENTINEL_ROW).all()
+    np.testing.assert_array_equal(params["fields"][len(rows) :], -1)
     save_checkpoint(tmp_path, 2, STEPS, 0.0, params)
     template = trainer.params(
         jax.eval_shape(lambda: trainer.init(cfg, jax.random.key(0)))
@@ -413,10 +418,12 @@ def test_the_checkpoint_stores_the_table_sparsely_and_rebuilds_it_exactly(
     dense = smdp.dense_table(loaded, state.cfg.top)
     assert dense.dtype == q.dtype
     np.testing.assert_array_equal(dense, q)
-    np.testing.assert_array_equal(loaded["fields"], seen[rows])
-    # an untrained table stores no rows at all
+    np.testing.assert_array_equal(loaded["fields"][: len(rows)], seen[rows])
+    # an untrained table stores only padding
     fresh = trainer.params(trainer.init(cfg, jax.random.key(0)))
-    assert fresh["rows"].shape == (0,)
+    assert (fresh["rows"] == smdp.SENTINEL_ROW).all()
+    assert smdp._padded(1024) == 1024
+    assert smdp._padded(1025) == 2048
     np.testing.assert_array_equal(smdp.dense_table(fresh, state.cfg.top), 10.0)
 
 
@@ -428,7 +435,12 @@ def test_the_greedy_table_lists_every_stored_key(entry: Any, tmp_path: Path) -> 
     smdp.write_greedy_table(tmp_path, 4, params)
     smdp.write_greedy_table(tmp_path, 2, params)  # rewritten, not duplicated
     table = pq.read_table(path).to_pydict()
-    keys, fields, q = params["rows"], params["fields"], params["q_rows"]
+    real = params["rows"] != smdp.SENTINEL_ROW  # the padding is not a key
+    keys, fields, q = (
+        params["rows"][real],
+        params["fields"][real],
+        params["q_rows"][real],
+    )
     assert sorted(set(table["update"])) == [2, 4]
     assert len(table["key"]) == 2 * len(keys)
     first = [i for i, u in enumerate(table["update"]) if u == 2]
@@ -570,8 +582,12 @@ def test_the_runner_trains_and_evaluation_replays_the_skills(
     opened = eval_rollouts.EvalRun.load(out, METHODS)
     assert opened.method == NAME
     last = opened.updates[-1]
+    rows = [
+        int((opened.params(u)["rows"] != smdp.SENTINEL_ROW).sum()) for u in (0, last)
+    ]
+    assert rows[0] < rows[1]  # the table grew between the two checkpoints
     for mode in eval_rollouts.MODES:
-        eval_rollouts.evaluate(opened, [last], mode, seeds=(10000,), chunk=256)
+        eval_rollouts.evaluate(opened, [0, last], mode, seeds=(10000,), chunk=256)
         ev = eval_rollouts.load_eval(out, last, mode == "greedy")
         live = ev["actions"] >= 0
         assert ev["extras/skill"].dtype == np.uint8
@@ -579,6 +595,8 @@ def test_the_runner_trains_and_evaluation_replays_the_skills(
         assert ev["extras/skill"].shape == ev["actions"].shape
         assert (ev["extras/skill"][live] < NUM_SKILLS).all()
         assert (ev["extras/steps_in_skill"][:, 0] == 0).all()
+    # both checkpoints, both modes: one compile of the eval chunk
+    assert opened._chunk._cache_size() == 1
 
 
 _ON_TWO_CPUS = """

@@ -1062,36 +1062,61 @@ def greedy_table(params: Mapping[str, Any]) -> dict[str, np.ndarray]:
     which a row does not keep. Fields are `progress_key.FIELDS` (Classic
     `CLASSIC_FIELDS`), then `FLAG_NAMES` unless the run left the flags out.
     """
-    fields_ = np.asarray(params["fields"])
-    q = np.asarray(params["q_rows"])
+    real = np.asarray(params["rows"]) != SENTINEL_ROW
+    fields_ = np.asarray(params["fields"])[real]
+    q = np.asarray(params["q_rows"])[real]
     base = CLASSIC_FIELDS if fields_.shape[1] in (12, 16) else FIELDS
     names = [*base, *FLAG_NAMES][: fields_.shape[1]]
-    cols = {"key": np.asarray(params["rows"], np.int32)}
+    cols = {"key": np.asarray(params["rows"], np.int32)[real]}
     cols |= {n: fields_[:, i] for i, n in enumerate(names)}
     cols["greedy_skill"] = np.array([SKILLS[i].name for i in q.argmax(1)], object)
     cols["value"] = q.max(1) if len(q) else np.zeros(0, q.dtype)
     return cols
 
 
+SENTINEL_ROW = int(np.iinfo(np.int32).max)
+"""Row index of padding in `sparse_table`: sorts last and matches no key."""
+MIN_STORED_ROWS = 1024
+"""Fewest rows `sparse_table` stores, so early checkpoints share one shape."""
+
+
+def _padded(n: int) -> int:
+    """Stored rows for ``n`` real ones: the next power of two, at least the minimum."""
+    return max(MIN_STORED_ROWS, 1 << max(n - 1, 0).bit_length())
+
+
 def sparse_table(q: Any, seen: Any, q_init: float) -> dict[str, Any]:
     """The table rows that differ from ``q_init``, with values and key fields.
 
     ``rows`` int32 ascending, ``q_rows``, and ``fields`` from ``seen`` (a hashed key
-    keeps no fields, so they are stored). The abstract state of evaluation's template
-    gets empty arrays: the row count varies per checkpoint, and loading keeps the
-    stored shapes.
+    keeps no fields, so they are stored). Padded to `_padded` rows with
+    `SENTINEL_ROW` (values ``q_init``, fields -1), so evaluation compiles once per
+    power of two, not per checkpoint. The abstract state of evaluation's template
+    gets empty arrays: loading keeps the stored shapes.
     """
     if isinstance(q, jax.ShapeDtypeStruct):
         q, seen = (np.zeros((0, x.shape[1]), x.dtype) for x in (q, seen))
     q, seen = np.asarray(q), np.asarray(seen)
-    rows = np.flatnonzero((q != q.dtype.type(q_init)).any(1)).astype(np.int32)
-    return {"rows": rows, "q_rows": q[rows], "fields": seen[rows]}
+    rows = np.flatnonzero((q != q.dtype.type(q_init)).any(1))
+    n = len(rows)
+    if not q.shape[0]:  # the template
+        return {"rows": rows.astype(np.int32), "q_rows": q, "fields": seen}
+    m = _padded(n)
+    out = {
+        "rows": np.full(m, SENTINEL_ROW, np.int32),
+        "q_rows": np.full((m, q.shape[1]), q_init, q.dtype),
+        "fields": np.full((m, seen.shape[1]), -1, seen.dtype),
+    }
+    out["rows"][:n], out["q_rows"][:n], out["fields"][:n] = rows, q[rows], seen[rows]
+    return out
 
 
 def dense_table(params: Mapping[str, Any], cfg: SMDPConfig) -> np.ndarray:
     """The full table of a `sparse_table` payload, bit for bit."""
     q = np.full((2**cfg.log2_rows, NUM_SKILLS), cfg.q_init, np.float32)
-    q[np.asarray(params["rows"])] = np.asarray(params["q_rows"])
+    rows = np.asarray(params["rows"])
+    real = rows != SENTINEL_ROW
+    q[rows[real]] = np.asarray(params["q_rows"])[real]
     return q
 
 
