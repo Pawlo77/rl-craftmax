@@ -478,13 +478,42 @@ def test_a_trainer_error_marks_the_run_failed(store: Store) -> None:
             raise FloatingPointError
 
     (spec,) = store.phase("tune-coarse", ["published"])
-    with pytest.raises(FloatingPointError):
+    with pytest.raises(RuntimeError, match=r"1 of 1 runs failed.*FloatingPointError"):
         store.run([spec], Broken())
-    assert store.runs()[spec.name].info.status == "FAILED"
+    run = store.runs()[spec.name]
+    assert run.info.status == "FAILED"
+    assert run.data.tags["fail/error"].startswith("FloatingPointError")
+    assert run.data.tags["fail/count"] == "1"
     trainer = FakeTrainer()
     store.run([spec], trainer)
     assert trainer.updates == [1, 2, 3]
     assert store.runs()[spec.name].info.status == "FINISHED"
+
+
+def test_a_failing_run_does_not_stop_the_queue(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The error is recorded on the run and logged; the next spec still runs."""
+
+    class FailsFirst(FakeTrainer):
+        def init(self, config: Any, key: jax.Array) -> Any:
+            if not self.init_steps:
+                self.init_steps.append(None)
+                msg = "out of memory"
+                raise MemoryError(msg)
+            return super().init(config, key)
+
+    first, second = store.phase("tune-coarse", ["published", "lr-hi"])
+    trainer = FailsFirst()
+    with pytest.raises(RuntimeError, match=rf"1 of 2 runs failed: {first.name}"):
+        store.run([first, second], trainer)
+    runs = store.runs()
+    assert runs[first.name].info.status == "FAILED"
+    assert runs[first.name].data.tags["fail/error"] == "MemoryError: out of memory"
+    assert runs[second.name].info.status == "FINISHED"
+    assert trainer.updates == [1, 2, 3]
+    assert [e[0] for e in store.evaluated] == [second.name]
+    assert f"{first.name} failed" in caplog.text
 
 
 # --- runtime --------------------------------------------------------------------
@@ -800,21 +829,25 @@ def test_a_lost_final_checkpoint_is_rebuilt_from_the_state(store: Store) -> None
     assert [e[0] for e in store.evaluated] == [spec.name] * 2
 
 
-def test_an_earlier_lost_checkpoint_fails_a_complete_run_on_every_call(
-    store: Store,
+def test_an_earlier_lost_checkpoint_fails_a_complete_run_then_skips_it(
+    store: Store, caplog: pytest.LogCaptureFixture
 ) -> None:
     (spec,) = store.phase("tune-coarse", ["published"])
     store.run([spec], FakeTrainer())
     _ckpt(store, spec.name, 1).unlink()
     _ckpt(store, spec.name, 2).unlink()
-    for _ in range(3):  # the cleaned index must not hide the loss from later calls
-        with pytest.raises(RuntimeError, match=r"\[1, 2\] are lost"):
-            store.run([spec], FakeTrainer())
+    with pytest.raises(RuntimeError, match=r"\[1, 2\] are lost"):
+        store.run([spec], FakeTrainer())
+    for _ in range(2):  # later calls skip it with a warning, they never retrain it
+        trainer = FakeTrainer()
+        store.run([spec], trainer)
+        assert trainer.updates == []
         run = store.runs()[spec.name]
         assert run.info.status == "FAILED"
         assert run.data.tags["ckpt/missing"] == "1,2"
     assert [e["update"] for e in load_index(store.run_dir(spec.name))] == [0, 3]
     assert len(store.evaluated) == 1  # only the first call evaluated
+    assert f"{spec.name} lost checkpoints 1,2 for good, skipped" in caplog.text
 
 
 def test_a_lost_checkpoint_of_a_run_in_progress_stays_tagged_and_fails_at_the_end(
@@ -829,13 +862,14 @@ def test_a_lost_checkpoint_of_a_run_in_progress_stays_tagged_and_fails_at_the_en
         store.run([spec], FakeTrainer((20, signal.SIGINT), steps_per_update=spu))
     run = store.runs()[spec.name]
     assert (run.info.status, run.data.tags["ckpt/missing"]) == ("KILLED", "1")
-    for _ in range(2):  # it trains on, then fails; a rerun fails at once
-        trainer = FakeTrainer(steps_per_update=spu)
-        with pytest.raises(RuntimeError, match=r"\[1\] are lost"):
-            store.run([spec], trainer)
-        run = store.runs()[spec.name]
-        assert (run.info.status, run.data.tags["ckpt/missing"]) == ("FAILED", "1")
+    with pytest.raises(RuntimeError, match=r"\[1\] are lost"):  # trains on, fails
+        store.run([spec], FakeTrainer(steps_per_update=spu))
+    run = store.runs()[spec.name]
+    assert (run.info.status, run.data.tags["ckpt/missing"]) == ("FAILED", "1")
     assert _ckpt(store, spec.name, 40).is_file()
+    trainer = FakeTrainer(steps_per_update=spu)
+    store.run([spec], trainer)  # a rerun skips it
+    assert trainer.updates == []
 
 
 def test_a_methods_knobs_reach_its_hooks_in_training_and_evaluation(

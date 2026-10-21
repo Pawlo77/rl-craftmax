@@ -95,6 +95,10 @@ MIN_FINAL_EPISODES = 100
 """Episodes the final-score window is widened backwards to."""
 TAG_CKPT_MISSING = "ckpt/missing"
 """Run tag: comma-joined updates whose checkpoint file is lost and cannot be rebuilt."""
+TAG_FAIL_ERROR = "fail/error"
+"""Run tag: the error of the last failed call (type and message, truncated)."""
+TAG_FAIL_COUNT = "fail/count"
+"""Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
 """Per-update method metrics of a run, name -> floats, in the run directory."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
@@ -568,6 +572,25 @@ def _mark_abort(previous: Mapping[str, str], abort: _Aborted) -> None:
     logger.warning("run aborted (%d of %d allowed): %s", count, MAX_ABORTS, abort)
 
 
+def _skip_reason(found: Any) -> str | None:
+    """Why the queue skips a run: a bug, or lost checkpoints that failed it."""
+    tags = found.data.tags if found else {}
+    if tags.get(TAG_ABORT_BUG) == "true":
+        return f"is marked a bug ({TAG_ABORT_BUG})"
+    if found and found.info.status == "FAILED" and tags.get(TAG_CKPT_MISSING):
+        return f"lost checkpoints {tags[TAG_CKPT_MISSING]} for good"
+    return None
+
+
+def _fail_tags(
+    previous: Mapping[str, str], error: BaseException | str
+) -> dict[str, str]:
+    """`TAG_FAIL_ERROR` and the next `TAG_FAIL_COUNT` of a failed call."""
+    text = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
+    count = int(previous.get(TAG_FAIL_COUNT, 0)) + 1
+    return {TAG_FAIL_ERROR: text[:500], TAG_FAIL_COUNT: str(count)}
+
+
 def _run_spec(
     spec: RunSpec,
     trainer: Trainer,
@@ -576,10 +599,15 @@ def _run_spec(
     evaluate: Evaluate,
     stop: _Stop,
 ) -> bool:
-    """Bring one run to FINISHED, or to KILLED on a signal; return if it trained."""
+    """Bring one run to FINISHED, or to KILLED on a signal; return if it trained.
+
+    Raises:
+        Exception: Any error of the run, after it is closed FAILED with the
+            `TAG_FAIL_ERROR` and `TAG_FAIL_COUNT` tags.
+    """
     found = find_run(spec.name)
-    if found and found.data.tags.get(TAG_ABORT_BUG) == "true":
-        logger.warning("%s is marked a bug (%s), skipped", spec.name, TAG_ABORT_BUG)
+    if (reason := _skip_reason(found)) is not None:
+        logger.warning("%s %s, skipped", spec.name, reason)
         return False
     phases = found.data.tags.get(TAG_PHASES, "").split(",") if found else []
     tags = {
@@ -628,7 +656,8 @@ def _run_spec(
         _mark_abort(found.data.tags if found else {}, abort)
         tracker.close("FAILED")  # its last state/ stays for the one retry
         return True
-    except Exception:
+    except Exception as error:
+        mlflow.set_tags(_fail_tags(found.data.tags if found else {}, error))
         tracker.close("FAILED")
         raise
     if stop.signum is not None:
@@ -660,8 +689,13 @@ def main(
     node's own store).
     ``evaluate`` defaults to `evaluate_fixed_seeds` with this worker's trainers.
 
+    A run that fails is closed FAILED with its error tagged (`TAG_FAIL_ERROR`) and
+    logged, and the next spec runs; runs marked a bug, or failed for lost
+    checkpoints, are skipped with a warning.
+
     Raises:
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
+        RuntimeError: At the end, naming every run of this call that failed.
     """
     machine = load_profile(profile)
     select_platforms(machine.device_roles)
@@ -684,12 +718,19 @@ def main(
             experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
         )
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
-    trained = 0
+    trained, failed = 0, []
     with _stop_on_signals() as stop:
         for spec in mine:
             if max_runs is not None and trained >= max_runs:
                 break
             trainer = trainers[spec.registry_name]
-            trained += _run_spec(spec, trainer, experiment, machine, evaluate, stop)
+            try:
+                trained += _run_spec(spec, trainer, experiment, machine, evaluate, stop)
+            except Exception as error:  # one run must not stop the queue
+                logger.exception("%s failed, next run", spec.name)
+                failed.append(f"{spec.name}: {type(error).__name__}: {error}")
             if stop.signum is not None:
                 raise SystemExit(128 + stop.signum)
+    if failed:
+        msg = f"{len(failed)} of {len(mine)} runs failed: " + "; ".join(failed)
+        raise RuntimeError(msg)
