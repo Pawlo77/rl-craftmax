@@ -29,7 +29,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 249 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 173 | [[orchestration]] |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, checkpoints, resume state, metrics. | 154 | [[training]] |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. | 181 | [[training]] |
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 147 | [[training]] |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 303 | [[training]] |

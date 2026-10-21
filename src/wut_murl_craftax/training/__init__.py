@@ -1,4 +1,4 @@
-"""Training: registry, PPO(-RNN), PQN-RNN, hooks, checkpoints, resume state, metrics."""
+"""Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -16,29 +16,33 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .hooks import (
         HOOK_NAMES,
         HookFields,
+        HookMethod,
         HookSpec,
         ResolvedHooks,
         Traj,
         check_metric_names,
         config_dict,
         resolve,
+        with_method,
     )
     from .interface import METHODS, Policy
-    from .ppo import ActorCritic, PPOConfig, PPOTrainer, make_network, train
-    from .ppo_rnn import (
-        ActorCriticRNN,
-        PPORNNConfig,
-        PPORNNPolicy,
-        PPORNNTrainer,
-        build_network,
-        make_trainer,
+    from .ppo import (
+        ActorCritic,
+        PPOConfig,
+        PPOTrainer,
+        gae,
+        make_env,
+        make_network,
+        make_train_env,
+        ppo_terms,
+        train,
     )
+    from .ppo_rnn import ActorCriticRNN, PPORNNConfig, PPORNNPolicy, PPORNNTrainer
     from .pqn_rnn import (
         PQNRNNConfig,
         PQNRNNPolicy,
         PQNRNNTrainer,
         RNNQNetwork,
-        learn,
         q_lambda_targets,
     )
     from .records import (
@@ -51,16 +55,28 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_episodes,
         load_metrics,
     )
+    from .wrappers import (
+        BatchEnvWrapper,
+        GymnaxWrapper,
+        LogWrapper,
+        OptimisticResetVecEnvWrapper,
+        unwrap_state,
+    )
 
 _EXPORTS: dict[str, str] = {
     "HOOK_NAMES": "hooks",
     "HookFields": "hooks",
+    "HookMethod": "hooks",
     "HookSpec": "hooks",
     "METHODS": "interface",
     "ActorCritic": "ppo",
     "ActorCriticRNN": "ppo_rnn",
+    "BatchEnvWrapper": "wrappers",
     "BatchRenorm": "batch_renorm",
     "Episodes": "records",
+    "GymnaxWrapper": "wrappers",
+    "LogWrapper": "wrappers",
+    "OptimisticResetVecEnvWrapper": "wrappers",
     "PPOConfig": "ppo",
     "PPOTrainer": "ppo",
     "PPORNNConfig": "ppo_rnn",
@@ -77,24 +93,27 @@ _EXPORTS: dict[str, str] = {
     "Traj": "hooks",
     "achievement_names": "records",
     "achievement_weights": "records",
-    "build_network": "ppo_rnn",
     "check_metric_names": "hooks",
     "checkpoint_schedule": "checkpoints",
     "config_dict": "hooks",
     "first_unlocks": "records",
-    "learn": "pqn_rnn",
+    "gae": "ppo",
     "load_episodes": "records",
     "load_index": "checkpoints",
     "load_metrics": "records",
     "load_params": "checkpoints",
     "load_state": "checkpoints",
+    "make_env": "ppo",
     "make_network": "ppo",
-    "make_trainer": "ppo_rnn",
+    "make_train_env": "ppo",
+    "ppo_terms": "ppo",
     "q_lambda_targets": "pqn_rnn",
     "resolve": "hooks",
     "save_checkpoint": "checkpoints",
     "save_state": "checkpoints",
     "train": "ppo",
+    "unwrap_state": "wrappers",
+    "with_method": "hooks",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -104,10 +123,15 @@ __all__ = [
     "METHODS",
     "ActorCritic",
     "ActorCriticRNN",
+    "BatchEnvWrapper",
     "BatchRenorm",
     "Episodes",
+    "GymnaxWrapper",
     "HookFields",
+    "HookMethod",
     "HookSpec",
+    "LogWrapper",
+    "OptimisticResetVecEnvWrapper",
     "PPOConfig",
     "PPORNNConfig",
     "PPORNNPolicy",
@@ -124,24 +148,27 @@ __all__ = [
     "Traj",
     "achievement_names",
     "achievement_weights",
-    "build_network",
     "check_metric_names",
     "checkpoint_schedule",
     "config_dict",
     "first_unlocks",
-    "learn",
+    "gae",
     "load_episodes",
     "load_index",
     "load_metrics",
     "load_params",
     "load_state",
+    "make_env",
     "make_network",
-    "make_trainer",
+    "make_train_env",
+    "ppo_terms",
     "q_lambda_targets",
     "resolve",
     "save_checkpoint",
     "save_state",
     "train",
+    "unwrap_state",
+    "with_method",
 ]
 
 
