@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,8 @@ class Store:
         self.client = mlflow.MlflowClient(tracking_uri=self.tracking_uri)
         self.runtime_calls: list[int | None] = []
         self.evaluated: list[tuple[str, str, str, list[str]]] = []
+        self.signal_in_eval = False
+        self.stop_seen: list[bool] = []
         monkeypatch.setattr(
             runner,
             "configure_runtime",
@@ -70,7 +73,12 @@ class Store:
         path.write_text(yaml.safe_dump(body))
         return expand_phase(path, methods_dir=METHODS)
 
-    def evaluate(self, run_dir: Path, spec: RunSpec) -> None:
+    def evaluate(
+        self, run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]
+    ) -> None:
+        if self.signal_in_eval:
+            os.kill(os.getpid(), signal.SIGTERM)
+        self.stop_seen.append(should_stop())
         status = mlflow.active_run().info.status
         files = sorted(p.name for p in run_dir.iterdir())
         self.evaluated.append((spec.name, spec.phase, status, files))
@@ -342,6 +350,90 @@ def test_an_interrupted_run_resumes_to_the_uninterrupted_result(
     assert [m.step for m in history] == [spu * u for u in range(1, n_updates + 1)]
     score = cut.client.get_run(rid).data.metrics[queue.SCORE_METRIC]
     assert score == whole.runs()[spec.name].data.metrics[queue.SCORE_METRIC]
+
+
+def test_a_signal_in_the_last_chunk_skips_the_evaluation(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((3, signal.SIGINT)))
+    run = store.runs()[spec.name]
+    assert (run.info.status, store.evaluated) == ("KILLED", [])
+    assert queue.SCORE_METRIC not in run.data.metrics
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    run = store.runs()[spec.name]
+    assert (trainer.updates, run.info.status) == ([], "FINISHED")
+    assert [e[0] for e in store.evaluated] == [spec.name]
+    assert queue.SCORE_METRIC in run.data.metrics
+
+
+def test_evaluate_sees_a_signal_and_the_run_stays_killed(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.signal_in_eval = True
+    with pytest.raises(SystemExit) as exit_info:
+        store.run([spec], FakeTrainer())
+    assert exit_info.value.code == 128 + signal.SIGTERM
+    assert store.stop_seen == [True]
+    assert store.runs()[spec.name].info.status == "KILLED"
+    store.signal_in_eval = False
+    store.run([spec], FakeTrainer())
+    assert store.stop_seen == [True, False]
+    assert store.runs()[spec.name].info.status == "FINISHED"
+
+
+def test_a_run_that_cannot_be_reopened_fails_loudly_without_a_duplicate(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    rid = store.runs()[spec.name].info.run_id
+    real = mlflow.start_run
+
+    def locked(*a: Any, run_id: str | None = None, **kw: Any) -> Any:
+        if run_id is not None:
+            raise mlflow.exceptions.MlflowException.invalid_parameter_value("locked")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(mlflow, "start_run", locked)
+    for trainer in (FakeTrainer(), FakeTrainer()):
+        with pytest.raises(RuntimeError, match=f"{spec.name}.*{rid}"):
+            store.run([spec], trainer)
+        assert trainer.updates == []
+    assert [r.info.run_id for r in store.runs().values()] == [rid]
+
+
+@pytest.mark.parametrize("variable", ["MLFLOW_ACTIVE_RUN_ID", "MLFLOW_RUN_ID"])
+def test_a_run_id_in_the_environment_never_hijacks_a_new_run(
+    store: Store, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    first, second = store.phase("tune-coarse", ["published", "lr-hi"])
+    store.run([first], FakeTrainer())
+    foreign = store.runs()[first.name]
+    monkeypatch.setenv(variable, foreign.info.run_id)
+    store.run([second], FakeTrainer())
+    assert variable not in os.environ
+    assert store.runs()[second.name].info.run_id != foreign.info.run_id
+    assert store.runs()[first.name].data.tags == foreign.data.tags
+    assert store.runs()[first.name].info.status == "FINISHED"
+
+
+def test_two_workers_creating_one_phase_experiment_share_it(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = store.phase("tune-coarse", ["published", "lr-hi"])
+    store.run([first], FakeTrainer())
+    real = mlflow.get_experiment_by_name
+    calls: list[str] = []
+
+    def stale_once(name: str) -> Any:  # the other worker created it meanwhile
+        calls.append(name)
+        return None if len(calls) == 1 else real(name)
+
+    monkeypatch.setattr(mlflow, "get_experiment_by_name", stale_once)
+    store.run([second], FakeTrainer())
+    runs = store.runs()
+    assert runs[second.name].info.status == "FINISHED"
+    assert runs[second.name].info.experiment_id == runs[first.name].info.experiment_id
 
 
 def test_a_trainer_error_marks_the_run_failed(store: Store) -> None:

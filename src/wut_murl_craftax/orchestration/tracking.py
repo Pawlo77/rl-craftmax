@@ -74,6 +74,19 @@ def artifact_path(artifact_uri: str) -> Path:
     return Path(unquote(parsed.path))
 
 
+def _use_experiment(mlflow: Any, tracking_uri: str, name: str) -> None:
+    """Make ``name`` the active experiment, creating it if no other process has."""
+    if mlflow.get_experiment_by_name(name) is None:
+        location = _artifact_location(tracking_uri, name)
+        try:
+            mlflow.create_experiment(name, artifact_location=location)
+        except mlflow.exceptions.MlflowException:
+            # another worker created it between the lookup and the create
+            if mlflow.get_experiment_by_name(name) is None:
+                raise
+    mlflow.set_experiment(name)
+
+
 @dataclass(slots=True)
 class MlflowRunTracker:
     """Track a single run with MLflow while tolerating offline/local-only setups."""
@@ -86,6 +99,9 @@ class MlflowRunTracker:
     """Run to resume; set to the started run's id by `start`."""
     tags: Mapping[str, str] = field(default_factory=dict)
     """Tags set on every start, also when resuming."""
+    strict: bool = False
+    """Raise when the run cannot start or reopen (never fall back to a new run), and
+    ignore ``$MLFLOW_ACTIVE_RUN_ID``: a run's identity must not change silently."""
 
     _mlflow: Any = field(default=None, init=False, repr=False)
     _run_active: bool = field(default=False, init=False, repr=False)
@@ -105,13 +121,12 @@ class MlflowRunTracker:
                     category=FutureWarning,
                 )
                 mlflow.set_tracking_uri(tracking_uri)
-                resume_run_id = self.run_id or os.environ.get(_ACTIVE_MLFLOW_RUN_ID_ENV)
+                env_run_id = (
+                    None if self.strict else os.environ.get(_ACTIVE_MLFLOW_RUN_ID_ENV)
+                )
+                resume_run_id = self.run_id or env_run_id
                 if not (resume_run_id and self._resume(mlflow, resume_run_id)):
-                    name = self.tracking.experiment_name
-                    if mlflow.get_experiment_by_name(name) is None:
-                        location = _artifact_location(tracking_uri, name)
-                        mlflow.create_experiment(name, artifact_location=location)
-                    mlflow.set_experiment(name)
+                    _use_experiment(mlflow, tracking_uri, self.tracking.experiment_name)
                     mlflow.start_run(run_name=self.run_name or self.tracking.run_name)
 
             self._mlflow = mlflow
@@ -128,18 +143,22 @@ class MlflowRunTracker:
             self._log_reproducibility_report()
 
         except Exception as e:
+            if self.strict:
+                raise
             _TRACKING_LOGGER.warning("Failed to start MLflow run: %s", e)
             self._run_active = False
             self._mlflow = None
 
-    @staticmethod
-    def _resume(mlflow: Any, run_id: str) -> bool:
+    def _resume(self, mlflow: Any, run_id: str) -> bool:
         """Reopen ``run_id`` in its own experiment, which may be another phase's."""
         try:
             experiment_id = mlflow.get_run(run_id).info.experiment_id
             mlflow.set_experiment(experiment_id=experiment_id)
             mlflow.start_run(run_id=run_id)
-        except Exception:
+        except Exception as e:
+            if self.strict:
+                msg = f"cannot reopen MLflow run {self.run_name} ({run_id}): {e}"
+                raise RuntimeError(msg) from e
             _TRACKING_LOGGER.warning(
                 "Failed to resume MLflow run_id=%s; starting a new run.", run_id
             )
@@ -187,6 +206,7 @@ def build_mlflow_tracker(
     *,
     run_id: str | None = None,
     tags: Mapping[str, str] | None = None,
+    strict: bool = False,
 ) -> MlflowRunTracker:
     """Build an MLflow tracker from an experiment configuration."""
     return MlflowRunTracker(
@@ -196,4 +216,5 @@ def build_mlflow_tracker(
         model_adapter=model_adapter,
         run_id=run_id,
         tags=dict(tags or {}),
+        strict=strict,
     )

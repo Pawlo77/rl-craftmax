@@ -13,6 +13,7 @@ import importlib
 import json
 import logging
 import math
+import os
 import signal
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -63,6 +64,8 @@ N_CHECKPOINTS = 12
 """Log-spaced params checkpoints per run (`checkpoint_schedule`)."""
 MIN_FINAL_EPISODES = 100
 """Episodes the final-score window is widened backwards to."""
+_RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
+"""Environment variables that make MLflow or the tracker reopen a given run."""
 _TRAIN_COLUMNS = [c for c in (*BASE_COLUMNS, *LOSS_COLUMNS) if c != "update"]
 
 
@@ -109,13 +112,16 @@ class Trainer(Protocol):
         ...
 
 
-Evaluate = Callable[[Path, RunSpec], None]
-"""Evaluates a run directory's checkpoints for its spec, skipping finished files."""
+Evaluate = Callable[[Path, RunSpec, Callable[[], bool]], None]
+"""Evaluates a run directory's checkpoints for its spec, skipping finished files;
+returns early once the third argument, ``should_stop()``, is true (SIGINT, SIGTERM)."""
 
 
-def no_evaluation(run_dir: Path, spec: RunSpec) -> None:
+def no_evaluation(
+    run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]
+) -> None:
     """Default `Evaluate`: fixed-seed evaluation arrives in infrastructure Task 5."""
-    del run_dir, spec
+    del run_dir, spec, should_stop
 
 
 def final_score(update_scores: np.ndarray, episode_counts: np.ndarray) -> float:
@@ -337,28 +343,37 @@ def _run_spec(
     cfg = replace(
         experiment, mlflow=replace(experiment.mlflow, experiment_name=spec.phase)
     )
+    run_id = found.info.run_id if found else None
     tracker = build_mlflow_tracker(
-        cfg, run_name=spec.name, run_id=found.info.run_id if found else None, tags=tags
+        cfg, run_name=spec.name, run_id=run_id, tags=tags, strict=True
     )
     tracker.start()
+    active = mlflow.get_run(tracker.run_id or "").info
+    if active.run_name != spec.name or run_id not in (None, active.run_id):
+        tracker.close("KILLED")
+        msg = f"{spec.name}: MLflow opened run {active.run_name} ({active.run_id})"
+        raise RuntimeError(msg)  # e.g. $MLFLOW_RUN_ID set in the environment
     out = tracker.artifact_dir
     trains = found is None or found.info.status != "FINISHED"
     try:
         if trains:
             (out / CONFIG_ARTIFACT).write_text(json.dumps(spec.config, indent=1))
             log = _train(trainer, spec, out, profile, stop)
-            if log is None:
-                tracker.close("KILLED")
+            if log is None or stop.signum is not None:
+                tracker.close("KILLED")  # the next call logs the score and evaluates
                 return True
             _log_final_score(log, spec.env)
         (out / "eval").mkdir(exist_ok=True)
-        evaluate(out, spec)
+        evaluate(out, spec, lambda: stop.signum is not None)
     except KeyboardInterrupt:
         tracker.close("KILLED")
         raise
     except Exception:
         tracker.close("FAILED")
         raise
+    if stop.signum is not None:
+        tracker.close("KILLED")  # evaluation may have stopped early
+        return trains
     tracker.close("FINISHED")
     return trains
 
@@ -391,6 +406,9 @@ def main(
     if missing:
         msg = f"no trainer registered for {missing}"
         raise ValueError(msg)
+    for variable in _RUN_ID_VARIABLES:
+        if os.environ.pop(variable, None):
+            logger.warning("ignoring %s: the runner picks runs by name", variable)
     experiment = load_experiment_config(experiment_config)
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
     trained = 0
