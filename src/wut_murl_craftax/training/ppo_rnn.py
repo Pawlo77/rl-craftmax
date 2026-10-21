@@ -72,8 +72,10 @@ ACTIVATIONS: dict[str, Callable[[jax.Array], jax.Array]] = {
 }
 """``activation`` values: ReLU as the original code, tanh as the paper's text."""
 _LEARNER_HOOKS = {"observe", "extra_loss_fn"}
-"""Hooks that read the method state on the learner, so it moves there each update;
-without them ``metrics_fn`` reads it on the actor, where the rollout keeps it."""
+"""Hooks that read the method state on the learner. With ``intrinsic_reward_fn`` too
+the state moves between actor and learner each update; without it the state lives on
+the learner (the rollout never reads it); with neither, ``metrics_fn`` reads it on the
+actor, where the rollout keeps it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +273,27 @@ def _seq_loss(
     return ppo_terms(logits.reshape(-1, logits.shape[-1]), v.reshape(-1), flat, cfg)
 
 
+def _skip_if_zero(old: TrainState, new: TrainState, g: Any) -> TrainState:
+    """``new``, or ``old`` with only its clocks moved on when ``g`` is all zero.
+
+    A zero gradient (an extra loss with nothing to learn) would still move the params
+    on Adam's momentum; the step count and the schedule's count still advance, so the
+    learning rate stays indexed by update. A NaN gradient is applied.
+    """
+    live = optax.tree.norm(g) != 0
+
+    def pick(o: Any, n: Any) -> Any:
+        if isinstance(n, optax.ScaleByScheduleState):
+            return n
+        return jax.tree.map(lambda a, b: jnp.where(live, b, a), o, n)
+
+    def is_clock(x: Any) -> bool:
+        return isinstance(x, optax.ScaleByScheduleState)
+
+    opt = jax.tree.map(pick, old.opt_state, new.opt_state, is_leaf=is_clock)
+    return new.replace(params=pick(old.params, new.params), opt_state=opt)
+
+
 def _make_learn(
     cfg: PPORNNConfig, net: ActorCriticRNN, hk: ResolvedHooks
 ) -> Callable[..., Any]:
@@ -278,7 +301,8 @@ def _make_learn(
 
     Returns the losses in ``records.LOSS_COLUMNS`` order and the method's metrics
     (extra-loss metrics averaged over the extra steps, then ``metrics_fn`` if the
-    state is on the learner).
+    state is on the learner). The method state argument is donated: the caller
+    passes a copy it no longer needs (`train_chunk`).
     """
     on_learner = bool(_LEARNER_HOOKS & set(hk.active))
     grad = jax.value_and_grad(lambda p, mb: _seq_loss(cfg, net, p, mb), has_aux=True)
@@ -299,10 +323,10 @@ def _make_learn(
         ts, ms, key = c
         key, k = jax.random.split(key)
         (_, (ms, m)), g = extra_grad(ts.params, ms, k)
-        ts = ts.apply_gradients(grads=g)  # type: ignore[no-untyped-call]  # flax API
-        return (ts, ms, key), m
+        new = ts.apply_gradients(grads=g)  # type: ignore[no-untyped-call]  # flax API
+        return (_skip_if_zero(ts, new, g), ms, key), m
 
-    @jax.jit
+    @functools.partial(jax.jit, donate_argnums=3)
     def learn(
         ts: TrainState, b: Batch, traj: Traj | None, ms: Any, key: jax.Array
     ) -> Any:
@@ -351,8 +375,18 @@ class _Setup:
 
     @property
     def learner_state(self) -> bool:
-        """Whether the method state moves to the learner for the update."""
+        """Whether the update reads the method state on the learner."""
         return bool(_LEARNER_HOOKS & set(self.hooks.active))
+
+    @property
+    def rollout_state(self) -> bool:
+        """Whether the rollout reads the method state (``intrinsic_reward_fn``)."""
+        return "intrinsic_reward_fn" in self.hooks.active
+
+    @property
+    def resident(self) -> bool:
+        """Whether the method state lives on the learner and never moves."""
+        return self.learner_state and not self.rollout_state
 
     @property
     def actor_metrics(self) -> bool:
@@ -418,7 +452,10 @@ class PPORNNState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax A
 
 
 def init_state(cfg: PPORNNConfig, key: jax.Array) -> PPORNNState:
-    """Fresh params on the learner; envs, GRU carry and method state on the actor."""
+    """Fresh params on the learner; envs and GRU carry on the actor.
+
+    The method state goes to the actor, or to the learner if only the update reads it.
+    """
     s = _setup(cfg)
     key, k_init, k_reset, k_method = jax.random.split(key, 4)
     with jax.default_device(s.learner):
@@ -438,6 +475,7 @@ def init_state(cfg: PPORNNConfig, key: jax.Array) -> PPORNNState:
             jnp.zeros(cfg.envs, bool),
             init_acc(cfg.envs, n_ach),
         )
+    with jax.default_device(s.learner if s.resident else s.actor):
         method_state = s.hooks.init_state_fn(k_method, spec)
     if s.mesh is not None:
         per_env = shard_envs(per_env, s.mesh)
@@ -450,7 +488,9 @@ def init_state(cfg: PPORNNConfig, key: jax.Array) -> PPORNNState:
         last_done=last_done,
         episode=episode,
         env_steps=jax.device_put(jnp.zeros((), jnp.int32), s.shared_at),
-        method_state=_on_actor(method_state, s, cfg.envs),
+        method_state=jax.device_put(method_state, s.learner)  # already there
+        if s.resident
+        else _on_actor(method_state, s, cfg.envs),
         key=jax.device_put(key, s.learner),
         key_act=jax.device_put(jax.random.fold_in(key, 1), s.shared_at),
         cfg=cfg,
@@ -467,12 +507,14 @@ def collect(
     """
     s = _setup(state.cfg)
     params = jax.device_put(state.train_state.params, s.shared_at)
+    # a state the rollout does not read stays where it is, out of the scan carry
+    on_actor = s.rollout_state or not s.learner_state
     carry = (
         state.hidden,
         state.obs,
         state.last_done,
         state.env_state,
-        _on_actor(state.method_state, s, state.cfg.envs),
+        _on_actor(state.method_state, s, state.cfg.envs) if on_actor else None,
         state.env_steps,
         state.episode,
         state.key_act,
@@ -486,7 +528,7 @@ def collect(
         last_done=last_done,
         episode=episode,
         env_steps=t,
-        method_state=ms,
+        method_state=ms if on_actor else state.method_state,
         key_act=key_act,
     )
     return new, batch, traj, ep
@@ -501,6 +543,8 @@ def train_chunk(
     """
     s = _setup(state.cfg)
     losses, eps, method = [], [], []
+    if s.resident:  # `learn` donates it: the caller's state stays valid
+        state = state.replace(method_state=jax.tree.map(jnp.copy, state.method_state))
     for _ in range(n_updates):
         state, batch, traj, ep = collect(state, s.with_traj)
         put = functools.partial(jax.device_put, device=s.learner)

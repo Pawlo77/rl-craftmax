@@ -1,6 +1,7 @@
 """Tests for the SIL window buffer: compression, sizes, window copy, masks, FIFO."""
 
 import dataclasses
+import functools
 import inspect
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from wut_murl_craftax.training.sil import (
     compress_obs,
     decompress_obs,
     init,
+    metrics,
     observe,
 )
 
@@ -68,9 +70,12 @@ def _traj(start: int, unlocks=(), dones=(), rewards=None) -> Traj:
 _observe = jax.jit(observe)
 
 
-def _run(cfg: SILConfig, n: int, last=None, dones=()) -> SILState:
-    """``n`` rollouts with no unlock, then ``last(start)`` as the next rollout."""
-    st = init(cfg, E, A, D)
+def _run(cfg: SILConfig, n: int, last=None, dones=(), **kw: Any) -> SILState:
+    """``n`` rollouts with no unlock, then ``last(start)`` as the next rollout.
+
+    ``kw`` goes to `init` (``gamma``, ``tiers``).
+    """
+    st = init(cfg, E, A, D, **kw)
     for k in range(n):
         st = _observe(st, _traj(k * T, dones=dones))
     return st if last is None else _observe(st, last(n * T))
@@ -199,7 +204,8 @@ def test_window_before_the_run_start_is_masked() -> None:
 
 def test_returns_are_discounted_and_cut_at_the_unlock() -> None:
     r = jnp.zeros((T, E)).at[2, 0].set(1.0).at[3, 0].set(5.0)
-    st = _run(SILConfig(gamma=0.9), 8, lambda s: _traj(s, [(130, 0, 0)], rewards=r))
+    last = functools.partial(_traj, unlocks=[(130, 0, 0)], rewards=r)
+    st = _run(SILConfig(), 8, last, gamma=0.9)
     ret = np.asarray(st.buffer["ret"][_stored(st)[0]])
     np.testing.assert_allclose(ret[-3:], [0.81, 0.9, 1.0], rtol=1e-6)
     # the reward of step 131, after the unlock, is cut off
@@ -213,6 +219,7 @@ def test_slot_keeps_the_newest_windows() -> None:
         st = _observe(st, _traj(16 * k, unlocks=[(s, 0, a) for s in ends]))
         last = sorted(int(x) for x in st.buffer["tail"][_stored(st), -1, 0])
         assert last == [[0], [18, 19], [19, 36]][k]
+        assert int(st.inserted) == [1, 2, 1][k]  # rows written, not candidates
     assert set(_stored(st)) == {2 * a, 2 * a + 1}
 
 
@@ -223,6 +230,40 @@ def test_insert_cap_takes_64_and_counts_the_overflow() -> None:
     st = _run(SILConfig(slots_windows=4), 0, lambda s: _traj(s, unlocks=unl))
     assert (int(st.inserted), int(st.overflow)) == (64, 6)
     assert len(_stored(st)) == 64
+    assert {"sil/inserted": 64, "sil/overflow": 6}.items() <= {
+        k: int(v) for k, v in metrics(st).items()
+    }.items()
+
+
+TIERS = tuple(a // 6 for a in range(A))
+"""Tiers 0-3 of the 22 achievements: 6, 6, 6 and 4 of them."""
+
+
+def test_insert_cap_keeps_the_highest_tiers_first() -> None:
+    """70 unlocks, 22 of tier 0: all 48 of tiers 1-3 are kept, and 16 of tier 0
+    picked at random (not the first 16 in time), the same pick every time."""
+    unl = [(0, i, a) for i in range(E) for a in range(A)]
+    unl += [(1, 0, a) for a in range(A)] + [(1, 1, a) for a in range(4)]
+    cfg = SILConfig(slots_windows=4)
+    runs = [
+        _run(cfg, 0, lambda s: _traj(s, unlocks=unl), tiers=TIERS) for _ in range(2)
+    ]
+    st = runs[0]
+    assert (int(st.inserted), int(st.overflow)) == (64, 6)
+    ach = np.asarray(st.buffer["ach"])[_stored(st)]
+    tiers = [TIERS[a] for a in ach]
+    assert tiers.count(0) == 16
+    assert len(tiers) - tiers.count(0) == sum(1 for *_, a in unl if TIERS[a] > 0)
+    np.testing.assert_array_equal(runs[1].buffer["stamp"], st.buffer["stamp"])
+    # the 6 dropped tier-0 unlocks are not simply the 6 latest of tier 0
+    tail = np.asarray(st.buffer["tail"])[_stored(st), -1, :2]  # step, env
+    tier0 = sorted((t, i, a) for t, i, a in unl if TIERS[a] == 0)
+    got = sorted(
+        (int(s), int(e), int(a))
+        for (s, e), a in zip(tail, ach, strict=True)
+        if TIERS[int(a)] == 0
+    )
+    assert got != tier0[:16]
 
 
 def test_single_layout_shares_one_fifo() -> None:
@@ -263,9 +304,16 @@ def test_state_round_trips_save_state(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "bad",
-    [{"slots_windows": 0}, {"layout": "shared"}, {"gamma": 0.0}, {"insert_cap": 0},
+    [{"slots_windows": 0}, {"layout": "shared"}, {"insert_cap": 0},
      {"lambda_sil": -1.0}],
 )  # fmt: skip
 def test_config_refuses_bad_values(bad: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match=next(iter(bad))):
         SILConfig(**bad)
+
+
+def test_init_refuses_a_bad_gamma_or_tier_count() -> None:
+    with pytest.raises(ValueError, match="gamma"):
+        init(SILConfig(), E, A, D, gamma=0.0)
+    with pytest.raises(ValueError, match="tiers"):
+        init(SILConfig(), E, A, D, tiers=(1,) * (A - 1))

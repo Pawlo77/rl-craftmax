@@ -7,8 +7,8 @@ achievement's FIFO slot, with returns cut at the unlock, then writes the rollout
 the staging ring. Observations are kept as a ``uint8`` map and a ``float32`` tail
 (`compress_obs`). `extra_loss` (``extra_loss_fn``, bound to the network) samples
 windows (`sample`), replays them from their stored GRU state and imitates the actions
-whose return beat the critic. `buffer_bytes` and `check_memory` size the state without
-building it. Design: [[Self-Imitation Learning design]].
+whose return beat the critic. `buffer_bytes` and `check_memory` size the state unbuilt;
+`METHOD` gives the ``sil`` entry's hooks. Design: [[Self-Imitation Learning design]].
 """
 
 import functools
@@ -17,10 +17,13 @@ from typing import Any, Literal, NamedTuple, get_args
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import struct
 
-from .hooks import HookSpec, Traj
-from .ppo_rnn import ActorCriticRNN, apply_network
+from ..evaluation.milestones import Game, constants, game_of
+from .hooks import HookFields, HookMethod, HookSpec, Traj
+from .ppo_rnn import ActorCriticRNN, PPORNNConfig, apply_network, build_network
+from .records import achievement_weights
 
 type Layout = Literal["slots", "single"]
 """One FIFO slot per achievement, or one shared FIFO of the same capacity (ablation)."""
@@ -29,6 +32,14 @@ MAP_DIMS: dict[int, int] = {8268: 8217, 1345: 1323}
 each observation, by observation length: Craftax 9 x 11 x 83, Classic 7 x 9 x 21."""
 CRAFTAX_OBS_DIM = 8268
 """Craftax-Symbolic observation length, the default of `buffer_bytes`."""
+OBS_DIMS: dict[Game, int] = {"craftax": CRAFTAX_OBS_DIM, "classic": 1345}
+"""Symbolic observation length by game, for the network SIL replays."""
+CONTROL_GAMMA, CONTROL_RNN_WIDTH = 0.99, 512
+"""gamma and GRU width of the PPO-RNN control: `init` defaults; `hooks` passes the
+run's."""
+TIE_SEED = 0
+"""Seed of the random order among unlocks of one tier when a rollout has more unlocks
+than ``insert_cap`` (folded with the next stamp, so each rollout draws anew)."""
 PRIORITY_EPS = 0.01
 """Added to a window's mean ``(R - V)_+``, so a caught-up window can still be drawn."""
 STEP_KEYS = ("map", "tail", "act", "rew", "done")
@@ -38,7 +49,7 @@ STEP_KEYS = ("map", "tail", "act", "rew", "done")
 
 @dataclass(frozen=True, slots=True)
 class SILConfig:
-    """Method knobs of SIL; ``gamma`` and ``rnn_width`` copy the control's."""
+    """Method knobs of SIL, its YAML keys; gamma and the GRU width are the control's."""
 
     lambda_sil: float = 1.0
     """Weight of the SIL loss against the PPO loss."""
@@ -55,20 +66,17 @@ class SILConfig:
     insert_cap: int = 64
     """Most windows copied per rollout; static, so shapes stay fixed."""
     layout: Layout = "slots"
-    gamma: float = 0.99
-    rnn_width: int = 512
 
     def __post_init__(self) -> None:
-        """Refuse sizes below 1, negative weights, gamma outside (0, 1], other layouts.
+        """Refuse sizes below 1, negative weights and other layouts.
 
         Raises:
             ValueError: Naming the field.
         """
-        sizes = ("slots_windows", "window", "batch", "insert_cap", "rnn_width")
+        sizes = ("slots_windows", "window", "batch", "insert_cap")
         bad = [n for n in sizes if getattr(self, n) < 1]
         bad += [n for n in ("lambda_sil", "beta_v", "alpha", "sil_steps")
                 if getattr(self, n) < 0]  # fmt: skip
-        bad += [] if 0 < self.gamma <= 1 else ["gamma"]
         bad += [] if self.layout in get_args(Layout.__value__) else ["layout"]
         if bad:
             msg = f"bad SIL settings {bad}: {[getattr(self, n) for n in bad]}"
@@ -109,10 +117,15 @@ class SILState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Largest priority so far, float32; new windows get it."""
     inserted: jax.Array
     overflow: jax.Array
-    """Windows copied, and unlocks over ``insert_cap`` dropped, by the last rollout."""
+    """Buffer rows written, and unlocks over ``insert_cap`` dropped, by the last
+    rollout (a slot that gets more than ``S`` keeps its newest ``S``)."""
     cfg: SILConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     slot_size: int = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     """Rows per slot: ``S`` (slots) or ``S * n_ach`` (single)."""
+    gamma: float = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
+    """Discount of the stored returns, the control's."""
+    tiers: tuple[int, ...] = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
+    """Tier rank of each achievement (0 lowest); the insertion cap keeps high ones."""
 
 
 def _map_dim(obs_dim: int) -> int:
@@ -148,16 +161,33 @@ def _steps(lead: tuple[int, ...], obs_dim: int) -> dict[str, jax.Array]:
     }
 
 
-def init(cfg: SILConfig, n_envs: int, n_ach: int, obs_dim: int) -> SILState:
+def init(
+    cfg: SILConfig,
+    n_envs: int,
+    n_ach: int,
+    obs_dim: int,
+    *,
+    gamma: float = CONTROL_GAMMA,
+    rnn_width: int = CONTROL_RNN_WIDTH,
+    tiers: tuple[float, ...] | None = None,
+) -> SILState:
     """Empty buffer of ``n_ach * S`` windows and an empty staging ring per env.
 
+    ``tiers``: a value per achievement, higher kept first by the insertion cap (the
+    reward weights); None ranks all alike.
+
     Raises:
-        ValueError: On an observation length outside `MAP_DIMS`.
+        ValueError: On an observation length outside `MAP_DIMS`, gamma outside (0, 1],
+            a GRU width below 1 or ``tiers`` not of length ``n_ach``.
     """
+    tiers = (0.0,) * n_ach if tiers is None else tiers
+    if not 0 < gamma <= 1 or rnn_width < 1 or len(tiers) != n_ach:
+        msg = f"need 0 < gamma <= 1, rnn_width >= 1, {n_ach} tiers: {gamma}, "
+        raise ValueError(msg + f"{rnn_width}, {len(tiers)} tiers")
     slot_size = cfg.slots_windows * (1 if cfg.layout == "slots" else n_ach)
     rows = n_ach * cfg.slots_windows
     rows += rows == n_envs  # one unused row, so the buffer is never taken as per-env
-    lw, h = cfg.window, cfg.rnn_width
+    lw, h = cfg.window, rnn_width
     staging = _steps((n_envs, lw), obs_dim)
     staging["done"] = jnp.ones((n_envs, lw), bool)  # no step before the run counts
     staging["hidden"] = jnp.zeros((n_envs, lw, h), jnp.float16)
@@ -180,14 +210,21 @@ def init(cfg: SILConfig, n_envs: int, n_ach: int, obs_dim: int) -> SILState:
         overflow=zero,
         cfg=cfg,
         slot_size=slot_size,
+        gamma=gamma,
+        tiers=tuple(int(r) for r in np.unique(tiers, return_inverse=True)[1]),
     )
 
 
 def buffer_bytes(
-    cfg: SILConfig, n_envs: int, n_ach: int, obs_dim: int = CRAFTAX_OBS_DIM
+    cfg: SILConfig,
+    n_envs: int,
+    n_ach: int,
+    obs_dim: int = CRAFTAX_OBS_DIM,
+    rnn_width: int = CONTROL_RNN_WIDTH,
 ) -> SILBytes:
     """Bytes `init` allocates, from its shapes alone (nothing is built)."""
-    st = jax.eval_shape(functools.partial(init, cfg, n_envs, n_ach, obs_dim))
+    build = functools.partial(init, cfg, n_envs, n_ach, obs_dim, rnn_width=rnn_width)
+    st = jax.eval_shape(build)
 
     def size(tree: object) -> int:
         return sum(x.size * x.dtype.itemsize for x in jax.tree.leaves(tree))
@@ -195,13 +232,22 @@ def buffer_bytes(
     return SILBytes(size(st.staging), size(st) - size(st.staging))
 
 
-def check_memory(cfg: SILConfig, spec: HookSpec, memory_limit_bytes: int) -> SILBytes:
+def check_memory(
+    cfg: SILConfig,
+    spec: HookSpec,
+    memory_limit_bytes: int,
+    rnn_width: int = CONTROL_RNN_WIDTH,
+) -> SILBytes:
     """`buffer_bytes` of the run in ``spec``, refused above the machine's limit.
+
+    A lower bound of the footprint: the state as allocated, without the copies an
+    update may make of it.
 
     Raises:
         ValueError: If staging plus buffer exceed ``memory_limit_bytes``.
     """
-    need = buffer_bytes(cfg, spec.n_envs, spec.n_achievements, spec.obs_dim)
+    dims = (spec.n_envs, spec.n_achievements, spec.obs_dim, rnn_width)
+    need = buffer_bytes(cfg, *dims)
     if need.total > memory_limit_bytes:
         msg = (
             f"SIL needs {need.total:,} B (staging {need.staging:,}, buffer "
@@ -280,15 +326,40 @@ def _write_staging(
     return new, (ptr + n) % lw
 
 
+def _capped(state: SILState, unl: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Flat indices of the unlocks kept under ``insert_cap``, oldest first, and live.
+
+    The highest tiers go first; within a tier the order is random (`TIE_SEED`), so
+    rare late unlocks are not crowded out by common early ones.
+    """
+    cap = state.cfg.insert_cap
+    key = jax.random.fold_in(jax.random.key(TIE_SEED), state.next_stamp)
+    # 2 x rank + [0, 1): float32 rounding never lifts a tier into the next one
+    rank = 2.0 * jnp.asarray(state.tiers, jnp.float32)
+    score = jnp.where(unl, rank + jax.random.uniform(key, unl.shape), -1.0)
+    k = min(cap, unl.size)
+    top, idx = jax.lax.top_k(score.ravel(), k)
+    idx = jnp.pad(
+        jnp.where(top >= 0, idx, unl.size), (0, cap - k), constant_values=unl.size
+    )
+    idx = jnp.sort(idx)  # time order: the slot FIFO keeps the newest
+    return jnp.minimum(idx, unl.size - 1), idx < unl.size
+
+
 def observe(state: SILState, traj: Traj) -> SILState:
     """Copy the window of each new unlock into its slot, then stage the rollout.
 
     Raises:
-        ValueError: If ``traj.hidden`` is not ``rnn_width`` wide.
+        ValueError: If ``traj.hidden`` is not the staged GRU width, or
+            ``traj.events.unlocked`` has another achievement count than the state.
     """
     cfg = state.cfg
-    if traj.hidden.shape[-1] != cfg.rnn_width:
-        msg = f"traj.hidden is {traj.hidden.shape[-1]} wide, rnn_width {cfg.rnn_width}"
+    width, n_ach = state.staging["hidden"].shape[-1], len(state.tiers)
+    if (traj.hidden.shape[-1], traj.events.unlocked.shape[-1]) != (width, n_ach):
+        msg = (
+            f"traj has hidden width {traj.hidden.shape[-1]} and "
+            f"{traj.events.unlocked.shape[-1]} achievements, the state {width}, {n_ach}"
+        )
         raise ValueError(msg)
     mp, tail = compress_obs(traj.obs)
     roll = {"map": mp, "tail": tail, "act": traj.actions.astype(jnp.uint8),
@@ -296,13 +367,12 @@ def observe(state: SILState, traj: Traj) -> SILState:
             "hidden": traj.hidden}  # fmt: skip
     unl = traj.events.unlocked
     total = jnp.sum(unl, dtype=jnp.int32)
-    flat = jnp.flatnonzero(unl, size=cfg.insert_cap, fill_value=0)
+    flat, live = _capped(state, unl)
     t, env, ach = jnp.unravel_index(flat, unl.shape)
-    live = jnp.arange(cfg.insert_cap) < total
     win = _windows(state.staging, state.ptr, roll, t, env)
     n = jnp.minimum(total, cfg.insert_cap)
     new = {k: win[k] for k in STEP_KEYS} | {
-        "ret": _returns(win["rew"], cfg.gamma),
+        "ret": _returns(win["rew"], state.gamma),
         "mask": _episode_mask(win["done"]),
         "h0": win["hidden"][:, 0],
         "prio": jnp.full(cfg.insert_cap, state.max_prio),
@@ -318,7 +388,7 @@ def observe(state: SILState, traj: Traj) -> SILState:
         ptr=ptr,
         buffer=buffer,
         next_stamp=state.next_stamp + n,
-        inserted=n,
+        inserted=jnp.sum(rows < state.buffer["stamp"].shape[0], dtype=jnp.int32),
         overflow=total - n,
     )
 
@@ -435,3 +505,45 @@ def extra_loss(
     }
     new = state.replace(buffer=buffer, max_prio=jnp.maximum(state.max_prio, top))
     return loss, (new, metrics)
+
+
+def metrics(state: SILState) -> dict[str, jax.Array]:
+    """The ``sil/...`` metrics of the buffer after the last rollout (``metrics_fn``)."""
+    return {"sil/inserted": state.inserted, "sil/overflow": state.overflow}
+
+
+def _init_hook(
+    cfg: SILConfig, base: PPORNNConfig, _key: jax.Array, spec: HookSpec
+) -> SILState:
+    """``init_state_fn``: `init` sized by ``spec``, with the control's gamma and GRU."""
+    tiers = tuple(float(w) for w in achievement_weights(base.env))
+    return init(
+        cfg,
+        spec.n_envs,
+        spec.n_achievements,
+        spec.obs_dim,
+        gamma=base.gamma,
+        rnn_width=base.rnn_width,
+        tiers=tiers,
+    )
+
+
+def hooks(cfg: SILConfig, base: PPORNNConfig) -> HookFields:
+    """The SIL hooks of a run config on the resolved PPO-RNN ``base`` config.
+
+    The extra loss replays windows with the network ``base`` trains; gamma and the GRU
+    width come from ``base`` too, so the method has no keys for them.
+    """
+    game = game_of(base.env)
+    net = build_network(base, len(constants(game).Action), OBS_DIMS[game])
+    return HookFields(
+        init_state_fn=functools.partial(_init_hook, cfg, base),
+        observe=observe,
+        extra_loss_fn=functools.partial(extra_loss, net),
+        extra_steps=cfg.sil_steps,
+        metrics_fn=metrics,
+    )
+
+
+METHOD = HookMethod(SILConfig, hooks)
+"""The method the ``sil`` registry entry builds its trainer with."""

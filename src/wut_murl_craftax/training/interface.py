@@ -13,7 +13,7 @@ from typing import Any, Protocol
 import jax
 
 from ..orchestration.runner import Trainer
-from . import count_bonus
+from . import count_bonus, sil
 from .ppo import PPOTrainer
 from .ppo_rnn import PPORNNConfig
 from .ppo_rnn import make_trainer as make_ppo_rnn_trainer
@@ -49,6 +49,7 @@ METHODS: Mapping[str, Trainer] = {
     "count-bonus-pqn-rnn": make_pqn_rnn_trainer(
         PQNRNNConfig(), method=count_bonus.METHOD
     ),
+    "sil": make_ppo_rnn_trainer(PPORNNConfig(), method=sil.METHOD),
 }
 """Registry name (`RunSpec.registry_name`, ``config["method"]``) -> trainer; each
 method plan adds its entry."""

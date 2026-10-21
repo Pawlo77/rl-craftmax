@@ -92,8 +92,10 @@ def replayed(rnn_cfg: Callable[..., PPORNNConfig]) -> dict[str, Any]:
     env, env_params = make_train_env(cfg)
     obs_dim = env.observation_space(env_params).shape[0]
     n_ach = len(achievement_names(cfg.env))
-    sil_cfg = SILConfig(gamma=cfg.gamma, rnn_width=cfg.rnn_width)
-    st = init(sil_cfg, cfg.envs, n_ach, obs_dim)
+    sil_cfg = SILConfig()
+    st = init(
+        sil_cfg, cfg.envs, n_ach, obs_dim, gamma=cfg.gamma, rnn_width=cfg.rnn_width
+    )
     n = sil_cfg.window // cfg.num_steps + 1
     trajs = []
     for k in range(n):
@@ -174,7 +176,8 @@ def test_empty_buffer_gives_zero_loss_and_finite_metrics(
 ) -> None:
     net, params, st = replayed["net"], replayed["params"], replayed["state"]
     envs = st.staging["done"].shape[0]
-    empty = init(st.cfg, envs, replayed["n_ach"], replayed["obs_dim"])
+    width = st.staging["hidden"].shape[-1]
+    empty = init(st.cfg, envs, replayed["n_ach"], replayed["obs_dim"], rnn_width=width)
     (loss, (st2, metrics)), g = _grad(net, params, empty, jax.random.key(5))
     assert float(loss) == 0.0
     assert _is_zero(g)

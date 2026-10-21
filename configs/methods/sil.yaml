@@ -1,0 +1,51 @@
+# Self-Imitation Learning on PPO-RNN (training/sil.py); the schema is documented in
+# orchestration/queue.py. `base` starts from the tuned control and sets every method knob,
+# so no code default decides a run: the paper's unweighted loss (lambda_sil 1), the
+# smallest buffer (S = 2 windows per slot) and one SIL step per update (K = 1), plus the
+# fixed settings of the design note. gamma and the GRU width are the control's: the hooks
+# copy them from the PPO-RNN config, so they are not keys here.
+base:
+  base_from: ppo-rnn.tuned
+  lambda_sil: 1.0
+  slots_windows: 2  # S
+  sil_steps: 1  # K
+  window: 128
+  beta_v: 0.01
+  batch: 32
+  alpha: 0.6
+  insert_cap: 64
+  layout: slots
+
+grid:
+  # Stage 1: lambda_sil x S x K, 3 x 2 x 3 = 18 configs, 3 seeds.
+  coarse:
+    - {name: l0.1-s2-k1, lambda_sil: 0.1, slots_windows: 2, sil_steps: 1}
+    - {name: l0.1-s2-k2, lambda_sil: 0.1, slots_windows: 2, sil_steps: 2}
+    - {name: l0.1-s2-k4, lambda_sil: 0.1, slots_windows: 2, sil_steps: 4}
+    - {name: l0.1-s8-k1, lambda_sil: 0.1, slots_windows: 8, sil_steps: 1}
+    - {name: l0.1-s8-k2, lambda_sil: 0.1, slots_windows: 8, sil_steps: 2}
+    - {name: l0.1-s8-k4, lambda_sil: 0.1, slots_windows: 8, sil_steps: 4}
+    - {name: l0.3-s2-k1, lambda_sil: 0.3, slots_windows: 2, sil_steps: 1}
+    - {name: l0.3-s2-k2, lambda_sil: 0.3, slots_windows: 2, sil_steps: 2}
+    - {name: l0.3-s2-k4, lambda_sil: 0.3, slots_windows: 2, sil_steps: 4}
+    - {name: l0.3-s8-k1, lambda_sil: 0.3, slots_windows: 8, sil_steps: 1}
+    - {name: l0.3-s8-k2, lambda_sil: 0.3, slots_windows: 8, sil_steps: 2}
+    - {name: l0.3-s8-k4, lambda_sil: 0.3, slots_windows: 8, sil_steps: 4}
+    - {name: l1-s2-k1, lambda_sil: 1.0, slots_windows: 2, sil_steps: 1}
+    - {name: l1-s2-k2, lambda_sil: 1.0, slots_windows: 2, sil_steps: 2}
+    - {name: l1-s2-k4, lambda_sil: 1.0, slots_windows: 2, sil_steps: 4}
+    - {name: l1-s8-k1, lambda_sil: 1.0, slots_windows: 8, sil_steps: 1}
+    - {name: l1-s8-k2, lambda_sil: 1.0, slots_windows: 8, sil_steps: 2}
+    - {name: l1-s8-k4, lambda_sil: 1.0, slots_windows: 8, sil_steps: 4}
+  # Stage 2 (`--expand-fine sil`): the 2 knobs whose stage-1 means spread most, each at
+  # the best value x {0.5, 1, 2}, crossed: 9 configs, the centre reused by run name. S and
+  # K round to integers >= 1; S stops at 16 (a 1.16 GB buffer), K at 8.
+  fine:
+    rule: {select: 2, combine: cross}
+    knobs:
+      - {key: lambda_sil, mul: [0.5, 1.0, 2.0]}
+      - {key: slots_windows, mul: [0.5, 1.0, 2.0], clip: [1, 16], integer: true}
+      - {key: sil_steps, mul: [0.5, 1.0, 2.0], clip: [1, 8], integer: true}
+
+# written by `--mark-tuned sil <hash8>`
+tuned: null

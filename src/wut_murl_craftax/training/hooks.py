@@ -62,8 +62,9 @@ class HookFields:
     init_state_fn: Callable[[jax.Array, HookSpec], State] | None = None
     """``(key, spec) -> state``, once in init; ``spec`` is `HookSpec` (Classic, 8 envs:
     8, 1345, 17, 22, budget). The state is one pytree in the train state, saved by
-    ``save_state``; it lives on the actor and moves to the learner and back each
-    update only while ``observe`` or ``extra_loss_fn`` is set."""
+    ``save_state``. It lives on the actor; with ``observe`` or ``extra_loss_fn`` it
+    moves to the learner and back each update, or stays on the learner for good when
+    ``intrinsic_reward_fn`` is unset (PPO-RNN; the rollout never reads it)."""
     intrinsic_reward_fn: (
         Callable[
             [State, Any, Any, jax.Array, jax.Array, jax.Array], tuple[jax.Array, State]
@@ -86,7 +87,8 @@ class HookFields:
     extra_steps: int = 0
     """K optimizer steps on ``extra_loss_fn`` after the PPO epochs, same Adam state; the
     learning-rate schedule is indexed by update, so K does not shift it. At 0 the extra
-    loss is not active, even when set."""
+    loss is not active, even when set. PPO-RNN skips a step whose gradient is all zero
+    (nothing to learn): params and Adam moments stay, only the step counts advance."""
     env_wrapper_fn: Callable[[Any, Any], tuple[Any, Any]] | None = None
     """``(env, env_params) -> (env, env_params)``, once when the training or the
     evaluation env is built. The wrapped env must proxy ``name`` and keep the Craftax
