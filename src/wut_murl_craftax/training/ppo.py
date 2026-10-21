@@ -18,21 +18,23 @@
 
 Adapted from Craftax_Baselines ``ppo.py`` (Michael Matthews, MIT; itself after
 purejaxrl by Chris Lu): same losses and defaults, no distrax, wandb or orbax.
-Rollouts run on ``device_roles().actor`` and updates on ``.learner`` (CPU actor and
-Metal learner on Apple silicon). Writes the run layout of ``training.records``.
+Rollouts run on ``device_roles().actor`` (env batch split over the CPU devices when
+there are several) and updates on ``.learner``. `PPOTrainer` is the runner's
+registry entry; `train` writes the run layout of ``training.records`` standalone.
 
 Usage: ``python -m wut_murl_craftax.training.ppo --steps 2e6 --out outputs/runs/c``
 """
 
 import argparse
 import dataclasses
+import functools
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import flax.linen as nn
 import jax
@@ -40,17 +42,26 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from craftax.craftax_env import make_craftax_env_from_name
+from flax import struct
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
-from ..orchestration import configure_runtime, device_roles
+from ..orchestration import configure_runtime, device_roles, env_mesh, shard_envs
 from .checkpoints import checkpoint_schedule, save_checkpoint
 from .records import RunLog, achievement_names
+
+if TYPE_CHECKING:  # the runner imports mlflow; the standalone CLI does not need it
+    from ..orchestration.runner import ChunkMetrics
 
 logger = logging.getLogger(__name__)
 
 Batch = dict[str, jax.Array]
 """Flat PPO batch: obs, act, logp, v, adv, tgt."""
+RESETS = ("optimistic", "auto")
+"""Accepted ``resets`` values."""
+_CLI_ONLY = {"seed", "n_ckpt"}
+"""`PPOConfig` fields the runner sets itself (key, checkpoints), never in a config."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +82,35 @@ class PPOConfig:
     ent: float = 0.01
     vf: float = 0.5
     max_grad_norm: float = 1.0
+    anneal_lr: bool = True
+    """Anneal the learning rate linearly to ``lr / n_updates`` at the last update."""
+    resets: str = "optimistic"
+    """Accepted and validated; envs auto-reset until PPO Task 2 vendors the
+    optimistic-reset wrapper."""
+    reset_ratio: int = 16
     n_ckpt: int = 12
     """Log-spaced checkpoints, plus update 0 and the last update."""
     seed: int = 0
+
+    def __post_init__(self) -> None:
+        """Reject reset modes the trainer does not know."""
+        if self.resets not in RESETS:
+            msg = f"resets must be one of {RESETS}, got {self.resets!r}"
+            raise ValueError(msg)
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> Self:
+        """Build from a run config: its keys, ``steps`` and the registry's ``method``.
+
+        Raises:
+            ValueError: On a key that is not a PPO setting.
+        """
+        keys = set(config) - {"method"}
+        names = {f.name for f in dataclasses.fields(cls)} - _CLI_ONLY
+        if unknown := sorted(keys - names):
+            msg = f"unknown PPO config keys: {unknown}"
+            raise ValueError(msg)
+        return cls(**{k: config[k] for k in keys})
 
     @property
     def batch(self) -> int:
@@ -226,77 +263,245 @@ def _make_learn(cfg: PPOConfig, net: ActorCritic) -> Callable[..., Any]:
     return learn
 
 
-def _init_state(
-    cfg: PPOConfig, net: ActorCritic, obs_dim: tuple[int, ...], key: jax.Array
-) -> TrainState:
-    """Adam with global-norm clipping and a linearly annealed learning rate."""
+def _optimizer(cfg: PPOConfig) -> optax.GradientTransformation:
+    """Adam with global-norm clipping and an optionally annealed learning rate."""
     per_update = cfg.minibatches * cfg.update_epochs
 
     def sched(count: jax.Array) -> jax.Array:
         return cfg.lr * (1.0 - (count // per_update) / cfg.n_updates)
 
-    tx = optax.chain(
-        optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(sched, eps=1e-5)
+    lr = sched if cfg.anneal_lr else cfg.lr
+    return optax.chain(
+        optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(lr, eps=1e-5)
     )
-    params = net.init(key, jnp.zeros((1, *obs_dim)))
-    state = TrainState.create(apply_fn=net.apply, params=params, tx=tx)  # type: ignore[no-untyped-call]  # flax API
-    return cast(TrainState, state)
+
+
+@dataclass(frozen=True, slots=True)
+class _Setup:
+    """Everything built once per config: network, env, optimizer, jitted steps."""
+
+    net: ActorCritic
+    env: Any
+    env_params: Any
+    tx: optax.GradientTransformation
+    rollout: Callable[..., Any]
+    learn: Callable[..., Any]
+    learner: jax.Device
+    actor: jax.Device
+    mesh: Mesh | None
+    """CPU ``envs`` mesh the env batch is split over, if there are several CPUs."""
+    shared_at: jax.Device | NamedSharding
+    """Placement of params and keys the rollout reads: the actor, or replicated."""
+
+
+@functools.cache
+def _setup(cfg: PPOConfig) -> _Setup:
+    """Cached per config so every chunk and resume reuses the compiled steps.
+
+    Raises:
+        ValueError: If the env batch does not split over the CPU devices.
+    """
+    roles = device_roles()
+    net, env, env_params = make_network(cfg.env, cfg.width)
+    names = achievement_names(cfg.env)
+    mesh: Mesh | None = None
+    shared_at: jax.Device | NamedSharding = roles.actor
+    n_cpu = len(jax.devices("cpu"))
+    if roles.actor.platform == "cpu" and n_cpu > 1:
+        if cfg.envs % n_cpu:
+            msg = f"{cfg.envs} envs do not split over {n_cpu} CPU devices"
+            raise ValueError(msg)
+        mesh = env_mesh()
+        shared_at = NamedSharding(mesh, PartitionSpec())  # type: ignore[no-untyped-call]
+    return _Setup(
+        net,
+        env,
+        env_params,
+        _optimizer(cfg),
+        _make_rollout(cfg, net, env, env_params, names),
+        _make_learn(cfg, net),
+        roles.learner,
+        roles.actor,
+        mesh,
+        shared_at,
+    )
+
+
+class PPOState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
+    """Full PPO training state: one pytree that `save_state` round-trips."""
+
+    train_state: TrainState
+    env_state: Any
+    obs: jax.Array
+    ep_ret: jax.Array
+    """Return of each env's running episode."""
+    ep_len: jax.Array
+    key: jax.Array
+    """Learner key (minibatch shuffles)."""
+    key_act: jax.Array
+    """Actor key (actions, env steps)."""
+    cfg: PPOConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
+
+
+def init_state(cfg: PPOConfig, key: jax.Array) -> PPOState:
+    """Fresh params and optimizer on the learner, reset env batch on the actor."""
+    s = _setup(cfg)
+    key, k_init, k_reset = jax.random.split(key, 3)
+    obs_dim = s.env.observation_space(s.env_params).shape
+    with jax.default_device(s.learner):
+        params = s.net.init(k_init, jnp.zeros((1, *obs_dim)))
+        ts = TrainState.create(apply_fn=s.net.apply, params=params, tx=s.tx)  # type: ignore[no-untyped-call]  # flax API
+        # an array from the start, as after an update: Python 0 would make the fresh
+        # state (and the load_state template) differ from a trained one in leaf type
+        ts = ts.replace(step=jnp.zeros((), jnp.int32))
+    with jax.default_device(s.actor):
+        reset_keys = jax.random.split(k_reset, cfg.envs)
+        obs, st = jax.vmap(s.env.reset, in_axes=(0, None))(reset_keys, s.env_params)
+        ep_ret, ep_len = jnp.zeros(cfg.envs), jnp.zeros(cfg.envs, jnp.int32)
+    if s.mesh is not None:
+        obs, st, ep_ret, ep_len = shard_envs((obs, st, ep_ret, ep_len), s.mesh)
+    return PPOState(
+        train_state=cast(TrainState, ts),
+        env_state=st,
+        obs=obs,
+        ep_ret=ep_ret,
+        ep_len=ep_len,
+        key=jax.device_put(key, s.learner),
+        key_act=jax.device_put(jax.random.fold_in(key, 1), s.shared_at),
+        cfg=cfg,
+    )
+
+
+def train_chunk(state: PPOState, n_updates: int) -> tuple[PPOState, "ChunkMetrics"]:
+    """Run ``n_updates`` rollout-and-update steps; metrics stacked per update."""
+    s = _setup(state.cfg)
+    ts, key = state.train_state, state.key
+    carry = (state.env_state, state.obs, state.ep_ret, state.ep_len, state.key_act)
+    losses, eps = [], []
+    for _ in range(n_updates):
+        params_act = jax.device_put(ts.params, s.shared_at)
+        *carry, flat, ep = s.rollout(params_act, *carry)
+        ts, key, loss = s.learn(ts, jax.device_put(flat, s.learner), key)
+        losses.append(loss)
+        eps.append(ep)
+    st, obs, ep_ret, ep_len, key_act = carry
+    new = state.replace(
+        train_state=ts,
+        env_state=st,
+        obs=obs,
+        ep_ret=ep_ret,
+        ep_len=ep_len,
+        key=key,
+        key_act=key_act,
+    )
+    metrics: ChunkMetrics = {
+        "losses": jnp.stack(losses),
+        "done": jnp.stack([e["d"] for e in eps]).astype(bool),
+        "ach": jnp.stack([e["ach"] for e in eps]),
+        "ret": jnp.stack([e["ret"] for e in eps]),
+        "length": jnp.stack([e["len"] for e in eps]),
+    }
+    return new, metrics
+
+
+@dataclass(frozen=True, slots=True)
+class PPOPolicy:
+    """Feed-forward actor: the carry is an empty tuple."""
+
+    net: ActorCritic
+
+    def init_carry(self, n: int) -> tuple[()]:
+        """No recurrent state, whatever the number of envs."""
+        del n
+        return ()
+
+    def step(
+        self,
+        params: Any,
+        carry: tuple[()],
+        obs: jax.Array,
+        key: jax.Array,
+        greedy: bool | jax.Array,
+    ) -> tuple[jax.Array, tuple[()]]:
+        """Sampled actions, or the most likely ones when ``greedy``."""
+        logits, _ = policy_value(self.net, params, obs)
+        sampled = jax.random.categorical(key, logits)
+        return jnp.where(greedy, logits.argmax(-1), sampled), carry
+
+
+class PPOTrainer:
+    """The ``ppo`` registry entry (`orchestration.runner.Trainer`)."""
+
+    def steps_per_update(self, config: Mapping[str, Any]) -> int:
+        """Rollout batch: ``envs * num_steps``."""
+        return PPOConfig.from_config(config).batch
+
+    def init(self, config: Mapping[str, Any], key: jax.Array) -> PPOState:
+        """Validated config to the initial state.
+
+        Raises:
+            ValueError: On an unknown key, or no ``steps`` while ``anneal_lr``.
+        """
+        cfg = PPOConfig.from_config(config)
+        if cfg.anneal_lr and "steps" not in config:
+            msg = "PPO with anneal_lr needs the budget: pass `steps` in the config"
+            raise ValueError(msg)
+        if cfg.resets == "optimistic":
+            logger.warning("resets=optimistic not vendored yet: envs auto-reset")
+        return init_state(cfg, key)
+
+    def train_chunk(
+        self, state: PPOState, n_updates: int
+    ) -> tuple[PPOState, "ChunkMetrics"]:
+        """See `train_chunk`."""
+        return train_chunk(state, n_updates)
+
+    def params(self, state: PPOState) -> Any:
+        """Actor-critic params (the ``ckpt/`` payload)."""
+        return state.train_state.params
+
+    def policy(self, state: PPOState) -> PPOPolicy:
+        """The acting policy of this config's network."""
+        return PPOPolicy(_setup(state.cfg).net)
 
 
 def train(cfg: PPOConfig, out: Path) -> Path:
     """Train, writing ``config.json``, ``metrics.npz``, ``episodes.npz``, ``ckpt/``."""
-    roles = device_roles()
-    net, env, env_params = make_network(cfg.env, cfg.width)
-    names = achievement_names(cfg.env)
+    state = init_state(cfg, jax.random.key(cfg.seed))
+    s, names = _setup(cfg), achievement_names(cfg.env)
     ckpts = checkpoint_schedule(cfg.n_updates, cfg.n_ckpt)
     out.mkdir(parents=True, exist_ok=True)
     meta = dataclasses.asdict(cfg) | {
         "n_updates": cfg.n_updates,
         "batch": cfg.batch,
         "achievements": names,
-        "n_actions": net.n_actions,
+        "n_actions": s.net.n_actions,
         "ckpt_updates": ckpts,
-        "devices": {"actor": str(roles.actor), "learner": str(roles.learner)},
+        "devices": {"actor": str(s.actor), "learner": str(s.learner)},
     }
     (out / "config.json").write_text(json.dumps(meta, indent=1))
-    key, k_init, k_reset = jax.random.split(jax.random.key(cfg.seed), 3)
-    obs_dim = env.observation_space(env_params).shape
-    with jax.default_device(roles.learner):
-        ts = _init_state(cfg, net, obs_dim, k_init)
-    with jax.default_device(roles.actor):
-        reset_keys = jax.random.split(k_reset, cfg.envs)
-        obs, st = jax.vmap(env.reset, in_axes=(0, None))(reset_keys, env_params)
-        ep_ret, ep_len = jnp.zeros(cfg.envs), jnp.zeros(cfg.envs, jnp.int32)
-        key_act = jax.device_put(jax.random.fold_in(key, 1), roles.actor)
-    key = jax.device_put(key, roles.learner)
-    rollout, learn = (
-        _make_rollout(cfg, net, env, env_params, names),
-        _make_learn(cfg, net),
-    )
     log, t0 = RunLog(out, cfg.env, names), time.time()
-    save_checkpoint(out, 0, 0, 0.0, ts.params)
+    save_checkpoint(out, 0, 0, 0.0, state.train_state.params)
     for u in range(1, cfg.n_updates + 1):
-        params_act = jax.device_put(ts.params, roles.actor)
-        st, obs, ep_ret, ep_len, key_act, flat, ep = rollout(
-            params_act, st, obs, ep_ret, ep_len, key_act
-        )
-        ts, key, losses = learn(ts, jax.device_put(flat, roles.learner), key)
-        ep = jax.tree.map(np.asarray, ep)
+        state, metrics = train_chunk(state, 1)
+        m = {k: np.asarray(v)[0] for k, v in metrics.items()}
         log.add_update(
             u,
             u * cfg.batch,
             time.time() - t0,
-            np.asarray(losses),
-            ep["d"],
-            ep["ach"],
-            ep["ret"],
-            ep["len"],
+            m["losses"],
+            m["done"],
+            m["ach"],
+            m["ret"],
+            m["length"],
         )
         if u in ckpts:
-            save_checkpoint(out, u, u * cfg.batch, time.time() - t0, ts.params)
+            wall = time.time() - t0
+            save_checkpoint(out, u, u * cfg.batch, wall, state.train_state.params)
             log.flush()  # a killed run keeps its curves up to the last checkpoint
-            sps = u * cfg.batch / (time.time() - t0)
-            logger.info("update %d/%d, %.0f steps/s", u, cfg.n_updates, sps)
+            logger.info(
+                "update %d/%d, %.0f steps/s", u, cfg.n_updates, u * cfg.batch / wall
+            )
     return out
 
 
@@ -304,8 +509,12 @@ def main(argv: list[str] | None = None) -> None:
     """Command line: one ``--flag`` per ``PPOConfig`` field plus ``--out``."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     for f in dataclasses.fields(PPOConfig):
-        kind = float if f.type in (float, "float") or f.name == "steps" else f.type
         flag = f"--{f.name.replace('_', '-')}"
+        if f.type in (bool, "bool"):
+            action = argparse.BooleanOptionalAction
+            parser.add_argument(flag, action=action, default=f.default)
+            continue
+        kind = float if f.type in (float, "float") or f.name == "steps" else f.type
         parser.add_argument(flag, type=kind, default=f.default)
     parser.add_argument("--out", type=Path, default=Path("outputs/runs/ppo"))
     args = vars(parser.parse_args(argv))

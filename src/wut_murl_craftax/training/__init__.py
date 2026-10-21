@@ -1,4 +1,4 @@
-"""Training loops and records: PPO, checkpoints, resume state, metrics, episodes."""
+"""Training: method registry, PPO, checkpoints, resume state, metrics, episodes."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -12,7 +12,8 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         save_checkpoint,
         save_state,
     )
-    from .ppo import ActorCritic, PPOConfig, make_network, train
+    from .interface import METHODS, Policy
+    from .ppo import ActorCritic, PPOConfig, PPOTrainer, make_network, train
     from .records import (
         Episodes,
         RunLog,
@@ -25,9 +26,12 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     )
 
 _EXPORTS: dict[str, str] = {
+    "METHODS": "interface",
     "ActorCritic": "ppo",
     "Episodes": "records",
     "PPOConfig": "ppo",
+    "PPOTrainer": "ppo",
+    "Policy": "interface",
     "RunLog": "records",
     "TrainingMetrics": "records",
     "achievement_names": "records",
@@ -48,9 +52,12 @@ _EXPORTS: dict[str, str] = {
 submodule do not import it twice."""
 
 __all__ = [
+    "METHODS",
     "ActorCritic",
     "Episodes",
     "PPOConfig",
+    "PPOTrainer",
+    "Policy",
     "RunLog",
     "TrainingMetrics",
     "achievement_names",

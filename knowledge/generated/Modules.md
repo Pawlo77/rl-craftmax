@@ -21,9 +21,10 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 428 |  |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 115 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 220 | [[orchestration]] |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training loops and records: PPO, checkpoints, resume state, metrics, episodes. | 78 | [[training]] |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training: method registry, PPO, checkpoints, resume state, metrics, episodes. | 85 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
-| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 321 | [[training]] |
+| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 36 |  |
+| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 530 | [[training]] |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 181 | [[training]] |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 100 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |
@@ -48,3 +49,4 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/orchestration/profiles.py]]
 - [[src/wut_murl_craftax/orchestration/queue.py]]
 - [[src/wut_murl_craftax/orchestration/runner.py]]
+- [[src/wut_murl_craftax/training/interface.py]]
