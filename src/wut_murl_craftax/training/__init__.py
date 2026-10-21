@@ -56,6 +56,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_episodes,
         load_metrics,
     )
+    from .sil import SILConfig, SILState
     from .wrappers import (
         BatchEnvWrapper,
         GymnaxWrapper,
@@ -92,6 +93,8 @@ _EXPORTS: dict[str, str] = {
     "RNNQNetwork": "pqn_rnn",
     "ResolvedHooks": "hooks",
     "RunLog": "records",
+    "SILConfig": "sil",
+    "SILState": "sil",
     "TrainingMetrics": "records",
     "Traj": "hooks",
     "achievement_names": "records",
@@ -149,6 +152,8 @@ __all__ = [
     "RNNQNetwork",
     "ResolvedHooks",
     "RunLog",
+    "SILConfig",
+    "SILState",
     "TrainingMetrics",
     "Traj",
     "achievement_names",
