@@ -100,3 +100,15 @@ def test_warm_texture_cache_writes_both_caches() -> None:
     paths = warm_texture_cache()
     assert len(paths) == 2
     assert all(path.is_file() and path.stat().st_size > 0 for path in paths)
+
+
+def test_host_devices_split_the_cpu_after_the_package_imports() -> None:
+    """Importing the runtime and the training records leaves XLA_FLAGS open."""
+    code = (
+        "import jax\n"
+        "from wut_murl_craftax.orchestration.runtime import configure_runtime\n"
+        "from wut_murl_craftax.training import records\n"
+        "configure_runtime(host_devices=3)\n"
+        "print(len(jax.devices('cpu')), len(records.achievement_names('Craftax-v1')))"
+    )
+    assert _run(code, XLA_FLAGS="").split()[-2:] == ["3", "67"]

@@ -5,13 +5,12 @@ Layout of a run directory (see ``knowledge/visualisation/Recording training data
 finished training episode, achievements bit-packed) and ``ckpt/``.
 """
 
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from craftax.craftax import constants as craftax_constants
-from craftax.craftax_classic import constants as classic_constants
 
 BASE_COLUMNS = ("update", "env_steps", "wall_s", "n_episodes", "return", "length")
 """Leading columns of ``metrics.npz``; the losses and ``ach/<name>`` columns follow."""
@@ -24,17 +23,27 @@ def is_classic(env_name: str) -> bool:
     return "Classic" in env_name
 
 
+def _constants(env_name: str) -> Any:
+    """Craftax constants of ``env_name``'s game, imported on first use.
+
+    Importing them builds JAX arrays, which starts the backends; deferring it keeps
+    ``configure_runtime`` able to split the CPU after this module is imported.
+    """
+    game = "craftax_classic" if is_classic(env_name) else "craftax"
+    return importlib.import_module(f"craftax.{game}.constants")
+
+
 def achievement_names(env_name: str) -> list[str]:
     """Lower-case achievement names in enum order (22 Classic, 67 Craftax)."""
-    consts = classic_constants if is_classic(env_name) else craftax_constants
-    return [a.name.lower() for a in consts.Achievement]
+    return [a.name.lower() for a in _constants(env_name).Achievement]
 
 
 def achievement_weights(env_name: str) -> np.ndarray:
     """Reward per achievement: 1 each in Classic, tier rewards (sum 226) in Craftax."""
+    consts = _constants(env_name)
     if is_classic(env_name):
-        return np.ones(len(classic_constants.Achievement))
-    return np.asarray(craftax_constants.ACHIEVEMENT_REWARD_MAP, float)
+        return np.ones(len(consts.Achievement))
+    return np.asarray(consts.ACHIEVEMENT_REWARD_MAP, float)
 
 
 class RunLog:

@@ -4,14 +4,13 @@ Measured effect of each setting: ``knowledge/craftax/Craftax runtime setup.md``.
 """
 
 import argparse
+import importlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import jax
-from craftax.craftax import constants as craftax_constants
-from craftax.craftax_classic import constants as classic_constants
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 DEFAULT_CACHE_DIR = Path(".cache/jax")
@@ -91,12 +90,14 @@ def warm_texture_cache() -> list[Path]:
     Craftax builds them on the first pixel render and stores them inside the
     installed package, so a fresh virtual environment starts without them.
     """
-    for module in (craftax_constants, classic_constants):
+    paths = []
+    for game in ("craftax", "craftax_classic"):
+        # imported here: the constants build JAX arrays on import, which starts the
+        # backends and would freeze XLA_FLAGS before configure_runtime splits the CPU
+        module = importlib.import_module(f"craftax.{game}.constants")
         module.load_all_textures()
-    return [
-        Path(craftax_constants.TEXTURE_CACHE_FILE),
-        Path(classic_constants.TEXTURE_CACHE_FILE),
-    ]
+        paths.append(Path(module.TEXTURE_CACHE_FILE))
+    return paths
 
 
 def main(argv: list[str] | None = None) -> None:
