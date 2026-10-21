@@ -28,8 +28,9 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: method registry, PPO, checkpoints, resume state, metrics, episodes. | 85 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 36 |  |
-| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 530 | [[training]] |
+| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 543 | [[training]] |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 180 | [[training]] |
+| [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 |  |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 100 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/curves.py]] | Animated training curves: % of max reward, achievements unlocked, success rates. | 151 | [[visualisation]] |
@@ -58,3 +59,4 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/orchestration/runner.py]]
 - [[src/wut_murl_craftax/orchestration/store.py]]
 - [[src/wut_murl_craftax/training/interface.py]]
+- [[src/wut_murl_craftax/training/wrappers.py]]

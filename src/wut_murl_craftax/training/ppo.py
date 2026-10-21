@@ -18,6 +18,7 @@
 
 Adapted from Craftax_Baselines ``ppo.py`` (Michael Matthews, MIT; itself after
 purejaxrl by Chris Lu): same losses and defaults, no distrax, wandb or orbax.
+Envs reset optimistically through the vendored ``wrappers``, as the original.
 Rollouts run on ``device_roles().actor`` (env batch split over the CPU devices when
 there are several) and updates on ``.learner``. `PPOTrainer` is the runner's
 registry entry; `train` writes the run layout of ``training.records`` standalone.
@@ -50,6 +51,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from ..orchestration import configure_runtime, device_roles, env_mesh, shard_envs
 from .checkpoints import checkpoint_schedule, save_checkpoint
 from .records import RunLog, achievement_names
+from .wrappers import BatchEnvWrapper, LogWrapper, OptimisticResetVecEnvWrapper
 
 if TYPE_CHECKING:  # the runner imports mlflow; the standalone CLI does not need it
     from ..orchestration.runner import ChunkMetrics
@@ -85,17 +87,22 @@ class PPOConfig:
     anneal_lr: bool = True
     """Anneal the learning rate linearly to ``lr / n_updates`` at the last update."""
     resets: str = "optimistic"
-    """Accepted and validated; envs auto-reset until PPO Task 2 vendors the
-    optimistic-reset wrapper."""
+    """``optimistic``: Craftax_Baselines' optimistic resets; ``auto``: Craftax's own
+    auto-reset (the debug comparison)."""
     reset_ratio: int = 16
+    """Envs per new world of an optimistic reset; the wrapper gets ``min(it, envs)``."""
     n_ckpt: int = 12
     """Log-spaced checkpoints, plus update 0 and the last update."""
     seed: int = 0
 
     def __post_init__(self) -> None:
-        """Reject reset modes the trainer does not know."""
+        """Reject unknown reset modes and reset ratios that are not positive ints."""
         if self.resets not in RESETS:
             msg = f"resets must be one of {RESETS}, got {self.resets!r}"
+            raise ValueError(msg)
+        ratio = self.reset_ratio
+        if isinstance(ratio, bool) or not isinstance(ratio, int) or ratio < 1:
+            msg = f"reset_ratio must be a positive int, got {ratio!r}"
             raise ValueError(msg)
 
     @classmethod
@@ -146,10 +153,20 @@ class ActorCritic(nn.Module):
 def make_network(
     env_name: str, width: int, auto_reset: bool = True
 ) -> tuple[ActorCritic, Any, Any]:
-    """Return ``(net, env, env_params)`` for an eval or training run."""
+    """Return ``(net, env, env_params)`` for an evaluation run."""
     env = make_craftax_env_from_name(env_name, auto_reset=auto_reset)
     params = env.default_params
     return ActorCritic(env.action_space(params).n, width), env, params
+
+
+def make_train_env(cfg: PPOConfig) -> tuple[Any, Any]:
+    """Batched training env and its params, built as Craftax_Baselines ``ppo.py``."""
+    optimistic = cfg.resets == "optimistic"
+    env = LogWrapper(make_craftax_env_from_name(cfg.env, auto_reset=not optimistic))
+    if optimistic:
+        ratio = min(cfg.reset_ratio, cfg.envs)
+        return OptimisticResetVecEnvWrapper(env, cfg.envs, ratio), env.default_params
+    return BatchEnvWrapper(env, cfg.envs), env.default_params
 
 
 def policy_value(
@@ -163,7 +180,6 @@ def _make_rollout(
     cfg: PPOConfig, net: ActorCritic, env: Any, env_params: Any, names: list[str]
 ) -> Callable[..., Any]:
     """Jitted rollout of ``num_steps`` x ``envs`` with GAE; returns the flat batch."""
-    step_envs = jax.vmap(env.step, in_axes=(0, 0, 0, None))
 
     def step(c: tuple[Any, ...], _: None) -> tuple[tuple[Any, ...], dict[str, Any]]:
         params, st, obs, ep_ret, ep_len, key = c
@@ -171,8 +187,7 @@ def _make_rollout(
         logits, v = policy_value(net, params, obs)
         act = jax.random.categorical(k_a, logits)
         logp = jax.nn.log_softmax(logits)[jnp.arange(cfg.envs), act]
-        keys = jax.random.split(k_s, cfg.envs)
-        obs2, st2, r, d, info = step_envs(keys, st, act, env_params)
+        obs2, st2, r, d, info = env.step(k_s, st, act, env_params)
         # Craftax reports 100 * achieved, and only on the done step.
         ach = jnp.stack([info[f"Achievements/{n}"] for n in names], -1) > 0
         ep_ret2, ep_len2 = ep_ret + r, ep_len + 1
@@ -302,7 +317,8 @@ def _setup(cfg: PPOConfig) -> _Setup:
         ValueError: If the env batch does not split over the CPU devices.
     """
     roles = device_roles()
-    net, env, env_params = make_network(cfg.env, cfg.width)
+    env, env_params = make_train_env(cfg)
+    net = ActorCritic(env.action_space(env_params).n, cfg.width)
     names = achievement_names(cfg.env)
     mesh: Mesh | None = None
     shared_at: jax.Device | NamedSharding = roles.actor
@@ -355,8 +371,7 @@ def init_state(cfg: PPOConfig, key: jax.Array) -> PPOState:
         # state (and the load_state template) differ from a trained one in leaf type
         ts = ts.replace(step=jnp.zeros((), jnp.int32))
     with jax.default_device(s.actor):
-        reset_keys = jax.random.split(k_reset, cfg.envs)
-        obs, st = jax.vmap(s.env.reset, in_axes=(0, None))(reset_keys, s.env_params)
+        obs, st = s.env.reset(k_reset, s.env_params)
         ep_ret, ep_len = jnp.zeros(cfg.envs), jnp.zeros(cfg.envs, jnp.int32)
     if s.mesh is not None:
         obs, st, ep_ret, ep_len = shard_envs((obs, st, ep_ret, ep_len), s.mesh)
@@ -446,8 +461,6 @@ class PPOTrainer:
         if cfg.anneal_lr and "steps" not in config:
             msg = "PPO with anneal_lr needs the budget: pass `steps` in the config"
             raise ValueError(msg)
-        if cfg.resets == "optimistic":
-            logger.warning("resets=optimistic not vendored yet: envs auto-reset")
         return init_state(cfg, key)
 
     def train_chunk(
