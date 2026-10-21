@@ -33,6 +33,7 @@ from wut_murl_craftax.visualisation.eval_rollouts import (
     evaluate,
     evaluate_spec,
     load_eval,
+    network_outputs,
     replay_episode,
     rollout_seeds,
     stored_episode,
@@ -320,3 +321,49 @@ def test_as_rollout_replays_to_the_same_frames() -> None:
     assert np.array_equal(frames, episode_frames(run, 4, seed))
     assert r.features.shape[0] == r.steps + 1
     assert r.policy == "ppo"
+
+
+PQN_CONFIG = {"method": "pqn-rnn", "env": ENV, "envs": 8, "num_steps": 8}
+"""A tiny PQN-RNN run config as the runner writes it (no ``steps``)."""
+PQN_CONFIG |= {"hidden": 32, "minibatches": 2, "epochs": 1}
+
+
+@pytest.fixture
+def pqn_run(tmp_path: Path) -> Path:
+    """4 PQN-RNN updates on Classic with checkpoints 0 and 4, as the runner saves."""
+    trainer, run = METHODS["pqn-rnn"], tmp_path / "pqn"
+    run.mkdir()
+    (run / "config.json").write_text(json.dumps(PQN_CONFIG))
+    spu = trainer.steps_per_update(PQN_CONFIG)
+    state = trainer.init(PQN_CONFIG | {"steps": 4 * spu}, jax.random.key(0))
+    save_checkpoint(run, 0, 0, 0.0, trainer.params(state))
+    state, _ = trainer.train_chunk(state, 4)
+    save_checkpoint(run, 4, 4 * spu, 1.0, trainer.params(state))
+    return run
+
+
+def test_pqn_rnn_checkpoints_evaluate_in_both_modes_at_their_epsilon(
+    pqn_run: Path,
+) -> None:
+    """Variables with BatchRenorm statistics and eps come from ``ckpt/``; the
+    stochastic mode acts at the checkpoint's epsilon (1 at update 0, 0.005 at 4)."""
+    run = EvalRun.load(pqn_run)
+    first, last = run.params(0), run.params(4)
+    assert set(last["variables"]) == {"params", "batch_stats"}
+    assert float(first["eps"]) == 1.0
+    np.testing.assert_allclose(float(last["eps"]), 0.005, rtol=1e-6)
+    for mode in MODES:
+        evaluate(run, [0, 4], mode, seeds=EVAL_SEEDS)
+    for u in (0, 4):
+        for greedy in (False, True):
+            ev = load_eval(pqn_run, u, greedy)
+            assert set(ev) == FILE_KEYS
+            assert str(ev["method"]) == "pqn-rnn"
+    stochastic, greedy = (load_eval(pqn_run, 0, g)["actions"] for g in (False, True))
+    assert (stochastic != greedy).any()
+    # at epsilon 0 the stochastic mode is the greedy one, so it reads params["eps"]
+    calm = rollout_seeds(run, first | {"eps": np.float32(0.0)}, EVAL_SEEDS, False)
+    assert calm is not None
+    np.testing.assert_array_equal(calm["actions"], greedy)
+    with pytest.raises(NotImplementedError, match="pqn-rnn"):
+        network_outputs(run, 4, np.zeros((1, 1)), np.zeros(1), np.zeros(1), True)
