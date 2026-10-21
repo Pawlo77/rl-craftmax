@@ -1054,22 +1054,53 @@ FLAG_NAMES = ("low_food", "low_drink", "low_energy", "low_health")
 
 
 def greedy_table(params: Mapping[str, Any]) -> dict[str, np.ndarray]:
-    """Columns per decided key: ``key``, fields, ``greedy_skill``, ``value``.
+    """Columns per stored key: ``key``, fields, ``greedy_skill``, ``value``.
 
-    The greedy skill is the row's unmasked argmax: start conditions need the
-    observation, which a row does not keep. Fields are `progress_key.FIELDS` (Classic
+    The stored keys are the rows training moved off ``q_init`` (`sparse_table`). The
+    greedy skill is the row's unmasked argmax: start conditions need the observation,
+    which a row does not keep. Fields are `progress_key.FIELDS` (Classic
     `CLASSIC_FIELDS`), then `FLAG_NAMES` unless the run left the flags out.
     """
-    seen, q = np.asarray(params["seen"]), np.asarray(params["q"])
-    keys = np.flatnonzero(seen[:, 0] >= 0)
-    base = CLASSIC_FIELDS if seen.shape[1] in (12, 16) else FIELDS
-    names = [*base, *FLAG_NAMES][: seen.shape[1]]
-    rows = q[keys]
-    cols = {"key": keys.astype(np.int32)}
-    cols |= {n: seen[keys, i] for i, n in enumerate(names)}
-    cols["greedy_skill"] = np.array([SKILLS[i].name for i in rows.argmax(1)], object)
-    cols["value"] = rows.max(1)
+    fields_ = np.asarray(params["fields"])
+    q = np.asarray(params["q_rows"])
+    base = CLASSIC_FIELDS if fields_.shape[1] in (12, 16) else FIELDS
+    names = [*base, *FLAG_NAMES][: fields_.shape[1]]
+    cols = {"key": np.asarray(params["rows"], np.int32)}
+    cols |= {n: fields_[:, i] for i, n in enumerate(names)}
+    cols["greedy_skill"] = np.array([SKILLS[i].name for i in q.argmax(1)], object)
+    cols["value"] = q.max(1) if len(q) else np.zeros(0, q.dtype)
     return cols
+
+
+def sparse_table(q: Any, seen: Any, q_init: float) -> dict[str, Any]:
+    """The table rows that differ from ``q_init``, with values and key fields.
+
+    ``rows`` int32 ascending, ``q_rows``, and ``fields`` from ``seen`` (a hashed key
+    keeps no fields, so they are stored). The abstract state of evaluation's template
+    gets empty arrays: the row count varies per checkpoint, and loading keeps the
+    stored shapes.
+    """
+    if isinstance(q, jax.ShapeDtypeStruct):
+        q, seen = (np.zeros((0, x.shape[1]), x.dtype) for x in (q, seen))
+    q, seen = np.asarray(q), np.asarray(seen)
+    rows = np.flatnonzero((q != q.dtype.type(q_init)).any(1)).astype(np.int32)
+    return {"rows": rows, "q_rows": q[rows], "fields": seen[rows]}
+
+
+def dense_table(params: Mapping[str, Any], cfg: SMDPConfig) -> np.ndarray:
+    """The full table of a `sparse_table` payload, bit for bit."""
+    q = np.full((2**cfg.log2_rows, NUM_SKILLS), cfg.q_init, np.float32)
+    q[np.asarray(params["rows"])] = np.asarray(params["q_rows"])
+    return q
+
+
+def _lookup(params: Mapping[str, Any], k: jax.Array, q_init: float) -> jax.Array:
+    """Table rows ``k`` of a `sparse_table` payload, ``[envs, skills]``."""
+    rows, vals = jnp.asarray(params["rows"]), jnp.asarray(params["q_rows"])
+    if rows.shape[0] == 0:
+        return jnp.full((k.shape[0], NUM_SKILLS), q_init, jnp.float32)
+    i = jnp.clip(jnp.searchsorted(rows, k), 0, rows.shape[0] - 1)
+    return jnp.where((rows[i] == k)[:, None], vals[i], jnp.float32(q_init))
 
 
 def write_greedy_table(run_dir: Path, update: int, params: Mapping[str, Any]) -> Path:
@@ -1144,7 +1175,9 @@ class SMDPPolicy:
         k_top, k_act = jax.random.split(key)
         k, avail, _ = _keys(cfg, view2)
         top = jnp.where(greedy, 0.0, params["eps_top"])
-        skill = jnp.where(ended, _pick(params["q"], k, avail, top, k_top), skill)
+        q = _lookup(params, k, cfg.q_init)  # row i holds env i's table row
+        picks = _pick(q, jnp.arange(n), avail, top, k_top)
+        skill = jnp.where(ended, picks, skill)
         steps = jnp.where(ended, 0, steps + 1)
         last = jnp.where(new, NO_ACTION, last)
         eps = jnp.where(greedy, 0.0, params["eps"])
@@ -1196,15 +1229,14 @@ class SMDPTrainer:
         return train_chunk(state, n_updates)
 
     def params(self, state: SMDPState) -> dict[str, Any]:
-        """The ``ckpt/`` payload: network variables, both ε, the table and its keys."""
+        """The ``ckpt/`` payload: network variables, both ε, the sparse table."""
         sh = state.carry.shared
-        return {
+        base = {
             "variables": variables_of(state.train_state),
             "eps": sh.eps,
             "eps_top": sh.eps_top,
-            "q": sh.q,
-            "seen": sh.seen,
         }
+        return base | sparse_table(sh.q, sh.seen, state.cfg.top.q_init)
 
     def policy(self, state: SMDPState) -> SMDPPolicy:
         """The two-level policy of this config (reads no state values)."""

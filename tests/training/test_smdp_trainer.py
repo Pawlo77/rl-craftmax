@@ -25,7 +25,12 @@ from wut_murl_craftax.orchestration.queue import (
 )
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import pqn_rnn, smdp
-from wut_murl_craftax.training.checkpoints import load_state, save_state
+from wut_murl_craftax.training.checkpoints import (
+    load_params,
+    load_state,
+    save_checkpoint,
+    save_state,
+)
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.pqn_rnn import (
     PQNRNNConfig,
@@ -229,7 +234,7 @@ def test_training_moves_the_network_and_the_table(
     trainer, _, start, (state, _) = entry
     p0, p1 = trainer.params(start), trainer.params(state)
     assert not same(p0["variables"]["params"], p1["variables"]["params"])
-    assert int((np.asarray(p1["q"]) != 10.0).sum()) > 0
+    assert int((np.asarray(state.carry.shared.q) != 10.0).sum()) > 0
     assert int(state.carry.shared.t) == STEPS
     assert int(state.updates) == 2
 
@@ -388,7 +393,34 @@ def test_the_diamond_counter_keeps_the_first_and_tenth_episode() -> None:
     np.testing.assert_array_equal(none, [0, -1, -1])
 
 
-def test_the_greedy_table_lists_every_decided_key(entry: Any, tmp_path: Path) -> None:
+def test_the_checkpoint_stores_the_table_sparsely_and_rebuilds_it_exactly(
+    entry: Any, tmp_path: Path
+) -> None:
+    """Only rows that left ``q_init`` (with their key fields); template: eval_shape."""
+    trainer, cfg, _, (state, _) = entry
+    params = trainer.params(state)
+    assert params.keys() == {"variables", "eps", "eps_top", "rows", "q_rows", "fields"}
+    q, seen = np.asarray(state.carry.shared.q), np.asarray(state.carry.shared.seen)
+    rows = np.flatnonzero((q != 10.0).any(1))
+    assert 0 < len(rows) < len(q)
+    np.testing.assert_array_equal(params["rows"], rows)
+    assert params["rows"].dtype == np.int32
+    save_checkpoint(tmp_path, 2, STEPS, 0.0, params)
+    template = trainer.params(
+        jax.eval_shape(lambda: trainer.init(cfg, jax.random.key(0)))
+    )
+    loaded = load_params(tmp_path, 2, template)
+    dense = smdp.dense_table(loaded, state.cfg.top)
+    assert dense.dtype == q.dtype
+    np.testing.assert_array_equal(dense, q)
+    np.testing.assert_array_equal(loaded["fields"], seen[rows])
+    # an untrained table stores no rows at all
+    fresh = trainer.params(trainer.init(cfg, jax.random.key(0)))
+    assert fresh["rows"].shape == (0,)
+    np.testing.assert_array_equal(smdp.dense_table(fresh, state.cfg.top), 10.0)
+
+
+def test_the_greedy_table_lists_every_stored_key(entry: Any, tmp_path: Path) -> None:
     trainer, _, _, (state, _) = entry
     params = trainer.params(state)
     path = smdp.write_greedy_table(tmp_path, 2, params)
@@ -396,18 +428,16 @@ def test_the_greedy_table_lists_every_decided_key(entry: Any, tmp_path: Path) ->
     smdp.write_greedy_table(tmp_path, 4, params)
     smdp.write_greedy_table(tmp_path, 2, params)  # rewritten, not duplicated
     table = pq.read_table(path).to_pydict()
-    seen = np.asarray(params["seen"])
-    keys = np.flatnonzero(seen[:, 0] >= 0)
+    keys, fields, q = params["rows"], params["fields"], params["q_rows"]
     assert sorted(set(table["update"])) == [2, 4]
     assert len(table["key"]) == 2 * len(keys)
     first = [i for i, u in enumerate(table["update"]) if u == 2]
     assert [table["key"][i] for i in first] == keys.tolist()
     names = [*CLASSIC_FIELDS, "low_food", "low_drink", "low_energy", "low_health"]
-    q = np.asarray(params["q"])
-    for i, key in zip(first, keys, strict=True):
-        assert [table[n][i] for n in names] == seen[key].tolist()
-        assert table["greedy_skill"][i] == SKILLS[int(q[key].argmax())].name
-        assert table["value"][i] == pytest.approx(float(q[key].max()))
+    for j, i in enumerate(first):
+        assert [table[n][i] for n in names] == fields[j].tolist()
+        assert table["greedy_skill"][i] == SKILLS[int(q[j].argmax())].name
+        assert table["value"][i] == pytest.approx(float(q[j].max()))
 
 
 # --- the two-level policy -----------------------------------------------------------
