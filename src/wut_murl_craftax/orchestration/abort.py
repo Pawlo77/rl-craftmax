@@ -4,7 +4,9 @@ A NaN or inf in a logged loss (the trainer's ``loss_columns`` and the method met
 method YAML lists under ``abort.finite``, none by default) aborts the run: it ends
 FAILED with its last ``state/`` kept. The next queue call resumes it from there once;
 a second abort of the same run marks it a bug (tag ``abort/bug``) and the queue skips
-it from then on. Flags
+it from then on. A method that refuses its config at init for the machine's memory
+(``MemoryLimitError``) ends the run FAILED with ``abort/memory``, skipped from then on
+too. Flags
 (``flag/<name>`` tags) come from a method's ``abort.flags`` rules, see `flag_hits`;
 they never stop a run, and nothing here looks at the score (no early stopping).
 """
@@ -19,6 +21,9 @@ from .queue import TAG_ABORT_BUG as TAG_ABORT_BUG  # queue reads it without this
 
 TAG_ABORT_COUNT = "abort/count"
 """Run tag: how often the run was aborted on a non-finite loss."""
+TAG_ABORT_MEMORY = "abort/memory"
+"""Run tag: ``true`` when the method's buffers exceed the profile's memory limit; the
+queue skips the run for good (change the config or the profile)."""
 TAG_ABORT_METRIC = "abort/metric"
 """Run tag: the metric that was non-finite at the last abort."""
 TAG_ABORT_UPDATE = "abort/update"

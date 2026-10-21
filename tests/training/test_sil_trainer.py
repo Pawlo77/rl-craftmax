@@ -15,13 +15,21 @@ import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
-from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
+from wut_murl_craftax.orchestration.abort import (
+    TAG_ABORT_MEMORY,
+    TAG_ABORT_METRIC,
+    TAG_ABORT_UPDATE,
+)
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
     load_method,
     resolve_config,
 )
-from wut_murl_craftax.orchestration.runner import EXTRAS_FILE, TAG_FAIL_ERROR
+from wut_murl_craftax.orchestration.runner import (
+    EXTRAS_FILE,
+    TAG_FAIL_COUNT,
+    TAG_FAIL_ERROR,
+)
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import ppo_rnn, sil
 from wut_murl_craftax.training.checkpoints import load_state, save_state
@@ -29,6 +37,7 @@ from wut_murl_craftax.training.hooks import (
     HOOK_NAMES,
     MEMORY_LIMIT_KEY,
     HookSpec,
+    MemoryLimitError,
     resolve,
 )
 from wut_murl_craftax.training.interface import METHODS
@@ -458,20 +467,34 @@ def test_a_buffer_over_the_machine_limit_fails_at_init(methods_dir: Path) -> Non
     assert state.method_state.buffer["map"].shape[0] == 134
 
 
-def test_the_runner_fails_a_run_whose_buffer_exceeds_the_profile(
-    methods_dir: Path, run_store: Any, tmp_path: Path
+def test_a_run_over_the_profile_limit_is_a_permanent_abort(
+    methods_dir: Path,
+    run_store: Any,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """FAILED with ``abort/memory``; later queue calls skip it instead of retrying."""
     (spec,) = _phase(tmp_path, methods_dir)
     profile = yaml.safe_load((PROFILES / "test.yaml").read_text())
     need = sil.buffer_bytes(sil.SILConfig(), 8, 22, 1345, rnn_width=16).total
     path = tmp_path / "small.yaml"
     path.write_text(yaml.safe_dump(profile | {"memory_limit_bytes": 3 * need - 1}))
-    with pytest.raises(RuntimeError, match="memory_limit_bytes"):  # the queue's summary
-        run_store.run([spec], path)
-    run = run_store.runs()[spec.name]
+    run = run_store.run([spec], path)[spec.name]  # an abort: the queue goes on
     assert run.info.status == "FAILED"
+    assert run.data.tags[TAG_ABORT_MEMORY] == "true"
     assert "memory_limit_bytes" in run.data.tags[TAG_FAIL_ERROR]
     assert not (artifact_path(run.info.artifact_uri) / EXTRAS_FILE).exists()
+    with caplog.at_level("WARNING"):
+        again = run_store.run([spec], path)[spec.name]
+    assert f"{spec.name} is over the machine's memory limit" in caplog.text
+    assert again.data.tags[TAG_FAIL_COUNT] == "1"
+    assert again.info.end_time == run.info.end_time  # not reopened
+
+
+def test_check_memory_raises_the_memory_limit_error() -> None:
+    spec = HookSpec(256, 8268, 43, 67, 10**6)
+    with pytest.raises(MemoryLimitError):
+        sil.check_memory(sil.SILConfig(), spec, 10**6)
 
 
 def test_a_nan_sil_loss_aborts_the_run(

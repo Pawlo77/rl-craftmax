@@ -21,7 +21,7 @@ import numpy as np
 from flax import struct
 
 from ..evaluation.milestones import Game, constants, game_of
-from .hooks import HookFields, HookMethod, HookSpec, Traj
+from .hooks import HookFields, HookMethod, HookSpec, MemoryLimitError, Traj
 from .ppo_rnn import ActorCriticRNN, PPORNNConfig, apply_network, build_network
 from .records import achievement_names, achievement_weights
 
@@ -268,7 +268,7 @@ def check_memory(
     copy per chunk to the update.
 
     Raises:
-        ValueError: If that peak exceeds ``memory_limit_bytes``.
+        MemoryLimitError: If that peak exceeds ``memory_limit_bytes``.
     """
     dims = (spec.n_envs, spec.n_achievements, spec.obs_dim, rnn_width)
     need = buffer_bytes(cfg, *dims)
@@ -278,7 +278,7 @@ def check_memory(
             f"{need.staging:,}, buffer {need.buffer:,}), over memory_limit_bytes "
             f"{memory_limit_bytes:,}"
         )
-        raise ValueError(msg)
+        raise MemoryLimitError(msg)
     return need
 
 

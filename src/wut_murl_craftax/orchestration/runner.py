@@ -45,7 +45,7 @@ from ..training.checkpoints import (
     save_checkpoint,
     save_state,
 )
-from ..training.hooks import MEMORY_LIMIT_KEY
+from ..training.hooks import MEMORY_LIMIT_KEY, MemoryLimitError
 from ..training.records import (
     BASE_COLUMNS,
     LOSS_COLUMNS,
@@ -58,6 +58,7 @@ from .abort import (
     MAX_ABORTS,
     TAG_ABORT_BUG,
     TAG_ABORT_COUNT,
+    TAG_ABORT_MEMORY,
     TAG_ABORT_METRIC,
     TAG_ABORT_UNREPORTED,
     TAG_ABORT_UPDATE,
@@ -644,6 +645,12 @@ def _mark_abort(previous: Mapping[str, str], abort: _Aborted) -> None:
     logger.warning("run aborted (%d of %d allowed): %s", count, MAX_ABORTS, abort)
 
 
+def _mark_memory(previous: Mapping[str, str], error: MemoryLimitError) -> None:
+    """Tag the active run a permanent abort: its config does not fit this machine."""
+    mlflow.set_tags(_fail_tags(previous, error) | {TAG_ABORT_MEMORY: "true"})
+    logger.warning("run aborted for good (%s): %s", TAG_ABORT_MEMORY, error)
+
+
 def _live_owner(found: Any) -> int | None:
     """The PID of a live process on this host that trains ``found`` (RUNNING)."""
     if found is None or found.info.status != "RUNNING":
@@ -666,12 +673,14 @@ def _live_owner(found: Any) -> int | None:
 
 
 def _skip_reason(found: Any) -> str | None:
-    """Why the queue skips a run: a live owner, a bug, or lost checkpoints."""
+    """Why the queue skips a run: live owner, bug, memory abort, lost checkpoints."""
     if (pid := _live_owner(found)) is not None:
         return f"is trained by live process {pid} on this host"
     tags = found.data.tags if found else {}
     if tags.get(TAG_ABORT_BUG) == "true":
         return f"is marked a bug ({TAG_ABORT_BUG})"
+    if tags.get(TAG_ABORT_MEMORY) == "true":
+        return f"is over the machine's memory limit ({TAG_ABORT_MEMORY})"
     if found and found.info.status == "FAILED" and tags.get(TAG_CKPT_MISSING):
         return f"lost checkpoints {tags[TAG_CKPT_MISSING]} for good"
     return None
@@ -772,6 +781,10 @@ def _run_spec(
     except _Aborted as abort:
         _mark_abort(found.data.tags if found else {}, abort)
         tracker.close("FAILED")  # its last state/ stays for the one retry
+        return True
+    except MemoryLimitError as error:  # no retry here can fit: skipped from now on
+        _mark_memory(found.data.tags if found else {}, error)
+        tracker.close("FAILED")
         return True
     except Exception as error:
         mlflow.set_tags(_fail_tags(found.data.tags if found else {}, error))

@@ -45,6 +45,13 @@ profile's limit. Never hashed or saved; trainer configs ignore it and pass it on
 `HookSpec.memory_limit_bytes`."""
 
 
+class MemoryLimitError(ValueError):
+    """A method's buffers exceed `HookSpec.memory_limit_bytes`.
+
+    The runner marks the run a permanent abort: no retry on this machine can fit.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class HookSpec:
     """What the run looks like, handed to ``init_state_fn``."""
