@@ -6,17 +6,20 @@ folder: the PQN-RNN control's tiny settings, an `smdp-skills` block equal to its
 """
 
 import itertools
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pyarrow.parquet as pq
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
     load_method,
@@ -75,6 +78,8 @@ DYNA_METRICS = TIMED | {
     "dyna/vi_residual",
 }
 """Every ``dyna/...`` metric but the guards."""
+SMDP_GUARDS = ["smdp/nan", "smdp/table_full", "smdp/divergence"]
+DYNA_GUARDS = ["dyna/nan", "dyna/model_full", "dyna/divergence"]
 SHARES = (
     "dyna/pairs_full_share",
     "dyna/model_accuracy",
@@ -302,6 +307,9 @@ def test_one_update_logs_every_method_metric(entry: Any) -> None:
     np.testing.assert_array_equal(m["dyna/bonus_mean"], 0.0)  # kappa 0
     for k in ("dyna/vi_sweeps", "dyna/vi_residual", "dyna/ps_above_theta"):
         np.testing.assert_array_equal(m[k], 0)  # uniform
+    assert new == DYNA_METRICS | set(DYNA_GUARDS)
+    for guard in (*SMDP_GUARDS, *DYNA_GUARDS):
+        np.testing.assert_array_equal(m[guard], 0.0)
 
 
 def _record(**over: Any) -> dict[str, np.ndarray]:
@@ -400,3 +408,96 @@ def test_the_runner_trains_and_evaluates_a_checkpoint(
         live = ev["actions"] >= 0
         assert live.any()
         assert (ev["extras/skill"][live] < smdp.NUM_SKILLS).all()
+
+
+# --- abort rules ----------------------------------------------------------------------
+
+
+def test_the_abort_list_holds_only_the_guards_and_flags_slow_planning() -> None:
+    """The guards are 0 until broken (`test_one_update_logs_every_method_metric`)."""
+    assert load_method(NAME).abort == {
+        "finite": SMDP_GUARDS + DYNA_GUARDS,
+        "flags": [
+            {"name": "plan_slow", "metric": "dyna/plan_wall_share", "above": 0.3}
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("over", "guard"),
+    [
+        ({"q_bad": [True]}, "dyna/nan"),
+        ({"full": [True]}, "dyna/model_full"),
+        ({"q_upd": [300.5]}, "dyna/divergence"),
+    ],
+)
+def test_each_guard_turns_nan_on_its_rule(over: dict[str, Any], guard: str) -> None:
+    m = dyna_q.method_metrics(_record(**over))
+    assert {g for g in DYNA_GUARDS if np.isnan(m[g][0])} == {guard}
+    fine = dyna_q.method_metrics(_record(q_upd=[300.0]))
+    assert not any(np.isnan(fine[g][0]) for g in DYNA_GUARDS)
+
+
+def _aborted(run: Any) -> tuple[str, str, str]:
+    return (
+        run.info.status,
+        run.data.tags[TAG_ABORT_METRIC],
+        run.data.tags[TAG_ABORT_UPDATE],
+    )
+
+
+def test_a_nan_after_planning_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = dyna_q._records
+    monkeypatch.setattr(
+        dyna_q, "_records", lambda *a: real(*a)._replace(ret=jnp.float32(jnp.nan))
+    )
+    # a batch no other test plans with, so the patch is traced
+    (spec,) = _phase(tmp_path, methods_dir, plan_batch=1000)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "dyna/nan", "1")
+
+
+def test_a_full_model_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path
+) -> None:
+    (spec,) = _phase(tmp_path, methods_dir, model_pairs=2)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "dyna/model_full", "1")
+
+
+def test_a_planned_value_above_the_return_bound_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path
+) -> None:
+    """A Dyna-Q+ bonus of 1000 sqrt(age): planned entries pass `smdp.MAX_Q`, real
+    updates (no bonus) do not."""
+    (spec,) = _phase(tmp_path, methods_dir, plan_kappa=1000.0)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "dyna/divergence", "1")
+
+
+def test_slow_planning_is_flagged_without_stopping_the_run(
+    entry: Any,
+    methods_dir: Path,
+    run_store: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A planning step of over a second; ``entry`` compiled this config, so no
+    compile time dilutes the share."""
+    real = dyna_q._run_plan
+
+    def slow(planner: Any, *args: Any) -> Any:
+        def sleepy(*a: Any) -> Any:
+            time.sleep(1.0)
+            return planner(*a)
+
+        return real(sleepy, *args)
+
+    monkeypatch.setattr(dyna_q, "_run_plan", slow)
+    (spec,) = _phase(tmp_path, methods_dir)
+    run = run_store.run([spec])[spec.name]
+    assert run.info.status == "FINISHED"
+    assert "flag/plan_slow" in run.data.tags
+    assert run.data.metrics["dyna/plan_wall_share"] > 0.3

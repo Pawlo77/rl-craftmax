@@ -27,6 +27,7 @@ from .pqn_rnn import FILLED_LOSS_COLUMNS
 from .records import achievement_names
 from .skills import NUM_SKILLS, SKILLS
 from .smdp import (
+    MAX_Q,
     RolloutCarry,
     SMDPPolicy,
     SMDPState,
@@ -729,10 +730,20 @@ def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
     held). Planning: ``backups``, ``plan_td_abs`` and ``bonus_mean`` per backed-up
     outcome, ``ps_above_theta``, ``vi_sweeps``, ``vi_residual`` (0 for the other
     variants), ``plan_seconds`` and ``plan_wall_share`` (of the update's wall time).
-    Empty shares are 0, so every value is finite.
+    Empty shares are 0, so every value is finite. The guards ``dyna/nan`` (a
+    non-finite planned value), ``dyna/model_full`` (all P pair slots taken) and
+    ``dyna/divergence`` (a planned value above `smdp.MAX_Q`) are 0, or NaN once
+    broken, for ``abort.finite``.
     """
     pairs, td_n = r["n_pairs"], r["td_n"]
+
+    def guard(broken: np.ndarray) -> np.ndarray:
+        return np.where(broken, np.nan, 0.0)
+
     return {
+        "dyna/nan": guard(r["q_bad"]),
+        "dyna/model_full": guard(r["full"]),
+        "dyna/divergence": guard(r["q_upd"] > MAX_Q),
         "dyna/pairs_visited": pairs,
         "dyna/pairs_full_share": _share(r["full_pairs"], pairs),
         "dyna/model_accuracy": _share(r["hits"], r["ends"]),

@@ -55,5 +55,18 @@ grid:
       - {key: plan_kappa, mul: [0.5, 1.0, 2.0], zero: [0.0, 0.0015, 0.003]}
       - {key: model_slots, mul: [0.5, 1.0, 2.0], integer: true}
 
+# Runner rules (orchestration/abort.py): a non-finite loss column (the skill network's TD
+# loss as value_loss, grad_norm) or a metric in `finite` aborts the run. The smdp-skills
+# guards (smdp/nan, smdp/table_full, smdp/divergence) watch the real updates; the Dyna-Q
+# guards of training/dyna_q.py are 0 and turn NaN on a NaN or inf in a planned table value
+# (dyna/nan), all P = 2^16 model pair slots taken (dyna/model_full), or a planned value
+# above 300, the smdp-skills return bound (dyna/divergence). Every other dyna/* metric is
+# finite. The flag plan_slow tags a run whose planning takes more than 30% of an update's
+# wall time; it never stops the run. The plan's detectors come with the analysis plan.
+abort:
+  finite: [smdp/nan, smdp/table_full, smdp/divergence, dyna/nan, dyna/model_full, dyna/divergence]
+  flags:
+    - {name: plan_slow, metric: dyna/plan_wall_share, above: 0.3}
+
 # written by `--mark-tuned dyna-q <hash8>`
 tuned: null
