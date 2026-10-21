@@ -1,4 +1,4 @@
-"""Training loops and their records: baseline PPO, checkpoints, metrics, episodes."""
+"""Training loops and records: PPO, checkpoints, resume state, metrics, episodes."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -8,7 +8,9 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         checkpoint_schedule,
         load_index,
         load_params,
+        load_state,
         save_checkpoint,
+        save_state,
     )
     from .ppo import ActorCritic, PPOConfig, make_network, train
     from .records import (
@@ -36,8 +38,10 @@ _EXPORTS: dict[str, str] = {
     "load_index": "checkpoints",
     "load_metrics": "records",
     "load_params": "checkpoints",
+    "load_state": "checkpoints",
     "make_network": "ppo",
     "save_checkpoint": "checkpoints",
+    "save_state": "checkpoints",
     "train": "ppo",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
@@ -57,8 +61,10 @@ __all__ = [
     "load_index",
     "load_metrics",
     "load_params",
+    "load_state",
     "make_network",
     "save_checkpoint",
+    "save_state",
     "train",
 ]
 

@@ -19,8 +19,8 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 114 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 142 | [[orchestration]] |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training loops and their records: baseline PPO, checkpoints, metrics, episodes. | 72 | [[training]] |
-| [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced checkpoint schedule and params-only checkpoints with an index file. | 58 | [[training]] |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training loops and records: PPO, checkpoints, resume state, metrics, episodes. | 78 | [[training]] |
+| [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 321 | [[training]] |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 172 | [[training]] |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 100 | [[visualisation]] |

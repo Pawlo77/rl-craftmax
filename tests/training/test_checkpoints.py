@@ -1,16 +1,22 @@
-"""Tests for the checkpoint schedule and params round trip."""
+"""Tests for the checkpoint schedule, params round trip and full-state saves."""
 
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
+import pytest
 
+from wut_murl_craftax.training import checkpoints
 from wut_murl_craftax.training.checkpoints import (
     checkpoint_schedule,
     load_index,
     load_params,
+    load_state,
     save_checkpoint,
+    save_state,
 )
 
 
@@ -35,3 +41,103 @@ def test_params_round_trip(tmp_path: Path) -> None:
     np.testing.assert_array_equal(
         loaded["dense"]["kernel"], params["dense"]["kernel"] * 2
     )
+
+
+def _state() -> dict[str, Any]:
+    """A trainer-like state: params, optax state, env state, keys, stats, numpy logs."""
+    params = {"dense": {"kernel": jnp.arange(6.0).reshape(2, 3), "bias": jnp.ones(3)}}
+    tx = optax.adam(1e-3)
+    opt = tx.update(params, tx.init(params), params)[1]
+    env = {
+        "pos": jnp.array([[1, 2], [3, 4]], jnp.int32),
+        "alive": jnp.array([True, False]),
+        "map": jnp.arange(8, dtype=jnp.uint8).reshape(2, 4),
+        "half": jnp.array([0.5, 1.5], jnp.bfloat16),
+    }
+    return {
+        "params": params,
+        "opt": opt,
+        "env": env,
+        "key": jax.random.split(jax.random.key(3), 2),
+        "rbg": jax.random.key(4, impl="rbg"),
+        "batch_stats": {"mean": jnp.full(3, 0.25), "var": jnp.full(3, 2.0)},
+        "episodes": {"ret": np.array([1.5, 2.5], np.float32), "n": np.int64(7)},
+        "rows": np.random.default_rng(0).normal(size=(4, 3)),
+        "update": 2,
+    }
+
+
+def _zeros_like(state: dict[str, Any]) -> dict[str, Any]:
+    """Same structure and leaf types, other values (keys from another seed)."""
+
+    def zero(x: Any) -> Any:
+        if isinstance(x, jax.Array) and jnp.issubdtype(x.dtype, jax.dtypes.prng_key):
+            key = jax.random.key(99, impl=jax.random.key_impl(x))
+            return jax.random.split(key, x.shape) if x.shape else key
+        if isinstance(x, np.ndarray):
+            return np.zeros((0, *x.shape[1:]), x.dtype)
+        return jnp.zeros_like(x) if isinstance(x, jax.Array) else type(x)(0)
+
+    return jax.tree.map(zero, state)
+
+
+def _assert_identical(got: Any, want: Any) -> None:
+    got_leaves, got_def = jax.tree.flatten(got)
+    want_leaves, want_def = jax.tree.flatten(want)
+    assert got_def == want_def
+    for g, w in zip(got_leaves, want_leaves, strict=True):
+        assert type(g) is type(w)
+        if isinstance(w, jax.Array) and jnp.issubdtype(w.dtype, jax.dtypes.prng_key):
+            assert jax.random.key_impl(g) == jax.random.key_impl(w)
+            g, w = jax.random.key_data(g), jax.random.key_data(w)
+        g, w = np.asarray(g), np.asarray(w)
+        assert g.dtype == w.dtype
+        assert g.shape == w.shape
+        assert g.tobytes() == w.tobytes()
+
+
+def test_state_round_trips_bit_for_bit(tmp_path: Path) -> None:
+    state = _state()
+    save_state(tmp_path, state)
+    loaded = load_state(tmp_path, _zeros_like(state))
+    _assert_identical(loaded, state)
+    # the restored keys draw what the saved ones draw
+    np.testing.assert_array_equal(
+        jax.random.uniform(loaded["key"][1]), jax.random.uniform(state["key"][1])
+    )
+
+
+def test_a_save_killed_half_way_leaves_the_previous_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _state()
+    save_state(tmp_path, first)
+
+    def killed(file: Any, **_: Any) -> None:
+        file.write(b"PK\x03\x04 half a zip")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(checkpoints.np, "savez", killed)
+    second = {**first, "update": 3}
+    with pytest.raises(KeyboardInterrupt):
+        save_state(tmp_path, second)
+    _assert_identical(load_state(tmp_path, _zeros_like(first)), first)
+    monkeypatch.undo()
+    save_state(tmp_path, second)
+    assert load_state(tmp_path, _zeros_like(first))["update"] == 3
+
+
+def test_load_state_refuses_another_structure(tmp_path: Path) -> None:
+    save_state(tmp_path, {"a": jnp.ones(2)})
+    with pytest.raises(ValueError, match="template has 2"):
+        load_state(tmp_path, {"a": jnp.ones(2), "b": jnp.ones(2)})
+
+
+def test_params_checkpoints_and_state_live_apart(tmp_path: Path) -> None:
+    save_checkpoint(tmp_path, 0, 0, 0.0, {"w": jnp.ones(2)})
+    save_state(tmp_path, _state())
+    assert sorted(p.name for p in (tmp_path / "ckpt").iterdir()) == [
+        "00000.msgpack",
+        "index.json",
+    ]
+    assert [p.name for p in (tmp_path / "state").iterdir()] == ["state.npz"]
