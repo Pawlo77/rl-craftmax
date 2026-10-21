@@ -176,6 +176,28 @@ def policy_value(
     return cast(tuple[jax.Array, jax.Array], net.apply(params, obs))
 
 
+def gae(
+    r: jax.Array,
+    v: jax.Array,
+    d: jax.Array,
+    last_v: jax.Array,
+    gamma: float,
+    gae_lambda: float,
+) -> jax.Array:
+    """GAE advantages of a ``(steps, envs)`` rollout; ``d[t]``: step t ended it."""
+
+    def back(c: tuple[jax.Array, jax.Array], t: tuple[jax.Array, ...]) -> Any:
+        g, nv = c
+        r_t, v_t, d_t = t
+        delta = r_t + gamma * nv * (1 - d_t) - v_t
+        g = delta + gamma * gae_lambda * (1 - d_t) * g
+        return (g, v_t), g
+
+    init = (jnp.zeros_like(last_v), last_v)
+    _, adv = jax.lax.scan(back, init, (r, v, d), reverse=True)
+    return cast(jax.Array, adv)
+
+
 def _make_rollout(
     cfg: PPOConfig, net: ActorCritic, env: Any, env_params: Any, names: list[str]
 ) -> Callable[..., Any]:
@@ -196,12 +218,6 @@ def _make_rollout(
         carry = (params, st2, obs2, ep_ret2 * (1 - d), ep_len2 * (1 - d), key)
         return carry, rec
 
-    def gae(c: tuple[jax.Array, jax.Array], t: dict[str, jax.Array]) -> Any:
-        g, nv = c
-        delta = t["r"] + cfg.gamma * nv * (1 - t["d"]) - t["v"]
-        g = delta + cfg.gamma * cfg.gae_lambda * (1 - t["d"]) * g
-        return (g, t["v"]), g
-
     @jax.jit
     def rollout(
         params: Any,
@@ -215,8 +231,7 @@ def _make_rollout(
         carry, tr = jax.lax.scan(step, carry, None, cfg.num_steps)
         _, st, obs, ep_ret, ep_len, key = carry
         _, last_v = policy_value(net, params, obs)
-        init = (jnp.zeros_like(last_v), last_v)
-        _, adv = jax.lax.scan(gae, init, tr, reverse=True)
+        adv = gae(tr["r"], tr["v"], tr["d"], last_v, cfg.gamma, cfg.gae_lambda)
         flat = {
             k: tr[k].reshape(cfg.batch, *tr[k].shape[2:])
             for k in ("obs", "act", "logp", "v")
@@ -231,11 +246,15 @@ def _make_rollout(
     return rollout
 
 
-def _ppo_loss(
-    cfg: PPOConfig, net: ActorCritic, p: Any, b: Batch
+def ppo_terms(
+    logits: jax.Array, v: jax.Array, b: Batch, cfg: PPOConfig
 ) -> tuple[jax.Array, tuple[jax.Array, ...]]:
-    """Clipped PPO loss; aux = (policy loss, value loss, entropy, approx KL)."""
-    logits, v = policy_value(net, p, b["obs"])
+    """Clipped PPO loss of the network outputs on batch ``b``.
+
+    Returns:
+        The loss and (policy loss, value loss, entropy, approx KL, clip fraction:
+        share of ratios outside ``1 +- clip``).
+    """
     lp_all = jax.nn.log_softmax(logits)
     lp = jnp.take_along_axis(lp_all, b["act"][:, None], 1)[:, 0]
     vc = b["v"] + (v - b["v"]).clip(-cfg.clip, cfg.clip)
@@ -246,17 +265,29 @@ def _ppo_loss(
     ploss = -jnp.minimum(ratio * g, clipped).mean()
     ent = -(jnp.exp(lp_all) * lp_all).sum(-1).mean()
     kl = ((ratio - 1) - jnp.log(ratio)).mean()
-    return ploss + cfg.vf * vloss - cfg.ent * ent, (ploss, vloss, ent, kl)
+    clip_frac = (jnp.abs(ratio - 1) > cfg.clip).mean()
+    return ploss + cfg.vf * vloss - cfg.ent * ent, (ploss, vloss, ent, kl, clip_frac)
+
+
+def _ppo_loss(
+    cfg: PPOConfig, net: ActorCritic, p: Any, b: Batch
+) -> tuple[jax.Array, tuple[jax.Array, ...]]:
+    """`ppo_terms` of the network with params ``p``."""
+    logits, v = policy_value(net, p, b["obs"])
+    return ppo_terms(logits, v, b, cfg)
 
 
 def _make_learn(cfg: PPOConfig, net: ActorCritic) -> Callable[..., Any]:
-    """Jitted PPO update: epochs x shuffled minibatches; returns loss summary."""
+    """Jitted PPO update: epochs x shuffled minibatches; returns the loss summary.
+
+    Summary columns: ``records.LOSS_COLUMNS``; ``grad_norm`` is before clipping.
+    """
     grad = jax.value_and_grad(lambda p, b: _ppo_loss(cfg, net, p, b), has_aux=True)
 
     def mb_step(ts: TrainState, b: Batch) -> tuple[TrainState, Any]:
         (_, aux), g = grad(ts.params, b)
         ts = ts.apply_gradients(grads=g)  # type: ignore[no-untyped-call]  # flax API
-        return ts, aux
+        return ts, (*aux, optax.tree.norm(g))
 
     def epoch(c: tuple[TrainState, Batch, jax.Array], _: None) -> Any:
         ts, flat, key = c
@@ -273,19 +304,28 @@ def _make_learn(cfg: PPOConfig, net: ActorCritic) -> Callable[..., Any]:
             epoch, (ts, flat, key), None, cfg.update_epochs
         )
         ev = 1 - jnp.var(flat["tgt"] - flat["v"]) / (jnp.var(flat["tgt"]) + 1e-8)
-        return ts, key, jnp.array([x.mean() for x in aux] + [ev])
+        m = [x.mean() for x in aux]
+        return ts, key, jnp.array([*m[:4], ev, *m[4:]])
 
     return learn
 
 
-def _optimizer(cfg: PPOConfig) -> optax.GradientTransformation:
-    """Adam with global-norm clipping and an optionally annealed learning rate."""
+def lr_schedule(cfg: PPOConfig) -> Callable[[jax.Array], jax.Array]:
+    """Learning rate per minibatch step: ``lr``, then linearly lower per update.
+
+    The last update runs at ``lr / n_updates``.
+    """
     per_update = cfg.minibatches * cfg.update_epochs
 
     def sched(count: jax.Array) -> jax.Array:
         return cfg.lr * (1.0 - (count // per_update) / cfg.n_updates)
 
-    lr = sched if cfg.anneal_lr else cfg.lr
+    return sched
+
+
+def _optimizer(cfg: PPOConfig) -> optax.GradientTransformation:
+    """Adam with global-norm clipping and an optionally annealed learning rate."""
+    lr = lr_schedule(cfg) if cfg.anneal_lr else cfg.lr
     return optax.chain(
         optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(lr, eps=1e-5)
     )

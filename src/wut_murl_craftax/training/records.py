@@ -16,7 +16,15 @@ from ..evaluation.milestones import constants, game_of
 
 BASE_COLUMNS = ("update", "env_steps", "wall_s", "n_episodes", "return", "length")
 """Leading columns of ``metrics.npz``; the losses and ``ach/<name>`` columns follow."""
-LOSS_COLUMNS = ("policy_loss", "value_loss", "entropy", "approx_kl", "explained_var")
+LOSS_COLUMNS = (
+    "policy_loss",
+    "value_loss",
+    "entropy",
+    "approx_kl",
+    "explained_var",
+    "clip_frac",
+    "grad_norm",
+)
 """Loss columns, in the order the PPO learner returns them."""
 
 

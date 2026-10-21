@@ -73,7 +73,7 @@ class ChunkMetrics(TypedDict):
     """What `Trainer.train_chunk` reports; every array has a leading update axis."""
 
     losses: jax.Array | np.ndarray
-    """(updates, 5) floats in `LOSS_COLUMNS` order."""
+    """(updates, len(LOSS_COLUMNS)) floats in `LOSS_COLUMNS` order."""
     done: jax.Array | np.ndarray
     """(updates, steps, envs) bools: the episode ended at this step."""
     ach: jax.Array | np.ndarray

@@ -13,6 +13,7 @@ import pytest
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.training.records import LOSS_COLUMNS
 
 REPO = Path(__file__).resolve().parents[2]
 ENVS, NUM_STEPS, N_ACH = 8, 8, 22
@@ -110,7 +111,7 @@ def test_two_updates_report_chunk_metrics(two_updates: tuple[Any, Any]) -> None:
     _, m = two_updates
     shapes = {k: np.asarray(v).shape for k, v in m.items()}
     assert shapes == {
-        "losses": (2, 5),
+        "losses": (2, len(LOSS_COLUMNS)),
         "done": (2, NUM_STEPS, ENVS),
         "ach": (2, NUM_STEPS, ENVS, N_ACH),
         "ret": (2, NUM_STEPS, ENVS),

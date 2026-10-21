@@ -6,6 +6,7 @@ import numpy as np
 from craftax.craftax import constants as craftax_constants
 
 from wut_murl_craftax.training.records import (
+    LOSS_COLUMNS,
     RunLog,
     achievement_names,
     achievement_weights,
@@ -66,7 +67,7 @@ def _log_two_updates(out: Path) -> RunLog:
     ach[1, 0, 0] = True  # collect_wood in the first finished episode
     ret = np.arange(8, dtype=np.float32).reshape(4, 2)
     length = np.full((4, 2), 10, np.int32)
-    losses = np.zeros(5, np.float32)
+    losses = np.zeros(len(LOSS_COLUMNS), np.float32)
     log.add_update(1, 8, 0.5, losses, done, ach, ret, length)
     ach2 = ach.copy()
     ach2[3, 1, 2] = True

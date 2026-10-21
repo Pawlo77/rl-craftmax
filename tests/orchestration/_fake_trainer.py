@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from wut_murl_craftax.training.records import LOSS_COLUMNS
+
 STEPS, ENVS, N_ACH = 4, 2, 22
 """Rollout shape of one update; 22 achievements as on Craftax-Classic."""
 STEPS_PER_UPDATE = 333_333
@@ -66,7 +68,7 @@ class FakeTrainer:
             "method": state["method"] + np.array([1.0, done.sum()]),
         }
         metrics = {
-            "losses": grad[:1].repeat(5),
+            "losses": grad[:1].repeat(len(LOSS_COLUMNS)),
             "done": done,
             "ach": jax.random.bernoulli(k_a, 0.3, (STEPS, ENVS, N_ACH)),
             "ret": jax.random.uniform(k_r, (STEPS, ENVS)) * N_ACH,
