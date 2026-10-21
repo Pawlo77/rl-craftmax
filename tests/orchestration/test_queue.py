@@ -669,7 +669,9 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_dry_run_prints_one_run_name_per_line_and_starts_nothing() -> None:
-    out = run_cli("--phase", "configs/phases/smoke.yaml", "--dry-run")
+    out = run_cli(
+        "--phase", "configs/phases/smoke.yaml", "--method", "ppo", "--dry-run"
+    )
     assert out.returncode == 0, out.stderr
     lines = out.stdout.splitlines()
     assert len(lines) == 2
@@ -766,7 +768,7 @@ def test_cli_expand_fine_prints_the_configs_then_the_run_names(
 
 
 def test_shipped_smoke_phase_expands_to_two_classic_ppo_runs() -> None:
-    specs = expand_phase(REPO / "configs/phases/smoke.yaml")
+    specs = expand_phase(REPO / "configs/phases/smoke.yaml", method="ppo")
     assert [(s.registry_name, s.budget, s.env, s.seed, s.eval_mode) for s in specs] == [
         ("ppo", "200k", "Craftax-Classic-Symbolic-v1", 0, "final")
     ] * 2
@@ -820,7 +822,7 @@ def test_shipped_ppo_abort_flags_are_the_plans_thresholds() -> None:
 
 
 def test_shipped_tune_coarse_phase_is_the_28_run_ppo_stage_1() -> None:
-    specs = expand_phase(REPO / "configs/phases/tune-coarse.yaml")
+    specs = expand_phase(REPO / "configs/phases/tune-coarse.yaml", method="ppo")
     assert len(specs) == 28
     assert {(s.registry_name, s.budget, s.env) for s in specs} == {
         ("ppo", "1m", "Craftax-Symbolic-v1")
