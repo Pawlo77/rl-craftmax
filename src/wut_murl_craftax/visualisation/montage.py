@@ -14,7 +14,7 @@ from pathlib import Path
 from . import ffmpeg
 from .charts import SERIES, SURFACE
 from .curves import render_curves, seq_cursor
-from .eval_rollouts import EvalRun, episode_frames, load_eval
+from .eval_rollouts import EVAL_SEEDS, EvalRun, episode_frames, eval_returns, load_eval
 from .grid import panel_label
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def sequence(
     updates: Sequence[int],
     seconds: float = 6.0,
     fps: int = 15,
-    seed: int = 0,
+    seed: int = EVAL_SEEDS[0],
     game_px: int = 1080,
     curves_size: tuple[int, int] = (840, 1080),
     out: Path = Path("outputs/visualisation/montage.mp4"),
@@ -44,7 +44,8 @@ def sequence(
             work / f"panel_{k}.mkv", frames.shape[2], frames.shape[1], fps
         ) as w:
             w.write(frames)
-        score = load_eval(run.dir, u)["reward"].sum(1).mean() / run.max_reward * 100
+        ret = eval_returns(load_eval(run.dir, u), run.cfg["env"]).mean()
+        score = ret / run.max_reward * 100
         head, sub = (
             f"{run.env_steps(u) / 1e6:.1f}M steps",
             f"eval score {score:.0f}% of max",
@@ -135,7 +136,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--updates", help="checkpoint updates, comma list")
     p.add_argument("--seconds", type=float, default=6.0)
     p.add_argument("--fps", type=int, default=15)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=EVAL_SEEDS[0])
     p.add_argument("--short", nargs=2, type=Path, metavar=("GRID", "CURVES"))
     p.add_argument(
         "--out", type=Path, default=Path("outputs/visualisation/montage.mp4")

@@ -13,7 +13,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .curves import render_curves
     from .cuts import gif, long_cut, short_cut
-    from .eval_rollouts import EvalRun, evaluate, load_eval
+    from .eval_rollouts import (
+        EvalRun,
+        evaluate,
+        evaluate_spec,
+        load_eval,
+        network_outputs,
+        replay_episode,
+    )
     from .grid import build_grid
     from .highlights import candidates, detect
     from .montage import sequence
@@ -44,10 +51,12 @@ _EXPORTS: dict[str, str] = {
     "candidates": "highlights",
     "detect": "highlights",
     "evaluate": "eval_rollouts",
+    "evaluate_spec": "eval_rollouts",
     "game_for": "rollout",
     "gif": "cuts",
     "load_eval": "eval_rollouts",
     "long_cut": "cuts",
+    "network_outputs": "eval_rollouts",
     "play": "rollout",
     "render_curves": "curves",
     "render_kept": "render",
@@ -55,6 +64,7 @@ _EXPORTS: dict[str, str] = {
     "render_overlay": "overlay",
     "render_timeline": "timeline",
     "replay": "rollout",
+    "replay_episode": "eval_rollouts",
     "sequence": "montage",
     "short_cut": "cuts",
     "write_page": "review",
@@ -74,10 +84,12 @@ __all__ = [
     "candidates",
     "detect",
     "evaluate",
+    "evaluate_spec",
     "game_for",
     "gif",
     "load_eval",
     "long_cut",
+    "network_outputs",
     "play",
     "render_curves",
     "render_kept",
@@ -85,6 +97,7 @@ __all__ = [
     "render_overlay",
     "render_timeline",
     "replay",
+    "replay_episode",
     "sequence",
     "short_cut",
     "write_page",

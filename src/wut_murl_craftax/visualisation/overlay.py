@@ -21,7 +21,13 @@ from matplotlib.colors import ListedColormap
 
 from . import ffmpeg
 from .charts import INK, MUTED, SERIES, SURFACE, figure, frame, style
-from .eval_rollouts import EvalRun, episode_frames, load_eval
+from .eval_rollouts import (
+    EVAL_SEEDS,
+    EvalRun,
+    episode_frames,
+    network_outputs,
+    stored_episode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +132,7 @@ def action_names(classic: bool) -> list[str]:
 
 @dataclass(frozen=True, slots=True)
 class _Episode:
-    """Per-step eval arrays of one seed, clipped to the steps that were alive."""
+    """Per-step arrays of one stored eval episode, rebuilt by replay."""
 
     probs: np.ndarray
     value: np.ndarray
@@ -138,16 +144,17 @@ class _Episode:
 
     @classmethod
     def load(cls, run: EvalRun, update: int, seed: int, gamma: float) -> "_Episode":
-        ev = load_eval(run.dir, update)
-        i = int(np.flatnonzero(ev["seeds"] == seed)[0])
-        n = int(ev["alive"][i].sum())
+        """Replay seed + actions; re-run the network on the observations."""
+        ep, actions = stored_episode(run, update, seed)
+        probs, value = network_outputs(run, update, ep.obs, actions, ep.done, False)
+        n = len(actions)
         return cls(
-            ev["probs"][i].astype(np.float32),
-            ev["value"][i],
-            ev["reward"][i],
-            ev["act"][i].astype(int),
-            decode_obs(ev["obs"][i], run.classic),
-            discounted_return(ev["reward"][i], n, gamma),
+            probs,
+            value,
+            ep.reward,
+            actions.astype(int),
+            decode_obs(ep.obs, run.classic),
+            discounted_return(ep.reward, n, gamma),
             n,
         )
 
@@ -264,7 +271,7 @@ class _Panel:
 def render_overlay(
     run_dir: Path,
     update: int,
-    seed: int = 0,
+    seed: int = EVAL_SEEDS[0],
     steps: tuple[int, int] = (0, 300),
     fps: int = 10,
     game_px: int = 1080,
@@ -322,11 +329,11 @@ def render_overlay(
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Command line: ``RUN --update U [--seed 0] [--steps 0:300] [--fps 10]``."""
+    """Command line: ``RUN --update U [--seed 10000] [--steps 0:300] [--fps 10]``."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("run", type=Path)
     p.add_argument("--update", type=int, required=True)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=EVAL_SEEDS[0])
     p.add_argument("--steps", default="0:300")
     p.add_argument("--fps", type=int, default=10)
     p.add_argument("--game-px", type=int, default=1080)

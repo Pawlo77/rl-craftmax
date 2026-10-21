@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 
 from . import ffmpeg, text
 from .charts import INK, INK2, SERIES, SURFACE
-from .eval_rollouts import EvalRun, episode_frames, load_eval
+from .eval_rollouts import EVAL_SEEDS, EvalRun, episode_frames, eval_returns, load_eval
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _panels(
             writer.write(frames)
         lens.append(len(frames))
         ev = load_eval(run.dir, u)
-        score = ev["reward"].sum(1).mean() / run.max_reward * 100
+        score = eval_returns(ev, run.cfg["env"]).mean() / run.max_reward * 100
         head = f"{run.env_steps(u) / 1e6:.1f}M steps"
         sub = f"eval score {score:.0f}% of max ({len(ev['seeds'])} seeds)"
         panel_label(head, sub, panel, SERIES[k % 4]).save(work / f"label_{k}.png")
@@ -75,7 +75,7 @@ def _panels(
 def build_grid(
     run_dir: Path,
     updates: Sequence[int],
-    seed: int = 0,
+    seed: int = EVAL_SEEDS[0],
     panel: int = 540,
     fps: int = 15,
     max_s: float = 20.0,
@@ -131,11 +131,11 @@ def build_grid(
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Command line: ``RUN --updates a,b,c,d [--seed 0] [--panel 540] [--fps 15]``."""
+    """Command line: ``RUN --updates a,b,c,d [--seed S] [--panel 540] [--fps 15]``."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("run", type=Path)
     p.add_argument("--updates", required=True, help="four checkpoint updates")
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=EVAL_SEEDS[0])
     p.add_argument("--panel", type=int, default=540, help="px; 540 -> 1080 x 1080")
     p.add_argument("--fps", type=int, default=15)
     p.add_argument("--max-s", type=float, default=20.0)

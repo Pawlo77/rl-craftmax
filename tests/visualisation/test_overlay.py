@@ -5,11 +5,14 @@ from pathlib import Path
 import jax
 import numpy as np
 import pytest
-from _learning_run import needs_ffmpeg, tiny_run
+from _learning_run import EVAL_SEEDS, TINY, needs_ffmpeg, tiny_run
 from craftax.craftax_env import make_craftax_env_from_name
 
+from wut_murl_craftax.training.ppo import make_network, policy_value
 from wut_murl_craftax.visualisation import ffmpeg
+from wut_murl_craftax.visualisation.eval_rollouts import EvalRun, load_eval
 from wut_murl_craftax.visualisation.overlay import (
+    _Episode,
     block_colors,
     decode_obs,
     discounted_return,
@@ -44,12 +47,39 @@ def test_discounted_return_stops_at_episode_end() -> None:
     np.testing.assert_allclose(discounted_return(r, 3, 0.5), [1.25, 0.5, 1.0, 0.0])
 
 
+def test_episode_replays_observations_and_reruns_the_network() -> None:
+    run, seed = EvalRun.load(tiny_run()), EVAL_SEEDS[0]
+    ev = load_eval(run.dir, 4)
+    n = int(ev["length"][0])
+    ep = _Episode.load(run, 4, seed, 0.99)
+    # an independent replay: the raw env and the fold_in key scheme
+    net, env, env_params = make_network(TINY.env, TINY.width, auto_reset=False)
+    base = jax.random.PRNGKey(seed)
+    obs, state = env.reset(base, env_params)
+    step = jax.jit(env.step)
+    seen, rewards = [], []
+    for t, a in enumerate(ev["actions"][0, :n].tolist()):
+        seen.append(np.asarray(obs))
+        k = jax.random.fold_in(jax.random.fold_in(base, 1), t)
+        obs, state, r, _, _ = step(k, state, a, env_params)
+        rewards.append(float(r))
+    logits, value = policy_value(net, run.params(4), np.stack(seen))
+    assert ep.n_alive == n
+    np.testing.assert_array_equal(ep.act, ev["actions"][0, :n])
+    np.testing.assert_allclose(ep.reward, rewards, atol=1e-6)
+    np.testing.assert_allclose(ep.probs, jax.nn.softmax(logits), atol=1e-6)
+    np.testing.assert_allclose(ep.value, value, atol=1e-6)
+    np.testing.assert_array_equal(
+        ep.view.blocks, decode_obs(np.stack(seen), True).blocks
+    )
+
+
 @needs_ffmpeg
 def test_overlay_is_game_plus_panel_one_frame_per_step(tmp_path: Path) -> None:
     out = render_overlay(
         tiny_run(),
         update=4,
-        seed=0,
+        seed=EVAL_SEEDS[0],
         steps=(0, 6),
         fps=5,
         game_px=144,
