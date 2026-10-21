@@ -117,6 +117,19 @@ def _mean_step(
     return q.reshape(-1).at[uniq].add(alpha * step).reshape(q.shape)
 
 
+def smdp_target(
+    q: jax.Array,
+    ret: jax.Array,
+    disc: jax.Array,
+    k_next: jax.Array,
+    avail_next: jax.Array,
+    done: jax.Array,
+) -> jax.Array:
+    """``R + gamma^tau (1 - done) max_{o' available} Q[k', o']`` per row."""
+    best = jnp.max(jnp.where(avail_next, q[k_next], -jnp.inf), axis=-1)
+    return ret + jnp.where(done, 0.0, disc * best)
+
+
 def smdp_update(
     q: jax.Array,
     k: jax.Array,
@@ -134,8 +147,7 @@ def smdp_update(
     Target ``R + gamma^tau (1 - done) max_{o' available} Q[k', o']``; envs ending
     the same (k, o) in this step share one step of ``alpha`` x their mean TD error.
     """
-    best = jnp.max(jnp.where(avail_next, q[k_next], -jnp.inf), axis=-1)
-    target = ret + jnp.where(done, 0.0, disc * best)
+    target = smdp_target(q, ret, disc, k_next, avail_next, done)
     return _mean_step(q, k, o, target - q[k, o], ended, alpha)
 
 

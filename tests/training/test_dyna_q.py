@@ -1,5 +1,6 @@
 """Tests for the Dyna-Q skill-outcome model and its planning updates on toy chains."""
 
+import inspect
 from typing import Any
 
 import jax
@@ -10,12 +11,17 @@ import pytest
 from wut_murl_craftax.training.dyna_q import (
     ModelState,
     Outcome,
+    full_backup,
     init_model,
     model_accuracy,
     pack_mask,
+    plan,
+    sample_backup,
+    uniform_batch,
     unpack_mask,
     write,
 )
+from wut_murl_craftax.training.smdp import init_table, smdp_update
 
 S = 3
 """Skills of the toy model."""
@@ -137,3 +143,133 @@ def test_write_jits_and_vmaps() -> None:
     np.testing.assert_array_equal(both.m_R[1], eager.m_R)
     acc = jax.jit(model_accuracy)(eager, rec, ended)
     assert [int(x) for x in acc] == [2, 2]
+
+
+# --- planning on toy deterministic chains (one skill per key, tau = 1) ---
+
+G2, ONE = 0.95, jnp.ones((1, 2), bool)
+
+
+def one(k: int, o: int, r: float = 0.0, k_next: int = 0, done: bool = False) -> Outcome:
+    """A single finished skill (gamma^tau 0.95, every next skill available)."""
+    a = jnp.array
+    return Outcome(a([k]), a([o]), a([r]), a([G2]), a([k_next]), a([done]), ONE)
+
+
+def chain(n_keys: int, alpha: float) -> tuple[jax.Array, ModelState]:
+    """Real episode ``k0 -> ... -> k_{n-1} -> goal``: table after the direct updates
+    in visit order, and the model of its outcomes (skill 0, R 1 at the goal)."""
+    q, m = init_table(4, 2, 0.0), init_model(4, 2, 8, 4)
+    for i in range(n_keys):
+        last = i == n_keys - 1
+        rec = one(i, 0, 1.0 if last else 0.0, i + 1, last)
+        m = write(m, rec, jnp.array([True]), jnp.float32(i))
+        q = smdp_update(q, rec.k, rec.o, rec.ret, rec.disc, rec.k_next, rec.avail,
+                        rec.done, jnp.array([True]), alpha)  # fmt: skip
+    return q, m
+
+
+def test_book_corridor_backs_up_one_key_per_planning_step() -> None:
+    q, m = chain(3, 0.1)  # A -> B -> C -> G
+    assert float(q[2, 0]) == pytest.approx(0.1)
+    assert float(q[1, 0]) == float(q[0, 0]) == 0.0
+    for key in (1, 0):  # B, then A
+        p = m.pair_id[key, 0][None]
+        q = sample_backup(q, m, p, jnp.array([0]), jnp.array([True]), 0.0, 0.0, 0.1)
+    assert round(float(q[1, 0]), 5) == 0.0095
+    assert round(float(q[0, 0]), 5) == 0.00090
+
+
+def test_prioritized_sweeping_carries_the_goal_back_in_one_episode() -> None:
+    q, m = chain(5, 1.0)
+    np.testing.assert_array_equal(q[:5, 0], [0, 0, 0, 0, 1])  # model-free, n = 0
+    order = []
+    for i in range(4):
+        q2, stats = plan(q, m, 1, "prioritized", 0.0, 5.0, jax.random.key(i),
+                         alpha=1.0, batch=1)  # fmt: skip
+        changed = np.flatnonzero(np.asarray(q2[:, 0] != q[:, 0]))
+        order.append(int(changed[0]))
+        assert int(stats["backups"]) == 1
+        q = q2
+    assert order == [3, 2, 1, 0]
+    np.testing.assert_allclose(
+        q[:5, 0], [0.81450625, 0.857375, 0.9025, 0.95, 1.0], rtol=1e-6
+    )
+    q0, m0 = chain(5, 1.0)
+    q4, _ = plan(q0, m0, 4, "prioritized", 0.0, 5.0, jax.random.key(0), alpha=1.0,
+                 batch=1)  # fmt: skip
+    np.testing.assert_array_equal(q4, q)
+
+
+def test_value_iteration_converges_to_the_discounted_goal() -> None:
+    q, m = chain(5, 1.0)
+    q, stats = plan(q, m, 0, "value_iteration", 0.0, 5.0, jax.random.key(0),
+                    alpha=1.0)  # fmt: skip
+    want = [G2 ** (4 - i) for i in range(5)]
+    np.testing.assert_allclose(q[:5, 0], want, atol=1e-3)
+    assert 4 <= int(stats["sweeps"]) <= 50
+
+
+def test_full_backup_averages_the_stored_outcomes_under_the_next_mask() -> None:
+    m = init_model(4, 2, 8, 4)
+    both = Outcome(
+        jnp.array([1, 1, 5]), jnp.array([0, 0, 0]), jnp.array([1.0, 0.0, 0.0]),
+        jnp.array([G2] * 3), jnp.array([0, 0, 6]), jnp.array([True, True, False]),
+        jnp.array([[True, True], [True, True], [False, True]]),
+    )  # fmt: skip
+    m = write(m, both, jnp.ones(3, bool), jnp.float32(0.0))
+    q = init_table(4, 2, 0.0).at[6].set(jnp.array([5.0, 1.0]))
+    pairs = jnp.array([m.pair_id[1, 0], m.pair_id[5, 0]])
+    q = full_backup(q, m, pairs, jnp.array([True, True]), 0.0, 0.0, 1.0)
+    assert float(q[1, 0]) == pytest.approx(0.5)
+    assert float(q[5, 0]) == pytest.approx(G2 * 1.0)  # o0 at k6 is masked out
+
+
+def test_dyna_q_plus_bonus_on_simulated_backups_only() -> None:
+    m = init_model(4, 2, 8, 4)
+    rec = one(2, 1, done=True)
+    m = write(m, rec, jnp.array([True]), jnp.float32(4.0))
+    q0 = init_table(4, 2, 0.0)
+    q = sample_backup(q0, m, jnp.array([0]), jnp.array([0]), jnp.array([True]), 0.01,
+                      20.0, 1.0)  # fmt: skip
+    assert float(q[2, 1]) == pytest.approx(0.04)
+    planned, _ = plan(q0, m, 1, "uniform", 0.01, 20.0, jax.random.key(0), alpha=1.0)
+    assert float(planned[2, 1]) == pytest.approx(0.04)
+    assert "kappa" not in inspect.signature(smdp_update).parameters
+    real = smdp_update(q0, rec.k, rec.o, rec.ret, rec.disc, rec.k_next, rec.avail,
+                       rec.done, jnp.array([True]), 1.0)  # fmt: skip
+    assert float(real[2, 1]) == 0.0
+
+
+@pytest.mark.parametrize("variant", ["uniform", "prioritized"])
+def test_no_planning_is_the_smdp_skills_table(variant: str) -> None:
+    q, m = chain(5, 0.5)
+    q2, stats = plan(q, m, 0, variant, 0.03, 5.0, jax.random.key(1), alpha=0.5)
+    assert np.asarray(q2).tobytes() == np.asarray(q).tobytes()
+    assert int(stats["backups"]) == 0
+
+
+def test_uniform_samples_visited_pairs_and_filled_slots() -> None:
+    m = init_model(4, 2, 8, 4)
+    for i, n in enumerate((1, 3, 6)):  # pairs with 1, 3 and 6 (> M) outcomes
+        for _ in range(n):
+            m = write(m, one(i, 1), jnp.array([True]), jnp.float32(0.0))
+    p, slot, valid = uniform_batch(m, jax.random.key(2), 10_000)
+    p, slot = np.asarray(p), np.asarray(slot)
+    assert bool(valid.all())
+    assert set(p.tolist()) == {0, 1, 2}
+    assert (slot < np.minimum(np.asarray(m.count)[p], 4)).all()
+    assert set(slot[p == 2].tolist()) == {0, 1, 2, 3}
+    empty = uniform_batch(init_model(4, 2, 8, 4), jax.random.key(2), 4)[2]
+    assert not bool(empty.any())
+
+
+def test_plan_jits_with_a_traced_backup_count() -> None:
+    q, m = chain(5, 1.0)
+    run = jax.jit(plan, static_argnames=("variant", "batch"))
+    for variant in ("uniform", "prioritized", "value_iteration"):
+        got, _ = run(q, m, jnp.int32(3), variant, 0.0, 5.0, jax.random.key(0),
+                     alpha=1.0, batch=2)  # fmt: skip
+        eager, _ = plan(q, m, 3, variant, 0.0, 5.0, jax.random.key(0), alpha=1.0,
+                        batch=2)  # fmt: skip
+        np.testing.assert_allclose(got, eager, rtol=1e-6)
