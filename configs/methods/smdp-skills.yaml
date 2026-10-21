@@ -1,0 +1,90 @@
+# SMDP Q-learning over hand-defined skills; the schema is documented in orchestration/queue.py.
+# The skill network is the PQN-RNN control's tuned config (base_from), widened by the skill
+# one-hot and the step-limit fraction (extra_obs_dim 26 = 25 skills + 1). Every top-level knob
+# is set here, so no dataclass default decides a run: the fixed settings of the plan (2^20
+# table rows, q_init 10 above early returns, top-level epsilon from 1 to 0.05, low-stat flags
+# in the key) and the design defaults of the tuned knobs. The top-level discount is set as
+# its horizon top_horizon = 1 / (1 - gamma) (200: gamma 0.995, 1000: 0.999), so the fine
+# grid's factors scale the horizon (1000 x 0.5, 1, 2: gamma 0.998, 0.999, 0.9995).
+# Ablations at final-1m, as phase-file overrides: random top level `set: {eps_top_end: 1.0}`,
+# Monte Carlo top level `set: {monte_carlo: true}`, no low-stat flags `set: {low_flags: false}`.
+base:
+  base_from: pqn-rnn.tuned
+  extra_obs_dim: 26
+  alpha: 0.2
+  top_horizon: 1000
+  eps_top_decay: 0.1
+  eps_top_end: 0.05
+  timeout_mult: 1.0
+  granularity: recipe
+  log2_rows: 20
+  q_init: 10.0
+  low_flags: true
+  monte_carlo: false
+  mc_length: 1024
+
+grid:
+  # Stage 1: alpha x horizon x epsilon decay x timeout multiplier x key granularity,
+  # 2 x 2 x 2 x 3 x 2 = 48 configs, 3 seeds each.
+  coarse:
+    - {name: a0.05-h200-e0.1-t0.5-recipe, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.05-h200-e0.1-t0.5-log2, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.05-h200-e0.1-t1-recipe, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.05-h200-e0.1-t1-log2, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.05-h200-e0.1-t2-recipe, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.05-h200-e0.1-t2-log2, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.05-h200-e0.3-t0.5-recipe, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.05-h200-e0.3-t0.5-log2, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.05-h200-e0.3-t1-recipe, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.05-h200-e0.3-t1-log2, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.05-h200-e0.3-t2-recipe, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.05-h200-e0.3-t2-log2, alpha: 0.05, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.05-h1000-e0.1-t0.5-recipe, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.05-h1000-e0.1-t0.5-log2, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.05-h1000-e0.1-t1-recipe, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.05-h1000-e0.1-t1-log2, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.05-h1000-e0.1-t2-recipe, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.05-h1000-e0.1-t2-log2, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.05-h1000-e0.3-t0.5-recipe, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.05-h1000-e0.3-t0.5-log2, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.05-h1000-e0.3-t1-recipe, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.05-h1000-e0.3-t1-log2, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.05-h1000-e0.3-t2-recipe, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.05-h1000-e0.3-t2-log2, alpha: 0.05, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.2-h200-e0.1-t0.5-recipe, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.2-h200-e0.1-t0.5-log2, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.2-h200-e0.1-t1-recipe, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.2-h200-e0.1-t1-log2, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.2-h200-e0.1-t2-recipe, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.2-h200-e0.1-t2-log2, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.2-h200-e0.3-t0.5-recipe, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.2-h200-e0.3-t0.5-log2, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.2-h200-e0.3-t1-recipe, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.2-h200-e0.3-t1-log2, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.2-h200-e0.3-t2-recipe, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.2-h200-e0.3-t2-log2, alpha: 0.2, top_horizon: 200, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.2-h1000-e0.1-t0.5-recipe, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.2-h1000-e0.1-t0.5-log2, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.2-h1000-e0.1-t1-recipe, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.2-h1000-e0.1-t1-log2, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.2-h1000-e0.1-t2-recipe, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.2-h1000-e0.1-t2-log2, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.1, timeout_mult: 2.0, granularity: log2}
+    - {name: a0.2-h1000-e0.3-t0.5-recipe, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: recipe}
+    - {name: a0.2-h1000-e0.3-t0.5-log2, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 0.5, granularity: log2}
+    - {name: a0.2-h1000-e0.3-t1-recipe, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: recipe}
+    - {name: a0.2-h1000-e0.3-t1-log2, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 1.0, granularity: log2}
+    - {name: a0.2-h1000-e0.3-t2-recipe, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: recipe}
+    - {name: a0.2-h1000-e0.3-t2-log2, alpha: 0.2, top_horizon: 1000, eps_top_decay: 0.3, timeout_mult: 2.0, granularity: log2}
+  # Stage 2 (`--expand-fine smdp-skills`): the 2 numeric knobs with the largest stage-1
+  # effect, best x 0.5, 1, 2 crossed (9 configs, the centre reused by run name); the
+  # granularity is categorical and stays at its best value. Entries are generated.
+  fine:
+    rule: {select: 2, combine: cross}
+    knobs:
+      - {key: alpha, mul: [0.5, 1.0, 2.0], clip: [0.0, 1.0]}
+      - {key: top_horizon, mul: [0.5, 1.0, 2.0]}
+      - {key: eps_top_decay, mul: [0.5, 1.0, 2.0], clip: [0.0, 1.0]}
+      - {key: timeout_mult, mul: [0.5, 1.0, 2.0]}
+
+# written by `--mark-tuned smdp-skills <hash8>`
+tuned: null

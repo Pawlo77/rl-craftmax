@@ -19,6 +19,7 @@ from .ppo_rnn import PPORNNConfig
 from .ppo_rnn import make_trainer as make_ppo_rnn_trainer
 from .pqn_rnn import PQNRNNConfig
 from .pqn_rnn import make_trainer as make_pqn_rnn_trainer
+from .smdp import SMDPTrainer
 
 
 class Policy(Protocol):
@@ -50,6 +51,7 @@ METHODS: Mapping[str, Trainer] = {
         PQNRNNConfig(), method=count_bonus.METHOD
     ),
     "sil": make_ppo_rnn_trainer(PPORNNConfig(), method=sil.METHOD),
+    "smdp-skills": SMDPTrainer(),
 }
 """Registry name (`RunSpec.registry_name`, ``config["method"]``) -> trainer; each
 method plan adds its entry."""

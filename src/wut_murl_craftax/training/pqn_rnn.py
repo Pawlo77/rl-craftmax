@@ -441,14 +441,16 @@ def _learn_batch(
         c, h = jnp.split(traj.hidden[0].astype(jnp.float32), 2, -1)
         h0 = (c, h)
     d = traj.dones.astype(jnp.float32)
+    # a skill method cuts targets at skill ends but resets its LSTM at episode ends
+    ends = traj.extra.get("episode_dones", traj.dones).astype(bool)
     # the start carry is already reset, so step 0 never resets again
-    first = jnp.zeros_like(traj.dones[:1], bool)
+    first = jnp.zeros_like(ends[:1])
     return {
         "obs": traj.obs,
         "act": traj.actions,
         "r": r,
         "d": d,
-        "reset": jnp.concatenate([first, traj.dones[:-1].astype(bool)]),
+        "reset": jnp.concatenate([first, ends[:-1]]),
         "la": traj.extra["last_actions"],
         "mask": jnp.ones_like(d) if loss_mask is None else loss_mask.astype(d.dtype),
         "h0": h0,
@@ -629,8 +631,9 @@ def learn(
 ) -> tuple[QTrainState, dict[str, jax.Array]]:
     """One PQN-RNN update on a rollout, for `train_chunk` or another rollout.
 
-    Reads ``traj.obs`` (network-wide), ``actions``, ``rewards``, ``dones``,
-    ``extra["last_actions"]`` and, if present, ``extra["r_int"]``; ``loss_mask``
+    Reads ``traj.obs`` (network-wide), ``actions``, ``rewards``, ``dones`` (no target
+    crosses one), ``extra["last_actions"]`` and, if present, ``extra["r_int"]`` and
+    ``extra["episode_dones"]`` (LSTM resets; default ``dones``); ``loss_mask``
     ``(steps, envs)`` drops transitions from the loss. ``h0`` is the float32 start
     carry after step 0's reset (default: ``traj.hidden[0]``, rounded to float16).
     Returns the train state and the mean ``td_loss`` and ``grad_norm`` of its steps.

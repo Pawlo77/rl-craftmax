@@ -441,3 +441,29 @@ def test_the_transition_fits_pqn_rnn_learn(rig: Rig) -> None:
     ts2, m = learn(ts, traj, jax.random.key(5), mask, rig.net.init_carry(ENVS))
     assert np.isfinite(float(m["td_loss"]))
     assert int(ts2.step) == NET_CFG.epochs * NET_CFG.minibatches
+
+
+def test_an_episode_end_is_not_judged_by_the_events(rig: Rig) -> None:
+    """The done step forces success off, so `test_agreement` skips it (``fight`` is
+    judged at every other end); the step's events stay out of the outputs."""
+    c = rig.carry()
+    st = c.per_env.env_state
+    inner = st.env_state.replace(
+        timestep=st.env_state.timestep.at[0].set(rig.params.max_timesteps - 1)
+    )
+    c = force(c.replace(per_env=c.per_env.replace(
+        env_state=st.replace(env_state=inner))), [FIGHT] * 2)  # fmt: skip
+    c2, out = rig.run(c, 1)
+    assert bool(out["episode_done"][0, 0])
+    assert REASONS[int(out["reason"][0, 1])] == "running"
+    np.testing.assert_array_equal(c2.shared.agreement[FIGHT], [0, 0])
+    assert int(c2.shared.ends[FIGHT].sum()) == 1
+    assert {"unlocked", "events"}.isdisjoint(out)
+
+
+def test_a_network_without_the_skill_inputs_is_refused(rig: Rig) -> None:
+    narrow = build_network(NET_CFG, 43, 8268 - EXTRA_DIM)
+    with pytest.raises(ValueError, match="extra_obs_dim=26"):
+        init_rollout(
+            TOY, rig.env, narrow, None, jax.random.key(0), env_params=rig.params
+        )

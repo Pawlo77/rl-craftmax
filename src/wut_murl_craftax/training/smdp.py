@@ -1,29 +1,55 @@
-"""SMDP skills method: the top-level table ``Q[2^bits, 25]``, its updates, the rollout.
+"""SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy.
 
-`top_key` hashes `skills.key_fields` plus the 4 low-stat flags to a row;
+`top_key` hashes `key_vector` (`skills.key_fields` plus 4 low-stat flags) to a row;
 `select_skill` is masked ε-greedy over `skills.available`; `accumulate` keeps a
-running skill's discounted return and ``gamma^tau``; `smdp_update` is the
-semi-Markov Q-learning backup, one mean TD step per (key, skill) pair ended in the
-same env step; `mc_init`, `mc_push`, `mc_update` are the Monte Carlo ablation;
-`rollout_step` is one env step of every env (action, skill ends, top-level update,
-re-decision); `SMDPConfig` holds the one granularity they all use. A trainer module
-(Craftax via ``pqn_rnn``), imported after ``configure_runtime``. Design:
-[[SMDP Q-Learning over Hand-Defined Skills design]].
+running skill's discounted return and ``gamma^tau``; `smdp_update` is the semi-Markov
+backup, one mean TD step per (key, skill) pair ended in the same env step; `mc_init`,
+`mc_push`, `mc_update` are the Monte Carlo ablation; `rollout_step` is one env step of
+every env. `SMDPTrainer` (registry ``smdp-skills``) trains the skill network with
+`pqn_rnn.learn` and acts through `SMDPPolicy`, which reads the reward from
+`reward_in_obs`. Imported after ``configure_runtime`` (Craftax via ``pqn_rnn``).
+Design: [[SMDP Q-Learning over Hand-Defined Skills design]].
 """
 
-from dataclasses import dataclass
-from typing import Any, cast
+import functools
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import optax
 from flax import struct
+from jax.sharding import Mesh, NamedSharding
 
+from ..evaluation.episode_metrics import EpisodeAcc, episode_step, init_acc
+from ..orchestration import shard_envs
 from .hooks import Traj
-from .pqn_rnn import NO_ACTION, Carry, RNNQNetwork, apply_network, eps_greedy
+from .ppo import env_placement, make_train_env
+from .pqn_rnn import (
+    FILLED_LOSS_COLUMNS,
+    NO_ACTION,
+    Carry,
+    PQNRNNConfig,
+    QTrainState,
+    RNNQNetwork,
+    apply_network,
+    build_network,
+    eps_greedy,
+    epsilon,
+    learn,
+    optimizer,
+    variables_of,
+)
 from .progress_key import Granularity, hash_fields
+from .records import LOSS_COLUMNS, achievement_names
 from .skills import (
+    CLASSIC_OBS,
+    CRAFTAX_OBS,
     NUM_SKILLS,
     PRIMITIVE,
+    REASONS,
     ObsView,
     available,
     decode_obs,
@@ -34,6 +60,10 @@ from .skills import (
     step_limit,
     test_agreement,
 )
+from .wrappers import GymnaxWrapper
+
+if TYPE_CHECKING:  # the runner imports mlflow; tests of this module do not need it
+    from ..orchestration.runner import ChunkMetrics
 
 EXTRA_DIM = NUM_SKILLS + 1
 """Skill-network inputs after the observation: skill one-hot, step-limit fraction."""
@@ -62,10 +92,17 @@ def top_key(
 
     ``low_flags=False`` is the no-low-stat-flags ablation.
     """
+    return hash_fields(key_vector(view, granularity, low_flags=low_flags), bits)
+
+
+def key_vector(
+    view: ObsView, granularity: Granularity, *, low_flags: bool = True
+) -> jax.Array:
+    """The fields `top_key` hashes: `skills.key_fields`, then the 4 low-stat flags."""
     f = key_fields(view, granularity)
     if low_flags:
         f = jnp.concatenate([f, low_stats(view).astype(jnp.int32)])
-    return hash_fields(f, bits)
+    return f
 
 
 def select_skill(
@@ -147,8 +184,24 @@ def smdp_update(
     Target ``R + gamma^tau (1 - done) max_{o' available} Q[k', o']``; envs ending
     the same (k, o) in this step share one step of ``alpha`` x their mean TD error.
     """
-    target = smdp_target(q, ret, disc, k_next, avail_next, done)
-    return _mean_step(q, k, o, target - q[k, o], ended, alpha)
+    return _smdp_step(q, k, o, ret, disc, k_next, avail_next, done, ended, alpha)[0]
+
+
+def _smdp_step(
+    q: jax.Array,
+    k: jax.Array,
+    o: jax.Array,
+    ret: jax.Array,
+    disc: jax.Array,
+    k_next: jax.Array,
+    avail_next: jax.Array,
+    done: jax.Array,
+    ended: jax.Array,
+    alpha: float,
+) -> tuple[jax.Array, jax.Array]:
+    """`smdp_update` and the TD error of every env."""
+    td = smdp_target(q, ret, disc, k_next, avail_next, done) - q[k, o]
+    return _mean_step(q, k, o, td, ended, alpha), td
 
 
 class MCRecords(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
@@ -208,6 +261,25 @@ def mc_update(
     ended envs restart with no records. A reverse scan over ``length``: call it
     under ``lax.cond`` on any episode end.
     """
+    q, rec, _ = _mc_flush(q, rec, episode_end, alpha)
+    return q, rec
+
+
+def _mc_flush(
+    q: jax.Array, rec: MCRecords, episode_end: jax.Array, alpha: float
+) -> tuple[jax.Array, MCRecords, tuple[jax.Array, ...]]:
+    """`mc_update` and the `_update_stats` of its records."""
+    k, o, g, mask = _mc_targets(rec, episode_end)
+    td = g - q[k, o]
+    q = _mean_step(q, k, o, td, mask, alpha)
+    rec = rec.replace(n=jnp.where(episode_end, 0, rec.n))
+    return q, rec, _update_stats(td, q[k, o], mask)
+
+
+def _mc_targets(
+    rec: MCRecords, episode_end: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Rows, skills, returns and mask ``[envs, length]`` of the records to update."""
     length = rec.key.shape[1]
     m = jnp.minimum(rec.n, length)
     start = jnp.where(rec.n > length, rec.n % length, 0)
@@ -224,10 +296,7 @@ def mc_update(
         return g, g
 
     _, gs = jax.lax.scan(back, jnp.zeros(m.shape), jnp.arange(length), reverse=True)
-    k, o = chrono(rec.key), chrono(rec.skill)
-    mask = valid & episode_end[:, None]
-    q = _mean_step(q, k, o, gs.T - q[k, o], mask, alpha)
-    return q, rec.replace(n=jnp.where(episode_end, 0, rec.n))
+    return chrono(rec.key), chrono(rec.skill), gs.T, valid & episode_end[:, None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +317,10 @@ class SMDPConfig:
     """Monte Carlo top level (ablation) instead of the SMDP backup."""
     mc_length: int = 1024
     """Skill ends per env and episode the Monte Carlo records keep."""
+    eps_top_end: float = 0.05
+    """Top-level ε after the decay (1: the random-top-level ablation)."""
+    eps_top_decay: float = 0.1
+    """Share of the updates over which the top-level ε falls linearly from 1."""
 
     def __post_init__(self) -> None:
         """Refuse settings the update cannot use.
@@ -264,6 +337,12 @@ class SMDPConfig:
             f"need 0 < gamma_top <= 1, got {self.gamma_top}": 0 < self.gamma_top <= 1,
             f"need timeout_mult > 0, got {self.timeout_mult}": self.timeout_mult > 0,
             f"need mc_length >= 1, got {self.mc_length}": self.mc_length >= 1,
+            f"need 0 <= eps_top_end <= 1, got {self.eps_top_end}": (
+                0 <= self.eps_top_end <= 1
+            ),
+            f"need 0 < eps_top_decay <= 1, got {self.eps_top_decay}": (
+                0 < self.eps_top_decay <= 1
+            ),
         }
         if failed := [msg for msg, ok in checks.items() if not ok]:
             raise ValueError("; ".join(failed))
@@ -287,6 +366,7 @@ class PerEnv(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Leaves with the env count as leading dim (split over an env mesh)."""
 
     obs: jax.Array
+    """As the env returns it; `reward_in_obs` appends a reward column."""
     env_state: Any
     h: Carry
     """LSTM carry, kept across skill ends, reset after an episode end."""
@@ -294,6 +374,8 @@ class PerEnv(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Episode end of the previous step."""
     last_act: jax.Array
     skill: SkillState
+    episode: EpisodeAcc
+    """Return, length and unlocks of the running episode, for logging only."""
     mc: MCRecords | None
     """Monte Carlo records, ``None`` unless ``monte_carlo``."""
 
@@ -304,11 +386,14 @@ class Shared(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     variables: Any
     """Skill-network params and BatchRenorm statistics."""
     q: jax.Array
+    seen: jax.Array
+    """`key_vector` of a decision made at each row, int8 ``[rows, fields]``, -1 for
+    rows never decided at (one of the keys when several share a row)."""
     ends: jax.Array
     """Skill ends per skill and `skills.REASONS` index, int32 ``[25, 7]``."""
     agreement: jax.Array
     """Per skill: ends the events judged, and of those the ones that agreed, int32
-    ``[25, 2]`` (`skills.test_agreement`)."""
+    ``[25, 2]`` (`skills.test_agreement`; episode ends are not judged)."""
     method_state: Any
     """State of the optional ``intrinsic_reward_fn``."""
     t: jax.Array
@@ -328,18 +413,30 @@ class RolloutCarry(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax 
     cfg: SMDPConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
 
 
-def _keys(cfg: SMDPConfig, v: ObsView) -> tuple[jax.Array, jax.Array]:
-    """Table rows and start-condition masks of a batch of views."""
+def _views(obs: jax.Array, width: int) -> ObsView:
+    """Views of a batch of observations, without a reward column past ``width``."""
+    return jax.vmap(decode_obs)(obs[..., :width])
+
+
+def _keys(cfg: SMDPConfig, v: ObsView) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Table rows, start-condition masks and `key_vector` of a batch of views."""
     g = cfg.granularity
-    k = jax.vmap(lambda x: top_key(x, g, cfg.log2_rows, low_flags=cfg.low_flags))(v)
-    return k, jax.vmap(lambda x: available(x, g))(v)
+    f = jax.vmap(lambda x: key_vector(x, g, low_flags=cfg.low_flags))(v)
+    return hash_fields(f, cfg.log2_rows), jax.vmap(lambda x: available(x, g))(v), f
 
 
 def _pick(
     q: jax.Array, k: jax.Array, avail: jax.Array, eps: jax.Array, key: jax.Array
 ) -> jax.Array:
+    """`select_skill` of every env, each with its own key."""
     keys = jax.random.split(key, k.shape[0])
     return jax.vmap(select_skill, in_axes=(None, 0, 0, None, 0))(q, k, avail, eps, keys)
+
+
+def _visit(seen: jax.Array, k: jax.Array, f: jax.Array, mask: jax.Array) -> jax.Array:
+    """Write the key vectors of the masked decisions into their rows."""
+    rows = jnp.where(mask, k, seen.shape[0])  # out of range: dropped
+    return seen.at[rows].set(f.astype(seen.dtype), mode="drop")
 
 
 def init_rollout(
@@ -350,21 +447,29 @@ def init_rollout(
     key: jax.Array,
     *,
     env_params: Any = None,
-    eps: float = 1.0,
-    eps_top: float = 1.0,
+    eps: float | jax.Array = 1.0,
+    eps_top: float | jax.Array = 1.0,
     method_state: Any = None,
 ) -> RolloutCarry:
     """Reset the batched ``env`` and choose every env's first skill.
 
     Raises:
-        ValueError: If the table rows equal the env count (`init_table`).
+        ValueError: If the table rows equal the env count (`init_table`), or the
+            network does not take the observation plus `EXTRA_DIM` inputs.
     """
     params = env.default_params if env_params is None else env_params
     envs = env.num_envs
     q = init_table(cfg.log2_rows, NUM_SKILLS, cfg.q_init, envs=envs)
     key, k_reset, k_pick = jax.random.split(key, 3)
     obs, st = env.reset(k_reset, params)
-    k, avail = _keys(cfg, jax.vmap(decode_obs)(obs))
+    width = obs.shape[-1] - (obs.shape[-1] in (CRAFTAX_OBS + 1, CLASSIC_OBS + 1))
+    if network.obs_dim != width + EXTRA_DIM:
+        msg = (
+            f"the skill network takes {network.obs_dim} inputs, not the observation "
+            f"({width}) plus EXTRA_DIM ({EXTRA_DIM}): set extra_obs_dim={EXTRA_DIM}"
+        )
+        raise ValueError(msg)
+    k, avail, f = _keys(cfg, _views(obs, width))
     f0, f1 = jnp.zeros(envs, jnp.float32), jnp.ones(envs, jnp.float32)
     i0 = jnp.zeros(envs, jnp.int32)
     skill = SkillState(_pick(q, k, avail, jnp.float32(eps_top), k_pick), k, f0, f1, i0)
@@ -375,13 +480,15 @@ def init_rollout(
         last_done=jnp.zeros(envs, bool),
         last_act=jnp.full(envs, NO_ACTION, jnp.int32),
         skill=skill,
+        episode=init_acc(envs, len(achievement_names(env.name))),
         mc=mc_init(envs, cfg.mc_length) if cfg.monte_carlo else None,
     )
-    reasons = 7  # len(skills.REASONS)
+    seen = jnp.full((q.shape[0], f.shape[-1]), -1, jnp.int8)
     shared = Shared(
         variables=variables,
         q=q,
-        ends=jnp.zeros((NUM_SKILLS, reasons), jnp.int32),
+        seen=_visit(seen, k, f, jnp.ones(envs, bool)),
+        ends=jnp.zeros((NUM_SKILLS, len(REASONS)), jnp.int32),
         agreement=jnp.zeros((NUM_SKILLS, 2), jnp.int32),
         method_state=method_state,
         t=jnp.zeros((), jnp.int32),
@@ -392,25 +499,59 @@ def init_rollout(
     return RolloutCarry(per_env, shared, cfg)
 
 
-def _act(
-    carry: RolloutCarry, network: RNNQNetwork, view: ObsView, key: jax.Array
-) -> tuple[jax.Array, jax.Array, jax.Array, Carry, jax.Array]:
-    """Network input, action, last action, next LSTM carry and primitive flag."""
-    pe, sh, cfg = carry.per_env, carry.shared, carry.cfg
-    sk = pe.skill
-    frac = sk.steps / step_limit(sk.skill, cfg.timeout_mult)
-    extra = jnp.concatenate([jax.nn.one_hot(sk.skill, NUM_SKILLS), frac[:, None]], -1)
-    x = jnp.concatenate([pe.obs, extra.astype(pe.obs.dtype)], -1)
-    reset = pe.last_done[:, None]
-    h = cast(Carry, tuple(jnp.where(reset, 0.0, part) for part in pe.h))
-    la = jnp.where(pe.last_done, NO_ACTION, pe.last_act)
-    h2, qv = apply_network(
-        network, sh.variables, h, x[None], pe.last_done[None], la[None]
+def _fresh(h: Carry, reset: jax.Array) -> Carry:
+    """The LSTM carry with the envs where ``reset`` zeroed."""
+    return cast(Carry, tuple(jnp.where(reset[:, None], 0.0, part) for part in h))
+
+
+def _skill_actions(
+    network: RNNQNetwork,
+    variables: Any,
+    h: Carry,
+    raw: jax.Array,
+    sk: tuple[jax.Array, jax.Array],
+    la: jax.Array,
+    view: ObsView,
+    eps: jax.Array,
+    key: jax.Array,
+    timeout_mult: float,
+) -> tuple[jax.Array, jax.Array, Carry, jax.Array, jax.Array]:
+    """Network input, action, next LSTM carry, primitive flag and max Q per env.
+
+    ``sk`` is the running skill and its steps; the input appends the skill one-hot
+    and ``steps / step_limit`` to the observation ``raw``.
+    """
+    skill, steps = sk
+    frac = steps / step_limit(skill, timeout_mult)
+    extra = jnp.concatenate([jax.nn.one_hot(skill, NUM_SKILLS), frac[:, None]], -1)
+    x = jnp.concatenate([raw, extra.astype(raw.dtype)], -1)
+    none = jnp.zeros((1, raw.shape[0]), bool)  # the caller already reset ``h``
+    h2, qv = apply_network(network, variables, h, x[None], none, la[None])
+    prim = jnp.asarray(PRIMITIVE)[skill]
+    fixed = jax.vmap(primitive_action)(skill, view)
+    act = jnp.where(prim, fixed, eps_greedy(key, qv[0], eps)).astype(jnp.int32)
+    return x, act, h2, prim, qv[0].max(-1)
+
+
+def _update_stats(
+    td: jax.Array, new: jax.Array, mask: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Per env: |TD| sum, updates, largest finite new value, a non-finite one.
+
+    The largest value is -inf where the env updated nothing.
+    """
+    ax = tuple(range(1, td.ndim))
+    ok = jnp.isfinite(new)
+    return (
+        jnp.sum(jnp.where(mask, jnp.abs(td), 0.0), ax),
+        jnp.sum(mask, ax, dtype=jnp.int32),
+        jnp.max(jnp.where(mask & ok, new, -jnp.inf), ax),
+        jnp.any(mask & ~ok, ax),
     )
-    prim = jnp.asarray(PRIMITIVE)[sk.skill]
-    fixed = jax.vmap(primitive_action)(sk.skill, view)
-    act = jnp.where(prim, fixed, eps_greedy(key, qv[0], sh.eps)).astype(jnp.int32)
-    return x, act, la, h2, prim
+
+
+Stats = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+"""`_update_stats` of a step."""
 
 
 def _top_update(
@@ -422,21 +563,22 @@ def _top_update(
     nxt: tuple[jax.Array, jax.Array],
     done: jax.Array,
     ended: jax.Array,
-) -> tuple[jax.Array, MCRecords | None]:
+) -> tuple[jax.Array, MCRecords | None, Stats]:
     """SMDP backup of the ended skills, or the Monte Carlo records and update."""
     ret, disc = ret_disc
+    k, o = sk.k_start, sk.skill
     if mc is None:
-        q = smdp_update(
-            q, sk.k_start, sk.skill, ret, disc, *nxt, done, ended, cfg.alpha
-        )
-        return q, mc
-    mc = mc_push(mc, ended, sk.k_start, sk.skill, ret, disc)
+        q, td = _smdp_step(q, k, o, ret, disc, *nxt, done, ended, cfg.alpha)
+        return q, mc, _update_stats(td, q[k, o], ended)
+    mc = mc_push(mc, ended, k, o, ret, disc)
+    none = jnp.zeros(done.shape)
+    idle = (none, none.astype(jnp.int32), none - jnp.inf, none.astype(bool))
     return cast(
-        tuple[jax.Array, MCRecords],
+        tuple[jax.Array, MCRecords, Stats],
         jax.lax.cond(
             jnp.any(done),
-            lambda: mc_update(q, mc, done, cfg.alpha),
-            lambda: (q, mc),
+            lambda: _mc_flush(q, mc, done, cfg.alpha),
+            lambda: (q, mc, idle),
         ),
     )
 
@@ -452,22 +594,30 @@ def rollout_step(
     """One env step of every env, for a ``lax.scan`` over the rollout.
 
     Acting, skill ends and keys read only decoded observations, the action, the native
-    reward and ``done``; the step's ``StepEvents`` reach only `skills.test_agreement`.
-    ``intrinsic_reward_fn`` has the ``hooks.HookFields`` signature; its ``r+`` joins
-    the native reward in the top-level return, never the skill pseudo-reward, and
-    ``None`` skips it at trace time. Outputs per env: the skill-network transition
-    (``obs`` widened by `EXTRA_DIM`, ``action``, pseudo-reward ``reward``, skill-end
-    ``done``, ``loss_mask``, ``last_action``), plus ``episode_done``,
-    ``native_reward``, ``skill``, ``steps_in_skill``, ``success``, ``reason`` and the
-    step's ``unlocked`` achievements.
+    reward and ``done``; the step's ``StepEvents`` reach only `skills.test_agreement`
+    and the episode totals (logging). ``intrinsic_reward_fn`` has the
+    ``hooks.HookFields`` signature; its ``r+`` joins the native reward in the
+    top-level return, never the skill pseudo-reward; ``None`` skips it at trace time.
+    Outputs per env: the skill-network transition (``obs`` widened by `EXTRA_DIM`,
+    ``action``, pseudo-reward ``reward``, skill-end ``done``, ``loss_mask``,
+    ``last_action``), ``episode_done``, ``native_reward``, ``skill``,
+    ``steps_in_skill``, ``success``, ``reason``, ``next_skill``, ``q_max``, the
+    top-level update's ``td_abs``, ``td_n``, ``q_upd``, ``q_bad`` (`_update_stats`)
+    and the episode totals ``ach``, ``ret``, ``length`` (logging only).
     """
     cfg, pe, sh = carry.cfg, carry.per_env, carry.shared
     params = env.default_params if env_params is None else env_params
+    width = network.obs_dim - EXTRA_DIM
     key, k_act, k_env, k_top = jax.random.split(sh.key, 4)
-    sk, view = pe.skill, jax.vmap(decode_obs)(pe.obs)
-    x, act, la, h2, prim = _act(carry, network, view, k_act)
+    sk, view = pe.skill, _views(pe.obs, width)
+    la = jnp.where(pe.last_done, NO_ACTION, pe.last_act)
+    h = _fresh(pe.h, pe.last_done)
+    x, act, h2, prim, q_max = _skill_actions(
+        network, sh.variables, h, pe.obs[..., :width], (sk.skill, sk.steps), la,
+        view, sh.eps, k_act, cfg.timeout_mult,
+    )  # fmt: skip
     obs2, st2, r, done, info = env.step(k_env, pe.env_state, act, params)
-    view2 = jax.vmap(decode_obs)(obs2)
+    view2 = _views(obs2, width)
     r_top, ms = r, sh.method_state
     if intrinsic_reward_fn is not None:
         r_plus, ms = intrinsic_reward_fn(ms, pe.env_state, st2, obs2, done, sh.t)
@@ -483,32 +633,40 @@ def rollout_step(
     )
     ended = ended | done
     ret, disc = accumulate(sk.ret, sk.disc, r_top, cfg.gamma_top)
-    nxt = _keys(cfg, view2)
-    q, mc = _top_update(cfg, sh.q, pe.mc, sk, (ret, disc), nxt, done, ended)
-    picks = _pick(q, *nxt, sh.eps_top, k_top)
+    k2, avail2, f2 = _keys(cfg, view2)
+    q, mc, stats = _top_update(
+        cfg, sh.q, pe.mc, sk, (ret, disc), (k2, avail2), done, ended
+    )
     new_skill = SkillState(
-        jnp.where(ended, picks, sk.skill),
-        jnp.where(ended, nxt[0], sk.k_start),
+        jnp.where(ended, _pick(q, k2, avail2, sh.eps_top, k_top), sk.skill),
+        jnp.where(ended, k2, sk.k_start),
         jnp.where(ended, 0.0, ret),
         jnp.where(ended, 1.0, disc),
         jnp.where(ended, 0, sk.steps + 1),
     )
-    checked, agree = jax.vmap(test_agreement)(sk.skill, success, info["events"])
-    judged = jnp.stack([checked & ended, checked & agree & ended], -1)
+    events = info["events"]
+    checked, agree = jax.vmap(test_agreement)(sk.skill, success, events)
+    judged = checked & ended & ~done  # a done step's events may unlock, never succeed
+    episode, total = episode_step(pe.episode, r, done, events.unlocked)
     shared = sh.replace(
         q=q,
+        seen=_visit(sh.seen, k2, f2, ended),
         ends=sh.ends.at[sk.skill, reason].add(ended.astype(jnp.int32)),
-        agreement=sh.agreement.at[sk.skill].add(judged.astype(jnp.int32)),
+        agreement=sh.agreement.at[sk.skill].add(
+            jnp.stack([judged, judged & agree], -1).astype(jnp.int32)
+        ),
         method_state=ms,
         t=sh.t + obs2.shape[0],
         key=key,
     )
-    per_env = PerEnv(obs2, st2, h2, done, act, new_skill, mc)
+    per_env = PerEnv(obs2, st2, h2, done, act, new_skill, episode, mc)
     out = {
         "obs": x, "action": act, "reward": success.astype(jnp.float32),
         "done": ended, "loss_mask": ~prim, "last_action": la, "episode_done": done,
         "native_reward": r, "skill": sk.skill, "steps_in_skill": sk.steps,
-        "success": success, "reason": reason, "unlocked": info["events"].unlocked,
+        "success": success, "reason": reason, "next_skill": new_skill.skill,
+        "q_max": q_max, "td_abs": stats[0], "td_n": stats[1], "q_upd": stats[2],
+        "q_bad": stats[3], "ach": total.ach, "ret": total.ret, "length": total.length,
     }  # fmt: skip
     return carry.replace(per_env=per_env, shared=shared), out
 
@@ -518,7 +676,8 @@ def to_traj(out: dict[str, jax.Array]) -> tuple[Traj, jax.Array]:
 
     ``dones`` are skill ends (no Q(lambda) target crosses one);
     ``extra["episode_dones"]`` keeps the episode ends the acting LSTM reset on.
-    ``hidden`` is empty: pass the rollout's start carry as ``h0``.
+    ``hidden`` is empty: pass the carry step 0 acted from as ``h0``, the rollout's
+    start carry reset where ``last_done``.
     """
     traj = Traj(
         out["obs"],
@@ -530,3 +689,455 @@ def to_traj(out: dict[str, jax.Array]) -> tuple[Traj, jax.Array]:
         {"last_actions": out["last_action"], "episode_dones": out["episode_done"]},
     )
     return traj, out["loss_mask"]
+
+
+class RewardInObs(GymnaxWrapper):
+    """Appends the step's reward to the observation, 0 after a reset.
+
+    The two-level `Policy.step` sees only observations, yet the skill tests read the
+    reward: evaluation hands it over in this column, and training runs the same env
+    chain. ``observation_space`` stays the bare env's: the network never sees it.
+    """
+
+    def reset(self, key: jax.Array, params: Any = None) -> tuple[jax.Array, Any]:
+        """Reset the env; the reward column is 0."""
+        obs, state = self._env.reset(key, params)
+        return _with_reward(obs, jnp.zeros(obs.shape[:-1])), state
+
+    def step(
+        self, key: jax.Array, state: Any, action: jax.Array, params: Any = None
+    ) -> Any:
+        """Step the env; the reward column is the step's reward."""
+        obs, state, r, done, info = self._env.step(key, state, action, params)
+        return _with_reward(obs, r), state, r, done, info
+
+
+def _with_reward(obs: jax.Array, r: jax.Array) -> jax.Array:
+    return jnp.concatenate([obs, jnp.asarray(r, obs.dtype)[..., None]], -1)
+
+
+def reward_in_obs(env: Any, params: Any) -> tuple[Any, Any]:
+    """The method's ``env_wrapper_fn``: `RewardInObs` around the bare env."""
+    return RewardInObs(env), params
+
+
+TOP_KEYS = frozenset({f.name for f in fields(SMDPConfig)} - {"gamma_top"}) | {
+    "top_horizon"
+}
+"""Run-config keys of the top level; ``top_horizon`` H sets ``gamma_top = 1 - 1/H``
+(the fine grid scales the horizon). The other keys configure the skill network."""
+MAX_OCCUPANCY = 0.25
+"""Share of the table rows decided at above which ``smdp/table_full`` aborts."""
+MAX_Q = 300.0
+"""Table value above which ``smdp/divergence`` aborts: no discounted return exceeds
+the 226 achievement reward plus the bounded health term."""
+SHARD_ROLLOUT = False
+"""Split the envs over the CPU mesh (shared leaves replicated); off: one actor device.
+Off: every step's table update gathers all envs, and each CPU keeps its own table.
+Craftax-Classic, 256 x 16, 2^20 rows (2026-10-21): 6,869 rollout steps/s and 1.9 GB on
+one device, 5,823 steps/s and 4.9 GB split over 8."""
+
+
+@dataclass(frozen=True, slots=True)
+class SMDPTrainConfig:
+    """Run config: skill network `PQNRNNConfig`, top level `SMDPConfig`."""
+
+    net: PQNRNNConfig
+    top: SMDPConfig
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> Self:
+        """Split a run config: `TOP_KEYS` to the top level, the rest to the network.
+
+        Raises:
+            ValueError: On ``gamma_top`` (set ``top_horizon``), an ``extra_obs_dim``
+                other than `EXTRA_DIM`, or a key neither config takes.
+        """
+        if "gamma_top" in config:
+            msg = "set the top-level discount as top_horizon, not gamma_top"
+            raise ValueError(msg)
+        if config.get("extra_obs_dim", EXTRA_DIM) != EXTRA_DIM:
+            msg = f"extra_obs_dim must be {EXTRA_DIM} (skill one-hot, step fraction)"
+            raise ValueError(msg)
+        top = {k: v for k, v in config.items() if k in TOP_KEYS}
+        if "top_horizon" in top:
+            top["gamma_top"] = 1 - 1 / top.pop("top_horizon")
+        net = {k: v for k, v in config.items() if k not in TOP_KEYS}
+        net["extra_obs_dim"] = EXTRA_DIM
+        return cls(PQNRNNConfig.from_config(net), SMDPConfig(**top))
+
+
+def eps_top(cfg: SMDPTrainConfig, update: jax.Array | int) -> jax.Array:
+    """Top-level ε of update ``update``: 1 down to ``eps_top_end`` linearly."""
+    top = cfg.top
+    sched = optax.linear_schedule(
+        1.0, top.eps_top_end, top.eps_top_decay * cfg.net.n_updates
+    )
+    return jnp.asarray(sched(update), jnp.float32)
+
+
+class SMDPState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
+    """Full training state: one pytree that `save_state` round-trips."""
+
+    train_state: QTrainState
+    carry: RolloutCarry
+    """Envs, skills, table and counters; ``shared.variables`` is None (each rollout
+    gets the train state's) and ``shared.eps``, ``eps_top`` are the next rollout's."""
+    updates: jax.Array
+    diamond: jax.Array
+    """Finished episodes with ``collect_diamond``, and the env steps at which the
+    first and the tenth ended (-1 before), int32[3]."""
+    start_key: jax.Array
+    start_avail: jax.Array
+    """Table row and start-condition mask of a reset observation (``smdp/q_start``)."""
+    key: jax.Array
+    """Learner key (minibatch shuffles)."""
+    cfg: SMDPTrainConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
+
+
+@dataclass(frozen=True, slots=True)
+class _Setup:
+    """Everything built once per config: network, env, devices, jitted rollout."""
+
+    net: RNNQNetwork
+    env: Any
+    env_params: Any
+    collect: Callable[..., Any]
+    learner: jax.Device
+    actor: jax.Device
+    mesh: Mesh | None
+    shared_at: jax.Device | NamedSharding
+
+
+@functools.cache
+def _setup(cfg: SMDPTrainConfig) -> _Setup:
+    """Cached per config, so every chunk reuses the compiled rollout.
+
+    Raises:
+        ValueError: If the env batch does not split over the CPU devices.
+    """
+    roles, mesh, shared_at = env_placement(cfg.net.envs)
+    if not SHARD_ROLLOUT:
+        mesh, shared_at = None, roles.actor
+    env, env_params = make_train_env(cfg.net, reward_in_obs)
+    width = env.observation_space(env_params).shape[0]
+    net = build_network(cfg.net, env.action_space(env_params).n, width)
+    names = achievement_names(cfg.net.env)
+    collect = _make_collect(cfg, net, env, env_params, names.index("collect_diamond"))
+    return _Setup(
+        net, env, env_params, collect, roles.learner, roles.actor, mesh, shared_at
+    )
+
+
+def _place(carry: RolloutCarry, s: _Setup) -> RolloutCarry:
+    """Per-env leaves split over the mesh, shared ones replicated; else the actor."""
+    if s.mesh is None:
+        return cast(RolloutCarry, jax.device_put(carry, s.actor))
+    per_env = shard_envs(carry.per_env, s.mesh)
+    shared = jax.device_put(carry.shared, s.shared_at)
+    return carry.replace(per_env=per_env, shared=shared)
+
+
+def _make_collect(
+    cfg: SMDPTrainConfig, net: RNNQNetwork, env: Any, env_params: Any, diamond: int
+) -> Callable[..., Any]:
+    """Jitted rollout of ``num_steps`` steps: carry, outputs, ``h0``, statistics.
+
+    The carry is donated (`train_chunk` hands it a copy of the state's).
+    """
+    envs, steps = cfg.net.envs, cfg.net.num_steps
+
+    def body(c: RolloutCarry, _: None) -> tuple[RolloutCarry, dict[str, jax.Array]]:
+        return rollout_step(c, env, net, env_params=env_params)
+
+    @functools.partial(jax.jit, donate_argnums=0)
+    def collect(
+        carry: RolloutCarry, variables: Any, found: jax.Array, start: Any
+    ) -> Any:
+        h0 = _fresh(carry.per_env.h, carry.per_env.last_done)
+        c = carry.replace(shared=carry.shared.replace(variables=variables))
+        c, out = jax.lax.scan(body, c, None, steps)
+        stats = _rollout_stats(carry.shared, c.shared, out, start)
+        hits = (out["episode_done"] & out["ach"][..., diamond]).sum(1)
+        found = _diamonds(found, hits, carry.shared.t + envs * (jnp.arange(steps) + 1))
+        c = c.replace(shared=c.shared.replace(variables=None))
+        return c, out, h0, stats, found
+
+    return cast(Callable[..., Any], collect)
+
+
+def _diamonds(found: jax.Array, hits: jax.Array, at: jax.Array) -> jax.Array:
+    """`SMDPState.diamond` after a rollout with ``hits`` such episodes per step."""
+    count = found[0] + jnp.cumsum(hits)
+
+    def reach(prev: jax.Array, n: int) -> jax.Array:
+        now = jnp.where(count[-1] >= n, at[jnp.argmax(count >= n)], -1)
+        return jnp.where(prev >= 0, prev, now)
+
+    return jnp.stack([count[-1], reach(found[1], 1), reach(found[2], 10)])
+
+
+def _rollout_stats(
+    before: Shared, after: Shared, out: dict[str, jax.Array], start: Any
+) -> dict[str, jax.Array]:
+    """Counts and sums of one rollout that the update's metrics are made of."""
+    done = out["done"]
+    lm = out["loss_mask"]
+    row = after.q[start[0]]
+    return {
+        "ends": after.ends - before.ends,
+        "agreement": after.agreement - before.agreement,
+        "chosen": jnp.zeros(NUM_SKILLS, jnp.int32).at[out["next_skill"]].add(done),
+        "length": jnp
+        .zeros(NUM_SKILLS, jnp.int32)
+        .at[out["skill"]]
+        .add(done * (out["steps_in_skill"] + 1)),
+        "td_abs": out["td_abs"].sum(),
+        "td_n": out["td_n"].sum(),
+        "q_upd": out["q_upd"].max(),
+        "q_bad": out["q_bad"].any(),
+        "q_mean": jnp.sum(out["q_max"] * lm) / jnp.maximum(lm.sum(), 1),
+        "episodes": out["episode_done"].sum(),
+        "visited": jnp.sum(after.seen[:, 0] >= 0),
+        "q_start": jnp.max(jnp.where(start[1], row, -jnp.inf)),
+    }
+
+
+def init_state(cfg: SMDPTrainConfig, key: jax.Array) -> SMDPState:
+    """Fresh network on the learner; envs, first skills and table on the actor."""
+    s = _setup(cfg)
+    key, k_init, k_roll = jax.random.split(key, 3)
+    with jax.default_device(s.learner):
+        v = s.net.init_variables(k_init)
+        ts = QTrainState.create(  # type: ignore[no-untyped-call]  # flax API
+            apply_fn=s.net.apply,
+            params=v["params"],
+            tx=optimizer(cfg.net),
+            batch_stats=v["batch_stats"],
+            cfg=cfg.net,
+        )
+        # an array from the start, as after an update (see `ppo.init_state`)
+        ts = ts.replace(step=jnp.zeros((), jnp.int32))
+    with jax.default_device(s.actor):
+        zero = jnp.zeros((), jnp.int32)
+        eps0, top0 = epsilon(cfg.net, zero), eps_top(cfg, zero)
+        carry = init_rollout(
+            cfg.top, s.env, s.net, None, k_roll, env_params=s.env_params,
+            eps=eps0, eps_top=top0,
+        )  # fmt: skip
+        first = decode_obs(carry.per_env.obs[0, : s.net.obs_dim - EXTRA_DIM])
+        found = jnp.array([0, -1, -1], jnp.int32)
+    at = s.shared_at
+    return SMDPState(
+        train_state=cast(QTrainState, ts),
+        carry=_place(carry, s),
+        updates=jax.device_put(jnp.zeros((), jnp.int32), at),
+        diamond=jax.device_put(found, at),
+        start_key=jax.device_put(carry.per_env.skill.k_start[0], at),
+        start_avail=jax.device_put(available(first, cfg.top.granularity), at),
+        key=jax.device_put(key, s.learner),
+        cfg=cfg,
+    )
+
+
+@jax.jit
+def _finite(tree: Any) -> jax.Array:
+    """Whether every leaf of ``tree`` is finite."""
+    return jnp.all(jnp.stack([jnp.isfinite(x).all() for x in jax.tree.leaves(tree)]))
+
+
+def _one_update(
+    state: SMDPState, s: _Setup, carry: RolloutCarry
+) -> tuple[SMDPState, RolloutCarry, dict[str, Any], dict[str, jax.Array]]:
+    """Rollout on the actor, `pqn_rnn.learn` on the learner, next ε values.
+
+    Returns the state (its carry not yet set), the donated-on carry, the update's
+    record and the chunk-metric arrays of its rollout.
+    """
+    variables = jax.device_put(variables_of(state.train_state), s.shared_at)
+    start = (state.start_key, state.start_avail)
+    carry, out, h0, stats, found = s.collect(carry, variables, state.diamond, start)
+    traj, mask = to_traj(out)
+    key, k_learn = jax.random.split(state.key)
+    put = functools.partial(jax.device_put, device=s.learner)
+    ts, m = learn(state.train_state, put(traj), k_learn, put(mask), put(h0))
+    updates = state.updates + 1
+    sh = carry.shared
+    record = stats | m | {"finite": _finite(ts.params), "found": found}
+    record |= {"eps_top": sh.eps_top, "eps": sh.eps}
+    nxt = (epsilon(state.cfg.net, updates), eps_top(state.cfg, updates))
+    eps, top = jax.device_put(nxt, s.shared_at)
+    carry = carry.replace(shared=sh.replace(eps=eps, eps_top=top))
+    state = state.replace(train_state=ts, updates=updates, diamond=found, key=key)
+    chunk = {k: out[k] for k in ("episode_done", "ach", "ret", "length")}
+    return state, carry, record, chunk
+
+
+def train_chunk(state: SMDPState, n_updates: int) -> tuple[SMDPState, "ChunkMetrics"]:
+    """Run ``n_updates`` rollout-and-update steps; metrics stacked per update.
+
+    The input state stays usable: the rollouts donate a copy of its carry.
+    """
+    s = _setup(state.cfg)
+    carry = jax.tree.map(jnp.copy, state.carry)
+    records, chunks = [], []
+    for _ in range(n_updates):
+        state, carry, record, chunk = _one_update(state, s, carry)
+        records.append(record)
+        chunks.append(chunk)
+    state = state.replace(carry=carry)
+    host = jax.device_get(records)
+    stacked = {k: np.stack([r[k] for r in host]) for k in host[0]}
+    cols = {"value_loss": stacked["td_loss"], "grad_norm": stacked["grad_norm"]}
+    nan = np.full(n_updates, np.nan, np.float32)
+    metrics: dict[str, Any] = {
+        "losses": np.stack([cols.get(c, nan) for c in LOSS_COLUMNS], -1),
+        "done": jnp.stack([c["episode_done"] for c in chunks]),
+        "ach": jnp.stack([c["ach"] for c in chunks]),
+        "ret": jnp.stack([c["ret"] for c in chunks]),
+        "length": jnp.stack([c["length"] for c in chunks]),
+    }
+    metrics |= method_metrics(stacked)
+    return state, cast("ChunkMetrics", metrics)
+
+
+def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """The ``smdp/...`` metrics of stacked update records."""
+    return {
+        "smdp/eps": r["eps_top"],
+        "smdp/low/loss": r["td_loss"],
+        "smdp/low/eps": r["eps"],
+    }
+
+
+PolicyCarry = tuple[Carry, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
+"""Per env: LSTM carry, last action, running skill, its steps, the previous
+observation (without the reward column) and whether a skill was chosen yet."""
+
+
+@dataclass(frozen=True, slots=True)
+class SMDPPolicy:
+    """The two-level actor: table rows and skill network from `SMDPTrainer.params`."""
+
+    net: RNNQNetwork
+    cfg: SMDPConfig
+
+    @property
+    def width(self) -> int:
+        """Observation features before the reward column."""
+        return self.net.obs_dim - EXTRA_DIM
+
+    def init_carry(self, n: int) -> PolicyCarry:
+        """Zero LSTM carry, no last action and no skill yet for ``n`` envs."""
+        zero = jnp.zeros(n, jnp.int32)
+        last = jnp.full(n, NO_ACTION, jnp.int32)
+        prev = jnp.zeros((n, self.width))
+        return self.net.init_carry(n), last, zero, zero, prev, jnp.zeros(n, bool)
+
+    def step(
+        self,
+        params: Mapping[str, Any],
+        carry: PolicyCarry,
+        obs: jax.Array,
+        key: jax.Array,
+        greedy: bool | jax.Array,
+    ) -> tuple[jax.Array, PolicyCarry]:
+        """End the last step's skill if its test says so, choose anew, then act.
+
+        ``obs`` carries the last reward in its final column (`reward_in_obs`). Greedy
+        acts at ε 0 on both levels (greedy skill ties stay random), else at the
+        checkpoint's ``eps_top`` and ``eps``. Evaluation episodes end at their done.
+
+        Raises:
+            ValueError: If ``obs`` has no reward column.
+        """
+        lstm, last, skill, steps, prev, started = carry
+        if obs.shape[-1] != self.width + 1:
+            msg = "the two-level policy needs the reward column of `reward_in_obs`"
+            raise ValueError(msg)
+        raw, r = obs[..., : self.width], obs[..., self.width]
+        cfg, view2 = self.cfg, jax.vmap(decode_obs)(raw)
+
+        def end(k: Any, a: Any, act: Any, r: Any, b: Any, n: Any) -> Any:
+            return skill_step(
+                k, a, act, r, b, False, n, cfg.timeout_mult, granularity=cfg.granularity
+            )
+
+        _, ended, _ = jax.vmap(end)(
+            skill, jax.vmap(decode_obs)(prev), last, r, view2, steps
+        )
+        ended = ended | ~started
+        k_top, k_act = jax.random.split(key)
+        k, avail, _ = _keys(cfg, view2)
+        top = jnp.where(greedy, 0.0, params["eps_top"])
+        skill = jnp.where(ended, _pick(params["q"], k, avail, top, k_top), skill)
+        steps = jnp.where(ended, 0, steps + 1)
+        eps = jnp.where(greedy, 0.0, params["eps"])
+        _, act, lstm, _, _ = _skill_actions(
+            self.net, params["variables"], lstm, raw, (skill, steps), last, view2,
+            eps, k_act, cfg.timeout_mult,
+        )  # fmt: skip
+        return act, (lstm, act, skill, steps, raw, jnp.ones_like(started))
+
+    def extras(self, carry: PolicyCarry) -> dict[str, jax.Array]:
+        """Per step for the eval file: the running skill and its step count."""
+        return {
+            "skill": carry[2].astype(jnp.uint8),
+            "steps_in_skill": carry[3].astype(jnp.uint16),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SMDPTrainer:
+    """The ``smdp-skills`` registry entry (`orchestration.runner.Trainer`)."""
+
+    loss_columns: ClassVar[tuple[str, ...]] = FILLED_LOSS_COLUMNS
+    """The skill network's TD loss and gradient norm (the others are NaN)."""
+
+    def config(self, config: Mapping[str, Any]) -> SMDPTrainConfig:
+        """See `SMDPTrainConfig.from_config`."""
+        return SMDPTrainConfig.from_config(config)
+
+    def steps_per_update(self, config: Mapping[str, Any]) -> int:
+        """Rollout batch: ``envs * num_steps``."""
+        return self.config(config).net.batch
+
+    def init(self, config: Mapping[str, Any], key: jax.Array) -> SMDPState:
+        """Validated config to the initial state.
+
+        Raises:
+            ValueError: On an unknown key, or no ``steps`` (the ε and learning-rate
+                schedules span the budget).
+        """
+        if "steps" not in config:
+            msg = "SMDP schedules span the budget: pass `steps` in the config"
+            raise ValueError(msg)
+        return init_state(self.config(config), key)
+
+    def train_chunk(
+        self, state: SMDPState, n_updates: int
+    ) -> tuple[SMDPState, "ChunkMetrics"]:
+        """See `train_chunk`."""
+        return train_chunk(state, n_updates)
+
+    def params(self, state: SMDPState) -> dict[str, Any]:
+        """The ``ckpt/`` payload: network variables, both ε, the table and its keys."""
+        sh = state.carry.shared
+        return {
+            "variables": variables_of(state.train_state),
+            "eps": sh.eps,
+            "eps_top": sh.eps_top,
+            "q": sh.q,
+            "seen": sh.seen,
+        }
+
+    def policy(self, state: SMDPState) -> SMDPPolicy:
+        """The two-level policy of this config (reads no state values)."""
+        return SMDPPolicy(_setup(state.cfg).net, state.cfg.top)
+
+    def env_wrapper(  # protocol
+        self, state: SMDPState
+    ) -> Callable[[Any, Any], tuple[Any, Any]]:
+        """`reward_in_obs`: evaluation hands the policy the reward the same way."""
+        del state  # one wrapper for every config
+        return reward_in_obs
