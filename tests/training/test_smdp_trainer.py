@@ -6,6 +6,7 @@ table) on the PQN-RNN control's tuned block of a temporary method folder.
 
 import itertools
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -430,10 +431,10 @@ def test_the_checkpoint_stores_the_table_sparsely_and_rebuilds_it_exactly(
 def test_the_greedy_table_lists_every_stored_key(entry: Any, tmp_path: Path) -> None:
     trainer, _, _, (state, _) = entry
     params = trainer.params(state)
-    path = smdp.write_greedy_table(tmp_path, 2, params)
+    path = smdp.write_greedy_table(tmp_path, 2, params, 10.0)
     assert path == tmp_path / "eval" / smdp.GREEDY_TABLE_FILE
-    smdp.write_greedy_table(tmp_path, 4, params)
-    smdp.write_greedy_table(tmp_path, 2, params)  # rewritten, not duplicated
+    smdp.write_greedy_table(tmp_path, 4, params, 10.0)
+    smdp.write_greedy_table(tmp_path, 2, params, 10.0)  # rewritten, not duplicated
     table = pq.read_table(path).to_pydict()
     real = params["rows"] != smdp.SENTINEL_ROW  # the padding is not a key
     keys, fields, q = (
@@ -450,6 +451,23 @@ def test_the_greedy_table_lists_every_stored_key(entry: Any, tmp_path: Path) -> 
         assert [table[n][i] for n in names] == fields[j].tolist()
         assert table["greedy_skill"][i] == SKILLS[int(q[j].argmax())].name
         assert table["value"][i] == pytest.approx(float(q[j].max()))
+        tried = q[j] != 10.0  # entries the top level updated
+        assert table["tried"][i] == int(tried.sum()) > 0
+        best = int(np.where(tried, q[j], -np.inf).argmax())
+        assert table["greedy_tried_skill"][i] == SKILLS[best].name
+        assert table["greedy_tried_value"][i] == pytest.approx(float(q[j][best]))
+
+
+def test_the_tried_columns_of_a_row_without_updates() -> None:
+    params = {
+        "rows": np.array([3], np.int32),
+        "q_rows": np.full((1, NUM_SKILLS), 10.0, np.float32),
+        "fields": np.zeros((1, 16), np.int8),
+    }
+    cols = smdp.greedy_table(params, 10.0)
+    assert cols["tried"][0] == 0
+    assert cols["greedy_tried_skill"][0] == ""
+    assert np.isnan(cols["greedy_tried_value"][0])
 
 
 # --- the two-level policy -----------------------------------------------------------
@@ -517,6 +535,27 @@ def test_the_policy_picks_skills_from_the_checkpoint_table(entry: Any) -> None:
         for k in range(4)
     ]
     assert len(np.unique(np.concatenate(picks))) > 1
+
+
+def test_greedy_evaluation_of_the_random_top_level_stays_random(entry: Any) -> None:
+    """eps_top_end 1 (the ablation): even greedy picks are uniform over the
+    available skills; a learned top level is greedy on its table."""
+    trainer, _, _, (state, _) = entry
+    ranked = _ranked(state, eps_top=jnp.float32(1.0))
+    params, policy = trainer.params(ranked), trainer.policy(state)
+    random_top = smdp.SMDPPolicy(policy.net, replace(policy.cfg, eps_top_end=1.0))
+    obs, carry = state.carry.per_env.obs, policy.init_carry(ENVS)
+
+    def picks(p: Any) -> set[int]:
+        step = jax.jit(p.step, static_argnames="greedy")
+        return {
+            int(x)
+            for k in range(4)
+            for x in step(params, carry, obs, jax.random.key(k), greedy=True)[1][2]
+        }
+
+    assert picks(policy) == {SKILL_IDS["fight"]}
+    assert len(picks(random_top)) > 1
 
 
 def test_evaluation_acts_as_the_training_rollout(methods_dir: Path) -> None:

@@ -793,6 +793,7 @@ def _setup(cfg: SMDPTrainConfig) -> _Setup:
     Raises:
         ValueError: If the env batch does not split over the CPU devices.
     """
+    # checks that the envs split over the CPUs even unsharded (pqn_rnn.learn does too)
     roles, mesh, shared_at = env_placement(cfg.net.envs)
     if not SHARD_ROLLOUT:
         mesh, shared_at = None, roles.actor
@@ -999,7 +1000,8 @@ def method_metrics(r: Mapping[str, np.ndarray], rows: int) -> dict[str, np.ndarr
     Per skill, over the update's skill ends: ``chosen_share`` (of the decisions),
     ``success_rate``, ``mean_len`` (steps), ``end/<reason>`` (`END_SHARES`; the
     success share is the success rate) and ``test_agreement`` (of the judged ends);
-    a skill without ends has rates 0 and agreement 1, so every value is finite. The
+    a skill without ends has rates 0 and agreement 1, so every value is finite.
+    ``decisions_per_episode`` is the update's skill ends per episode it finished. The
     guards ``smdp/nan`` (a non-finite table update, loss or parameter),
     ``smdp/table_full`` (occupancy above `MAX_OCCUPANCY`) and ``smdp/divergence``
     (an updated entry above `MAX_Q`) are 0, or NaN once broken, for ``abort.finite``.
@@ -1054,13 +1056,18 @@ FLAG_NAMES = ("low_food", "low_drink", "low_energy", "low_health")
 """Columns of the low-stat flags in `key_vector` order."""
 
 
-def greedy_table(params: Mapping[str, Any]) -> dict[str, np.ndarray]:
-    """Columns per stored key: ``key``, fields, ``greedy_skill``, ``value``.
+def greedy_table(params: Mapping[str, Any], q_init: float) -> dict[str, np.ndarray]:
+    """Columns per stored key: ``key``, fields, greedy and greedy tried skill.
 
+    Columns: ``key``, the fields, ``greedy_skill``, ``value``, ``tried``,
+    ``greedy_tried_skill``, ``greedy_tried_value``.
     The stored keys are the rows training moved off ``q_init`` (`sparse_table`). The
     greedy skill is the row's unmasked argmax: start conditions need the observation,
-    which a row does not keep. Fields are `progress_key.FIELDS` (Classic
-    `CLASSIC_FIELDS`), then `FLAG_NAMES` unless the run left the flags out.
+    which a row does not keep, so an untried optimistic entry can win. Tried entries
+    are derived as ``q_rows != q_init``: ``tried`` counts them, and the greedy tried
+    skill is the argmax over them ("" and NaN for none). Fields are
+    `progress_key.FIELDS` (Classic `CLASSIC_FIELDS`), then `FLAG_NAMES` unless the
+    run left the flags out.
     """
     real = np.asarray(params["rows"]) != SENTINEL_ROW
     fields_ = np.asarray(params["fields"])[real]
@@ -1069,8 +1076,18 @@ def greedy_table(params: Mapping[str, Any]) -> dict[str, np.ndarray]:
     names = [*base, *FLAG_NAMES][: fields_.shape[1]]
     cols = {"key": np.asarray(params["rows"], np.int32)[real]}
     cols |= {n: fields_[:, i] for i, n in enumerate(names)}
-    cols["greedy_skill"] = np.array([SKILLS[i].name for i in q.argmax(1)], object)
+    skill_names = np.array([s.name for s in SKILLS], object)
+    cols["greedy_skill"] = skill_names[q.argmax(1)]
     cols["value"] = q.max(1) if len(q) else np.zeros(0, q.dtype)
+    tried = q != q.dtype.type(q_init)
+    best = np.where(tried, q, -np.inf).argmax(1)
+    any_tried = tried.any(1)
+    cols["tried"] = tried.sum(1).astype(np.int32)
+    cols["greedy_tried_skill"] = np.where(any_tried, skill_names[best], "").astype(
+        object
+    )
+    picked = np.take_along_axis(q, best[:, None], 1)[:, 0]
+    cols["greedy_tried_value"] = np.where(any_tried, picked, np.nan)
     return cols
 
 
@@ -1129,14 +1146,16 @@ def _lookup(params: Mapping[str, Any], k: jax.Array, q_init: float) -> jax.Array
     return jnp.where((rows[i] == k)[:, None], vals[i], jnp.float32(q_init))
 
 
-def write_greedy_table(run_dir: Path, update: int, params: Mapping[str, Any]) -> Path:
+def write_greedy_table(
+    run_dir: Path, update: int, params: Mapping[str, Any], q_init: float
+) -> Path:
     """Put `greedy_table` of ``update`` into the run's ``eval/`` file, atomically.
 
     Rows of an earlier call for the same update are replaced.
     """
     path = Path(run_dir) / "eval" / GREEDY_TABLE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    cols = greedy_table(params)
+    cols = greedy_table(params, q_init)
     new = pa.table({"update": np.full(len(cols["key"]), update, np.int32), **cols})
     if path.is_file():
         old = pq.read_table(path)
@@ -1179,11 +1198,12 @@ class SMDPPolicy:
     ) -> tuple[jax.Array, PolicyCarry]:
         """End the last step's skill if its test says so, choose anew, then act.
 
-        ``reward`` and ``done`` (default 0) are those of the step that produced
-        ``obs``, as in the training rollout: the skill tests read the reward, and a
-        done starts a new episode (fresh skill, LSTM and last action). Greedy acts at
-        ε 0 on both levels (greedy skill ties stay random), else at the checkpoint's
-        ``eps_top`` and ``eps``.
+        ``reward`` and ``done`` are those of the step that produced ``obs``, as in the
+        training rollout; pass them: without ``reward`` (taken as 0) ``unlock_any``
+        and ``fight``'s kill reward never succeed. A done starts a new episode (fresh
+        skill, LSTM and last action). Greedy acts at ε 0 on both levels (greedy skill
+        ties stay random; the random-top-level ablation keeps ``eps_top`` 1), else at
+        the checkpoint's ``eps_top`` and ``eps``.
         """
         lstm, last, skill, steps, prev, started = carry
         n = obs.shape[0]
@@ -1201,7 +1221,12 @@ class SMDPPolicy:
         ended = ended | new
         k_top, k_act = jax.random.split(key)
         k, avail, _ = _keys(cfg, view2)
-        top = jnp.where(greedy, 0.0, params["eps_top"])
+        # the random-top-level ablation stays random when greedy: no learned top level
+        top = (
+            params["eps_top"]
+            if cfg.eps_top_end >= 1
+            else jnp.where(greedy, 0.0, params["eps_top"])
+        )
         q = _lookup(params, k, cfg.q_init)  # row i holds env i's table row
         picks = _pick(q, jnp.arange(n), avail, top, k_top)
         skill = jnp.where(ended, picks, skill)
@@ -1224,7 +1249,11 @@ class SMDPPolicy:
 
 @dataclass(frozen=True, slots=True)
 class SMDPTrainer:
-    """The ``smdp-skills`` registry entry (`orchestration.runner.Trainer`)."""
+    """The ``smdp-skills`` registry entry (`orchestration.runner.Trainer`).
+
+    No random warm-up rollout as the PQN-RNN control's: the top level's ε = 1 phase
+    is this method's warm-up, and every primitive step counts toward the budget.
+    """
 
     loss_columns: ClassVar[tuple[str, ...]] = FILLED_LOSS_COLUMNS
     """The skill network's TD loss and gradient norm (the others are NaN)."""

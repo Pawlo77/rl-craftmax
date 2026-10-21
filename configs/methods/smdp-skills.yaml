@@ -6,7 +6,8 @@
 # in the key) and the design defaults of the tuned knobs. The top-level discount is set as
 # its horizon top_horizon = 1 / (1 - gamma) (200: gamma 0.995, 1000: 0.999), so the fine
 # grid's factors scale the horizon (1000 x 0.5, 1, 2: gamma 0.998, 0.999, 0.9995).
-# Ablations at final-1m, as phase-file overrides: random top level `set: {eps_top_end: 1.0}`,
+# Ablations at final-1m, as phase-file overrides: random top level `set: {eps_top_end: 1.0}`
+# (greedy evaluation keeps it random),
 # Monte Carlo top level `set: {monte_carlo: true}`, no low-stat flags `set: {low_flags: false}`
 # (no flags in the key and no low-stat skill interruption).
 base:
