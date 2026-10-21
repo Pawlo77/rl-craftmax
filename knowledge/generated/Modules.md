@@ -35,6 +35,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 40 |  |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 625 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 577 |  |
+| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 49 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 186 | [[training]] |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 |  |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 113 | [[visualisation]] |
@@ -71,4 +72,5 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/training/hooks.py]]
 - [[src/wut_murl_craftax/training/interface.py]]
 - [[src/wut_murl_craftax/training/ppo_rnn.py]]
+- [[src/wut_murl_craftax/training/pqn_rnn.py]]
 - [[src/wut_murl_craftax/training/wrappers.py]]
