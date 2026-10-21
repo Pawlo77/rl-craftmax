@@ -417,12 +417,13 @@ def replay_episode(run: EvalRun, seed: int, actions: np.ndarray) -> Replay:
     """Observations, rewards, events and states of seed + the episode's actions.
 
     ``actions`` may keep the eval file's -1 padding after the episode. The replay
-    runs at a width rounded up to `CHUNK_STEPS` (NOOP past the end, then sliced
-    off), so episodes of any length up to that width share one compile.
+    runs at the episode length rounded up to `CHUNK_STEPS` (NOOP past the end, then
+    sliced off), so one compile serves every episode of a 1,000-step bucket, and a
+    short episode never replays the width of the file's longest one.
     """
     actions = np.asarray(actions)
     n = int((actions >= 0).sum())
-    padded = np.zeros(-(-max(len(actions), 1) // CHUNK_STEPS) * CHUNK_STEPS, np.int32)
+    padded = np.zeros(-(-max(n, 1) // CHUNK_STEPS) * CHUNK_STEPS, np.int32)
     padded[:n] = actions[:n]
     with jax.default_device(device_roles().actor):
         o, r, d, ev, states = run._replay(jnp.int32(seed), jnp.asarray(padded))

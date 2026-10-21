@@ -202,6 +202,41 @@ def test_replays_of_different_lengths_compile_once() -> None:
     assert run._replay._cache_size() == 1
 
 
+def test_a_short_episode_beside_a_long_one_replays_at_its_own_width(
+    fresh_ppo_run: Path,
+) -> None:
+    # the file's width is set by its longest seed: widen it as a 2,500-step seed would
+    ev = load_eval(tiny_run(), 4)
+    width = 3 * 1000
+    wide = {
+        k: np.pad(
+            v,
+            [(0, 0), (0, width - v.shape[1]), *[(0, 0)] * (v.ndim - 2)],
+            constant_values=-1 if k == "actions" else 0,
+        )
+        if v.ndim >= 2
+        else v
+        for k, v in ev.items()
+    }
+    path = fresh_ppo_run / "eval" / "stochastic" / "00004.npz"
+    path.parent.mkdir(parents=True)
+    np.savez_compressed(path, **wide)
+    run = EvalRun.load(fresh_ppo_run)
+    real, widths = run._replay, []
+
+    def spy(seed: jax.Array, actions: jax.Array) -> Any:
+        widths.append(actions.shape[0])
+        return real(seed, actions)
+
+    run.__dict__["_replay"] = spy  # the cached_property's slot
+    for i, seed in enumerate(EVAL_SEEDS):
+        ep, actions = stored_episode(run, 4, seed)
+        assert len(ep.obs) == len(actions) == ev["length"][i]
+    replay_episode(run, EVAL_SEEDS[0], np.zeros(1000, np.int32))  # a full bucket
+    assert widths == [1000, 1000, 1000]
+    assert real._cache_size() == 1
+
+
 def test_replaying_seed_and_actions_rebuilds_observations_and_events() -> None:
     run = EvalRun.load(tiny_run())
     ev = load_eval(run.dir, 4)
