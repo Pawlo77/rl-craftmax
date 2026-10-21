@@ -124,7 +124,43 @@ def test_resolve_reports_active_hook_names() -> None:
         )
     )
     assert r.active == ("intrinsic_reward_fn", "observe")
-    assert resolve(_Cfg(**hooks_)).active == HOOK_NAMES
+    assert resolve(_Cfg(extra_steps=1, **hooks_)).active == HOOK_NAMES
+
+
+def test_an_extra_loss_without_extra_steps_is_not_active() -> None:
+    """``extra_steps`` gates the extra loss, so the trainer never traces it at 0."""
+    loss = _all_hooks()["extra_loss_fn"]
+    assert resolve(HookFields(extra_loss_fn=loss)).active == ()
+    assert resolve(HookFields(extra_loss_fn=loss, extra_steps=1)).active == (
+        "extra_loss_fn",
+    )
+
+
+def test_resolve_keeps_a_falsy_callable_hook() -> None:
+    class Falsy:
+        def __call__(self, state: Any, traj: Any) -> Any:
+            return state
+
+        def __len__(self) -> int:
+            return 0
+
+    observe = Falsy()
+    r = resolve(HookFields(observe=observe))
+    assert r.observe is observe
+    assert r.active == ("observe",)
+
+
+def test_hook_fields_are_keyword_only() -> None:
+    """Hooks never bind positionally; a subclass may add fields without defaults."""
+    with pytest.raises(TypeError):
+        HookFields(None)  # type: ignore[misc]
+
+    @dataclasses.dataclass(frozen=True, slots=True)
+    class Required(HookFields):
+        lr: float
+
+    cfg = Required(0.1, extra_steps=2)
+    assert (cfg.lr, cfg.extra_steps) == (0.1, 2)
 
 
 def test_resolve_keeps_user_hooks() -> None:

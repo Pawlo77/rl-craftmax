@@ -50,9 +50,13 @@ class HookSpec:
     total_steps: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, kw_only=True)
 class HookFields:
-    """Hook fields of a trainer config; the config classes inherit, never redeclare."""
+    """Hook fields of a trainer config; the config classes inherit, never redeclare.
+
+    Keyword-only, so subclass fields stay positional; no slots, so a config can also
+    inherit a slotted trainer config (``PPORNNConfig(PPOConfig, HookFields)``).
+    """
 
     init_state_fn: Callable[[jax.Array, HookSpec], State] | None = None
     """``(key, spec) -> state``, once in init; ``spec`` is `HookSpec` (Classic, 8 envs:
@@ -79,7 +83,8 @@ class HookFields:
     """``(params, state, key) -> (loss, (state, metrics))``, called per extra step."""
     extra_steps: int = 0
     """K optimizer steps on ``extra_loss_fn`` after the PPO epochs, same Adam state; the
-    learning-rate schedule is indexed by update, so K does not shift it."""
+    learning-rate schedule is indexed by update, so K does not shift it. At 0 the extra
+    loss is not active, even when set."""
     env_wrapper_fn: Callable[[Any, Any], tuple[Any, Any]] | None = None
     """``(env, env_params) -> (env, env_params)``, once when the env is built."""
     metrics_fn: Callable[[State], dict[str, Any]] | None = None
@@ -194,6 +199,8 @@ def _checked(
 def resolve(hooks: HookFields) -> ResolvedHooks:
     """Fill the no-op defaults of ``hooks`` and report the hooks the method set.
 
+    ``extra_loss_fn`` counts as set only with ``extra_steps > 0``.
+
     Raises:
         ValueError: If ``extra_steps`` is negative, or positive with no
             ``extra_loss_fn``.
@@ -204,16 +211,23 @@ def resolve(hooks: HookFields) -> ResolvedHooks:
     if hooks.extra_steps and hooks.extra_loss_fn is None:
         msg = "extra_steps > 0 needs an extra_loss_fn"
         raise ValueError(msg)
+
+    def pick[F](hook: F | None, default: F) -> F:
+        return default if hook is None else hook  # `or` would drop a falsy callable
+
     metrics = hooks.metrics_fn
+    unused = () if hooks.extra_steps else ("extra_loss_fn",)
     return ResolvedHooks(
-        init_state_fn=hooks.init_state_fn or _no_init,
-        intrinsic_reward_fn=hooks.intrinsic_reward_fn or _zero_reward,
-        observe=hooks.observe or _keep_state,
-        extra_loss_fn=hooks.extra_loss_fn or _no_extra_loss,
+        init_state_fn=pick(hooks.init_state_fn, _no_init),
+        intrinsic_reward_fn=pick(hooks.intrinsic_reward_fn, _zero_reward),
+        observe=pick(hooks.observe, _keep_state),
+        extra_loss_fn=pick(hooks.extra_loss_fn, _no_extra_loss),
         extra_steps=hooks.extra_steps,
-        env_wrapper_fn=hooks.env_wrapper_fn or _keep_env,
+        env_wrapper_fn=pick(hooks.env_wrapper_fn, _keep_env),
         metrics_fn=_checked(metrics) if metrics is not None else _no_metrics,
-        active=tuple(n for n in HOOK_NAMES if getattr(hooks, n) is not None),
+        active=tuple(
+            n for n in HOOK_NAMES if getattr(hooks, n) is not None and n not in unused
+        ),
     )
 
 
