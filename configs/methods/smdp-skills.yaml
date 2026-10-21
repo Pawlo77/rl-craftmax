@@ -86,5 +86,15 @@ grid:
       - {key: eps_top_decay, mul: [0.5, 1.0, 2.0], clip: [0.0, 1.0]}
       - {key: timeout_mult, mul: [0.5, 1.0, 2.0]}
 
+# Runner rules (orchestration/abort.py): a non-finite loss column (the skill network's TD
+# loss as value_loss, grad_norm) or a metric in `finite` aborts the run. The three guards of
+# training/smdp.py are 0 and turn NaN on a NaN or inf in a table update, a loss or the
+# network's parameters (smdp/nan), more than a quarter of the table rows decided at
+# (smdp/table_full), or an updated entry above 300, more than any discounted return of the
+# 226 achievement reward plus the bounded health term (smdp/divergence). Every smdp/* metric
+# is finite otherwise. No flags: the plan's detectors come with the analysis plan.
+abort:
+  finite: [smdp/nan, smdp/table_full, smdp/divergence]
+
 # written by `--mark-tuned smdp-skills <hash8>`
 tuned: null

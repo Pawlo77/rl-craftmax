@@ -17,13 +17,14 @@ import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
     load_method,
     resolve_config,
 )
 from wut_murl_craftax.orchestration.tracking import artifact_path
-from wut_murl_craftax.training import smdp
+from wut_murl_craftax.training import pqn_rnn, smdp
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.pqn_rnn import (
@@ -528,3 +529,81 @@ def test_the_rollout_stays_on_one_actor_device(
     out, err = proc.communicate(timeout=900)
     assert proc.returncode == 0, err[-3000:]
     assert out.strip().splitlines()[-1] == "ok"
+
+
+# --- abort rules ----------------------------------------------------------------------
+
+GUARDS = ["smdp/nan", "smdp/table_full", "smdp/divergence"]
+
+
+def test_the_abort_list_holds_only_the_guards() -> None:
+    """The guards are 0 until broken (`test_one_update_logs_every_method_metric`)."""
+    assert load_method(NAME).abort == {"finite": GUARDS}
+
+
+@pytest.mark.parametrize(
+    ("over", "guard"),
+    [
+        ({"q_bad": np.array([True])}, "smdp/nan"),
+        ({"td_loss": np.array([np.nan])}, "smdp/nan"),
+        ({"grad_norm": np.array([np.inf])}, "smdp/nan"),
+        ({"finite": np.array([False])}, "smdp/nan"),
+        ({"visited": np.array([251])}, "smdp/table_full"),
+        ({"q_upd": np.array([300.5])}, "smdp/divergence"),
+    ],
+)
+def test_each_guard_turns_nan_on_its_rule(over: dict[str, Any], guard: str) -> None:
+    m = smdp.method_metrics(_record(**over), rows=1000)
+    assert {g for g in GUARDS if np.isnan(m[g][0])} == {guard}
+    fine = smdp.method_metrics(
+        _record(visited=np.array([250]), q_upd=np.array([300.0])), 1000
+    )
+    assert not any(np.isnan(fine[g][0]) for g in GUARDS)
+
+
+def _aborted(run: Any) -> tuple[str, str, str]:
+    return (
+        run.info.status,
+        run.data.tags[TAG_ABORT_METRIC],
+        run.data.tags[TAG_ABORT_UPDATE],
+    )
+
+
+def test_a_nan_in_the_table_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = smdp.smdp_target
+    monkeypatch.setattr(smdp, "smdp_target", lambda *a: real(*a) * jnp.nan)
+    # a width no other test compiles, so the patch is traced; 1-step skills end at once
+    (spec,) = _phase(tmp_path, methods_dir, hidden=18, timeout_mult=0.001)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "smdp/nan", "1")
+
+
+def test_a_nan_skill_loss_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runner checks the TD loss column first; ``smdp/nan`` would also hold."""
+    real = pqn_rnn.q_lambda_targets
+    monkeypatch.setattr(pqn_rnn, "q_lambda_targets", lambda *a: real(*a) * jnp.nan)
+    (spec,) = _phase(tmp_path, methods_dir, hidden=19)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "value_loss", "1")
+
+
+def test_a_full_table_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smdp, "MAX_OCCUPANCY", 0.0)
+    (spec,) = _phase(tmp_path, methods_dir)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "smdp/table_full", "1")
+
+
+def test_a_table_value_above_the_return_bound_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path
+) -> None:
+    """Optimistic entries of 400: the first updated one is above `smdp.MAX_Q`."""
+    (spec,) = _phase(tmp_path, methods_dir, q_init=400.0, timeout_mult=0.001)
+    run = run_store.run([spec])[spec.name]
+    assert _aborted(run) == ("FAILED", "smdp/divergence", "1")
