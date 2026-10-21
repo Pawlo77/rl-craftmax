@@ -129,16 +129,21 @@ class RunStore:
         text = yaml.safe_dump({"experiment": {"name": "craftax"}, "mlflow": mlflow_cfg})
         self.config.write_text(text, encoding="utf-8")
 
-    def run(self, specs: list[Any]) -> dict[str, Any]:
-        """Train ``specs`` with the registry's trainers; the store's runs by name."""
+    def run(self, specs: list[Any], profile: Path | None = None) -> dict[str, Any]:
+        """Train ``specs`` with the registry's trainers under ``profile`` (default the
+        runner tests' one); the store's runs by name."""
         methods = importlib.import_module("wut_murl_craftax.training.interface").METHODS
         self.runner.main(
             specs,
-            PROFILE / "test.yaml",
+            profile or PROFILE / "test.yaml",
             experiment_config=self.config,
             methods={s.registry_name: methods[s.registry_name] for s in specs},
             evaluate=lambda run_dir, spec, should_stop: None,
         )
+        return self.runs()
+
+    def runs(self) -> dict[str, Any]:
+        """The store's runs by name (also after a `run` that raised)."""
         client = self.runner.mlflow.MlflowClient(tracking_uri=self.uri)
         ids = [e.experiment_id for e in client.search_experiments()]
         return {r.info.run_name: r for r in client.search_runs(ids)}

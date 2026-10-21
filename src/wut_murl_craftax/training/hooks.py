@@ -38,6 +38,10 @@ HOOK_NAMES = (
 """The callable hooks, in call order; also the names `ResolvedHooks.active` reports."""
 OLD_METRIC_PREFIX = "hook/"
 """Prefix of the first draft of the metric names; now refused."""
+MEMORY_LIMIT_KEY = "memory_limit_bytes"
+"""Runtime key the runner adds to each run config beside ``steps``: the machine
+profile's limit. Never hashed or saved; trainer configs ignore it and pass it on as
+`HookSpec.memory_limit_bytes`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +53,9 @@ class HookSpec:
     n_actions: int
     n_achievements: int
     total_steps: int
+    memory_limit_bytes: int | None = None
+    """Memory the method's buffers may take on this machine (the profile's); None
+    outside the runner (evaluation, tests): nothing to check."""
 
 
 @dataclass(frozen=True, kw_only=True)

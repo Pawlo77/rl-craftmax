@@ -47,5 +47,14 @@ grid:
       - {key: slots_windows, mul: [0.5, 1.0, 2.0], clip: [1, 16], integer: true}
       - {key: sil_steps, mul: [0.5, 1.0, 2.0], clip: [1, 8], integer: true}
 
+# Runner rules (orchestration/abort.py): a non-finite loss column of the base aborts the
+# run, and so does a metric in `finite`. The SIL loss parts are 0 with nothing to imitate
+# (an empty buffer or V above every return) and NaN once the loss or the params are; the
+# other sil/* metrics are not listed. A buffer above the profile's memory_limit_bytes
+# fails the run at init (training/sil.py `check_memory`). No flags: the plan's detectors
+# come with the analysis plan.
+abort:
+  finite: [sil/policy_loss, sil/value_loss]
+
 # written by `--mark-tuned sil <hash8>`
 tuned: null

@@ -8,27 +8,37 @@ from pathlib import Path
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import optax
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
     load_method,
     resolve_config,
 )
-from wut_murl_craftax.orchestration.runner import EXTRAS_FILE
+from wut_murl_craftax.orchestration.runner import EXTRAS_FILE, TAG_FAIL_ERROR
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import ppo_rnn, sil
 from wut_murl_craftax.training.checkpoints import load_state, save_state
-from wut_murl_craftax.training.hooks import HOOK_NAMES, HookSpec, resolve
+from wut_murl_craftax.training.hooks import (
+    HOOK_NAMES,
+    MEMORY_LIMIT_KEY,
+    HookSpec,
+    resolve,
+)
 from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.training.ppo import PPOConfig
+from wut_murl_craftax.training.pqn_rnn import PQNRNNConfig
 from wut_murl_craftax.training.records import LOSS_COLUMNS
 from wut_murl_craftax.visualisation import eval_rollouts
 
 REPO = Path(__file__).resolve().parents[2]
+PROFILES = REPO / "tests" / "orchestration" / "fixtures" / "profiles"
 CLASSIC = "Craftax-Classic-Symbolic-v1"
 TINY = {
     "env": CLASSIC,
@@ -311,6 +321,8 @@ import jax
 from wut_murl_craftax.orchestration.runtime import configure_runtime
 configure_runtime(host_devices=2)
 from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.training.ppo import PPOConfig
+from wut_murl_craftax.training.pqn_rnn import PQNRNNConfig
 
 cfg = {"env": "Craftax-Classic-Symbolic-v1", "envs": 8, "num_steps": 8,
        "minibatches": 2, "steps": 128, "width": 16, "rnn_width": 16,
@@ -346,9 +358,10 @@ def test_the_buffer_stays_on_the_learner(
 # --- through the runner ---------------------------------------------------------------
 
 
-def _phase(tmp_path: Path, methods_dir: Path) -> list[Any]:
+def _phase(tmp_path: Path, methods_dir: Path, config: Any = CONFIG) -> list[Any]:
+    """The specs of a 2-update Classic phase training one SIL config."""
     phase = tmp_path / "sil.yaml"
-    entry = {"config": "sil", "configs": [CONFIG], "seeds": 1}
+    entry = {"config": "sil", "configs": [config], "seeds": 1}
     phase.write_text(
         yaml.safe_dump({
             "budget": "0.128k",
@@ -384,3 +397,72 @@ def test_the_runner_trains_and_evaluation_opens_the_run(
         params, opened.policy.init_carry(1), obs[None], jax.random.key(1), True
     )
     assert act.shape == (1,)
+
+
+# --- abort rules ----------------------------------------------------------------------
+
+
+def test_the_abort_list_holds_only_always_finite_metrics() -> None:
+    """The loss parts are 0, not NaN, on an empty buffer (`test_sil_loss`), and NaN
+    once the loss or the params are."""
+    assert load_method("sil").abort == {"finite": ["sil/policy_loss", "sil/value_loss"]}
+
+
+def test_trainer_configs_take_the_memory_limit_as_a_runtime_key(
+    methods_dir: Path,
+) -> None:
+    """The runner adds it to every run config like ``steps``; no config keeps it."""
+    over = {MEMORY_LIMIT_KEY: 10**9}
+    assert PPOConfig.from_config(over) == PPOConfig()
+    assert PQNRNNConfig.from_config(over) == PQNRNNConfig()
+    configs = {"sil": _config(methods_dir), "ppo-rnn": _control(methods_dir)}
+    for name, cfg in configs.items():
+        assert METHODS[name].config(cfg | over) == METHODS[name].config(cfg)
+
+
+def test_a_buffer_over_the_machine_limit_fails_at_init(methods_dir: Path) -> None:
+    """Craftax-Symbolic, S = 2 on 8 envs (155 MB) under a 100 MB profile limit."""
+    cfg = _config(methods_dir, env="Craftax-Symbolic-v1", width=19, rnn_width=16)
+    need = sil.buffer_bytes(sil.SILConfig(slots_windows=2), 8, 67, rnn_width=16)
+    assert need.total > 100 * 10**6
+    trainer = METHODS["sil"]
+    with pytest.raises(ValueError, match="memory_limit_bytes"):
+        trainer.init(cfg | {MEMORY_LIMIT_KEY: 100 * 10**6}, jax.random.key(0))
+    state = jax.eval_shape(  # without the key (evaluation), nothing is checked
+        lambda: trainer.init(cfg, jax.random.key(0))
+    )
+    assert state.method_state.buffer["map"].shape[0] == 134
+
+
+def test_the_runner_fails_a_run_whose_buffer_exceeds_the_profile(
+    methods_dir: Path, run_store: Any, tmp_path: Path
+) -> None:
+    (spec,) = _phase(tmp_path, methods_dir)
+    profile = yaml.safe_load((PROFILES / "test.yaml").read_text())
+    need = sil.buffer_bytes(sil.SILConfig(), 8, 22, 1345, rnn_width=16).total
+    path = tmp_path / "small.yaml"
+    path.write_text(yaml.safe_dump(profile | {"memory_limit_bytes": need - 1}))
+    with pytest.raises(RuntimeError, match="memory_limit_bytes"):  # the queue's summary
+        run_store.run([spec], path)
+    run = run_store.runs()[spec.name]
+    assert run.info.status == "FAILED"
+    assert "memory_limit_bytes" in run.data.tags[TAG_FAIL_ERROR]
+    assert not (artifact_path(run.info.artifact_uri) / EXTRAS_FILE).exists()
+
+
+def test_a_nan_sil_loss_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = sil.sil_terms
+
+    def nan_terms(*args: Any) -> Any:
+        loss, aux = real(*args)
+        return loss * jnp.nan, aux | {"policy": aux["policy"] * jnp.nan}
+
+    monkeypatch.setattr(sil, "sil_terms", nan_terms)
+    # a width no other test compiles, so the patched loss is traced
+    (spec,) = _phase(tmp_path, methods_dir, {"ref": CONFIG, "set": {"width": 21}})
+    run = run_store.run([spec])[spec.name]
+    assert run.info.status == "FAILED"
+    assert run.data.tags[TAG_ABORT_METRIC] == "sil/policy_loss"
+    assert run.data.tags[TAG_ABORT_UPDATE] == "1"

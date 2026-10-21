@@ -57,7 +57,7 @@ from ..orchestration import (
     shard_envs,
 )
 from .checkpoints import checkpoint_schedule, save_checkpoint
-from .hooks import HOOK_NAMES
+from .hooks import HOOK_NAMES, MEMORY_LIMIT_KEY
 from .records import LOSS_COLUMNS, RunLog, achievement_names
 from .wrappers import (
     BatchEnvWrapper,
@@ -124,12 +124,13 @@ class PPOConfig:
     def from_config(cls, config: Mapping[str, Any], base: Self | None = None) -> Self:
         """Build from a run config: its keys, ``steps`` and the registry's ``method``.
 
-        The keys override ``base`` (default: the field defaults); hooks are never keys.
+        The keys override ``base`` (default: the field defaults); hooks are never keys,
+        the runtime `MEMORY_LIMIT_KEY` is skipped.
 
         Raises:
             ValueError: On a key that is not a PPO setting.
         """
-        keys = set(config) - {"method"}
+        keys = set(config) - {"method", MEMORY_LIMIT_KEY}
         names = {f.name for f in dataclasses.fields(cls)} - _CLI_ONLY - set(HOOK_NAMES)
         if unknown := sorted(keys - names):
             msg = f"unknown PPO config keys: {unknown}"

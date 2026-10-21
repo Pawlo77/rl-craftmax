@@ -39,6 +39,7 @@ from ..orchestration import shard_envs
 from .batch_renorm import BatchRenorm
 from .hooks import (
     HOOK_NAMES,
+    MEMORY_LIMIT_KEY,
     HookFields,
     HookMethod,
     HookSpec,
@@ -159,12 +160,13 @@ class PQNRNNConfig(HookFields):
     def from_config(cls, config: Mapping[str, Any], base: Self | None = None) -> Self:
         """Build from a run config: its keys, ``steps`` and the registry's ``method``.
 
-        The keys override ``base`` (default: the field defaults); hooks are never keys.
+        The keys override ``base`` (default: the field defaults); hooks are never keys,
+        the runtime `MEMORY_LIMIT_KEY` is skipped.
 
         Raises:
             ValueError: On a key that is not a PQN-RNN setting.
         """
-        keys = set(config) - {"method"}
+        keys = set(config) - {"method", MEMORY_LIMIT_KEY}
         names = {f.name for f in dataclasses.fields(cls)} - _CLI_ONLY - set(HOOK_NAMES)
         if unknown := sorted(keys - names):
             msg = f"unknown PQN-RNN config keys: {unknown}"
@@ -711,8 +713,13 @@ class PQNRNNState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax A
     cfg: PQNRNNConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
 
 
-def init_state(cfg: PQNRNNConfig, key: jax.Array) -> PQNRNNState:
-    """Fresh network on the learner, envs on the actor, then the random warm-up."""
+def init_state(
+    cfg: PQNRNNConfig, key: jax.Array, memory_limit_bytes: int | None = None
+) -> PQNRNNState:
+    """Fresh network on the learner, envs on the actor, then the random warm-up.
+
+    ``memory_limit_bytes`` goes to the method in `HookSpec`.
+    """
     s = _setup(cfg)
     key, k_init, k_reset, k_method = jax.random.split(key, 4)
     with jax.default_device(s.learner):
@@ -727,7 +734,8 @@ def init_state(cfg: PQNRNNConfig, key: jax.Array) -> PQNRNNState:
         # an array from the start, as after an update (see `ppo.init_state`)
         ts = ts.replace(step=jnp.zeros((), jnp.int32))
     n_ach = len(achievement_names(cfg.env))
-    spec = HookSpec(cfg.envs, s.net.obs_dim, s.net.n_actions, n_ach, cfg.steps)
+    dims = (cfg.envs, s.net.obs_dim, s.net.n_actions, n_ach, cfg.steps)
+    spec = HookSpec(*dims, memory_limit_bytes)
     with jax.default_device(s.actor):
         obs, st = s.env.reset(k_reset, s.env_params)
         per_env = (
@@ -945,7 +953,8 @@ class PQNRNNTrainer:
         if "steps" not in config:
             msg = "PQN-RNN schedules span the budget: pass `steps` in the config"
             raise ValueError(msg)
-        return init_state(self.config(config), key)
+        limit = config.get(MEMORY_LIMIT_KEY)
+        return init_state(self.config(config), key, limit)
 
     def train_chunk(
         self, state: PQNRNNState, n_updates: int

@@ -41,6 +41,7 @@ from jax.sharding import Mesh, NamedSharding
 from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
 from ..orchestration import shard_envs
 from .hooks import (
+    MEMORY_LIMIT_KEY,
     HookFields,
     HookMethod,
     HookSpec,
@@ -451,10 +452,13 @@ class PPORNNState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax A
     cfg: PPORNNConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
 
 
-def init_state(cfg: PPORNNConfig, key: jax.Array) -> PPORNNState:
+def init_state(
+    cfg: PPORNNConfig, key: jax.Array, memory_limit_bytes: int | None = None
+) -> PPORNNState:
     """Fresh params on the learner; envs and GRU carry on the actor.
 
     The method state goes to the actor, or to the learner if only the update reads it.
+    ``memory_limit_bytes`` goes to the method in `HookSpec`.
     """
     s = _setup(cfg)
     key, k_init, k_reset, k_method = jax.random.split(key, 4)
@@ -465,7 +469,8 @@ def init_state(cfg: PPORNNConfig, key: jax.Array) -> PPORNNState:
         # an array from the start, as after an update (see `ppo.init_state`)
         ts = ts.replace(step=jnp.zeros((), jnp.int32))
     n_ach = len(achievement_names(cfg.env))
-    spec = HookSpec(cfg.envs, s.net.obs_dim, s.net.n_actions, n_ach, cfg.steps)
+    dims = (cfg.envs, s.net.obs_dim, s.net.n_actions, n_ach, cfg.steps)
+    spec = HookSpec(*dims, memory_limit_bytes)
     with jax.default_device(s.actor):
         obs, st = s.env.reset(k_reset, s.env_params)
         per_env = (
@@ -632,7 +637,7 @@ class PPORNNTrainer:
         if cfg.anneal_lr and "steps" not in config:
             msg = "PPO-RNN with anneal_lr needs the budget: pass `steps` in the config"
             raise ValueError(msg)
-        return init_state(cfg, key)
+        return init_state(cfg, key, config.get(MEMORY_LIMIT_KEY))
 
     def train_chunk(
         self, state: PPORNNState, n_updates: int

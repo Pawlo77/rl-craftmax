@@ -45,6 +45,7 @@ from ..training.checkpoints import (
     save_checkpoint,
     save_state,
 )
+from ..training.hooks import MEMORY_LIMIT_KEY
 from ..training.records import (
     BASE_COLUMNS,
     LOSS_COLUMNS,
@@ -177,9 +178,10 @@ class Trainer(Protocol):
     def init(self, config: Mapping[str, Any], key: jax.Array) -> Any:
         """Initial state: params, optimizer, env states, keys, method state.
 
-        ``config`` is the run's config plus ``steps``, the budget in env steps: the
-        one runtime key the runner injects (it is not hashed or saved in
-        ``config.json``); later runtime inputs, such as the profile, follow suit.
+        ``config`` is the run's config plus the runtime keys the runner injects (not
+        hashed or saved in ``config.json``): ``steps``, the budget in env steps, and
+        `MEMORY_LIMIT_KEY`, the profile's ``memory_limit_bytes`` (evaluation leaves it
+        out, so nothing is checked there).
         """
         ...
 
@@ -557,7 +559,11 @@ def _train(
         raise ValueError(msg)
     ckpts = checkpoint_schedule(n_updates, N_CHECKPOINTS)
     # a resume needs init too: it gives the tree, key implementations and placement
-    config = {**spec.config, "steps": spec.steps}
+    config = {
+        **spec.config,
+        "steps": spec.steps,
+        MEMORY_LIMIT_KEY: profile.memory_limit_bytes,
+    }
     fresh = state_template(trainer.init(config, jax.random.key(spec.seed)), spec)
     saved = load_state(out, fresh) if (out / STATE_FILE).exists() else fresh
     state, update = saved["trainer"], saved["update"]

@@ -565,7 +565,13 @@ def metrics(state: SILState) -> dict[str, jax.Array]:
 def _init_hook(
     cfg: SILConfig, base: PPORNNConfig, _key: jax.Array, spec: HookSpec
 ) -> SILState:
-    """``init_state_fn``: `init` sized by ``spec``, with the control's gamma and GRU."""
+    """``init_state_fn``: `init` sized by ``spec``, with the control's gamma and GRU.
+
+    Raises:
+        ValueError: If the state exceeds ``spec.memory_limit_bytes`` (`check_memory`).
+    """
+    if spec.memory_limit_bytes is not None:  # before anything is allocated
+        check_memory(cfg, spec, spec.memory_limit_bytes, base.rnn_width)
     tiers = tuple(float(w) for w in achievement_weights(base.env))
     names = tuple(achievement_names(base.env))
     return init(
