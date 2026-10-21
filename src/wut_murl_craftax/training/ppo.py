@@ -58,7 +58,7 @@ from ..orchestration import (
 )
 from .checkpoints import checkpoint_schedule, save_checkpoint
 from .hooks import HOOK_NAMES
-from .records import RunLog, achievement_names
+from .records import LOSS_COLUMNS, RunLog, achievement_names
 from .wrappers import BatchEnvWrapper, LogWrapper, OptimisticResetVecEnvWrapper
 
 if TYPE_CHECKING:  # the runner imports mlflow; the standalone CLI does not need it
@@ -70,6 +70,8 @@ Batch = dict[str, jax.Array]
 """Flat PPO batch: obs, act, logp, v, adv, tgt."""
 RESETS = ("optimistic", "auto")
 """Accepted ``resets`` values."""
+_PPO_NAMES = {"explained_var": "explained_variance"}
+"""`LOSS_COLUMNS` names that differ in the ``ppo/*`` metrics."""
 _CLI_ONLY = {"seed", "n_ckpt"}
 """`PPOConfig` fields the runner sets itself (key, checkpoints), never in a config."""
 
@@ -298,8 +300,12 @@ def _ppo_loss(
 def _make_learn(cfg: PPOConfig, net: ActorCritic) -> Callable[..., Any]:
     """Jitted PPO update: epochs x shuffled minibatches; returns the loss summary.
 
-    Summary columns: ``records.LOSS_COLUMNS``; ``grad_norm`` is before clipping.
+    Returns the train state, the key, the summary in ``records.LOSS_COLUMNS`` order
+    (``grad_norm`` is before clipping) and ``(adv_mean, adv_std, lr)``: the rollout's
+    advantage statistics before the per-minibatch normalisation, and the learning
+    rate of this update's first optimizer step.
     """
+    lr_at = lr_schedule(cfg) if cfg.anneal_lr else lambda _: jnp.asarray(cfg.lr)
     grad = jax.value_and_grad(lambda p, b: _ppo_loss(cfg, net, p, b), has_aux=True)
 
     def mb_step(ts: TrainState, b: Batch) -> tuple[TrainState, Any]:
@@ -318,12 +324,14 @@ def _make_learn(cfg: PPOConfig, net: ActorCritic) -> Callable[..., Any]:
 
     @jax.jit
     def learn(ts: TrainState, flat: Batch, key: jax.Array) -> Any:
+        lr = lr_at(jnp.asarray(ts.step))
         (ts, _, key), aux = jax.lax.scan(
             epoch, (ts, flat, key), None, cfg.update_epochs
         )
         ev = 1 - jnp.var(flat["tgt"] - flat["v"]) / (jnp.var(flat["tgt"]) + 1e-8)
         m = [x.mean() for x in aux]
-        return ts, key, jnp.array([*m[:4], ev, *m[4:]])
+        adv = jnp.array([flat["adv"].mean(), flat["adv"].std(), lr])
+        return ts, key, jnp.array([*m[:4], ev, *m[4:]]), adv
 
     return learn
 
@@ -454,30 +462,43 @@ def init_state(cfg: PPOConfig, key: jax.Array) -> PPOState:
     )
 
 
+def ppo_metrics(losses: jax.Array, advs: jax.Array) -> dict[str, jax.Array]:
+    """The ``ppo/*`` metrics of stacked updates: loss summaries, advantage stats, lr."""
+    named = {_PPO_NAMES.get(c, c): losses[:, i] for i, c in enumerate(LOSS_COLUMNS)}
+    named |= {"adv_mean": advs[:, 0], "adv_std": advs[:, 1], "lr": advs[:, 2]}
+    return {f"ppo/{k}": v for k, v in named.items()}
+
+
 def train_chunk(state: PPOState, n_updates: int) -> tuple[PPOState, "ChunkMetrics"]:
-    """Run ``n_updates`` rollout-and-update steps; metrics stacked per update."""
+    """Run ``n_updates`` rollout-and-update steps; metrics stacked per update.
+
+    Besides the `ChunkMetrics` arrays, the ``ppo/*`` metrics of `ppo_metrics`.
+    """
     s = _setup(state.cfg)
     ts, key = state.train_state, state.key
     carry = (state.env_state, state.obs, state.episode, state.key_act)
-    losses, eps = [], []
+    losses, advs, eps = [], [], []
     for _ in range(n_updates):
         params_act = jax.device_put(ts.params, s.shared_at)
         *carry, flat, ep = s.rollout(params_act, *carry)
-        ts, key, loss = s.learn(ts, jax.device_put(flat, s.learner), key)
+        ts, key, loss, adv = s.learn(ts, jax.device_put(flat, s.learner), key)
         losses.append(loss)
+        advs.append(adv)
         eps.append(ep)
     st, obs, episode, key_act = carry
     new = state.replace(
         train_state=ts, env_state=st, obs=obs, episode=episode, key=key, key_act=key_act
     )
-    metrics: ChunkMetrics = {
-        "losses": jnp.stack(losses),
+    stacked = jnp.stack(losses)
+    metrics = {
+        "losses": stacked,
         "done": jnp.stack([e["d"] for e in eps]).astype(bool),
         "ach": jnp.stack([e["ach"] for e in eps]),
         "ret": jnp.stack([e["ret"] for e in eps]),
         "length": jnp.stack([e["len"] for e in eps]),
     }
-    return new, metrics
+    metrics |= ppo_metrics(stacked, jnp.stack(advs))
+    return new, cast("ChunkMetrics", metrics)
 
 
 @dataclass(frozen=True, slots=True)

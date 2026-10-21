@@ -32,7 +32,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 241 |  |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 40 |  |
-| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 604 | [[training]] |
+| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 625 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 577 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 186 | [[training]] |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 |  |

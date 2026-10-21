@@ -117,7 +117,9 @@ def test_two_updates_report_chunk_metrics(two_updates: tuple[Any, Any]) -> None:
         "ach": (2, NUM_STEPS, ENVS, N_ACH),
         "ret": (2, NUM_STEPS, ENVS),
         "length": (2, NUM_STEPS, ENVS),
+        **{k: (2,) for k in m if k.startswith("ppo/")},
     }
+    assert len([k for k in m if k.startswith("ppo/")]) == 10
     assert np.isfinite(np.asarray(m["losses"])).all()
     assert np.asarray(m["done"]).dtype == np.asarray(m["ach"]).dtype == bool
 

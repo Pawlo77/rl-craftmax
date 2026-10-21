@@ -109,3 +109,42 @@ def test_same_seed_gives_identical_params_and_loss_summaries() -> None:
     cols = dict(zip(LOSS_COLUMNS, losses.T, strict=True))
     assert ((cols["clip_frac"] >= 0) & (cols["clip_frac"] <= 1)).all()
     assert (cols["grad_norm"] > 0).all()
+
+
+PPO_METRICS = (
+    "policy_loss",
+    "value_loss",
+    "entropy",
+    "approx_kl",
+    "clip_frac",
+    "explained_variance",
+    "grad_norm",
+    "adv_mean",
+    "adv_std",
+    "lr",
+)
+
+
+def test_a_chunk_returns_the_ppo_metrics_per_update() -> None:
+    cfg = dataclasses.replace(TINY, steps=4096, envs=32, num_steps=8, lr=1e-3)
+    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+    losses = dict(zip(LOSS_COLUMNS, np.asarray(m["losses"]).T, strict=True))
+    for name in PPO_METRICS:
+        values = np.asarray(m[f"ppo/{name}"])  # type: ignore[literal-required]  # method metric
+        assert values.shape == (3,), name
+        assert np.isfinite(values).all(), name
+    for name in set(LOSS_COLUMNS) - {"explained_var"}:
+        np.testing.assert_array_equal(m[f"ppo/{name}"], losses[name])  # type: ignore[literal-required]
+    np.testing.assert_array_equal(m["ppo/explained_variance"], losses["explained_var"])  # type: ignore[literal-required]
+    assert (np.asarray(m["ppo/adv_std"]) > 0).all()  # type: ignore[literal-required]
+
+
+def test_the_logged_learning_rate_is_the_annealed_one() -> None:
+    cfg = dataclasses.replace(TINY, steps=4096, envs=32, num_steps=8, lr=1e-3)
+    state = init_state(cfg, jax.random.key(1))
+    _, m = train_chunk(state, 3)
+    want = [1e-3 * (1 - u / cfg.n_updates) for u in range(3)]
+    np.testing.assert_allclose(m["ppo/lr"], want, rtol=1e-6)  # type: ignore[literal-required]
+    flat = dataclasses.replace(cfg, anneal_lr=False)
+    _, m = train_chunk(init_state(flat, jax.random.key(1)), 2)
+    np.testing.assert_allclose(m["ppo/lr"], [1e-3, 1e-3], rtol=1e-6)  # type: ignore[literal-required]
