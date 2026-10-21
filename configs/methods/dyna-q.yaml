@@ -1,0 +1,59 @@
+# Dyna-Q over the SMDP skills method; the schema is documented in orchestration/queue.py.
+# Everything of smdp-skills (skills, skill network, top-level knobs) comes from its tuned
+# config (base_from); only the planning knobs below are new. Every planning setting is set
+# here, so no dataclass default decides a run: the plan's fixed settings (P = 2^16 visited
+# pairs, M = 8 ring slots, batches of 1024, prioritized-sweeping threshold 1e-4, value
+# iteration to a per-sweep change below 1e-3 or 50 sweeps) and the smoke config A defaults of
+# the tuned knobs (uniform, n = 5, kappa 0). plan_n is the number of planning backups per real
+# skill end of the rollout (n = 0 is smdp-skills exactly; value iteration ignores it);
+# plan_kappa is the Dyna-Q+ bonus per sqrt time unit, a unit being 1/1000 of the budget.
+# Ablation at final-1m, as a phase-file override of tuned: `set: {plan_kappa: 0.0}` when the
+# best kappa is above 0, else the best nonzero stage-1 kappa.
+base:
+  base_from: smdp-skills.tuned
+  plan_variant: uniform
+  plan_n: 5
+  plan_kappa: 0.0
+  model_slots: 8
+  model_pairs: 65536
+  plan_batch: 1024
+  ps_theta: 1.0e-4
+  vi_tol: 1.0e-3
+  vi_max_sweeps: 50
+
+grid:
+  # Stage 1: (uniform, prioritized) x n (1, 5, 20) x kappa (0, 0.003, 0.03), plus value
+  # iteration x kappa: 21 configs, 3 seeds each.
+  coarse:
+    - {name: uniform-n1-k0, plan_variant: uniform, plan_n: 1, plan_kappa: 0.0}
+    - {name: uniform-n1-k0.003, plan_variant: uniform, plan_n: 1, plan_kappa: 0.003}
+    - {name: uniform-n1-k0.03, plan_variant: uniform, plan_n: 1, plan_kappa: 0.03}
+    - {name: uniform-n5-k0, plan_variant: uniform, plan_n: 5, plan_kappa: 0.0}
+    - {name: uniform-n5-k0.003, plan_variant: uniform, plan_n: 5, plan_kappa: 0.003}
+    - {name: uniform-n5-k0.03, plan_variant: uniform, plan_n: 5, plan_kappa: 0.03}
+    - {name: uniform-n20-k0, plan_variant: uniform, plan_n: 20, plan_kappa: 0.0}
+    - {name: uniform-n20-k0.003, plan_variant: uniform, plan_n: 20, plan_kappa: 0.003}
+    - {name: uniform-n20-k0.03, plan_variant: uniform, plan_n: 20, plan_kappa: 0.03}
+    - {name: prioritized-n1-k0, plan_variant: prioritized, plan_n: 1, plan_kappa: 0.0}
+    - {name: prioritized-n1-k0.003, plan_variant: prioritized, plan_n: 1, plan_kappa: 0.003}
+    - {name: prioritized-n1-k0.03, plan_variant: prioritized, plan_n: 1, plan_kappa: 0.03}
+    - {name: prioritized-n5-k0, plan_variant: prioritized, plan_n: 5, plan_kappa: 0.0}
+    - {name: prioritized-n5-k0.003, plan_variant: prioritized, plan_n: 5, plan_kappa: 0.003}
+    - {name: prioritized-n5-k0.03, plan_variant: prioritized, plan_n: 5, plan_kappa: 0.03}
+    - {name: prioritized-n20-k0, plan_variant: prioritized, plan_n: 20, plan_kappa: 0.0}
+    - {name: prioritized-n20-k0.003, plan_variant: prioritized, plan_n: 20, plan_kappa: 0.003}
+    - {name: prioritized-n20-k0.03, plan_variant: prioritized, plan_n: 20, plan_kappa: 0.03}
+    - {name: vi-k0, plan_variant: value_iteration, plan_kappa: 0.0}
+    - {name: vi-k0.003, plan_variant: value_iteration, plan_kappa: 0.003}
+    - {name: vi-k0.03, plan_variant: value_iteration, plan_kappa: 0.03}
+  # Stage 2 (`--expand-fine dyna-q`): kappa x M, best x 0.5, 1, 2 crossed (9 configs, the
+  # centre reused by run name); a best kappa of 0 gives 0, 0.0015, 0.003 instead; M 8 gives
+  # 4, 8, 16. Entries are generated.
+  fine:
+    rule: {select: 2, combine: cross}
+    knobs:
+      - {key: plan_kappa, mul: [0.5, 1.0, 2.0], zero: [0.0, 0.0015, 0.003]}
+      - {key: model_slots, mul: [0.5, 1.0, 2.0], integer: true}
+
+# written by `--mark-tuned dyna-q <hash8>`
+tuned: null

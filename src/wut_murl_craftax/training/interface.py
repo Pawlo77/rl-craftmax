@@ -14,6 +14,7 @@ import jax
 
 from ..orchestration.runner import Trainer
 from . import count_bonus, sil
+from .dyna_q import DynaTrainer
 from .ppo import PPOTrainer
 from .ppo_rnn import PPORNNConfig
 from .ppo_rnn import make_trainer as make_ppo_rnn_trainer
@@ -61,6 +62,7 @@ METHODS: Mapping[str, Trainer] = {
     ),
     "sil": make_ppo_rnn_trainer(PPORNNConfig(), method=sil.METHOD),
     "smdp-skills": SMDPTrainer(),
+    "dyna-q": DynaTrainer(),
 }
 """Registry name (`RunSpec.registry_name`, ``config["method"]``) -> trainer; each
 method plan adds its entry."""

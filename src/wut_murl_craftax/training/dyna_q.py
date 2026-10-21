@@ -1,22 +1,48 @@
-"""Dyna-Q over the SMDP skills method: a skill-outcome model and planning updates.
+"""Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer.
 
-The model maps each visited (key, skill) pair to a compact slot (``pair_id``, first
-visits in order) holding a ring of its last ``M`` real outcomes ``(R, gamma^tau, k',
-done, mask')``; `write` stores the skill ends of one env step, `model_accuracy`
-counts outcomes whose next key the pair had already seen. `plan` runs the planning
-backups on the top-level table with `smdp.smdp_update` (sample backups with the
-Dyna-Q+ bonus, prioritized sweeping, value iteration); the bonus is paid on
-simulated backups only. Pure, for ``jit``. Design: [[Dyna-Q over a Skill-Level
-Progress Model design]].
+The model maps each visited (key, skill) pair to a slot (``pair_id``, first visits in
+order) holding a ring of its last ``M`` real outcomes ``(R, gamma^tau, k', done,
+mask')``; `write` stores one env step's skill ends, `model_accuracy` counts outcomes
+whose next key the pair already held. `plan` backs up the top-level table with
+`smdp.smdp_update` (Dyna-Q+ sample backups, prioritized sweeping, value iteration);
+the bonus is paid on simulated backups only. `DynaTrainer` (registry ``dyna-q``) is
+the `smdp-skills` trainer with model writes in the rollout and `plan` after it; it
+acts through `smdp.SMDPPolicy`. Imported after ``configure_runtime`` (via ``smdp``).
+Design: [[Dyna-Q over a Skill-Level Progress Model design]].
 """
 
-from typing import Any, Literal, NamedTuple
+import functools
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import struct
 
-from .smdp import smdp_target, smdp_update
+from .pqn_rnn import FILLED_LOSS_COLUMNS
+from .records import achievement_names
+from .skills import NUM_SKILLS
+from .smdp import (
+    RolloutCarry,
+    SMDPPolicy,
+    SMDPState,
+    SMDPTrainConfig,
+    SMDPTrainer,
+    _chunk_metrics,
+    _learn_after_rollout,
+    _make_collect,
+    _rollout_inputs,
+    _setup,
+    smdp_target,
+    smdp_update,
+)
+from .smdp import init_state as smdp_init_state
+
+if TYPE_CHECKING:  # the runner imports mlflow; tests of this module do not need it
+    from ..orchestration.runner import ChunkMetrics
 
 type Variant = Literal["uniform", "prioritized", "value_iteration"]
 """Planning variant: sample backups (Dyna-Q, Dyna-Q+), sweeping, full sweeps."""
@@ -358,3 +384,283 @@ def plan(
     batches = (n + batch - 1) // batch
     q, backups = jax.lax.fori_loop(0, batches, body, (q, zero))
     return q, {"backups": backups, "sweeps": zero}
+
+
+VARIANTS = ("uniform", "prioritized", "value_iteration")
+"""The `Variant` values."""
+TIME_UNITS = 1000
+"""Dyna-Q+ time units per run budget: κ transfers between budgets."""
+
+
+@dataclass(frozen=True, slots=True)
+class DynaConfig:
+    """Planning settings; no defaults, so the method YAML decides every run."""
+
+    plan_variant: Variant
+    plan_n: int
+    """Planning backups per real skill end of the rollout (value iteration: unused)."""
+    plan_kappa: float
+    """Dyna-Q+ bonus per ``sqrt`` time unit (`TIME_UNITS` per budget); 0 is Dyna-Q."""
+    model_slots: int
+    model_pairs: int
+    """Ring slots per pair (M) and visited-pair capacity (P)."""
+    plan_batch: int
+    ps_theta: float
+    vi_tol: float
+    vi_max_sweeps: int
+
+    def __post_init__(self) -> None:
+        """Refuse settings planning cannot use.
+
+        Raises:
+            ValueError: On an unknown variant or a value out of range.
+        """
+        checks = {
+            f"plan_variant must be one of {VARIANTS}, got {self.plan_variant!r}": (
+                self.plan_variant in VARIANTS
+            ),
+            f"need plan_n >= 0, got {self.plan_n}": self.plan_n >= 0,
+            f"need plan_kappa >= 0, got {self.plan_kappa}": self.plan_kappa >= 0,
+            f"need model_slots >= 1, got {self.model_slots}": self.model_slots >= 1,
+            f"need model_pairs >= 1, got {self.model_pairs}": self.model_pairs >= 1,
+            f"need plan_batch >= 1, got {self.plan_batch}": self.plan_batch >= 1,
+            f"need ps_theta >= 0, got {self.ps_theta}": self.ps_theta >= 0,
+            f"need vi_tol > 0, got {self.vi_tol}": self.vi_tol > 0,
+            f"need vi_max_sweeps >= 1, got {self.vi_max_sweeps}": (
+                self.vi_max_sweeps >= 1
+            ),
+        }
+        if failed := [msg for msg, ok in checks.items() if not ok]:
+            raise ValueError("; ".join(failed))
+
+
+DYNA_KEYS = frozenset(f.name for f in fields(DynaConfig))
+"""Run-config keys of the planning; the other keys configure `smdp-skills`."""
+
+
+@dataclass(frozen=True, slots=True)
+class DynaTrainConfig:
+    """Run config: `smdp.SMDPTrainConfig` plus the planning `DynaConfig`."""
+
+    smdp: SMDPTrainConfig
+    dyna: DynaConfig
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> Self:
+        """Split a run config: `DYNA_KEYS` to the planning, the rest to `smdp-skills`.
+
+        Raises:
+            ValueError: On a missing planning key or a value `DynaConfig` refuses.
+        """
+        if missing := sorted(DYNA_KEYS - config.keys()):
+            msg = f"set every planning key: missing {missing}"
+            raise ValueError(msg)
+        rest = {k: v for k, v in config.items() if k not in DYNA_KEYS}
+        dyna = DynaConfig(**{k: config[k] for k in DYNA_KEYS})
+        return cls(SMDPTrainConfig.from_config(rest), dyna)
+
+
+class DynaState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
+    """Training state: the `smdp-skills` state, the model and the planning key.
+
+    The model and key sit on the actor device with the table; `save_state` keeps
+    them, the ``ckpt/`` params do not (acting reads only the table).
+    """
+
+    smdp: SMDPState
+    model: ModelState
+    plan_key: jax.Array
+    cfg: DynaConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
+
+
+def _now(t_env: jax.Array, steps: int) -> jax.Array:
+    """Env-step count ``t_env`` in time units (`TIME_UNITS` per budget)."""
+    return jnp.asarray(t_env, jnp.float32) * (TIME_UNITS / steps)
+
+
+@functools.cache
+def _collect(cfg: SMDPTrainConfig) -> Callable[..., Any]:
+    """`smdp-skills` rollout that also writes every real skill end to the model.
+
+    ``aux`` is (model, [hits, ends]) with the `model_accuracy` counts; cached per
+    config, so runs that differ only in planning share the compiled rollout.
+    """
+    s = _setup(cfg)
+
+    def observe(aux: Any, e: dict[str, jax.Array], t: jax.Array) -> Any:
+        model, acc = aux
+        rec = Outcome(*(e[k] for k in Outcome._fields))
+        hits, ended = model_accuracy(model, rec, e["ended"])
+        model = write(model, rec, e["ended"], _now(t, cfg.net.steps))
+        return model, acc + jnp.stack([hits, ended]).astype(jnp.int32)
+
+    diamond = achievement_names(cfg.net.env).index("collect_diamond")
+    return _make_collect(cfg, s.net, s.env, s.env_params, diamond, observe)
+
+
+@functools.cache
+def _planner(cfg: DynaConfig, alpha: float, steps: int) -> Callable[..., Any]:
+    """Jitted `plan` with every setting from ``cfg``; the table is donated.
+
+    ``run(q, model, ended, t_env, key)`` plans ``plan_n x ended`` backups at the
+    env-step count ``t_env`` and returns the table and the statistics.
+    """
+
+    @functools.partial(jax.jit, donate_argnums=0)
+    def run(
+        q: jax.Array, model: ModelState, ended: jax.Array, t_env: jax.Array, key: Any
+    ) -> tuple[jax.Array, dict[str, jax.Array]]:
+        t = _now(t_env, steps)
+        q, stats = plan(
+            q, model, cfg.plan_n * ended, cfg.plan_variant, cfg.plan_kappa, t, key,
+            alpha=alpha, batch=cfg.plan_batch, theta=cfg.ps_theta, tol=cfg.vi_tol,
+            max_sweeps=cfg.vi_max_sweeps,
+        )  # fmt: skip
+        return q, stats | _model_stats(model)
+
+    return cast(Callable[..., Any], run)
+
+
+def _model_stats(model: ModelState) -> dict[str, jax.Array]:
+    """Counts of the model after a rollout, new arrays (the model is donated next)."""
+    return {"n_pairs": model.n_pairs.astype(jnp.float32)}
+
+
+def init_state(cfg: DynaTrainConfig, key: jax.Array) -> DynaState:
+    """The `smdp-skills` initial state of ``key``, an empty model, a planning key.
+
+    Raises:
+        ValueError: If the model's rows or pairs equal the env count (`init_model`).
+    """
+    s, d = _setup(cfg.smdp), cfg.dyna
+    with jax.default_device(s.actor):
+        model = init_model(
+            cfg.smdp.top.log2_rows, NUM_SKILLS, d.model_pairs, d.model_slots,
+            envs=cfg.smdp.net.envs,
+        )  # fmt: skip
+    state = smdp_init_state(cfg.smdp, key)
+    # a stream of its own: the smdp-skills state of the same key stays unchanged
+    plan_key = jax.random.fold_in(key, 1)
+    at = s.shared_at
+    return DynaState(
+        smdp=state,
+        model=jax.device_put(model, at),
+        plan_key=jax.device_put(plan_key, at),
+        cfg=d,
+    )
+
+
+def _run_plan(planner: Callable[..., Any], *args: Any) -> tuple[Any, float]:
+    """``planner(*args)`` to completion and its wall time in seconds."""
+    start = time.perf_counter()
+    out = jax.block_until_ready(planner(*args))  # type: ignore[no-untyped-call]  # jax API
+    return out, time.perf_counter() - start
+
+
+def _one_update(
+    state: DynaState, carry: RolloutCarry, model: ModelState
+) -> tuple[DynaState, RolloutCarry, ModelState, tuple[Any, ...]]:
+    """Rollout with model writes, planning on the table, then `pqn_rnn.learn`.
+
+    Planning runs (and is timed) before the learner's update, which does not read
+    the table. Returns the state (carry and model not yet set), the donated-on
+    carry and model, and the update's smdp record, chunk arrays and Dyna record.
+    """
+    begin = time.perf_counter()
+    cfg = state.smdp.cfg
+    s = _setup(cfg)
+    variables, start = _rollout_inputs(state.smdp, s)
+    acc = jax.device_put(jnp.zeros(2, jnp.int32), s.shared_at)
+    *rollout, (model, acc) = _collect(cfg)(
+        carry, variables, state.smdp.diamond, start, (model, acc)
+    )
+    carry = rollout[0]
+    jax.block_until_ready(carry)  # type: ignore[no-untyped-call]  # jax API
+    key, k_plan = jax.random.split(state.plan_key)
+    planner = _planner(state.cfg, cfg.top.alpha, cfg.net.steps)
+    (q, stats), seconds = _run_plan(
+        planner, carry.shared.q, model, acc[1], carry.shared.t, k_plan
+    )
+    carry = carry.replace(shared=carry.shared.replace(q=q))
+    sm, carry, record, chunk = _learn_after_rollout(
+        state.smdp, s, carry, tuple(rollout[1:])
+    )
+    jax.block_until_ready(sm.train_state)  # type: ignore[no-untyped-call]  # jax API
+    dyna = {**stats, "hits": acc[0], "ends": acc[1]}
+    dyna |= {"plan_seconds": seconds, "update_seconds": time.perf_counter() - begin}
+    state = state.replace(smdp=sm, plan_key=key)
+    return state, carry, model, (record, chunk, dyna)
+
+
+def train_chunk(state: DynaState, n_updates: int) -> tuple[DynaState, "ChunkMetrics"]:
+    """Run ``n_updates`` updates; the `smdp-skills` metrics plus ``dyna/...``.
+
+    The input state stays usable: the rollouts donate copies of its carry and model.
+    """
+    carry = jax.tree.map(jnp.copy, state.smdp.carry)
+    model = jax.tree.map(jnp.copy, state.model)
+    records, chunks, dyna = [], [], []
+    for _ in range(n_updates):
+        state, carry, model, (record, chunk, d) = _one_update(state, carry, model)
+        records.append(record)
+        chunks.append(chunk)
+        dyna.append(d)
+    state = state.replace(smdp=state.smdp.replace(carry=carry), model=model)
+    metrics = _chunk_metrics(records, chunks, carry.shared.q.shape[0])
+    host = jax.device_get(dyna)
+    stacked = {k: np.stack([r[k] for r in host]) for k in host[0]}
+    return state, cast("ChunkMetrics", metrics | method_metrics(stacked))
+
+
+def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """The ``dyna/...`` metrics of stacked update records, ``(updates,)`` each."""
+    return {"dyna/backups": r["backups"], "dyna/vi_sweeps": r["sweeps"]}
+
+
+_SMDP = SMDPTrainer()
+"""The `smdp-skills` entry: checkpoint payload and policy are its own."""
+
+
+@dataclass(frozen=True, slots=True)
+class DynaTrainer:
+    """The ``dyna-q`` registry entry (`orchestration.runner.Trainer`)."""
+
+    loss_columns: ClassVar[tuple[str, ...]] = FILLED_LOSS_COLUMNS
+    """The skill network's TD loss and gradient norm (the others are NaN)."""
+
+    def config(self, config: Mapping[str, Any]) -> DynaTrainConfig:
+        """See `DynaTrainConfig.from_config`."""
+        return DynaTrainConfig.from_config(config)
+
+    def steps_per_update(self, config: Mapping[str, Any]) -> int:
+        """Rollout batch: ``envs * num_steps``; planning takes no env steps."""
+        return self.config(config).smdp.net.batch
+
+    def init(self, config: Mapping[str, Any], key: jax.Array) -> DynaState:
+        """Validated config to the initial state.
+
+        Raises:
+            ValueError: On an unknown or missing key, or no ``steps`` (the schedules
+                and the Dyna-Q+ time unit span the budget).
+        """
+        if "steps" not in config:
+            msg = "Dyna-Q schedules span the budget: pass `steps` in the config"
+            raise ValueError(msg)
+        return init_state(self.config(config), key)
+
+    def train_chunk(
+        self, state: DynaState, n_updates: int
+    ) -> tuple[DynaState, "ChunkMetrics"]:
+        """See `train_chunk`."""
+        return train_chunk(state, n_updates)
+
+    def params(self, state: DynaState) -> dict[str, Any]:
+        """The ``ckpt/`` payload of `smdp-skills` (sparse table); no model."""
+        return _SMDP.params(state.smdp)
+
+    def policy(self, state: DynaState) -> SMDPPolicy:
+        """The two-level policy of `smdp-skills`."""
+        return _SMDP.policy(state.smdp)
+
+    def env_wrapper(self, state: DynaState) -> None:  # protocol
+        """No env wrapper: the rollout is the method's own."""

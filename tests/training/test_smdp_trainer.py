@@ -579,7 +579,7 @@ def test_evaluation_acts_as_the_training_rollout(methods_dir: Path) -> None:
     start = (state.start_key, state.start_avail)
     carry, outs = jax.tree.map(jnp.copy, state.carry), []
     for _ in range(3):
-        carry, out, _, _, _ = s.collect(carry, variables, state.diamond, start)
+        carry, out, *_ = s.collect(carry, variables, state.diamond, start, None)
         outs.append(out)
     out = {k: jnp.concatenate([o[k] for o in outs]) for k in outs[0]}
     policy, params = trainer.policy(state), trainer.params(state)

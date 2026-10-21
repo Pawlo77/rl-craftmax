@@ -15,6 +15,11 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     )
     from .count_bonus import CountBonusConfig, CountState
     from .dyna_q import (
+        DYNA_KEYS,
+        DynaConfig,
+        DynaState,
+        DynaTrainConfig,
+        DynaTrainer,
         ModelState,
         Outcome,
         Variant,
@@ -136,6 +141,11 @@ _EXPORTS: dict[str, str] = {
     "Episodes": "records",
     "GymnaxWrapper": "wrappers",
     "LogWrapper": "wrappers",
+    "DYNA_KEYS": "dyna_q",
+    "DynaConfig": "dyna_q",
+    "DynaState": "dyna_q",
+    "DynaTrainConfig": "dyna_q",
+    "DynaTrainer": "dyna_q",
     "ModelState": "dyna_q",
     "ObsView": "skills",
     "OptimisticResetVecEnvWrapper": "wrappers",
@@ -227,6 +237,7 @@ _EXPORTS: dict[str, str] = {
 submodule do not import it twice."""
 
 __all__ = [
+    "DYNA_KEYS",
     "EXTRA_DIM",
     "HOOK_NAMES",
     "METHODS",
@@ -237,6 +248,10 @@ __all__ = [
     "BatchRenorm",
     "CountBonusConfig",
     "CountState",
+    "DynaConfig",
+    "DynaState",
+    "DynaTrainConfig",
+    "DynaTrainer",
     "Episodes",
     "GymnaxWrapper",
     "HookFields",

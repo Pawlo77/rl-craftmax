@@ -612,6 +612,23 @@ def rollout_step(
     top-level update's ``td_abs``, ``td_n``, ``q_upd``, ``q_bad`` (`_update_stats`)
     and the episode totals ``ach``, ``ret``, ``length`` (logging only).
     """
+    carry, out, _ = _rollout_step(carry, env, network, intrinsic_reward_fn, env_params)
+    return carry, out
+
+
+def _rollout_step(
+    carry: RolloutCarry,
+    env: Any,
+    network: RNNQNetwork,
+    intrinsic_reward_fn: Any,
+    env_params: Any,
+) -> tuple[RolloutCarry, dict[str, jax.Array], dict[str, jax.Array]]:
+    """`rollout_step` and its real skill outcomes (Dyna's model reads them).
+
+    The outcomes per env: start key ``k``, skill ``o``, return ``ret``, ``disc``
+    (``gamma^tau``), next key ``k_next``, ``done``, next mask ``avail`` and
+    ``ended``, the values of the step's top-level backup.
+    """
     cfg, pe, sh = carry.cfg, carry.per_env, carry.shared
     params = env.default_params if env_params is None else env_params
     key, k_act, k_env, k_top = jax.random.split(sh.key, 4)
@@ -675,7 +692,11 @@ def rollout_step(
         "q_max": q_max, "td_abs": stats[0], "td_n": stats[1], "q_upd": stats[2],
         "q_bad": stats[3], "ach": total.ach, "ret": total.ret, "length": total.length,
     }  # fmt: skip
-    return carry.replace(per_env=per_env, shared=shared), out
+    ends = {
+        "k": sk.k_start, "o": sk.skill, "ret": ret, "disc": disc, "k_next": k2,
+        "done": done, "avail": avail2, "ended": ended,
+    }  # fmt: skip
+    return carry.replace(per_env=per_env, shared=shared), out, ends
 
 
 def to_traj(out: dict[str, jax.Array]) -> tuple[Traj, jax.Array]:
@@ -817,29 +838,41 @@ def _place(carry: RolloutCarry, s: _Setup) -> RolloutCarry:
 
 
 def _make_collect(
-    cfg: SMDPTrainConfig, net: RNNQNetwork, env: Any, env_params: Any, diamond: int
+    cfg: SMDPTrainConfig,
+    net: RNNQNetwork,
+    env: Any,
+    env_params: Any,
+    diamond: int,
+    observe: Callable[[Any, dict[str, jax.Array], jax.Array], Any] | None = None,
 ) -> Callable[..., Any]:
-    """Jitted rollout of ``num_steps`` steps: carry, outputs, ``h0``, statistics.
+    """Jitted rollout of ``num_steps`` steps: carry, outputs, ``h0``, statistics, aux.
 
-    The carry is donated (`train_chunk` hands it a copy of the state's).
+    ``observe(aux, ends, t)`` folds every step's real skill outcomes (`_rollout_step`)
+    at env-step count ``t`` into the extra carry ``aux`` (Dyna-Q's model); without it
+    ``aux`` passes through. The carry and ``aux`` are donated (`train_chunk` hands
+    them copies of the state's).
     """
     envs, steps = cfg.net.envs, cfg.net.num_steps
 
-    def body(c: RolloutCarry, _: None) -> tuple[RolloutCarry, dict[str, jax.Array]]:
-        return rollout_step(c, env, net, env_params=env_params)
+    def body(c: tuple[RolloutCarry, Any], _: None) -> Any:
+        carry, aux = c
+        carry, out, ends = _rollout_step(carry, env, net, None, env_params)
+        if observe is not None:
+            aux = observe(aux, ends, carry.shared.t)
+        return (carry, aux), out
 
-    @functools.partial(jax.jit, donate_argnums=0)
+    @functools.partial(jax.jit, donate_argnums=(0, 4))
     def collect(
-        carry: RolloutCarry, variables: Any, found: jax.Array, start: Any
+        carry: RolloutCarry, variables: Any, found: jax.Array, start: Any, aux: Any
     ) -> Any:
         h0 = _fresh(carry.per_env.h, carry.per_env.last_done)
         c = carry.replace(shared=carry.shared.replace(variables=variables))
-        c, out = jax.lax.scan(body, c, None, steps)
+        (c, aux), out = jax.lax.scan(body, (c, aux), None, steps)
         stats = _rollout_stats(carry.shared, c.shared, out, start)
         hits = (out["episode_done"] & out["ach"][..., diamond]).sum(1)
         found = _diamonds(found, hits, carry.shared.t + envs * (jnp.arange(steps) + 1))
         c = c.replace(shared=c.shared.replace(variables=None))
-        return c, out, h0, stats, found
+        return c, out, h0, stats, found, aux
 
     return cast(Callable[..., Any], collect)
 
@@ -932,9 +965,25 @@ def _one_update(
     Returns the state (its carry not yet set), the donated-on carry, the update's
     record and the chunk-metric arrays of its rollout.
     """
+    variables, start = _rollout_inputs(state, s)
+    rollout = s.collect(carry, variables, state.diamond, start, None)
+    return _learn_after_rollout(state, s, rollout[0], rollout[1:5])
+
+
+def _rollout_inputs(state: SMDPState, s: _Setup) -> tuple[Any, tuple[Any, Any]]:
+    """The network variables on the actor and the start row and mask of a rollout."""
     variables = jax.device_put(variables_of(state.train_state), s.shared_at)
-    start = (state.start_key, state.start_avail)
-    carry, out, h0, stats, found = s.collect(carry, variables, state.diamond, start)
+    return variables, (state.start_key, state.start_avail)
+
+
+def _learn_after_rollout(
+    state: SMDPState, s: _Setup, carry: RolloutCarry, rollout: tuple[Any, ...]
+) -> tuple[SMDPState, RolloutCarry, dict[str, Any], dict[str, jax.Array]]:
+    """`pqn_rnn.learn` on a rollout's ``(out, h0, stats, found)``, next ε values.
+
+    The rest of `_one_update`; Dyna-Q runs it after its own rollout.
+    """
+    out, h0, stats, found = rollout
     traj, mask = to_traj(out)
     key, k_learn = jax.random.split(state.key)
     put = functools.partial(jax.device_put, device=s.learner)
@@ -964,10 +1013,17 @@ def train_chunk(state: SMDPState, n_updates: int) -> tuple[SMDPState, "ChunkMetr
         records.append(record)
         chunks.append(chunk)
     state = state.replace(carry=carry)
+    return state, _chunk_metrics(records, chunks, state.carry.shared.q.shape[0])
+
+
+def _chunk_metrics(
+    records: list[dict[str, Any]], chunks: list[dict[str, jax.Array]], rows: int
+) -> "ChunkMetrics":
+    """The `ChunkMetrics` and ``smdp/...`` metrics of the updates' records."""
     host = jax.device_get(records)
     stacked = {k: np.stack([r[k] for r in host]) for k in host[0]}
     cols = {"value_loss": stacked["td_loss"], "grad_norm": stacked["grad_norm"]}
-    nan = np.full(n_updates, np.nan, np.float32)
+    nan = np.full(len(records), np.nan, np.float32)
     metrics: dict[str, Any] = {
         "losses": np.stack([cols.get(c, nan) for c in LOSS_COLUMNS], -1),
         "done": jnp.stack([c["episode_done"] for c in chunks]),
@@ -975,8 +1031,8 @@ def train_chunk(state: SMDPState, n_updates: int) -> tuple[SMDPState, "ChunkMetr
         "ret": jnp.stack([c["ret"] for c in chunks]),
         "length": jnp.stack([c["length"] for c in chunks]),
     }
-    metrics |= method_metrics(stacked, state.carry.shared.q.shape[0])
-    return state, cast("ChunkMetrics", metrics)
+    metrics |= method_metrics(stacked, rows)
+    return cast("ChunkMetrics", metrics)
 
 
 END_SHARES = {
