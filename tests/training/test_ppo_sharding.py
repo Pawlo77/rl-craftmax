@@ -3,9 +3,8 @@
 Each run is a subprocess: the host device count is fixed when JAX starts.
 """
 
-import os
 import subprocess
-import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -43,21 +42,12 @@ np.savez(sys.argv[1], *(np.asarray(x) for x in leaves))
 """
 
 
-def _start(devices: int, out: Path) -> subprocess.Popen[str]:
-    flags = f"--xla_force_host_platform_device_count={devices}" if devices > 1 else ""
-    return subprocess.Popen(
-        [sys.executable, "-c", _RUN, str(out)],
-        env={**os.environ, "JAX_PLATFORMS": "cpu", "XLA_FLAGS": flags},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-
-def test_sharded_envs_give_the_unsharded_params(tmp_path: Path) -> None:
+def test_sharded_envs_give_the_unsharded_params(
+    tmp_path: Path, start_on_cpus: Callable[[str, int, Path], subprocess.Popen[str]]
+) -> None:
     """4 devices: states and events stay split, params match 1 device to 1e-5; 3
     devices cannot split 32 envs."""
-    runs = {n: _start(n, tmp_path / f"params{n}.npz") for n in (4, 1, 3)}
+    runs = {n: start_on_cpus(_RUN, n, tmp_path / f"params{n}.npz") for n in (4, 1, 3)}
     out = {}
     for n, proc in runs.items():
         stdout, stderr = proc.communicate(timeout=900)

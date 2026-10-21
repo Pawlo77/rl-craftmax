@@ -11,6 +11,7 @@ import jax
 
 from ..orchestration.runner import Trainer
 from .ppo import PPOTrainer
+from .ppo_rnn import PPORNNConfig, make_trainer
 
 
 class Policy(Protocol):
@@ -31,6 +32,9 @@ class Policy(Protocol):
         ...
 
 
-METHODS: Mapping[str, Trainer] = {"ppo": PPOTrainer()}
+METHODS: Mapping[str, Trainer] = {
+    "ppo": PPOTrainer(),
+    "ppo-rnn": make_trainer(PPORNNConfig()),
+}
 """Registry name (`RunSpec.registry_name`, ``config["method"]``) -> trainer; each
 method plan adds its entry."""

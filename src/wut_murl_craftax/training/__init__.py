@@ -1,4 +1,4 @@
-"""Training: method registry, PPO, method hooks, checkpoints, resume state, episodes."""
+"""Training: method registry, PPO, PPO-RNN, method hooks, checkpoints, episodes."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -24,6 +24,14 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     )
     from .interface import METHODS, Policy
     from .ppo import ActorCritic, PPOConfig, PPOTrainer, make_network, train
+    from .ppo_rnn import (
+        ActorCriticRNN,
+        PPORNNConfig,
+        PPORNNPolicy,
+        PPORNNTrainer,
+        build_network,
+        make_trainer,
+    )
     from .records import (
         Episodes,
         RunLog,
@@ -41,9 +49,13 @@ _EXPORTS: dict[str, str] = {
     "HookSpec": "hooks",
     "METHODS": "interface",
     "ActorCritic": "ppo",
+    "ActorCriticRNN": "ppo_rnn",
     "Episodes": "records",
     "PPOConfig": "ppo",
     "PPOTrainer": "ppo",
+    "PPORNNConfig": "ppo_rnn",
+    "PPORNNPolicy": "ppo_rnn",
+    "PPORNNTrainer": "ppo_rnn",
     "Policy": "interface",
     "ResolvedHooks": "hooks",
     "RunLog": "records",
@@ -51,6 +63,7 @@ _EXPORTS: dict[str, str] = {
     "Traj": "hooks",
     "achievement_names": "records",
     "achievement_weights": "records",
+    "build_network": "ppo_rnn",
     "check_metric_names": "hooks",
     "checkpoint_schedule": "checkpoints",
     "config_dict": "hooks",
@@ -61,6 +74,7 @@ _EXPORTS: dict[str, str] = {
     "load_params": "checkpoints",
     "load_state": "checkpoints",
     "make_network": "ppo",
+    "make_trainer": "ppo_rnn",
     "resolve": "hooks",
     "save_checkpoint": "checkpoints",
     "save_state": "checkpoints",
@@ -73,10 +87,14 @@ __all__ = [
     "HOOK_NAMES",
     "METHODS",
     "ActorCritic",
+    "ActorCriticRNN",
     "Episodes",
     "HookFields",
     "HookSpec",
     "PPOConfig",
+    "PPORNNConfig",
+    "PPORNNPolicy",
+    "PPORNNTrainer",
     "PPOTrainer",
     "Policy",
     "ResolvedHooks",
@@ -85,6 +103,7 @@ __all__ = [
     "Traj",
     "achievement_names",
     "achievement_weights",
+    "build_network",
     "check_metric_names",
     "checkpoint_schedule",
     "config_dict",
@@ -95,6 +114,7 @@ __all__ = [
     "load_params",
     "load_state",
     "make_network",
+    "make_trainer",
     "resolve",
     "save_checkpoint",
     "save_state",
