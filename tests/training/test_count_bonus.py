@@ -1,5 +1,6 @@
 """Tests for the count table and bonus: counts, masking, decay, SimHash, metrics."""
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -8,9 +9,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from craftax.craftax.craftax_state import StaticEnvParams
 from craftax.craftax_classic.constants import BlockType
 from craftax.craftax_env import make_craftax_env_from_name
 
+from wut_murl_craftax.training import count_bonus
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.count_bonus import (
     CountBonusConfig,
@@ -18,9 +21,12 @@ from wut_murl_craftax.training.count_bonus import (
     intrinsic_reward,
     metrics,
     simhash_key,
+    top_keys,
+    write_top_keys,
 )
 from wut_murl_craftax.training.hooks import HookSpec
-from wut_murl_craftax.training.progress_key import fields, hash_fields
+from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.training.progress_key import CLASSIC_FIELDS, fields, hash_fields
 from wut_murl_craftax.training.wrappers import LogEnvState
 
 CLASSIC = "Craftax-Classic-Symbolic-v1"
@@ -36,6 +42,20 @@ KNOBS = {
     "key": "progress",
 }
 """Every method knob (the config has no defaults): smoke config A."""
+SIZES = {"batch": 4, "game": "classic"}
+"""2 envs x 2 steps per update (a metrics window), Craftax-Classic fields."""
+CLASSIC_METRICS = {
+    "count/distinct_keys",
+    "count/new_keys",
+    "count/occupancy",
+    "count/collision_est",
+    "count/beta_t",
+    "count/r_int_mean",
+    "count/r_int_share",
+    "count/r_int_by_floor/0",
+    "count/max_key_floor",
+}
+"""Every metric of a Craftax-Classic run (one floor)."""
 
 
 def _cfg(**over: Any) -> CountBonusConfig:
@@ -60,11 +80,13 @@ def picked(start: Any) -> Any:
     return start.replace(inventory=start.inventory.replace(wood_pickaxe=1))
 
 
-def _batch(*states: Any) -> LogEnvState:
-    """Stack per-env inner states under a log state, as the trainers see them."""
+def _batch(*states: Any, returns: tuple[float, ...] | None = None) -> LogEnvState:
+    """Stack per-env inner states under a log state, as the trainers see them;
+    ``returns`` are the running extrinsic returns of the episodes."""
     inner = jax.tree.map(lambda *x: jnp.stack(x), *states)
     zeros = jnp.zeros(len(states))
-    return LogEnvState(inner, zeros, zeros, zeros, zeros, zeros)
+    ret = zeros if returns is None else jnp.array(returns, jnp.float32)
+    return LogEnvState(inner, ret, zeros, zeros, zeros, zeros)
 
 
 def _call(state: Any, nxt: Any, done: list[bool], t: int = 0, env_state: Any = None):
@@ -81,7 +103,7 @@ def _key(s: Any) -> int:
 def test_scripted_counts_and_bonuses(start: Any, picked: Any) -> None:
     a, b = _key(start), _key(picked)
     assert a != b
-    st = init(_cfg(), jax.random.key(1), SPEC)
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
     script = [
         ((start, start), [False, False], 2, [1 / math.sqrt(2)] * 2),
         ((picked, start), [False, False], 3, [1.0, 1 / math.sqrt(3)]),
@@ -96,7 +118,7 @@ def test_scripted_counts_and_bonuses(start: Any, picked: Any) -> None:
 
 
 def test_bonus_ignores_the_pre_step_state(start: Any, picked: Any) -> None:
-    st = init(_cfg(), jax.random.key(1), SPEC)
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
     nxt = _batch(picked, start)
     r1, s1 = _call(st, nxt, [False, True], env_state=_batch(start, start))
     r2, s2 = _call(st, nxt, [False, True], env_state=jnp.full(7, -1))
@@ -108,19 +130,23 @@ def test_init_sizes_from_the_spec() -> None:
     spec = HookSpec(
         n_envs=4, obs_dim=8268, n_actions=43, n_achievements=67, total_steps=10**6
     )
-    st = init(_cfg(), jax.random.key(2), spec)
+    st = init(_cfg(), jax.random.key(2), spec, batch=4, game="craftax")
     assert st.table.shape == (2**20,)
     assert st.table.dtype == jnp.int32
     assert not st.table.any()
     assert st.proj.shape == (8268, 64)
     assert st.total_steps == 1_000_000
-    # per-env leaves (leading dim == envs) are sharded over the mesh: none here
-    assert all(np.ndim(x) == 0 or np.shape(x)[0] != 4 for x in jax.tree.leaves(st))
+    assert st.seen.shape == (2**20, 23)
+    assert st.window.floor_sum.shape == (9,)
+    # per-env leaves (leading dim == envs) are sharded over the mesh: the episodes'
+    per_env = [x for x in jax.tree.leaves(st) if np.ndim(x) and np.shape(x)[0] == 4]
+    assert len(per_env) == 2
+    assert {id(x) for x in per_env} == {id(st.ep_int), id(st.ep_ext)}
 
 
 def test_linear_decay_halves_beta_at_half_budget(start: Any) -> None:
     cfg = _cfg(decay="linear")
-    st = init(cfg, jax.random.key(1), SPEC)
+    st = init(cfg, jax.random.key(1), SPEC, **SIZES)
     r, _ = _call(st, _batch(start, start), [False, False], t=SPEC.total_steps // 2)
     np.testing.assert_allclose(r, BETA / 2 / math.sqrt(2), rtol=1e-6)
     r, _ = _call(st, _batch(start, start), [False, False], t=SPEC.total_steps)
@@ -128,7 +154,7 @@ def test_linear_decay_halves_beta_at_half_budget(start: Any) -> None:
 
 
 def test_zero_beta_pays_nothing_and_calls_repeat(start: Any, picked: Any) -> None:
-    st = init(_cfg(beta=0.0), jax.random.key(1), SPEC)
+    st = init(_cfg(beta=0.0), jax.random.key(1), SPEC, **SIZES)
     nxt = _batch(start, picked)
     r1, s1 = _call(st, nxt, [False, False])
     r2, s2 = _call(st, nxt, [False, False])
@@ -140,7 +166,7 @@ def test_zero_beta_pays_nothing_and_calls_repeat(start: Any, picked: Any) -> Non
 
 
 def test_simhash_key_separates_one_map_tile(env: Any, start: Any) -> None:
-    proj = init(_cfg(key="simhash"), jax.random.key(3), SPEC).proj
+    proj = init(_cfg(key="simhash"), jax.random.key(3), SPEC, **SIZES).proj
     pos = start.player_position + jnp.array([1, 0])
     tile = int(start.map[pos[0], pos[1]])
     new = (
@@ -160,26 +186,27 @@ def test_simhash_key_separates_one_map_tile(env: Any, start: Any) -> None:
 
 def test_simhash_counts_observations(env: Any, start: Any) -> None:
     cfg = _cfg(key="simhash")
-    st = init(cfg, jax.random.key(3), SPEC)
+    st = init(cfg, jax.random.key(3), SPEC, **SIZES)
     obs = jnp.stack([env.get_obs(start)] * 2)
     r, st = jax.jit(intrinsic_reward)(
-        st, None, None, obs, jnp.array([False, False]), jnp.int32(0)
+        st, None, _batch(start, start), obs, jnp.array([False, False]), jnp.int32(0)
     )
     np.testing.assert_allclose(r, BETA / math.sqrt(2), rtol=1e-6)
     assert int(st.table[simhash_key(obs[0], st.proj, 20)]) == 2
 
 
 def test_metrics_match_numpy() -> None:
-    st = init(_cfg(), jax.random.key(4), SPEC)
+    st = init(_cfg(), jax.random.key(4), SPEC, **SIZES)
     keys = np.random.default_rng(5).integers(0, 2**20, 3000)
     table = st.table.at[keys].add(1)
     got = jax.jit(metrics)(st.replace(table=table))
     ref = np.zeros(2**20, np.int64)
     np.add.at(ref, keys, 1)
     distinct = np.count_nonzero(ref)
-    assert set(got) == {"count/distinct_keys", "count/occupancy"}
+    assert set(got) == CLASSIC_METRICS
     assert int(got["count/distinct_keys"]) == distinct
     np.testing.assert_allclose(got["count/occupancy"], distinct / 2**20, rtol=1e-6)
+    np.testing.assert_allclose(got["count/collision_est"], distinct / 2**21, rtol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -199,10 +226,155 @@ def test_config_refuses_bad_values(bad: dict[str, Any]) -> None:
 
 def test_state_round_trips_save_state(tmp_path: Path, start: Any) -> None:
     cfg = _cfg(decay="linear")
-    st = init(cfg, jax.random.key(1), SPEC)
+    st = init(cfg, jax.random.key(1), SPEC, **SIZES)
     _, st = _call(st, _batch(start, start), [False, False], t=40)
     save_state(tmp_path, st)
-    back = load_state(tmp_path, init(cfg, jax.random.key(9), SPEC))
+    back = load_state(tmp_path, init(cfg, jax.random.key(9), SPEC, **SIZES))
     for got, want in zip(jax.tree.leaves(back), jax.tree.leaves(st), strict=True):
         np.testing.assert_array_equal(got, want)
     assert (back.cfg, back.total_steps) == (cfg, SPEC.total_steps)
+
+
+def _script(st: Any, steps: list[tuple[Any, list[bool], int]]) -> list[Any]:
+    """Run (next state, done, t) calls; the metrics after each call."""
+    out = []
+    for nxt, done, t in steps:
+        _, st = _call(st, nxt, done, t=t)
+        out.append(jax.jit(metrics)(st))
+    return out
+
+
+def test_metrics_cover_the_update_window(start: Any, picked: Any) -> None:
+    """Two calls make an update (batch 4); the third starts a new window."""
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
+    first, second, third = _script(
+        st,
+        [
+            (_batch(start, start), [False, False], 0),
+            (_batch(picked, start), [False, False], 2),
+            (_batch(start, start), [False, True], 4),
+        ],
+    )
+    assert set(first) == CLASSIC_METRICS
+    assert all(np.shape(v) == () for v in first.values())
+    assert all(
+        np.isfinite(float(v)) for m in (first, second, third) for v in m.values()
+    )
+    window0 = BETA * np.array([2**-0.5, 2**-0.5, 1.0, 3**-0.5])
+    assert (int(second["count/distinct_keys"]), int(second["count/new_keys"])) == (2, 2)
+    np.testing.assert_allclose(second["count/r_int_mean"], window0.mean(), rtol=1e-6)
+    np.testing.assert_allclose(
+        second["count/r_int_by_floor/0"], window0.mean(), rtol=1e-6
+    )
+    # the new window: one key seen again, one done step (paid 0, not on a floor)
+    assert (int(third["count/distinct_keys"]), int(third["count/new_keys"])) == (2, 0)
+    np.testing.assert_allclose(third["count/r_int_mean"], BETA / 4, rtol=1e-6)
+    np.testing.assert_allclose(third["count/r_int_by_floor/0"], BETA / 2, rtol=1e-6)
+    assert float(third["count/beta_t"]) == pytest.approx(BETA)
+    assert int(third["count/max_key_floor"]) == 0
+
+
+def test_r_int_share_is_over_finished_episodes(start: Any) -> None:
+    """Env 0 earns 1.0 extrinsic and two bonuses, then ends; the share is kept
+    through a window where no episode ends."""
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
+    live = [False, False]
+    got = _script(
+        st,
+        [
+            (_batch(start, start, returns=(0.0, 0.0)), live, 0),
+            (_batch(start, start, returns=(1.0, 0.0)), live, 2),
+            (_batch(start, start), [True, False], 4),
+            (_batch(start, start, returns=(0.0, 0.0)), live, 8),
+        ],
+    )
+    assert float(got[1]["count/r_int_share"]) == 0.0  # no episode ended yet
+    bonus = BETA * (2**-0.5 + 4**-0.5)  # env 0's two live steps; both envs on a
+    share = bonus / (bonus + 1.0)
+    np.testing.assert_allclose(got[2]["count/r_int_share"], share, rtol=1e-5)
+    np.testing.assert_allclose(got[3]["count/r_int_share"], share, rtol=1e-5)
+
+
+@pytest.fixture(scope="module")
+def craftax_start() -> Any:
+    """Craftax (full game) start state."""
+    env = make_craftax_env_from_name("Craftax-Symbolic-v1", auto_reset=False)
+    return env.reset(jax.random.key(0), env.default_params)[1]
+
+
+def test_bonus_by_floor_on_craftax(craftax_start: Any) -> None:
+    assert StaticEnvParams().num_levels == count_bonus.N_FLOORS
+    spec = HookSpec(
+        n_envs=2, obs_dim=8268, n_actions=43, n_achievements=67, total_steps=1000
+    )
+    st = init(_cfg(), jax.random.key(1), spec, batch=4, game="craftax")
+    deep = craftax_start.replace(player_level=jnp.int32(2))
+    obs = jnp.zeros((2, 8268))
+    r, st = jax.jit(intrinsic_reward)(
+        st, None, _batch(deep, craftax_start), obs, jnp.array([False, False]), 0
+    )
+    got = jax.jit(metrics)(st)
+    floors = {f"count/r_int_by_floor/{f}" for f in range(9)}
+    assert floors <= set(got)
+    by_floor = [float(got[f"count/r_int_by_floor/{f}"]) for f in range(9)]
+    np.testing.assert_allclose(by_floor, [r[1], 0, r[0], *[0] * 6], rtol=1e-6)
+    assert int(got["count/max_key_floor"]) == 2
+
+
+def test_one_update_logs_every_metric_and_keys_never_vanish() -> None:
+    trainer = METHODS["count-bonus-ppo-rnn"]
+    cfg = {
+        "env": CLASSIC,
+        "envs": 8,
+        "num_steps": 8,
+        "minibatches": 2,
+        "width": 16,
+        "rnn_width": 16,
+        "steps": 3 * 64,
+        **KNOBS,
+    }
+    _, m = trainer.train_chunk(trainer.init(cfg, jax.random.key(0)), 3)
+    count = {k: np.asarray(v) for k, v in m.items() if k.startswith("count/")}
+    assert set(count) == CLASSIC_METRICS
+    assert all(v.shape == (3,) and np.isfinite(v).all() for v in count.values())
+    distinct = count["count/distinct_keys"]
+    assert (np.diff(distinct) >= 0).all()
+    np.testing.assert_array_equal(count["count/new_keys"], np.diff(distinct, prepend=0))
+    assert (count["count/r_int_mean"] > 0).all()
+
+
+def test_the_first_visit_writes_the_fields_of_the_slot(start: Any, picked: Any) -> None:
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
+    _, st = _call(st, _batch(picked, start), [False, False])
+    _, st = _call(st, _batch(start, start), [False, False])
+    for s in (start, picked):
+        np.testing.assert_array_equal(st.seen[_key(s)], fields(s, "recipe"))
+
+
+def test_top_keys_lists_the_most_and_least_visited(
+    start: Any, picked: Any, tmp_path: Path
+) -> None:
+    st = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
+    for nxt in (_batch(picked, start), _batch(start, start)):
+        _, st = _call(st, nxt, [False, False])
+    top = top_keys(st)
+    assert top["distinct_keys"] == 2
+    assert [(e["slot"], e["count"]) for e in top["most"]] == [
+        (_key(start), 3),
+        (_key(picked), 1),
+    ]
+    assert [e["slot"] for e in top["least"]] == [_key(picked), _key(start)]
+    assert top["least"][0]["fields"] == dict(
+        zip(CLASSIC_FIELDS, np.asarray(fields(picked, "recipe")).tolist(), strict=True)
+    )
+    many = st.replace(table=st.table.at[jnp.arange(200)].add(jnp.arange(1, 201)))
+    top = top_keys(many, n=50)
+    assert len(top["most"]) == len(top["least"]) == 50
+    assert top["most"][0]["count"] == 200
+    assert top["least"][0]["count"] == 1
+    path = write_top_keys(tmp_path, 10, st)
+    write_top_keys(tmp_path, 20, many)
+    assert path == tmp_path / "eval" / "count_top_keys.json"
+    saved = json.loads(path.read_text())
+    assert set(saved) == {"10", "20"}
+    assert saved["10"] == top_keys(st)
