@@ -1,4 +1,4 @@
-"""Training: method registry, PPO, PPO-RNN, method hooks, checkpoints, episodes."""
+"""Training: registry, PPO, PPO-RNN, hooks, checkpoints, resume state, metrics."""
 
 import importlib
 from typing import TYPE_CHECKING
