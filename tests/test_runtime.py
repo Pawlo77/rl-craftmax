@@ -1,6 +1,7 @@
 """Tests for the fast Craftax runtime setup."""
 
 import importlib.util
+import inspect
 import os
 import platform
 import subprocess
@@ -9,8 +10,10 @@ from pathlib import Path
 
 import jax
 import pytest
+from craftax import craftax_env
 
 from wut_murl_craftax.orchestration.runtime import (
+    CRAFTAX_MODULES,
     configure_runtime,
     device_roles,
     warm_texture_cache,
@@ -112,3 +115,35 @@ def test_host_devices_split_the_cpu_after_the_package_imports() -> None:
         "print(len(jax.devices('cpu')), len(records.achievement_names('Craftax-v1')))"
     )
     assert _run(code, XLA_FLAGS="").split()[-2:] == ["3", "67"]
+
+
+_TRACE_FIRST = """
+import sys
+import jax
+from wut_murl_craftax.orchestration.runtime import configure_runtime, import_craftax
+assert not any(m.startswith("craftax") for m in sys.modules)
+configure_runtime(host_devices=3)
+import_craftax()
+from craftax.craftax_env import make_craftax_env_from_name
+
+def reset(name):
+    env = make_craftax_env_from_name(name, auto_reset=True)
+    return env.reset(jax.random.key(0), env.default_params)
+
+for name in ("Craftax-Symbolic-v1", "Craftax-Classic-Symbolic-v1"):
+    jax.eval_shape(lambda: reset(name))  # the env's first use inside a trace
+    reset(name)  # eager: no module constant may be a tracer of that trace
+print(len(jax.devices("cpu")))
+"""
+
+
+def test_import_craftax_keeps_module_constants_out_of_traces() -> None:
+    """After `import_craftax`, building a symbolic env first inside a trace is safe."""
+    assert _run(_TRACE_FIRST, XLA_FLAGS="", JAX_PLATFORMS="cpu").split()[-1] == "3"
+
+
+def test_craftax_modules_cover_every_lazy_env_import() -> None:
+    """`CRAFTAX_MODULES` lists each module ``make_craftax_env_from_name`` imports."""
+    lines = inspect.getsource(craftax_env).splitlines()
+    lazy = {ln.split()[1] for ln in lines if ln.strip().startswith("from craftax.")}
+    assert lazy == set(CRAFTAX_MODULES)

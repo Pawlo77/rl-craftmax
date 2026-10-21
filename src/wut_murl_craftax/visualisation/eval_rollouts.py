@@ -28,7 +28,13 @@ from jax.sharding import NamedSharding, PartitionSpec
 from ..evaluation.episode_metrics import score_pct
 from ..evaluation.events import NO_SOURCE, StepEvents, step_events
 from ..evaluation.milestones import Game, game_of
-from ..orchestration import configure_runtime, device_roles, env_mesh, shard_envs
+from ..orchestration import (
+    configure_runtime,
+    device_roles,
+    env_mesh,
+    import_craftax,
+    shard_envs,
+)
 from ..orchestration.queue import RunSpec
 from ..orchestration.runner import Trainer
 from ..training.checkpoints import CheckpointEntry, load_index, load_params
@@ -104,6 +110,7 @@ class EvalRun:
         trainer = (METHODS if methods is None else methods)[cfg["method"]]
         index = load_index(run_dir)
         config = {**cfg, "steps": max((e["env_steps"] for e in index), default=0)}
+        import_craftax()  # not inside the trace below: Craftax would keep its tracers
         # shapes only: acting needs the params structure, not an env batch or values
         state = jax.eval_shape(lambda: trainer.init(config, jax.random.key(0)))
         env = LogWrapper(make_craftax_env_from_name(cfg["env"], auto_reset=False))

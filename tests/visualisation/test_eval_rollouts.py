@@ -2,7 +2,10 @@
 
 import inspect
 import json
+import os
 import shutil
+import subprocess
+import sys
 from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
@@ -107,6 +110,46 @@ def fresh_ppo_run(tmp_path: Path) -> Path:
 def _spec(phase: str, eval_mode: str) -> RunSpec:
     cfg = runner_config(TINY)
     return RunSpec("ppo", "ppo", "1m", ENV, 0, cfg, "0" * 8, phase, eval_mode)
+
+
+_OPEN_THEN_TRAIN = """
+import json, sys
+from pathlib import Path
+import jax
+from wut_murl_craftax.orchestration.runtime import configure_runtime
+configure_runtime()
+from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.visualisation.eval_rollouts import EvalRun
+run = Path(sys.argv[1])
+EvalRun.load(run)
+METHODS["ppo"].init({**json.loads((run / "config.json").read_text()), "steps": 64},
+                    jax.random.key(0))
+print("ok")
+"""
+
+
+@pytest.mark.parametrize("env", ["Craftax-Symbolic-v1", "Craftax-Classic-Symbolic-v1"])
+def test_opening_a_run_first_leaves_craftax_usable_outside_the_trace(
+    tmp_path: Path, env: str
+) -> None:
+    """The queue evaluates a FINISHED run before training the next one in a process.
+
+    ``load`` traces ``init`` with ``eval_shape``; Craftax imported for the first time
+    inside that trace kept tracers as module constants and the next eager ``reset``
+    raised ``UnexpectedTracerError``. A fresh interpreter makes ``load`` come first.
+    """
+    cfg = runner_config(TINY) | {"env": env, "envs": 2, "num_steps": 4}
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    out = subprocess.run(
+        [sys.executable, "-c", _OPEN_THEN_TRAIN, str(tmp_path)],
+        env={**os.environ, "JAX_PLATFORMS": "cpu"},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600,
+    )
+    assert out.returncode == 0, out.stderr[-3000:]
+    assert out.stdout.split()[-1] == "ok"
 
 
 def test_production_seeds_are_10000_to_10063() -> None:

@@ -39,6 +39,7 @@ PROFILE = HERE / "fixtures" / "profiles" / "test.yaml"
 REPO = HERE.parents[1]
 ENV = "Craftax-Classic-Symbolic-v1"
 EVAL_MODULE = "wut_murl_craftax.visualisation.eval_rollouts"
+WORLD_GEN = "craftax.craftax.world_gen.world_gen_configs"
 RUN_FILES = ["ckpt", "config.json", "episodes.npz", "eval", "metrics.npz", "state"]
 
 
@@ -538,13 +539,14 @@ def test_main_splits_the_cpu_into_the_profiles_host_devices(store: Store) -> Non
         "from _fake_trainer import FakeTrainer\n"
         "from wut_murl_craftax.orchestration import runner\n"
         f"assert {EVAL_MODULE!r} not in sys.modules\n"
+        f"assert {WORLD_GEN!r} not in sys.modules\n"
         "from wut_murl_craftax.orchestration.queue import expand_phase\n"
         f"specs = expand_phase(Path({str(store.tmp / 'tune-coarse.yaml')!r}),"
         f" methods_dir=Path({str(METHODS)!r}))\n"
         "trainer = FakeTrainer()\n"
         f"runner.main(specs, {str(PROFILE)!r},"
         f" experiment_config={str(store.config)!r}, methods={{'toy': trainer}})\n"
-        "print(trainer.cpu_devices)\n"
+        f"print({WORLD_GEN!r} in sys.modules, trainer.cpu_devices)\n"
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
@@ -556,7 +558,8 @@ def test_main_splits_the_cpu_into_the_profiles_host_devices(store: Store) -> Non
         timeout=600,
     )
     assert out.returncode == 0, out.stderr[-3000:]
-    assert out.stdout.split()[-1] == str(load_profile(PROFILE).host_devices)
+    # Craftax imported before any trace: a Classic-only queue never builds Craftax
+    assert out.stdout.split()[-2:] == ["True", str(load_profile(PROFILE).host_devices)]
     run = store.runs()[spec.name]
     assert run.info.status == "FINISHED"
     last = load_index(store.run_dir(spec.name))[-1]

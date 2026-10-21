@@ -70,7 +70,13 @@ from .queue import (
     TAG_SEED,
     RunSpec,
 )
-from .runtime import DeviceRoles, configure_runtime, device_roles, select_platforms
+from .runtime import (
+    DeviceRoles,
+    configure_runtime,
+    device_roles,
+    import_craftax,
+    select_platforms,
+)
 from .tracking import _resolve_tracking_uri, build_mlflow_tracker
 from .train_metrics import (
     compile_seconds,
@@ -638,11 +644,12 @@ def main(
 ) -> None:
     """Train, evaluate and log this worker's specs, at most ``max_runs`` trained ones.
 
-    ``select_platforms`` and ``configure_runtime`` run first, before any JAX
-    computation (the profile decides the backends and the CPU split); runs reused as
-    FINISHED do not count towards ``max_runs``. MLflow settings come from
-    ``experiment_config``, the experiment name replaced by each spec's phase and the
-    tracking URI by ``tracking_uri`` when given (a cluster node's own store).
+    ``select_platforms``, ``configure_runtime`` and ``import_craftax`` run first,
+    before any JAX computation (the profile decides the backends and the CPU split)
+    or trace; runs reused as FINISHED do not count towards ``max_runs``. MLflow
+    settings come from ``experiment_config``, the experiment name replaced by each
+    spec's phase and the tracking URI by ``tracking_uri`` when given (a cluster
+    node's own store).
     ``evaluate`` defaults to `evaluate_fixed_seeds` with this worker's trainers.
 
     Raises:
@@ -651,6 +658,7 @@ def main(
     machine = load_profile(profile)
     select_platforms(machine.device_roles)
     configure_runtime(host_devices=machine.host_devices)
+    import_craftax()  # before evaluation traces ``init``, which builds the env
     mine = worker_specs(specs, worker_index, num_workers)
     trainers = _registry() if methods is None else methods
     missing = sorted({s.registry_name for s in mine} - set(trainers))

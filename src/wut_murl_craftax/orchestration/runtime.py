@@ -20,6 +20,13 @@ DEFAULT_CACHE_DIR = Path(".cache/jax")
 """Persistent XLA compilation cache, relative to the working directory."""
 
 _HOST_DEVICES_FLAG = "--xla_force_host_platform_device_count"
+CRAFTAX_MODULES: tuple[str, ...] = (
+    "craftax.craftax.envs.craftax_symbolic_env",
+    "craftax.craftax.envs.craftax_pixels_env",
+    "craftax.craftax_classic.envs.craftax_symbolic_env",
+    "craftax.craftax_classic.envs.craftax_pixels_env",
+)
+"""The env modules ``make_craftax_env_from_name`` imports on its first call."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +76,21 @@ def configure_runtime(
     cache = str(Path(cache_dir).resolve())
     jax.config.update("jax_compilation_cache_dir", cache)  # type: ignore[no-untyped-call]
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)  # type: ignore[no-untyped-call]
+
+
+def import_craftax() -> None:
+    """Import every Craftax env module, with its constants and world generation.
+
+    Craftax builds ``jnp`` constants at import and ``make_craftax_env_from_name``
+    imports its env lazily: a first import inside a trace (``jax.eval_shape`` or a
+    jitted function) stores that trace's tracers as module globals, and the next use
+    outside it raises ``UnexpectedTracerError``. Call after ``configure_runtime``: the
+    imports start the JAX backends. Pixel envs and renderers also cache their textures
+    on the first build (``load_all_textures``, ~0.8 GB, not loaded here): build those
+    outside traces too.
+    """
+    for module in CRAFTAX_MODULES:
+        importlib.import_module(module)
 
 
 def device_roles() -> DeviceRoles:
