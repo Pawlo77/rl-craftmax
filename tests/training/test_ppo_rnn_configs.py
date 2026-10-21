@@ -3,8 +3,6 @@
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from wut_murl_craftax.orchestration.queue import (
     config_hash,
     expand_phase,
@@ -109,19 +107,15 @@ def test_tuned_is_null_and_the_abort_block_is_valid() -> None:
     assert ppo_rnn().abort["finite"]
 
 
-def test_coarse_phase_plans_31_runs(tmp_path: Path) -> None:
-    phase = tmp_path / "p.yaml"
-    phase.write_text(
-        yaml.safe_dump({
-            "budget": "1m",
-            "eval": "final",
-            "seeds": 3,
-            "runs": {"ppo-rnn": {"configs": "coarse"}},
-        })
-    )
-    specs = expand_phase(phase, methods_dir=METHODS)
+def test_tune_coarse_phase_plans_31_runs() -> None:
+    phase = REPO / "configs" / "phases" / "tune-coarse.yaml"
+    specs = expand_phase(phase, method="ppo-rnn", methods_dir=METHODS)
     assert len(specs) == 7 * 3 + 10
+    assert {s.budget for s in specs} == {"1m"}
+    assert {s.env for s in specs} == {"Craftax-Symbolic-v1"}
     assert len({config_hash(s.config) for s in specs}) == 8
+    published = [s for s in specs if s.config_slug == "ppo-rnn" and s.seed >= 3]
+    assert len(published) == 7  # seeds 3 to 9 exist only for published-1m
 
 
 def test_smoke_runs_published_and_tanh_on_classic_with_one_seed() -> None:
