@@ -1,9 +1,17 @@
-"""Evaluation and metrics: game tables shared by every metric family."""
+"""Evaluation and metrics: game tables and the per-step events every metric reads."""
 
 import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .events import (
+        DAMAGE_SOURCES,
+        LAVA,
+        NO_SOURCE,
+        UNKNOWN,
+        StepEvents,
+        step_events,
+    )
     from .milestones import (
         ADVANCED_ACTIONS,
         CREATURE_OFFSET,
@@ -21,13 +29,19 @@ _EXPORTS: dict[str, str] = {
     "ADVANCED_ACTIONS": "milestones",
     "CREATURES": "milestones",
     "CREATURE_OFFSET": "milestones",
+    "DAMAGE_SOURCES": "events",
     "FLOORS": "milestones",
     "Game": "milestones",
     "HOSTILE_CLASSES": "milestones",
+    "LAVA": "events",
+    "NO_SOURCE": "events",
     "RADAR_AXES": "milestones",
+    "StepEvents": "events",
     "TECH_LADDER": "milestones",
+    "UNKNOWN": "events",
     "game_of": "milestones",
     "ladder": "milestones",
+    "step_events": "events",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -36,13 +50,19 @@ __all__ = [
     "ADVANCED_ACTIONS",
     "CREATURES",
     "CREATURE_OFFSET",
+    "DAMAGE_SOURCES",
     "FLOORS",
     "HOSTILE_CLASSES",
+    "LAVA",
+    "NO_SOURCE",
     "RADAR_AXES",
     "TECH_LADDER",
+    "UNKNOWN",
     "Game",
+    "StepEvents",
     "game_of",
     "ladder",
+    "step_events",
 ]
 
 
