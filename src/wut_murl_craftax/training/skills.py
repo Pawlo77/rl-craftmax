@@ -481,6 +481,12 @@ def _success_tests(g: Granularity) -> list[_Test]:
     return [tests[s.name] for s in SKILLS]
 
 
+def step_limit(skill: jax.Array | int, timeout_mult: jax.Array | float) -> jax.Array:
+    """Step limit: ``round(t_max x timeout_mult)``, at least 1; primitive options 1."""
+    limit = jnp.maximum(1, jnp.round(jnp.asarray(T_MAX)[skill] * timeout_mult))
+    return jnp.where(jnp.asarray(PRIMITIVE)[skill], 1, limit).astype(jnp.int32)
+
+
 def skill_step(
     skill: jax.Array | int,
     view: ObsView,
@@ -495,8 +501,8 @@ def skill_step(
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Success, end flag and `REASONS` index of the step ``view -(action)-> view2``.
 
-    ``steps_in_skill`` counts the skill's steps before this one; the step limit is
-    ``round(t_max x timeout_mult)`` (primitive options: 1). The first match wins:
+    ``steps_in_skill`` counts the skill's steps before this one; the limit is
+    `step_limit`. The first match wins:
     episode end (``done``: ``view2`` is a reset, so no test, no success), success,
     failure (``sleep`` woken below max energy), floor change, a low-stat flag
     switching on (not during ``drink``, ``eat``, ``sleep``), step limit. Collect
@@ -512,8 +518,7 @@ def skill_step(
     woken = view.sleeping & ~view2.sleeping & (skill == SKILL_IDS["sleep"])
     new_low = jnp.any(low_stats(view2) & ~low_stats(view))
     exempt = jnp.isin(skill, jnp.asarray(_LOW_STAT_EXEMPT))
-    limit = jnp.maximum(1, jnp.round(jnp.asarray(T_MAX)[skill] * timeout_mult))
-    limit = jnp.where(jnp.asarray(PRIMITIVE)[skill], 1, limit)
+    limit = step_limit(skill, timeout_mult)
     done = jnp.asarray(done, jnp.bool_)
     ends = [done, passed, woken, view2.floor != view.floor, new_low & ~exempt]
     ends.append(steps_in_skill + 1 >= limit)

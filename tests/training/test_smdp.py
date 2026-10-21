@@ -4,23 +4,51 @@ Toy: keys k0 = 3 and k1 = 5 of an 8-row table, gamma 0.9, alpha 0.5, the table z
 except ``Q[k1] = [2, 0, 1]``.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from craftax.craftax_env import make_craftax_env_from_name
 
+from wut_murl_craftax.training.ppo import make_train_env
+from wut_murl_craftax.training.pqn_rnn import (
+    PQNRNNConfig,
+    QTrainState,
+    _check_rollout,
+    build_network,
+    learn,
+    optimizer,
+)
 from wut_murl_craftax.training.progress_key import hash_fields
-from wut_murl_craftax.training.skills import decode_obs, key_fields, low_stats
+from wut_murl_craftax.training.skills import (
+    NUM_SKILLS,
+    REASONS,
+    SKILL_IDS,
+    available,
+    decode_obs,
+    key_fields,
+    low_stats,
+    skill_step,
+    step_limit,
+)
 from wut_murl_craftax.training.smdp import (
+    EXTRA_DIM,
     MCRecords,
+    RolloutCarry,
+    SMDPConfig,
     accumulate,
+    init_rollout,
     init_table,
     mc_init,
     mc_push,
     mc_update,
+    rollout_step,
     select_skill,
     smdp_update,
+    to_traj,
     top_key,
 )
 
@@ -193,3 +221,223 @@ def test_jit_and_vmap() -> None:
         toy(), ks, ALL, 0.0, keys
     )
     assert picks.tolist()[:2] == [0, 0]
+
+
+# --- rollout step on the training wrapper chain ---
+
+ENVS = 2
+FIGHT, DESCEND = SKILL_IDS["fight"], SKILL_IDS["descend"]
+NET_CFG = PQNRNNConfig(
+    env="Craftax-Symbolic-v1", envs=ENVS, num_steps=4, minibatches=1, hidden=16,
+    extra_obs_dim=EXTRA_DIM,
+)  # fmt: skip
+TOY = SMDPConfig(gamma_top=GAMMA, alpha=ALPHA, log2_rows=10)
+
+
+def script_hook(state: Any, st: Any, st2: Any, obs2: Any, done: Any, t: Any) -> Any:
+    """r+ = 1 on the third step (t counts env steps), and a call counter as state."""
+    return jnp.where(t == 2 * ENVS, 1.0, 0.0) * jnp.ones(ENVS), state + 1
+
+
+def zero_hook(state: Any, st: Any, st2: Any, obs2: Any, done: Any, t: Any) -> Any:
+    return jnp.zeros(ENVS), state
+
+
+class Rig:
+    """The PQN-RNN training env chain, a 16-wide skill network and jitted steps."""
+
+    def __init__(self) -> None:
+        self.env, self.params = make_train_env(NET_CFG)
+        self.net = build_network(NET_CFG, 43, 8268)
+        self.variables = self.net.init_variables(jax.random.key(0))
+        self._steps: dict[Any, Any] = {}
+
+    def carry(self, cfg: SMDPConfig = TOY, seed: int = 0, **kw: Any) -> RolloutCarry:
+        key = jax.random.key(seed)
+        return init_rollout(
+            cfg, self.env, self.net, self.variables, key, env_params=self.params, **kw
+        )
+
+    def run(self, carry: RolloutCarry, n: int, hook: Any = None) -> tuple[Any, Any]:
+        """``n`` jitted steps; outputs stacked on a leading time axis."""
+        if hook not in self._steps:
+            self._steps[hook] = jax.jit(
+                lambda c: rollout_step(
+                    c, self.env, self.net, hook, env_params=self.params
+                )
+            )
+        outs = []
+        for _ in range(n):
+            carry, out = self._steps[hook](carry)
+            outs.append(out)
+        return carry, jax.tree.map(lambda *x: jnp.stack(x), *outs)
+
+
+@pytest.fixture(scope="module")
+def rig() -> Rig:
+    return Rig()
+
+
+def force(c: RolloutCarry, skill: list[int], steps: list[int] | None = None) -> Any:
+    """Set the running skills (and their step counts) of every env."""
+    sk = c.per_env.skill.replace(
+        skill=jnp.array(skill, jnp.int32),
+        steps=jnp.array(steps or [0] * ENVS, jnp.int32),
+    )
+    return c.replace(per_env=c.per_env.replace(skill=sk))
+
+
+def views(obs: jax.Array) -> Any:
+    return jax.vmap(decode_obs)(obs[..., :8268])
+
+
+def test_config_refuses_tiers_and_a_table_as_wide_as_the_envs(rig: Rig) -> None:
+    with pytest.raises(ValueError, match="granularity"):
+        SMDPConfig(granularity="tiers")
+    with pytest.raises(ValueError, match="envs"):
+        rig.carry(SMDPConfig(log2_rows=1))
+
+
+def test_skill_state_accumulates_the_return_and_discount(rig: Rig) -> None:
+    c, out = rig.run(force(rig.carry(method_state=jnp.int32(0)), [DESCEND] * 2), 3,
+                     script_hook)  # fmt: skip
+    assert not out["done"].any()
+    r = np.asarray(out["native_reward"]) + np.array([[0.0], [0.0], [1.0]])
+    want = r[0] + GAMMA * r[1] + GAMMA**2 * r[2]
+    np.testing.assert_allclose(c.per_env.skill.ret, want, rtol=1e-6)
+    np.testing.assert_allclose(c.per_env.skill.disc, [0.729, 0.729], rtol=1e-6)
+    np.testing.assert_array_equal(c.per_env.skill.steps, [3, 3])
+    assert not out["reward"].any()  # r+ never reaches the skill pseudo-reward
+    assert int(c.shared.method_state) == 3
+
+
+def test_a_skill_end_rechooses_from_the_new_observation(rig: Rig) -> None:
+    c = rig.carry(eps_top=0.0)
+    c = c.replace(shared=c.shared.replace(q=c.shared.q.at[:, FIGHT].set(100.0)))
+    wood = SKILL_IDS["collect_wood"]
+    limit = int(step_limit(wood, TOY.timeout_mult))
+    c = force(c, [wood] * 2, [limit - 1] * 2)
+    k0 = np.asarray(c.per_env.skill.k_start)
+    c2, out = rig.run(c, 1)
+    assert [REASONS[int(x)] for x in out["reason"][0]] == ["timeout"] * 2
+    s = c2.per_env.skill
+    np.testing.assert_array_equal(s.skill, [FIGHT, FIGHT])
+    np.testing.assert_array_equal(s.steps, [0, 0])
+    np.testing.assert_array_equal(s.ret, [0.0, 0.0])
+    np.testing.assert_array_equal(s.disc, [1.0, 1.0])
+    keys = jax.vmap(lambda v: top_key(v, "recipe", 10))(views(c2.per_env.obs))
+    np.testing.assert_array_equal(s.k_start, keys)
+    r = np.asarray(out["native_reward"][0])
+    for i in range(ENVS):  # envs on one (key, skill) pair share the mean step
+        want = 10 + ALPHA * np.mean((r + GAMMA * 100 - 10)[k0 == k0[i]])
+        assert float(c2.shared.q[k0[i], wood]) == pytest.approx(want, rel=1e-6)
+
+
+def test_an_episode_end_resets_and_does_not_bootstrap(rig: Rig) -> None:
+    c = rig.carry()
+    st = c.per_env.env_state
+    inner = st.env_state.replace(
+        timestep=st.env_state.timestep.at[0].set(rig.params.max_timesteps - 1)
+    )
+    c = force(c.replace(per_env=c.per_env.replace(
+        env_state=st.replace(env_state=inner))), [DESCEND] * 2)  # fmt: skip
+    c = c.replace(shared=c.shared.replace(q=c.shared.q.at[:, FIGHT].set(100.0)))
+    k0 = int(c.per_env.skill.k_start[0])
+    c2, out = rig.run(c, 1)
+    assert bool(out["episode_done"][0, 0])
+    assert not bool(out["episode_done"][0, 1])
+    assert REASONS[int(out["reason"][0, 0])] == "episode_end"
+    assert not bool(out["success"][0, 0])
+    assert float(out["reward"][0, 0]) == 0.0
+    r0 = float(out["native_reward"][0, 0])
+    assert float(c2.shared.q[k0, DESCEND]) == pytest.approx(10 + ALPHA * (r0 - 10))
+    s = c2.per_env.skill
+    assert (int(s.steps[0]), float(s.ret[0]), float(s.disc[0])) == (0, 0.0, 1.0)
+    first = jax.tree.map(lambda x: x[0], views(c2.per_env.obs))
+    assert int(s.k_start[0]) == int(top_key(first, "recipe", 10))
+    assert int(s.steps[1]) == 1
+    assert bool(c2.per_env.last_done[0])
+
+
+def test_a_primitive_option_takes_one_unlearned_step(rig: Rig) -> None:
+    c = force(rig.carry(), [SKILL_IDS["read_book"], DESCEND])
+    _, out = rig.run(c, 1)
+    assert int(out["action"][0, 0]) == 35
+    np.testing.assert_array_equal(out["done"][0], [True, False])
+    np.testing.assert_array_equal(out["loss_mask"][0], [False, True])
+
+
+def test_extra_input_is_the_skill_and_its_step_fraction(rig: Rig) -> None:
+    c = force(rig.carry(), [DESCEND, FIGHT], [250, 30])
+    _, out = rig.run(c, 1)
+    extra = np.asarray(out["obs"][0, :, 8268:])
+    assert extra.shape == (ENVS, EXTRA_DIM)
+    np.testing.assert_array_equal(extra[:, :NUM_SKILLS].argmax(1), [DESCEND, FIGHT])
+    assert extra[:, :NUM_SKILLS].sum() == ENVS
+    np.testing.assert_allclose(extra[:, -1], [250 / 1000, 30 / 300])
+
+
+def test_ends_come_from_the_skills_functions(rig: Rig) -> None:
+    c, out = rig.run(rig.carry(eps=1.0, eps_top=1.0), 8)
+    obs = jnp.concatenate([out["obs"][:, :, :8268], c.per_env.obs[None]])
+    for t in range(8):
+        a, b = views(obs[t]), views(obs[t + 1])
+        got = jax.vmap(
+            lambda k, va, act, r, vb, d, n: skill_step(k, va, act, r, vb, d, n, 1.0)
+        )(out["skill"][t], a, out["action"][t], out["native_reward"][t], b,
+          out["episode_done"][t], out["steps_in_skill"][t])  # fmt: skip
+        np.testing.assert_array_equal(got[0], out["success"][t])
+        np.testing.assert_array_equal(got[1], out["done"][t])
+        np.testing.assert_array_equal(got[2], out["reason"][t])
+        avail = jax.vmap(available)(a)
+        assert bool(avail[jnp.arange(ENVS), out["skill"][t]].all() | (t == 0))
+    ends = np.asarray(c.shared.ends)
+    assert ends.shape == (NUM_SKILLS, len(REASONS))
+    assert ends.sum() == int(out["done"].sum())
+    agree = np.asarray(c.shared.agreement)
+    assert (agree[:, 1] <= agree[:, 0]).all()
+    assert agree[:, 0].sum() <= ends.sum()
+
+
+def test_same_key_same_skills(rig: Rig) -> None:
+    runs = [rig.run(rig.carry(seed=3, eps=1.0, eps_top=1.0), 6) for _ in range(2)]
+    (c1, o1), (c2, o2) = runs
+    np.testing.assert_array_equal(o1["skill"], o2["skill"])
+    np.testing.assert_array_equal(o1["action"], o2["action"])
+    np.testing.assert_array_equal(c1.shared.q, c2.shared.q)
+
+
+def test_no_hook_is_bit_identical_to_a_zero_hook(
+    rig: Rig, same: Callable[[Any, Any], bool]
+) -> None:
+    c = rig.carry(seed=4, eps=1.0, eps_top=1.0, method_state=jnp.int32(0))
+    assert same(rig.run(c, 5), rig.run(c, 5, zero_hook))
+
+
+def test_monte_carlo_mode_waits_for_the_episode(rig: Rig) -> None:
+    cfg = SMDPConfig(gamma_top=GAMMA, alpha=ALPHA, log2_rows=10, monte_carlo=True,
+                     mc_length=8)  # fmt: skip
+    wood = SKILL_IDS["collect_wood"]
+    c = force(rig.carry(cfg), [wood] * 2, [int(step_limit(wood, 1.0)) - 1] * 2)
+    c2, out = rig.run(c, 1)
+    assert out["done"].all()
+    np.testing.assert_array_equal(c2.shared.q, c.shared.q)
+    np.testing.assert_array_equal(c2.per_env.mc.n, [1, 1])
+
+
+def test_the_transition_fits_pqn_rnn_learn(rig: Rig) -> None:
+    _, out = rig.run(rig.carry(eps=1.0, eps_top=1.0), NET_CFG.num_steps)
+    traj, mask = to_traj(out)
+    _check_rollout(NET_CFG, traj, mask, rig.net.init_carry(ENVS))
+    assert traj.obs.shape == (4, ENVS, 8268 + EXTRA_DIM)
+    assert traj.rewards.dtype == jnp.float32
+    np.testing.assert_array_equal(traj.dones, out["done"])
+    np.testing.assert_array_equal(traj.extra["episode_dones"], out["episode_done"])
+    v = rig.variables
+    ts = QTrainState.create(  # type: ignore[no-untyped-call]
+        apply_fn=rig.net.apply, params=v["params"], tx=optimizer(NET_CFG),
+        batch_stats=v["batch_stats"], cfg=NET_CFG,
+    )  # fmt: skip
+    ts2, m = learn(ts, traj, jax.random.key(5), mask, rig.net.init_carry(ENVS))
+    assert np.isfinite(float(m["td_loss"]))
+    assert int(ts2.step) == NET_CFG.epochs * NET_CFG.minibatches
