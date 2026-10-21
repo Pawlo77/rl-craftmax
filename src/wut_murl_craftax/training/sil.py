@@ -23,7 +23,7 @@ from flax import struct
 from ..evaluation.milestones import Game, constants, game_of
 from .hooks import HookFields, HookMethod, HookSpec, Traj
 from .ppo_rnn import ActorCriticRNN, PPORNNConfig, apply_network, build_network
-from .records import achievement_weights
+from .records import achievement_names, achievement_weights
 
 type Layout = Literal["slots", "single"]
 """One FIFO slot per achievement, or one shared FIFO of the same capacity (ablation)."""
@@ -109,8 +109,9 @@ class SILState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Staging column of the oldest step, int32; the ring is written there next."""
     buffer: dict[str, jax.Array]
     """Windows, ``(rows, window, ...)``: `STEP_KEYS`, ``ret`` and ``mask``; per row
-    ``h0`` (float16 start state), ``prio``, ``stamp`` (insertion order, -1 empty) and
-    ``ach`` (the unlocked achievement). Slot ``s`` holds rows ``s*S .. s*S+S-1``."""
+    ``h0`` (float16 start state), ``prio``, ``stamp`` (insertion order, -1 empty),
+    ``born`` (`update` at insertion) and ``ach`` (the unlocked achievement). Slot ``s``
+    holds rows ``s*S .. s*S+S-1``."""
     next_stamp: jax.Array
     """Stamp of the next inserted window, int32."""
     max_prio: jax.Array
@@ -119,6 +120,8 @@ class SILState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     overflow: jax.Array
     """Buffer rows written, and unlocks over ``insert_cap`` dropped, by the last
     rollout (a slot that gets more than ``S`` keeps its newest ``S``)."""
+    update: jax.Array
+    """Rollouts observed so far, int32: the age clock of the windows."""
     cfg: SILConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     slot_size: int = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     """Rows per slot: ``S`` (slots) or ``S * n_ach`` (single)."""
@@ -126,6 +129,8 @@ class SILState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Discount of the stored returns, the control's."""
     tiers: tuple[int, ...] = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     """Tier rank of each achievement (0 lowest); the insertion cap keeps high ones."""
+    names: tuple[str, ...] = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
+    """Achievement names in slot order, for the per-achievement metrics."""
 
 
 def _map_dim(obs_dim: int) -> int:
@@ -170,20 +175,24 @@ def init(
     gamma: float = CONTROL_GAMMA,
     rnn_width: int = CONTROL_RNN_WIDTH,
     tiers: tuple[float, ...] | None = None,
+    names: tuple[str, ...] | None = None,
 ) -> SILState:
     """Empty buffer of ``n_ach * S`` windows and an empty staging ring per env.
 
     ``tiers``: a value per achievement, higher kept first by the insertion cap (the
-    reward weights); None ranks all alike.
+    reward weights); None ranks all alike. ``names`` label the per-achievement
+    metrics; None numbers them.
 
     Raises:
         ValueError: On an observation length outside `MAP_DIMS`, gamma outside (0, 1],
-            a GRU width below 1 or ``tiers`` not of length ``n_ach``.
+            a GRU width below 1 or ``tiers`` or ``names`` not of length ``n_ach``.
     """
     tiers = (0.0,) * n_ach if tiers is None else tiers
-    if not 0 < gamma <= 1 or rnn_width < 1 or len(tiers) != n_ach:
-        msg = f"need 0 < gamma <= 1, rnn_width >= 1, {n_ach} tiers: {gamma}, "
-        raise ValueError(msg + f"{rnn_width}, {len(tiers)} tiers")
+    names = tuple(map(str, range(n_ach))) if names is None else names
+    if not 0 < gamma <= 1 or rnn_width < 1 or {len(tiers), len(names)} != {n_ach}:
+        msg = f"need 0 < gamma <= 1, rnn_width >= 1, {n_ach} tiers and names: "
+        msg += f"{gamma}, {rnn_width}, {len(tiers)} tiers, {len(names)} names"
+        raise ValueError(msg)
     slot_size = cfg.slots_windows * (1 if cfg.layout == "slots" else n_ach)
     rows = n_ach * cfg.slots_windows
     rows += rows == n_envs  # one unused row, so the buffer is never taken as per-env
@@ -197,6 +206,7 @@ def init(
         "h0": jnp.zeros((rows, h), jnp.float16),
         "prio": jnp.zeros(rows, jnp.float32),
         "stamp": jnp.full(rows, -1, jnp.int32),
+        "born": jnp.zeros(rows, jnp.int32),
         "ach": jnp.full(rows, -1, jnp.int32),
     }
     zero = jnp.zeros((), jnp.int32)
@@ -208,11 +218,18 @@ def init(
         max_prio=jnp.ones((), jnp.float32),
         inserted=zero,
         overflow=zero,
+        update=zero,
         cfg=cfg,
         slot_size=slot_size,
         gamma=gamma,
         tiers=tuple(int(r) for r in np.unique(tiers, return_inverse=True)[1]),
+        names=names,
     )
+
+
+def _nbytes(tree: object) -> int:
+    """Bytes of a pytree's array leaves, from shapes alone (works under a trace)."""
+    return sum(x.size * x.dtype.itemsize for x in jax.tree.leaves(tree))
 
 
 def buffer_bytes(
@@ -226,10 +243,7 @@ def buffer_bytes(
     build = functools.partial(init, cfg, n_envs, n_ach, obs_dim, rnn_width=rnn_width)
     st = jax.eval_shape(build)
 
-    def size(tree: object) -> int:
-        return sum(x.size * x.dtype.itemsize for x in jax.tree.leaves(tree))
-
-    return SILBytes(size(st.staging), size(st) - size(st.staging))
+    return SILBytes(_nbytes(st.staging), _nbytes(st) - _nbytes(st.staging))
 
 
 def check_memory(
@@ -377,6 +391,7 @@ def observe(state: SILState, traj: Traj) -> SILState:
         "h0": win["hidden"][:, 0],
         "prio": jnp.full(cfg.insert_cap, state.max_prio),
         "stamp": state.next_stamp + jnp.arange(cfg.insert_cap, dtype=jnp.int32),
+        "born": jnp.full(cfg.insert_cap, state.update + 1),
         "ach": ach.astype(jnp.int32),
     }
     slot = ach if cfg.layout == "slots" else jnp.zeros_like(ach)
@@ -390,6 +405,7 @@ def observe(state: SILState, traj: Traj) -> SILState:
         next_stamp=state.next_stamp + n,
         inserted=jnp.sum(rows < state.buffer["stamp"].shape[0], dtype=jnp.int32),
         overflow=total - n,
+        update=state.update + 1,
     )
 
 
@@ -451,8 +467,9 @@ def sil_terms(
     """SIL loss over the masked steps and its parts.
 
     ``lambda_sil * mean(-logp * sg((R - V)+) + beta_v / 2 * (R - V)+^2)``; aux holds
-    ``adv`` (``(R - V)+`` per step, 0 where masked), ``policy``, ``value`` (the two
-    means, unweighted) and ``active`` (share of steps with ``R > V``).
+    ``adv`` (``(R - V)+`` per step, 0 where masked), ``bias`` (``V - R`` per step),
+    ``policy``, ``value`` (the two means, unweighted) and ``active`` (share of steps
+    with ``R > V``).
     """
     w = mask.astype(jnp.float32)
     n = jnp.maximum(w.sum(), 1.0)  # an empty buffer gives 0, not NaN
@@ -461,6 +478,7 @@ def sil_terms(
     value = jnp.sum(0.5 * adv**2 * w) / n
     aux = {
         "adv": jax.lax.stop_gradient(adv) * w,
+        "bias": jax.lax.stop_gradient(v - ret),
         "policy": policy,
         "value": value,
         "active": jnp.sum((adv > 0) * w) / n,
@@ -496,20 +514,52 @@ def extra_loss(
         "prio": state.buffer["prio"].at[rows].set(prio, mode="drop")
     }
     top = jnp.max(jnp.where(w["valid"], prio, 0.0))
+    new = state.replace(buffer=buffer, max_prio=jnp.maximum(state.max_prio, top))
+    return loss, (new, _sample_metrics(state, w, aux))
+
+
+def _sample_metrics(
+    state: SILState, w: dict[str, jax.Array], aux: dict[str, jax.Array]
+) -> dict[str, jax.Array]:
+    """``sil/`` metrics of one SIL step's sample; all 0 when nothing is stored."""
     n = jnp.maximum(w["mask"].sum(), 1)
-    metrics = {
+    valid = w["valid"]
+    n_win = jnp.maximum(valid.sum(), 1)
+    age = jnp.where(valid, state.update - state.buffer["born"][w["rows"]], 0)
+    ach = jnp.where(valid, state.buffer["ach"][w["rows"]], -1)
+    share = (ach[:, None] == jnp.arange(len(state.names))).sum(0) / n_win
+    return {
         "sil/policy_loss": aux["policy"],
         "sil/value_loss": aux["value"],
         "sil/active": aux["active"],
         "sil/adv_pos_mean": aux["adv"].sum() / n,
-    }
-    new = state.replace(buffer=buffer, max_prio=jnp.maximum(state.max_prio, top))
-    return loss, (new, metrics)
+        "sil/value_bias": jnp.sum(aux["bias"] * w["mask"]) / n,
+        "sil/sample_age_mean": age.sum() / n_win,
+        "sil/sample_age_max": age.max(),
+    } | {f"sil/sample_share/{a}": x for a, x in zip(state.names, share, strict=True)}
 
 
 def metrics(state: SILState) -> dict[str, jax.Array]:
-    """The ``sil/...`` metrics of the buffer after the last rollout (``metrics_fn``)."""
-    return {"sil/inserted": state.inserted, "sil/overflow": state.overflow}
+    """The ``sil/...`` metrics of the buffer after the last rollout (``metrics_fn``).
+
+    ``slot_fill/<achievement>`` counts the stored windows of each achievement (at most
+    ``S`` in the slots layout); the byte sizes are float32, constant over a run.
+    """
+    stored = state.buffer["stamp"] >= 0
+    fill = (
+        jnp
+        .zeros(len(state.names), jnp.int32)
+        .at[state.buffer["ach"]]
+        .add(stored.astype(jnp.int32), mode="drop")
+    )
+    staging, total = _nbytes(state.staging), _nbytes(state)
+    return {
+        "sil/inserted": state.inserted,
+        "sil/overflow": state.overflow,
+        "sil/nonempty_slots": jnp.count_nonzero(fill).astype(jnp.int32),
+        "sil/buffer_bytes": jnp.float32(total - staging),
+        "sil/staging_bytes": jnp.float32(staging),
+    } | {f"sil/slot_fill/{a}": x for a, x in zip(state.names, fill, strict=True)}
 
 
 def _init_hook(
@@ -517,6 +567,7 @@ def _init_hook(
 ) -> SILState:
     """``init_state_fn``: `init` sized by ``spec``, with the control's gamma and GRU."""
     tiers = tuple(float(w) for w in achievement_weights(base.env))
+    names = tuple(achievement_names(base.env))
     return init(
         cfg,
         spec.n_envs,
@@ -525,6 +576,7 @@ def _init_hook(
         gamma=base.gamma,
         rnn_width=base.rnn_width,
         tiers=tiers,
+        names=names,
     )
 
 

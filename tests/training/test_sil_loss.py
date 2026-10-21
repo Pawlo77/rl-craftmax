@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.ppo import make_train_env
 from wut_murl_craftax.training.ppo_rnn import (
     PPORNNConfig,
@@ -20,8 +21,10 @@ from wut_murl_craftax.training.records import achievement_names
 from wut_murl_craftax.training.sil import (
     SILConfig,
     SILState,
+    buffer_bytes,
     extra_loss,
     init,
+    metrics,
     observe,
     replay,
     sample,
@@ -93,9 +96,9 @@ def replayed(rnn_cfg: Callable[..., PPORNNConfig]) -> dict[str, Any]:
     obs_dim = env.observation_space(env_params).shape[0]
     n_ach = len(achievement_names(cfg.env))
     sil_cfg = SILConfig()
-    st = init(
-        sil_cfg, cfg.envs, n_ach, obs_dim, gamma=cfg.gamma, rnn_width=cfg.rnn_width
-    )
+    names = tuple(achievement_names(cfg.env))
+    kw = {"gamma": cfg.gamma, "rnn_width": cfg.rnn_width, "names": names}
+    st = init(sil_cfg, cfg.envs, n_ach, obs_dim, **kw)
     n = sil_cfg.window // cfg.num_steps + 1
     trajs = []
     for k in range(n):
@@ -185,3 +188,93 @@ def test_empty_buffer_gives_zero_loss_and_finite_metrics(
     assert all(np.isfinite(np.asarray(x)).all() for x in metrics.values())
     np.testing.assert_array_equal(st2.buffer["prio"], empty.buffer["prio"])
     assert float(st2.max_prio) == float(empty.max_prio)
+
+
+# --- metrics -------------------------------------------------------------------------
+
+
+def test_sample_metrics_match_the_hand_values(replayed: dict[str, Any]) -> None:
+    """One stored window (inserted at update 3, now 7): every draw is it."""
+    net, params, st = replayed["net"], replayed["params"], replayed["state"]
+    (row,) = np.flatnonzero(np.asarray(st.buffer["stamp"]) >= 0)
+    born = st.buffer["born"].at[row].set(3)
+    st = st.replace(buffer=st.buffer | {"born": born}, update=jnp.int32(7))
+    (_, (_, m)), _ = _grad(net, params, st, jax.random.key(6))
+    assert float(m["sil/sample_age_mean"]) == float(m["sil/sample_age_max"]) == 4.0
+    w = sample(st, jax.random.key(6))
+    _, v = replay(net, params, w)
+    mask = np.asarray(w["mask"])
+    bias = (np.asarray(v) - np.asarray(w["ret"]))[mask].mean()
+    assert float(m["sil/value_bias"]) == pytest.approx(bias, rel=1e-4, abs=1e-6)
+    first = st.names[int(st.buffer["ach"][row])]
+    shares = {k: float(x) for k, x in m.items() if k.startswith("sil/sample_share/")}
+    assert len(shares) == replayed["n_ach"]
+    assert shares.pop(f"sil/sample_share/{first}") == 1.0
+    assert set(shares.values()) == {0.0}
+
+
+def test_buffer_metrics_count_windows_per_achievement() -> None:
+    cfg = SILConfig(slots_windows=3)
+    st = _filled(cfg, {0: [1.0], 1: [1.0] * 3, 5: [2.0, 1.0]})
+    m = {k: float(v) for k, v in metrics(st).items()}
+    fill = {k.removeprefix("sil/slot_fill/"): v for k, v in m.items() if "fill" in k}
+    assert fill == {str(a): {0: 1, 1: 3, 5: 2}.get(a, 0) for a in range(A)}
+    assert m["sil/nonempty_slots"] == 3
+    size = buffer_bytes(cfg, 2, A, D)
+    assert (m["sil/buffer_bytes"], m["sil/staging_bytes"]) == (
+        size.buffer,
+        size.staging,
+    )
+
+
+SMALL = {
+    "env": "Craftax-Classic-Symbolic-v1",
+    "envs": 16,
+    "num_steps": 32,
+    "minibatches": 2,
+    "update_epochs": 1,
+    "width": 16,
+    "rnn_width": 16,
+    "steps": 4 * 512,
+    "lambda_sil": 0.3,
+    "slots_windows": 2,
+    "sil_steps": 2,
+    "window": 128,
+    "beta_v": 0.01,
+    "batch": 32,
+    "alpha": 0.6,
+    "insert_cap": 64,
+    "layout": "slots",
+}
+"""A SIL run config on Classic, 512 env steps per update: random play unlocks."""
+NAMES = [
+    "inserted",
+    "overflow",
+    "nonempty_slots",
+    "buffer_bytes",
+    "staging_bytes",
+    "active",
+    "adv_pos_mean",
+    "policy_loss",
+    "value_loss",
+    "value_bias",
+    "sample_age_mean",
+    "sample_age_max",
+]
+"""The ``sil/`` metrics besides the per-achievement ones."""
+
+
+def test_updates_log_every_metric_and_slots_never_overfill() -> None:
+    trainer = METHODS["sil"]
+    state, m = trainer.train_chunk(trainer.init(SMALL, jax.random.key(0)), 3)
+    names = achievement_names(SMALL["env"])
+    method = {k for k in m if k not in {"losses", "done", "ach", "ret", "length"}}
+    assert all(k.startswith("sil/") for k in method)
+    assert method == {f"sil/{n}" for n in NAMES} | {
+        f"sil/{group}/{a}" for group in ("slot_fill", "sample_share") for a in names
+    }
+    assert all(np.isfinite(np.asarray(m[k], float)).all() for k in method)
+    fill = np.stack([np.asarray(m[f"sil/slot_fill/{a}"]) for a in names])
+    assert fill.max() <= 2
+    assert fill[:, -1].sum() == int((state.method_state.buffer["stamp"] >= 0).sum()) > 0
+    assert (np.asarray(m["sil/nonempty_slots"]) == (fill > 0).sum(0)).all()
