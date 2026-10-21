@@ -12,6 +12,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
@@ -30,8 +31,18 @@ from wut_murl_craftax.training.pqn_rnn import (
     _learn_batch,
     q_lambda_targets,
 )
+from wut_murl_craftax.training.progress_key import CLASSIC_FIELDS
 from wut_murl_craftax.training.records import LOSS_COLUMNS
-from wut_murl_craftax.training.skills import CLASSIC_OBS, NUM_SKILLS, SKILL_IDS
+from wut_murl_craftax.training.skills import (
+    CLASSIC_OBS,
+    LOW_STAT,
+    NUM_SKILLS,
+    REASONS,
+    SKILL_IDS,
+    SKILLS,
+    SUCCESS,
+    TIMEOUT,
+)
 from wut_murl_craftax.visualisation import eval_rollouts
 
 REPO = Path(__file__).resolve().parents[2]
@@ -253,6 +264,149 @@ def test_a_done_step_unlock_reaches_the_chunk_metrics(
     assert_done_step_unlock_counted(METHODS[NAME], cfg, monkeypatch)
 
 
+# --- method metrics ------------------------------------------------------------------
+
+PER_SKILL = (
+    "chosen_share",
+    "success_rate",
+    "mean_len",
+    "end/success",
+    "end/failure",
+    "end/timeout",
+    "end/episode_end",
+    "end/interrupt",
+    "test_agreement",
+)
+TOP_METRICS = {
+    "smdp/eps",
+    "smdp/td_abs_mean",
+    "smdp/decisions_per_episode",
+    "smdp/keys_visited",
+    "smdp/occupancy",
+    "smdp/collision_est",
+    "smdp/q_start",
+    "smdp/q_max_updated",
+    "smdp/low/loss",
+    "smdp/low/q_mean",
+    "smdp/low/eps",
+    "smdp/diamond_episodes",
+    "smdp/diamond_first_step",
+    "smdp/diamond_tenth_step",
+    "smdp/nan",
+    "smdp/table_full",
+    "smdp/divergence",
+}
+RATES = ("chosen_share", "success_rate", "test_agreement")
+
+
+def test_one_update_logs_every_method_metric(entry: Any) -> None:
+    _, _, _, (state, m) = entry
+    names = {k for k in m if k not in ("losses", "done", "ach", "ret", "length")}
+    skills = {f"smdp/skill/{s.name}/{x}" for s in SKILLS for x in PER_SKILL}
+    assert names == TOP_METRICS | skills
+    for k in names:
+        v = np.asarray(m[k], float)
+        assert v.shape == (2,), k
+        assert np.isfinite(v).all(), k
+    for s, x in itertools.product(
+        SKILLS, (*RATES, *(p for p in PER_SKILL if "/" in p))
+    ):
+        v = np.asarray(m[f"smdp/skill/{s.name}/{x}"])
+        assert ((v >= 0) & (v <= 1)).all(), (s.name, x)
+    shares = sum(np.asarray(m[f"smdp/skill/{s.name}/chosen_share"]) for s in SKILLS)
+    ends = int(state.carry.shared.ends.sum())  # every end is followed by a decision
+    assert ends > 0
+    np.testing.assert_allclose(shares[shares > 0], 1.0, rtol=1e-6)
+    # both epsilons decay over 10% of the 2 updates: at their ends from update 1
+    np.testing.assert_allclose(m["smdp/eps"], [1.0, 0.05])
+    np.testing.assert_allclose(m["smdp/low/eps"], [1.0, 0.005])
+    rows = 2**12
+    visited = int((np.asarray(state.carry.shared.seen)[:, 0] >= 0).sum())
+    assert m["smdp/keys_visited"][-1] == visited > 0
+    assert m["smdp/occupancy"][-1] == pytest.approx(visited / rows)
+    np.testing.assert_array_equal(m["smdp/diamond_first_step"], -1)
+    for guard in ("smdp/nan", "smdp/table_full", "smdp/divergence"):
+        np.testing.assert_array_equal(m[guard], 0.0)
+
+
+def _record(**over: Any) -> dict[str, np.ndarray]:
+    """One update's stacked record with a hand-made skill 0 (`smdp.method_metrics`)."""
+    ends = np.zeros((1, NUM_SKILLS, len(REASONS)), np.int32)
+    ends[0, 0, [SUCCESS, TIMEOUT, LOW_STAT]] = [2, 1, 1]
+    agreement = np.zeros((1, NUM_SKILLS, 2), np.int32)
+    agreement[0, 0] = [4, 3]
+    chosen = np.zeros((1, NUM_SKILLS), np.int32)
+    chosen[0, :2] = [3, 1]
+    length = np.zeros((1, NUM_SKILLS), np.int32)
+    length[0, 0] = 40
+    r = {
+        "ends": ends, "agreement": agreement, "chosen": chosen, "length": length,
+        "td_abs": np.array([6.0]), "td_n": np.array([3]), "q_upd": np.array([12.5]),
+        "q_bad": np.array([False]), "q_mean": np.array([0.5]),
+        "episodes": np.array([2]), "visited": np.array([100]),
+        "q_start": np.array([10.0]), "td_loss": np.array([0.25]),
+        "grad_norm": np.array([1.0]), "finite": np.array([True]),
+        "found": np.array([[3, 50, -1]]), "eps_top": np.array([0.5]),
+        "eps": np.array([0.2]),
+    }  # fmt: skip
+    return r | over
+
+
+def test_method_metrics_are_shares_of_the_update_counts() -> None:
+    m = smdp.method_metrics(_record(), rows=1000)
+    skill = f"smdp/skill/{SKILLS[0].name}"
+    assert m[f"{skill}/chosen_share"][0] == 0.75
+    assert m[f"{skill}/success_rate"][0] == m[f"{skill}/end/success"][0] == 0.5
+    assert m[f"{skill}/end/timeout"][0] == m[f"{skill}/end/interrupt"][0] == 0.25
+    assert m[f"{skill}/mean_len"][0] == 10.0
+    assert m[f"{skill}/test_agreement"][0] == 0.75
+    other = f"smdp/skill/{SKILLS[1].name}"  # chosen but not ended: no rates yet
+    assert m[f"{other}/success_rate"][0] == m[f"{other}/mean_len"][0] == 0.0
+    assert m[f"{other}/test_agreement"][0] == 1.0
+    assert m["smdp/td_abs_mean"][0] == 2.0
+    assert m["smdp/decisions_per_episode"][0] == 2.0
+    assert m["smdp/occupancy"][0] == 0.1
+    assert m["smdp/collision_est"][0] == 0.05
+    assert m["smdp/q_max_updated"][0] == 12.5
+    assert (m["smdp/diamond_episodes"][0], m["smdp/diamond_first_step"][0]) == (3, 50)
+    assert m["smdp/diamond_tenth_step"][0] == -1
+    assert m["smdp/low/q_mean"][0] == 0.5
+    none = smdp.method_metrics(_record(q_upd=np.array([-np.inf])), rows=1000)
+    assert none["smdp/q_max_updated"][0] == 0.0
+
+
+def test_the_diamond_counter_keeps_the_first_and_tenth_episode() -> None:
+    at = jnp.array([8, 16, 24, 32])
+    found = smdp._diamonds(jnp.array([0, -1, -1]), jnp.array([0, 1, 0, 9]), at)
+    np.testing.assert_array_equal(found, [10, 16, 32])
+    again = smdp._diamonds(found, jnp.array([1, 0, 0, 0]), at + 32)
+    np.testing.assert_array_equal(again, [11, 16, 32])
+    none = smdp._diamonds(jnp.array([0, -1, -1]), jnp.zeros(4, int), at)
+    np.testing.assert_array_equal(none, [0, -1, -1])
+
+
+def test_the_greedy_table_lists_every_decided_key(entry: Any, tmp_path: Path) -> None:
+    trainer, _, _, (state, _) = entry
+    params = trainer.params(state)
+    path = smdp.write_greedy_table(tmp_path, 2, params)
+    assert path == tmp_path / "eval" / smdp.GREEDY_TABLE_FILE
+    smdp.write_greedy_table(tmp_path, 4, params)
+    smdp.write_greedy_table(tmp_path, 2, params)  # rewritten, not duplicated
+    table = pq.read_table(path).to_pydict()
+    seen = np.asarray(params["seen"])
+    keys = np.flatnonzero(seen[:, 0] >= 0)
+    assert sorted(set(table["update"])) == [2, 4]
+    assert len(table["key"]) == 2 * len(keys)
+    first = [i for i, u in enumerate(table["update"]) if u == 2]
+    assert [table["key"][i] for i in first] == keys.tolist()
+    names = [*CLASSIC_FIELDS, "low_food", "low_drink", "low_energy", "low_health"]
+    q = np.asarray(params["q"])
+    for i, key in zip(first, keys, strict=True):
+        assert [table[n][i] for n in names] == seen[key].tolist()
+        assert table["greedy_skill"][i] == SKILLS[int(q[key].argmax())].name
+        assert table["value"][i] == pytest.approx(float(q[key].max()))
+
+
 # --- the two-level policy -----------------------------------------------------------
 
 
@@ -328,7 +482,7 @@ def test_the_runner_trains_and_evaluation_replays_the_skills(
     (spec,) = _phase(tmp_path, methods_dir)
     run = run_store.run([spec])[spec.name]
     assert run.info.status == "FINISHED"
-    assert {"smdp/eps", "smdp/low/loss"} <= run.data.metrics.keys()
+    assert run.data.metrics.keys() >= TOP_METRICS
     out = artifact_path(run.info.artifact_uri)
     opened = eval_rollouts.EvalRun.load(out, METHODS)
     assert opened.method == NAME

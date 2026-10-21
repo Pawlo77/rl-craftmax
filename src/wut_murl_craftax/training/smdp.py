@@ -14,12 +14,16 @@ Design: [[SMDP Q-Learning over Hand-Defined Skills design]].
 import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from flax import struct
 from jax.sharding import Mesh, NamedSharding
 
@@ -42,14 +46,21 @@ from .pqn_rnn import (
     optimizer,
     variables_of,
 )
-from .progress_key import Granularity, hash_fields
+from .progress_key import CLASSIC_FIELDS, FIELDS, Granularity, hash_fields
 from .records import LOSS_COLUMNS, achievement_names
 from .skills import (
     CLASSIC_OBS,
     CRAFTAX_OBS,
+    EPISODE_END,
+    FAILURE,
+    FLOOR_CHANGE,
+    LOW_STAT,
     NUM_SKILLS,
     PRIMITIVE,
     REASONS,
+    SKILLS,
+    SUCCESS,
+    TIMEOUT,
     ObsView,
     available,
     decode_obs,
@@ -997,17 +1008,122 @@ def train_chunk(state: SMDPState, n_updates: int) -> tuple[SMDPState, "ChunkMetr
         "ret": jnp.stack([c["ret"] for c in chunks]),
         "length": jnp.stack([c["length"] for c in chunks]),
     }
-    metrics |= method_metrics(stacked)
+    metrics |= method_metrics(stacked, state.carry.shared.q.shape[0])
     return state, cast("ChunkMetrics", metrics)
 
 
-def method_metrics(r: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """The ``smdp/...`` metrics of stacked update records."""
-    return {
-        "smdp/eps": r["eps_top"],
-        "smdp/low/loss": r["td_loss"],
-        "smdp/low/eps": r["eps"],
+END_SHARES = {
+    "success": (SUCCESS,),
+    "failure": (FAILURE,),
+    "timeout": (TIMEOUT,),
+    "episode_end": (EPISODE_END,),
+    "interrupt": (FLOOR_CHANGE, LOW_STAT),
+}
+"""``smdp/skill/<name>/end/<reason>``: `skills.REASONS` indices pooled per name."""
+
+
+def _share(n: np.ndarray, total: np.ndarray, empty: float = 0.0) -> np.ndarray:
+    """``n / total``, ``empty`` where ``total`` is 0."""
+    return np.where(total > 0, n / np.maximum(total, 1), empty)
+
+
+def method_metrics(r: Mapping[str, np.ndarray], rows: int) -> dict[str, np.ndarray]:
+    """The ``smdp/...`` metrics of stacked update records, ``(updates,)`` each.
+
+    Per skill, over the update's skill ends: ``chosen_share`` (of the decisions),
+    ``success_rate``, ``mean_len`` (steps), ``end/<reason>`` (`END_SHARES`; the
+    success share is the success rate) and ``test_agreement`` (of the judged ends);
+    a skill without ends has rates 0 and agreement 1, so every value is finite. The
+    guards ``smdp/nan`` (a non-finite table update, loss or parameter),
+    ``smdp/table_full`` (occupancy above `MAX_OCCUPANCY`) and ``smdp/divergence``
+    (an updated entry above `MAX_Q`) are 0, or NaN once broken, for ``abort.finite``.
+    """
+    ends, agree, chosen = r["ends"], r["agreement"], r["chosen"]
+    n_ends = ends.sum(-1)
+    per = {
+        "chosen_share": _share(chosen, chosen.sum(-1, keepdims=True)),
+        "success_rate": _share(ends[..., SUCCESS], n_ends),
+        "mean_len": _share(r["length"], n_ends),
+        **{
+            f"end/{name}": _share(ends[..., list(ix)].sum(-1), n_ends)
+            for name, ix in END_SHARES.items()
+        },
+        "test_agreement": _share(agree[..., 1], agree[..., 0], 1.0),
     }
+    out = {
+        f"smdp/skill/{s.name}/{k}": v[:, i]
+        for k, v in per.items()
+        for i, s in enumerate(SKILLS)
+    }
+    visited, q_upd = r["visited"], r["q_upd"]
+    bad = r["q_bad"] | ~r["finite"] | ~np.isfinite(r["td_loss"] + r["grad_norm"])
+
+    def guard(broken: np.ndarray) -> np.ndarray:
+        return np.where(broken, np.nan, 0.0)
+
+    return out | {
+        "smdp/eps": r["eps_top"],
+        "smdp/td_abs_mean": _share(r["td_abs"], r["td_n"]),
+        "smdp/decisions_per_episode": _share(n_ends.sum(-1), r["episodes"]),
+        "smdp/keys_visited": visited,
+        "smdp/occupancy": visited / rows,
+        "smdp/collision_est": visited / (2 * rows),  # share of keys sharing a row
+        "smdp/q_start": r["q_start"],
+        "smdp/q_max_updated": np.where(np.isfinite(q_upd), q_upd, 0.0),
+        "smdp/low/loss": r["td_loss"],
+        "smdp/low/q_mean": r["q_mean"],
+        "smdp/low/eps": r["eps"],
+        "smdp/diamond_episodes": r["found"][:, 0],
+        "smdp/diamond_first_step": r["found"][:, 1],
+        "smdp/diamond_tenth_step": r["found"][:, 2],
+        "smdp/nan": guard(bad),
+        "smdp/table_full": guard(visited > MAX_OCCUPANCY * rows),
+        "smdp/divergence": guard(q_upd > MAX_Q),
+    }
+
+
+GREEDY_TABLE_FILE = "smdp_greedy_table.parquet"
+"""File in the run directory's ``eval/``: `greedy_table` rows of each checkpoint."""
+FLAG_NAMES = ("low_food", "low_drink", "low_energy", "low_health")
+"""Columns of the low-stat flags in `key_vector` order."""
+
+
+def greedy_table(params: Mapping[str, Any]) -> dict[str, np.ndarray]:
+    """Columns per decided key: ``key``, fields, ``greedy_skill``, ``value``.
+
+    The greedy skill is the row's unmasked argmax: start conditions need the
+    observation, which a row does not keep. Fields are `progress_key.FIELDS` (Classic
+    `CLASSIC_FIELDS`), then `FLAG_NAMES` unless the run left the flags out.
+    """
+    seen, q = np.asarray(params["seen"]), np.asarray(params["q"])
+    keys = np.flatnonzero(seen[:, 0] >= 0)
+    base = CLASSIC_FIELDS if seen.shape[1] in (12, 16) else FIELDS
+    names = [*base, *FLAG_NAMES][: seen.shape[1]]
+    rows = q[keys]
+    cols = {"key": keys.astype(np.int32)}
+    cols |= {n: seen[keys, i] for i, n in enumerate(names)}
+    cols["greedy_skill"] = np.array([SKILLS[i].name for i in rows.argmax(1)], object)
+    cols["value"] = rows.max(1)
+    return cols
+
+
+def write_greedy_table(run_dir: Path, update: int, params: Mapping[str, Any]) -> Path:
+    """Put `greedy_table` of ``update`` into the run's ``eval/`` file, atomically.
+
+    Rows of an earlier call for the same update are replaced.
+    """
+    path = Path(run_dir) / "eval" / GREEDY_TABLE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cols = greedy_table(params)
+    new = pa.table({"update": np.full(len(cols["key"]), update, np.int32), **cols})
+    if path.is_file():
+        old = pq.read_table(path)
+        keep = pc.not_equal(old["update"], pa.scalar(update, pa.int32()))
+        new = pa.concat_tables([old.filter(keep), new])
+    tmp = path.with_suffix(".tmp")
+    pq.write_table(new, tmp)
+    tmp.replace(path)
+    return path
 
 
 PolicyCarry = tuple[Carry, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
