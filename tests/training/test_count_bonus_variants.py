@@ -21,7 +21,7 @@ from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import count_bonus, ppo_rnn, pqn_rnn
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.count_bonus import CountBonusConfig
-from wut_murl_craftax.training.hooks import HOOK_NAMES, resolve
+from wut_murl_craftax.training.hooks import HOOK_NAMES, HookSpec, resolve
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.records import LOSS_COLUMNS
 from wut_murl_craftax.visualisation import eval_rollouts
@@ -29,7 +29,7 @@ from wut_murl_craftax.visualisation import eval_rollouts
 REPO = Path(__file__).resolve().parents[2]
 CLASSIC = "Craftax-Classic-Symbolic-v1"
 VARIANTS = ("ppo-rnn", "pqn-rnn")
-KNOBS = {"beta", "granularity", "decay", "log2_k", "key"}
+KNOBS = {"beta", "granularity", "decay", "log2_k", "key", "max_occupancy"}
 """The method's run-config keys (`CountBonusConfig` fields)."""
 TINY = {
     "ppo-rnn": {
@@ -104,7 +104,11 @@ def test_the_method_file_has_both_variants_and_the_coarse_grid() -> None:
     # every knob is set in the base, so no dataclass default decides a run
     for block in method.base.values():
         assert block.keys() >= KNOBS
-        assert (block["log2_k"], block["key"]) == (20, "progress")
+        assert (block["log2_k"], block["key"], block["max_occupancy"]) == (
+            20,
+            "progress",
+            0.25,
+        )
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
@@ -120,6 +124,7 @@ def test_each_variant_resolves_on_its_own_control(
         "decay": "linear",
         "log2_k": 20,
         "key": "progress",
+        "max_occupancy": 0.25,
     }
     built = METHODS[f"count-bonus-{variant}"].config(cfg)
     assert built.envs == 8
@@ -312,7 +317,8 @@ from wut_murl_craftax.training.interface import METHODS
 
 base = {"env": "Craftax-Classic-Symbolic-v1", "envs": 8, "num_steps": 8,
         "minibatches": 2, "steps": 128, "beta": 0.1, "granularity": "recipe",
-        "decay": "constant", "log2_k": 20, "key": "progress"}
+        "decay": "constant", "log2_k": 20, "key": "progress",
+        "max_occupancy": 0.25}
 sizes = {"ppo-rnn": {"width": 16, "rnn_width": 16}, "pqn-rnn": {"hidden": 16}}
 for variant, size in sizes.items():
     trainer = METHODS["count-bonus-" + variant]
@@ -373,7 +379,12 @@ def test_the_runner_trains_and_evaluation_opens_both_variants(
         assert opened.method == spec.registry_name
         knobs = {k: saved[k] for k in KNOBS}
         assert count_bonus.CountBonusConfig(**knobs) == CountBonusConfig(
-            beta=0.1, granularity="recipe", decay="constant", log2_k=20, key="progress"
+            beta=0.1,
+            granularity="recipe",
+            decay="constant",
+            log2_k=20,
+            key="progress",
+            max_occupancy=0.25,
         )
         params = opened.params(opened.updates[-1])
         obs, _ = opened.env.reset(jax.random.key(0), opened.env_params)
@@ -381,3 +392,20 @@ def test_the_runner_trains_and_evaluation_opens_both_variants(
             params, opened.policy.init_carry(1), obs[None], jax.random.key(1), True
         )
         assert act.shape == (1,)
+
+
+def test_the_simhash_ablation_overrides_build_a_trainer(methods_dir: Path) -> None:
+    """The final-1m ablation set count-bonus.yaml documents, on the PPO variant."""
+    text = (REPO / "configs" / "methods" / "count-bonus.yaml").read_text()
+    line = "set: {key: simhash, log2_k: 24, max_occupancy: 0.1}"
+    assert line in text
+    over = yaml.safe_load(line)["set"]
+    cfg = METHODS["count-bonus-ppo-rnn"].config(_config(methods_dir, "ppo-rnn", **over))
+    state = jax.eval_shape(lambda: cfg.init_state_fn(jax.random.key(0), _SPEC))
+    assert state.table.shape == (2**24,)
+    assert state.seen.shape[0] == 0
+
+
+_SPEC = HookSpec(
+    n_envs=8, obs_dim=8268, n_actions=43, n_achievements=67, total_steps=10**6
+)

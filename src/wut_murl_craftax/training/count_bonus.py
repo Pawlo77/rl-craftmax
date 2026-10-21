@@ -42,8 +42,6 @@ N_FLOORS = 9
 """Craftax floors (``StaticEnvParams.num_levels`` of craftax 1.6.1); Classic has one."""
 TOP_KEYS_FILE = "count_top_keys.json"
 """File in the run directory's ``eval/``: `top_keys` by checkpoint update."""
-MAX_OCCUPANCY = 0.25
-"""Occupied share of the table above which a run aborts (collisions above ~12%)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -56,15 +54,23 @@ class CountBonusConfig:
     log2_k: int
     """Table size ``2^log2_k`` slots, also the hash width."""
     key: KeyKind
+    max_occupancy: float
+    """Occupied share of the table above which the run aborts (``count/table_full``);
+    about twice the share of keys that then collide, ``n / 2K``."""
 
     def __post_init__(self) -> None:
-        """Refuse a negative or NaN β, a table outside 1-31 bits, unknown knob values.
+        """Refuse bad β, table bits, threshold or knob values.
+
+        β must be >= 0 (not NaN), ``log2_k`` in 1-31, ``max_occupancy`` in (0, 1].
 
         Raises:
             ValueError: On any of these.
         """
         if not self.beta >= 0 or not 0 < self.log2_k < 32:
             msg = f"need beta >= 0 and 0 < log2_k < 32, got {self.beta}, {self.log2_k}"
+            raise ValueError(msg)
+        if not 0 < self.max_occupancy <= 1:
+            msg = f"max_occupancy must be in (0, 1], got {self.max_occupancy}"
             raise ValueError(msg)
         knobs = (("granularity", Granularity), ("decay", Decay), ("key", KeyKind))
         for name, kind in knobs:
@@ -121,7 +127,8 @@ class CountState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax AP
     """Visits per key slot since the run began, int32 ``[2^log2_k]``, never reset."""
     seen: jax.Array
     """Progress fields of the first state counted in each slot, int8
-    ``[2^log2_k, fields]``: decodes the keys in `top_keys`."""
+    ``[2^log2_k, fields]``: decodes the keys in `top_keys`. Empty (no rows) for
+    SimHash keys, which the progress fields do not decode."""
     t: jax.Array
     """Env-step counter of the last call (the hooks' ``t``), int32; gives β_t."""
     proj: jax.Array
@@ -156,7 +163,7 @@ def init(
     k = 2**cfg.log2_k
     return CountState(
         table=jnp.zeros(k, jnp.int32),
-        seen=jnp.zeros((k, width), jnp.int8),
+        seen=jnp.zeros((k if cfg.key == "progress" else 0, width), jnp.int8),
         t=jnp.zeros((), jnp.int32),
         proj=jax.random.normal(key, (spec.obs_dim, SIMHASH_BITS), jnp.float32),
         window=_window(1 if game == "classic" else N_FLOORS),
@@ -236,10 +243,10 @@ def intrinsic_reward(
     table = state.table.at[keys].add(live.astype(jnp.int32))
     n = jnp.maximum(table[keys], 1).astype(jnp.float32)  # done slots may still be 0
     r_int = jnp.where(live, _beta_t(state, t) / jnp.sqrt(n), 0.0).astype(jnp.float32)
-    first = (live & (old == 0))[:, None]
-    seen = state.seen.at[keys].set(
-        jnp.where(first, f.astype(jnp.int8), state.seen[keys])
-    )
+    seen = state.seen
+    if cfg.key == "progress":
+        first = (live & (old == 0))[:, None]
+        seen = seen.at[keys].set(jnp.where(first, f.astype(jnp.int8), seen[keys]))
     floor = inner.player_level if state.game == "craftax" else jnp.zeros_like(keys)
     ep_int = state.ep_int + r_int
     w = state.window
@@ -266,7 +273,7 @@ def intrinsic_reward(
 def metrics(state: CountState) -> dict[str, jax.Array]:
     """The ``count/...`` metrics: the table, and the bonus of the current update.
 
-    The guards ``count/table_full`` (occupancy above `MAX_OCCUPANCY`) and
+    The guards ``count/table_full`` (occupancy above ``max_occupancy``) and
     ``count/negative_counts`` (a count below 0: counts only grow) are 0, or NaN once
     broken, so the runner's ``abort.finite`` check fails the run on them.
     """
@@ -279,7 +286,7 @@ def metrics(state: CountState) -> dict[str, jax.Array]:
         return jnp.where(broken, jnp.nan, 0.0).astype(jnp.float32)
 
     return {
-        "count/table_full": guard(distinct > MAX_OCCUPANCY * k),
+        "count/table_full": guard(distinct > state.cfg.max_occupancy * k),
         "count/negative_counts": guard(state.table.min() < 0),
         "count/distinct_keys": distinct,
         "count/new_keys": distinct - w.start_distinct,
@@ -295,7 +302,8 @@ def metrics(state: CountState) -> dict[str, jax.Array]:
 def top_keys(state: CountState, n: int = 50) -> dict[str, Any]:
     """The ``n`` most and ``n`` least visited occupied slots with their fields.
 
-    On the host (NumPy) for the per-checkpoint file; equal counts go by slot.
+    On the host (NumPy) for the per-checkpoint file; equal counts go by slot. SimHash
+    slots have no decoded fields (None).
     """
     table, seen = np.asarray(state.table), np.asarray(state.seen)
     names = CLASSIC_FIELDS if state.game == "classic" else FIELDS
@@ -304,7 +312,9 @@ def top_keys(state: CountState, n: int = 50) -> dict[str, Any]:
     most = slots[np.lexsort((slots, -table[slots]))][:n]
 
     def entry(slot: int) -> dict[str, Any]:
-        decoded = dict(zip(names, seen[slot].tolist(), strict=True))
+        decoded = (
+            dict(zip(names, seen[slot].tolist(), strict=True)) if len(seen) else None
+        )
         return {"slot": int(slot), "count": int(table[slot]), "fields": decoded}
 
     return {

@@ -2,7 +2,17 @@
 # Two registry entries share it: count-bonus-ppo-rnn and count-bonus-pqn-rnn. Each `base`
 # block starts from its tuned control and sets every method knob, so no code default
 # decides a run: beta, key granularity and decay (the design defaults, smoke config A),
-# plus the fixed table of 2^20 int32 slots over the progress key.
+# plus the fixed table of 2^20 int32 slots over the progress key, which aborts above a
+# quarter full (about 12% of the keys would share a slot; a run reaches thousands of
+# progress keys, far below 262,144).
+#
+# The SimHash ablation (final-1m, PPO-RNN variant's tuned config) counts a 64-bit sign
+# hash of the whole observation, a new code almost every step: up to 1M codes in a 1M
+# run. It sets a larger table and a lower threshold, in the phase file as
+#   set: {key: simhash, log2_k: 24, max_occupancy: 0.1}
+# 2^24 slots (64 MB of counts) keep 1M codes below 6% occupancy (about 3% collisions),
+# so the guard cannot fire within 1M steps; 0.1 still stops a longer run before about
+# 5% of its codes collide. The SimHash state has no `seen` side table.
 base:
   ppo-rnn:
     base_from: ppo-rnn.tuned
@@ -11,6 +21,7 @@ base:
     decay: constant
     log2_k: 20
     key: progress
+    max_occupancy: 0.25
   pqn-rnn:
     base_from: pqn-rnn.tuned
     beta: 0.1
@@ -18,6 +29,7 @@ base:
     decay: constant
     log2_k: 20
     key: progress
+    max_occupancy: 0.25
 
 grid:
   # Stage 1: beta x granularity x decay, 4 x 3 x 2 = 24 configs for each variant, 3 seeds.
@@ -52,9 +64,9 @@ grid:
 
 # Runner rules (orchestration/abort.py): a non-finite loss column of the base aborts the
 # run, and so does a metric in `finite`. A NaN or inf bonus makes count/r_int_mean
-# non-finite; the two guards of training/count_bonus.py turn NaN when the table is more
-# than a quarter full (collisions above about 12%) or a count is below 0. Every count/*
-# metric is finite otherwise. No flags: the plan's detectors come with the analysis plan.
+# non-finite; the two guards of training/count_bonus.py turn NaN when the table is fuller
+# than `max_occupancy` or a count is below 0. Every count/* metric is finite otherwise.
+# No flags: the plan's detectors come with the analysis plan.
 abort:
   finite: [count/r_int_mean, count/table_full, count/negative_counts]
 

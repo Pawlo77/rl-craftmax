@@ -42,8 +42,11 @@ KNOBS = {
     "decay": "constant",
     "log2_k": 20,
     "key": "progress",
+    "max_occupancy": 0.25,
 }
 """Every method knob (the config has no defaults): smoke config A."""
+SIMHASH = {"key": "simhash", "log2_k": 24, "max_occupancy": 0.1}
+"""The SimHash ablation's overrides, as count-bonus.yaml documents them."""
 SIZES = {"batch": 4, "game": "classic"}
 """2 envs x 2 steps per update (a metrics window), Craftax-Classic fields."""
 CLASSIC_METRICS = {
@@ -221,6 +224,9 @@ def test_metrics_match_numpy() -> None:
         {"granularity": "fine"},
         {"decay": "cosine"},
         {"key": "rnd"},
+        {"max_occupancy": 0.0},
+        {"max_occupancy": 1.5},
+        {"max_occupancy": math.nan},
     ],
 )
 def test_config_refuses_bad_values(bad: dict[str, Any]) -> None:
@@ -456,3 +462,43 @@ def test_a_nan_bonus_fails_the_run(
     assert tags["abort/update"] == "1"
     # the NaN reaches the losses in the same update; either check stops the run
     assert tags["abort/metric"] in {*LOSS_COLUMNS, "count/r_int_mean"}
+
+
+def _fill(st: Any, n: int) -> Any:
+    """``st`` with ``n`` uniform random insertions into its table."""
+    k = st.table.shape[0]
+    keys = np.random.default_rng(6).integers(0, k, n)
+    return st.replace(table=st.table.at[keys].add(1))
+
+
+def test_the_simhash_ablation_has_room_for_a_new_code_every_step() -> None:
+    """1M steps of distinct codes (a 1M run where every observation is new) stay
+    below the ablation's threshold; the progress-key table would abort on them."""
+    ablation = init(_cfg(**SIMHASH), jax.random.key(1), SPEC, **SIZES)
+    m = jax.jit(metrics)(_fill(ablation, 10**6))
+    assert float(m["count/table_full"]) == 0.0
+    assert float(m["count/occupancy"]) < 0.06
+    progress = init(_cfg(), jax.random.key(1), SPEC, **SIZES)
+    assert np.isnan(float(jax.jit(metrics)(_fill(progress, 10**6))["count/table_full"]))
+
+
+def test_the_threshold_is_the_config_knob() -> None:
+    st = init(_cfg(max_occupancy=0.5), jax.random.key(1), SPEC, **SIZES)
+    k = st.table.shape[0]
+    half = st.replace(table=st.table.at[: k // 2].set(1))
+    assert float(jax.jit(metrics)(half)["count/table_full"]) == 0.0
+    more = half.replace(table=half.table.at[k // 2].set(1))
+    assert np.isnan(float(jax.jit(metrics)(more)["count/table_full"]))
+
+
+def test_simhash_keeps_no_side_table(env: Any, start: Any) -> None:
+    st = init(_cfg(**SIMHASH), jax.random.key(3), SPEC, **SIZES)
+    assert st.seen.shape == (0, len(CLASSIC_FIELDS))
+    obs = jnp.stack([env.get_obs(start)] * 2)
+    r, st = jax.jit(intrinsic_reward)(
+        st, None, _batch(start, start), obs, jnp.array([False, False]), jnp.int32(0)
+    )
+    np.testing.assert_allclose(r, BETA / math.sqrt(2), rtol=1e-6)
+    assert st.seen.shape == (0, len(CLASSIC_FIELDS))
+    top = top_keys(st)
+    assert [(e["count"], e["fields"]) for e in top["most"]] == [(2, None)]
