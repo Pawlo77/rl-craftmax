@@ -259,6 +259,8 @@ def test_yaml_floats_without_a_dot_are_floats() -> None:
         {"grid": {"coarse": [{"name": "a"}, {"name": "a"}]}},
         {"grid": {"coarse": [{"name": "tuned"}]}},
         {"abort": {"nan": True}},
+        {"abort": {"finite": "ppo/value_loss"}},
+        {"abort": {"finite": [1]}},
         {"abort": {"flags": [{"name": "a", "metric": "m"}]}},
         {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "below": 0}]}},
         {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "x": 0}]}},
@@ -284,7 +286,8 @@ def test_the_abort_block_reaches_every_spec_of_the_method() -> None:
     specs = phase("entries")
     toy = [s for s in specs if s.registry_name == "toy"]
     assert toy
-    assert all(s.abort == {"flags": flags} for s in toy)
+    assert all(s.abort["flags"] == flags for s in toy)  # type: ignore[index]
+    assert all(s.abort["finite"] == ["ppo/value_loss"] for s in toy)  # type: ignore[index]
     assert all(s.abort is None for s in specs if s.registry_name != "toy")
 
 
@@ -796,6 +799,7 @@ def test_shipped_ppo_base_is_the_craftax_1m_table_11() -> None:
 def test_shipped_ppo_abort_flags_are_the_plans_thresholds() -> None:
     abort = load_method("ppo", REPO / "configs/methods").abort
     assert abort == {
+        "finite": ["ppo/policy_loss", "ppo/value_loss"],
         "flags": [
             {"name": "kl_high", "metric": "ppo/approx_kl", "above": 0.1, "updates": 3},
             {
@@ -809,8 +813,9 @@ def test_shipped_ppo_abort_flags_are_the_plans_thresholds() -> None:
                 "metric": "ppo/explained_variance",
                 "below": 0.0,
                 "after": 0.2,
+                "updates": 5,
             },
-        ]
+        ],
     }
 
 

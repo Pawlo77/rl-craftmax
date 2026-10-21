@@ -269,7 +269,10 @@ def _check_flag(flag: object, where: str) -> str:
 def _check_abort(block: object, where: str) -> dict[str, Any] | None:
     if block is None:
         return None
-    block = _check_keys(block, {"flags"}, f"{where} abort")
+    block = _check_keys(block, {"flags", "finite"}, f"{where} abort")
+    finite = block.get("finite", [])
+    if not isinstance(finite, list) or not all(isinstance(m, str) for m in finite):
+        _fail(f"{where} abort.finite: expected a list of metric names")
     flags = block.get("flags", [])
     if not isinstance(flags, list):
         _fail(f"{where} abort.flags: expected a list")

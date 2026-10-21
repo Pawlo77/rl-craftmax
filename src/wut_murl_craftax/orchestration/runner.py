@@ -364,10 +364,12 @@ class _Extras:
         tmp.replace(self.path)
 
 
-def _check_finite(metrics: ChunkMetrics, columns: Sequence[str], update: int) -> None:
+def _check_finite(
+    metrics: ChunkMetrics, columns: Sequence[str], finite: Sequence[str], update: int
+) -> None:
     """Raise `_Aborted` on the first non-finite logged loss of the chunk."""
     hit = first_nonfinite(
-        np.asarray(metrics["losses"], float), columns, _method_metrics(metrics)
+        np.asarray(metrics["losses"], float), columns, _method_metrics(metrics), finite
     )
     if hit is not None:
         raise _Aborted(update + hit[0] + 1, hit[1])
@@ -442,7 +444,8 @@ def _train(
     if 0 not in written:
         save_checkpoint(out, 0, 0, 0.0, trainer.params(state))
     columns, extras = _loss_columns(trainer), _Extras.load(out, update)
-    rules, flagged = (spec.abort or {}).get("flags", []), set[str]()
+    abort = spec.abort or {}
+    rules, finite, flagged = abort.get("flags", []), abort.get("finite", []), set[str]()
     t0 = time.monotonic() - saved["wall_s"]
     every, max_reward = log_every(n_updates), float(achievement_weights(spec.env).sum())
     chunks: list[tuple[int, float]] = []
@@ -453,7 +456,7 @@ def _train(
         # dispatch is asynchronous: without waiting, wall_s and SPS time the dispatch
         jax.block_until_ready((state, metrics))  # type: ignore[no-untyped-call]  # jax API
         wall = time.monotonic() - t0
-        _check_finite(metrics, columns, update)
+        _check_finite(metrics, columns, finite, update)
         chunks.append((n, wall - start))
         _add_updates(log, update, spu, np.linspace(start, wall, n + 1)[1:], metrics)
         extras.extend(update, _method_metrics(metrics))

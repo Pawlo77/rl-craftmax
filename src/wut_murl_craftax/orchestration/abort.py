@@ -1,9 +1,10 @@
 """Abort rules of the runner: non-finite losses end a run, flags only tag it.
 
-A NaN or inf in a logged loss (the trainer's ``loss_columns`` and every method metric
-whose name holds ``loss``) aborts the run: it ends FAILED with its last ``state/``
-kept. The next queue call resumes it from there once; a second abort of the same run
-marks it a bug (tag ``abort/bug``) and the queue skips it from then on. Flags
+A NaN or inf in a logged loss (the trainer's ``loss_columns`` and the method metrics the
+method YAML lists under ``abort.finite``, none by default) aborts the run: it ends
+FAILED with its last ``state/`` kept. The next queue call resumes it from there once;
+a second abort of the same run marks it a bug (tag ``abort/bug``) and the queue skips
+it from then on. Flags
 (``flag/<name>`` tags) come from a method's ``abort.flags`` rules, see `flag_hits`;
 they never stop a run, and nothing here looks at the score (no early stopping).
 """
@@ -33,15 +34,17 @@ def first_nonfinite(
     losses: np.ndarray,
     loss_columns: Sequence[str],
     method_metrics: Mapping[str, np.ndarray],
+    finite: Sequence[str] = (),
 ) -> tuple[int, str] | None:
     """The earliest update (0-based, in the chunk) with a non-finite logged loss.
 
     ``losses`` is the chunk's ``(updates, len(LOSS_COLUMNS))`` array, of which only
-    ``loss_columns`` are checked; of ``method_metrics`` only the names holding
-    ``loss``. Returns that update and the metric name, or None.
+    ``loss_columns`` are checked; of ``method_metrics`` only the names in ``finite``
+    (a metric may be NaN by design, e.g. a mean over an empty buffer). Returns that
+    update and the metric name, or None.
     """
     series = {c: losses[:, LOSS_COLUMNS.index(c)] for c in loss_columns}
-    series |= {k: np.asarray(v) for k, v in method_metrics.items() if "loss" in k}
+    series |= {k: np.asarray(v) for k, v in method_metrics.items() if k in finite}
     hits = [
         (int(np.argmax(bad)), name)
         for name, values in series.items()

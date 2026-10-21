@@ -663,6 +663,21 @@ def test_a_rerun_that_stays_finite_equals_the_uninterrupted_run(
     ]
 
 
+def test_an_unlisted_nan_method_metric_does_not_abort_a_listed_one_does(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    unlisted = FakeTrainer(extra=lambda u: {"sil/loss_mean": float("nan")})
+    store.run([spec], unlisted)  # `finite` of the toy method lists only ppo/value_loss
+    run = store.runs()[spec.name]
+    assert (run.info.status, unlisted.updates) == ("FINISHED", [1, 2, 3])
+    assert tags_of(store, spec.name, "abort/") == {}
+    (other,) = store.phase("tune-coarse", ["lr-hi"])
+    store.run([other], FakeTrainer(extra=nan_at(2)))
+    assert store.runs()[other.name].info.status == "FAILED"
+    assert tags_of(store, other.name, "abort/")["abort/metric"] == "ppo/value_loss"
+
+
 def test_a_non_finite_reported_loss_column_aborts(store: Store) -> None:
     (spec,) = store.phase("tune-coarse", ["published"])
     store.run([spec], FakeTrainer(loss_nan_at=2))

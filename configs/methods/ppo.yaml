@@ -43,13 +43,14 @@ grid:
       - {key: gae_lambda, add: [-0.05, 0.05]}
       - {key: ent, mul: [0.5, 2.0], zero: [0.001, 0.003]}
 
-# Runner rules, thresholds of the PPO plan (Task 9). A non-finite loss always aborts the
-# run (orchestration/abort.py); these only tag it `flag/<name>`, never stop it.
+# Runner rules, thresholds of the PPO plan (Task 9; orchestration/abort.py). A non-finite
+# loss column or a metric in `finite` aborts the run; `flags` only tag it, never stop it.
 abort:
+  finite: [ppo/policy_loss, ppo/value_loss]
   flags:
     - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
     - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
-    - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2}
+    - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
 
 # written by `--mark-tuned ppo <hash8>`
 tuned: null

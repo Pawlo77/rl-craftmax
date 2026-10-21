@@ -26,13 +26,15 @@ def test_only_the_reported_loss_columns_are_checked() -> None:
     assert first_nonfinite(table, LOSS_COLUMNS, {}) == (0, "policy_loss")
 
 
-def test_method_metrics_count_when_they_are_losses() -> None:
-    extra = {
+def test_only_the_listed_method_metrics_are_checked() -> None:
+    bad = {
         "ppo/value_loss": np.array([1.0, np.nan]),
-        "ppo/lr": np.array([np.nan] * 2),
+        "sil/loss": np.array([np.nan] * 2),
     }
-    assert first_nonfinite(losses(2), LOSS_COLUMNS, extra) == (1, "ppo/value_loss")
-    assert first_nonfinite(losses(2), LOSS_COLUMNS, {"ppo/lr": extra["ppo/lr"]}) is None
+    assert first_nonfinite(losses(2), LOSS_COLUMNS, bad) is None
+    listed = first_nonfinite(losses(2), LOSS_COLUMNS, bad, ["ppo/value_loss"])
+    assert listed == (1, "ppo/value_loss")
+    assert first_nonfinite(losses(2), LOSS_COLUMNS, bad, ["ppo/lr"]) is None
 
 
 KL = {"name": "kl_high", "metric": "ppo/approx_kl", "above": 0.1, "updates": 3}
