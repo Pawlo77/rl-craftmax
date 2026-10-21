@@ -49,8 +49,15 @@ from flax.training.train_state import TrainState
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
-from ..orchestration import configure_runtime, device_roles, env_mesh, shard_envs
+from ..orchestration import (
+    DeviceRoles,
+    configure_runtime,
+    device_roles,
+    env_mesh,
+    shard_envs,
+)
 from .checkpoints import checkpoint_schedule, save_checkpoint
+from .hooks import HOOK_NAMES
 from .records import RunLog, achievement_names
 from .wrappers import BatchEnvWrapper, LogWrapper, OptimisticResetVecEnvWrapper
 
@@ -107,18 +114,21 @@ class PPOConfig:
             raise ValueError(msg)
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any]) -> Self:
+    def from_config(cls, config: Mapping[str, Any], base: Self | None = None) -> Self:
         """Build from a run config: its keys, ``steps`` and the registry's ``method``.
+
+        The keys override ``base`` (default: the field defaults); hooks are never keys.
 
         Raises:
             ValueError: On a key that is not a PPO setting.
         """
         keys = set(config) - {"method"}
-        names = {f.name for f in dataclasses.fields(cls)} - _CLI_ONLY
+        names = {f.name for f in dataclasses.fields(cls)} - _CLI_ONLY - set(HOOK_NAMES)
         if unknown := sorted(keys - names):
             msg = f"unknown PPO config keys: {unknown}"
             raise ValueError(msg)
-        return cls(**{k: config[k] for k in keys})
+        kwargs = {k: config[k] for k in keys}
+        return cls(**kwargs) if base is None else dataclasses.replace(base, **kwargs)
 
     @property
     def batch(self) -> int:
@@ -160,14 +170,24 @@ def make_network(
     return ActorCritic(env.action_space(params).n, width), env, params
 
 
-def make_train_env(cfg: PPOConfig) -> tuple[Any, Any]:
-    """Batched training env and its params, built as Craftax_Baselines ``ppo.py``."""
+def make_train_env(
+    cfg: PPOConfig, wrap: Callable[[Any, Any], tuple[Any, Any]] | None = None
+) -> tuple[Any, Any]:
+    """Batched training env and its params, built as Craftax_Baselines ``ppo.py``.
+
+    ``wrap`` (a method's ``env_wrapper_fn``) wraps the bare env, inside the logging
+    and reset wrappers.
+    """
     optimistic = cfg.resets == "optimistic"
-    env = LogWrapper(make_craftax_env_from_name(cfg.env, auto_reset=not optimistic))
+    env = make_craftax_env_from_name(cfg.env, auto_reset=not optimistic)
+    params = env.default_params
+    if wrap is not None:
+        env, params = wrap(env, params)
+    env = LogWrapper(env)
     if optimistic:
         ratio = min(cfg.reset_ratio, cfg.envs)
-        return OptimisticResetVecEnvWrapper(env, cfg.envs, ratio), env.default_params
-    return BatchEnvWrapper(env, cfg.envs), env.default_params
+        return OptimisticResetVecEnvWrapper(env, cfg.envs, ratio), params
+    return BatchEnvWrapper(env, cfg.envs), params
 
 
 def policy_value(
@@ -308,12 +328,15 @@ def _make_learn(cfg: PPOConfig, net: ActorCritic) -> Callable[..., Any]:
     return learn
 
 
-def lr_schedule(cfg: PPOConfig) -> Callable[[jax.Array], jax.Array]:
-    """Learning rate per minibatch step: ``lr``, then linearly lower per update.
+def lr_schedule(
+    cfg: PPOConfig, extra_steps: int = 0
+) -> Callable[[jax.Array], jax.Array]:
+    """Learning rate per optimizer step: ``lr``, then linearly lower per update.
 
-    The last update runs at ``lr / n_updates``.
+    The last update runs at ``lr / n_updates``; ``extra_steps`` optimizer steps per
+    update after the minibatches (a method's extra loss) do not shift it.
     """
-    per_update = cfg.minibatches * cfg.update_epochs
+    per_update = cfg.minibatches * cfg.update_epochs + extra_steps
 
     def sched(count: jax.Array) -> jax.Array:
         return cfg.lr * (1.0 - (count // per_update) / cfg.n_updates)
@@ -321,9 +344,9 @@ def lr_schedule(cfg: PPOConfig) -> Callable[[jax.Array], jax.Array]:
     return sched
 
 
-def _optimizer(cfg: PPOConfig) -> optax.GradientTransformation:
+def optimizer(cfg: PPOConfig, extra_steps: int = 0) -> optax.GradientTransformation:
     """Adam with global-norm clipping and an optionally annealed learning rate."""
-    lr = lr_schedule(cfg) if cfg.anneal_lr else cfg.lr
+    lr = lr_schedule(cfg, extra_steps) if cfg.anneal_lr else cfg.lr
     return optax.chain(
         optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(lr, eps=1e-5)
     )
@@ -347,6 +370,24 @@ class _Setup:
     """Placement of params and keys the rollout reads: the actor, or replicated."""
 
 
+def env_placement(
+    envs: int,
+) -> tuple[DeviceRoles, Mesh | None, jax.Device | NamedSharding]:
+    """Device roles, the CPU ``envs`` mesh (several CPUs) and where rollout params go.
+
+    Raises:
+        ValueError: If ``envs`` does not split over the CPU devices.
+    """
+    roles = device_roles()
+    if roles.actor.platform != "cpu" or len(jax.devices("cpu")) == 1:
+        return roles, None, roles.actor
+    mesh = env_mesh()
+    if envs % mesh.devices.size:
+        msg = f"{envs} envs do not split over {mesh.devices.size} CPU devices"
+        raise ValueError(msg)
+    return roles, mesh, NamedSharding(mesh, PartitionSpec())  # type: ignore[no-untyped-call]
+
+
 @functools.cache
 def _setup(cfg: PPOConfig) -> _Setup:
     """Cached per config so every chunk and resume reuses the compiled steps.
@@ -354,22 +395,14 @@ def _setup(cfg: PPOConfig) -> _Setup:
     Raises:
         ValueError: If the env batch does not split over the CPU devices.
     """
-    roles = device_roles()
+    roles, mesh, shared_at = env_placement(cfg.envs)
     env, env_params = make_train_env(cfg)
     net = ActorCritic(env.action_space(env_params).n, cfg.width)
-    mesh: Mesh | None = None
-    shared_at: jax.Device | NamedSharding = roles.actor
-    if roles.actor.platform == "cpu" and len(jax.devices("cpu")) > 1:
-        mesh = env_mesh()
-        if cfg.envs % mesh.devices.size:
-            msg = f"{cfg.envs} envs do not split over {mesh.devices.size} CPU devices"
-            raise ValueError(msg)
-        shared_at = NamedSharding(mesh, PartitionSpec())  # type: ignore[no-untyped-call]
     return _Setup(
         net,
         env,
         env_params,
-        _optimizer(cfg),
+        optimizer(cfg),
         _make_rollout(cfg, net, env, env_params),
         _make_learn(cfg, net),
         roles.learner,
