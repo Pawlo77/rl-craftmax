@@ -590,9 +590,13 @@ def _setup(cfg: PQNRNNConfig) -> _Setup:
     """Cached per config (hooks included) so every chunk reuses the compiled steps.
 
     Raises:
-        ValueError: If the env batch does not split over the CPU devices.
+        ValueError: If the env batch does not split over the CPU devices, or a method
+            sets ``after_extra_fn``.
     """
     hk = resolve(cfg)
+    if "after_extra_fn" in hk.active:
+        msg = "after_extra_fn is a PPO-RNN hook: PQN-RNN would never call it"
+        raise ValueError(msg)
     roles, mesh, shared_at = env_placement(cfg.envs)
     wrap = hk.env_wrapper_fn if "env_wrapper_fn" in hk.active else None
     env, env_params = make_train_env(cfg, wrap)

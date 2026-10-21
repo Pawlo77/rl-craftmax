@@ -40,6 +40,10 @@ run's."""
 TIE_SEED = 0
 """Seed of the random order among unlocks of one tier when a rollout has more unlocks
 than ``insert_cap`` (folded with the next stamp, so each rollout draws anew)."""
+KL_LIMIT, KL_UPDATES = 0.5, 20
+"""``sil/kl_after`` above ``KL_LIMIT`` for ``KL_UPDATES`` updates in a row: the SIL
+steps dominate the policy, and ``sil/dominates`` turns NaN (a guard in
+``abort.finite``)."""
 PRIORITY_EPS = 0.01
 """Added to a window's mean ``(R - V)_+``, so a caught-up window can still be drawn."""
 STEP_KEYS = ("map", "tail", "act", "rew", "done")
@@ -122,6 +126,8 @@ class SILState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     rollout (a slot that gets more than ``S`` keeps its newest ``S``)."""
     update: jax.Array
     """Rollouts observed so far, int32: the age clock of the windows."""
+    kl_streak: jax.Array
+    """Updates in a row whose ``sil/kl_after`` exceeded `KL_LIMIT`, int32."""
     cfg: SILConfig = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     slot_size: int = struct.field(pytree_node=False)  # type: ignore[no-untyped-call]  # flax API
     """Rows per slot: ``S`` (slots) or ``S * n_ach`` (single)."""
@@ -219,6 +225,7 @@ def init(
         inserted=zero,
         overflow=zero,
         update=zero,
+        kl_streak=zero,
         cfg=cfg,
         slot_size=slot_size,
         gamma=gamma,
@@ -544,6 +551,7 @@ def metrics(state: SILState) -> dict[str, jax.Array]:
 
     ``slot_fill/<achievement>`` counts the stored windows of each achievement (at most
     ``S`` in the slots layout); the byte sizes are float32, constant over a run.
+    ``sil/dominates`` is 0, or NaN once the SIL steps dominate (`KL_UPDATES`).
     """
     stored = state.buffer["stamp"] >= 0
     fill = (
@@ -553,13 +561,24 @@ def metrics(state: SILState) -> dict[str, jax.Array]:
         .add(stored.astype(jnp.int32), mode="drop")
     )
     staging, total = _nbytes(state.staging), _nbytes(state)
+    dominates = jnp.where(state.kl_streak >= KL_UPDATES, jnp.nan, 0.0)
     return {
+        "sil/dominates": dominates.astype(jnp.float32),
         "sil/inserted": state.inserted,
         "sil/overflow": state.overflow,
         "sil/nonempty_slots": jnp.count_nonzero(fill).astype(jnp.int32),
         "sil/buffer_bytes": jnp.float32(total - staging),
         "sil/staging_bytes": jnp.float32(staging),
     } | {f"sil/slot_fill/{a}": x for a, x in zip(state.names, fill, strict=True)}
+
+
+def after_extra(state: SILState, metrics: dict[str, jax.Array]) -> SILState:
+    """``after_extra_fn``: count updates in a row with ``sil/kl_after`` over the limit.
+
+    The learner adds that metric after the SIL steps.
+    """
+    over = metrics["sil/kl_after"] > KL_LIMIT
+    return state.replace(kl_streak=jnp.where(over, state.kl_streak + 1, 0))
 
 
 def _init_hook(
@@ -599,6 +618,7 @@ def hooks(cfg: SILConfig, base: PPORNNConfig) -> HookFields:
         observe=observe,
         extra_loss_fn=functools.partial(extra_loss, net),
         extra_steps=cfg.sil_steps,
+        after_extra_fn=after_extra,
         metrics_fn=metrics,
     )
 

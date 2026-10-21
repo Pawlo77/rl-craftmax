@@ -54,7 +54,13 @@ KNOBS = {f.name for f in dataclasses.fields(sil.SILConfig)}
 """The method's run-config keys."""
 CONFIG = "l0.3-s2-k2"
 """The coarse entry the tests train."""
-LEARNER_HOOKS = ("init_state_fn", "observe", "extra_loss_fn", "metrics_fn")
+LEARNER_HOOKS = (
+    "init_state_fn",
+    "observe",
+    "extra_loss_fn",
+    "after_extra_fn",
+    "metrics_fn",
+)
 
 
 @pytest.fixture(scope="module")
@@ -151,6 +157,7 @@ def test_the_hooks_are_the_learner_hooks_and_metrics(methods_dir: Path) -> None:
     assert cfg.env_wrapper_fn is None
     assert cfg.observe is sil.observe
     assert cfg.metrics_fn is sil.metrics
+    assert cfg.after_extra_fn is sil.after_extra
     loss = cfg.extra_loss_fn
     assert isinstance(loss, functools.partial)
     assert loss.func is sil.extra_loss
@@ -224,6 +231,8 @@ def test_a_sil_step_with_no_active_step_leaves_adam_untouched(
     assert _schedule_count(b.train_state) == _schedule_count(a.train_state) + 2
     assert int(b.train_state.step) == int(a.train_state.step) + 2
     assert float(m["sil/active"][0]) == 0.0  # type: ignore[typeddict-item]
+    # skipped steps: no gradient and an unchanged policy
+    assert float(m["sil/grad_norm"][0]) == float(m["sil/kl_after"][0]) == 0.0  # type: ignore[typeddict-item]
 
 
 def test_a_sil_step_with_active_steps_moves_the_params(
@@ -232,8 +241,21 @@ def test_a_sil_step_with_active_steps_moves_the_params(
     ctrl = METHODS["ppo-rnn"]
     a, _ = ctrl.train_chunk(ctrl.init(_control(methods_dir), jax.random.key(0)), 1)
     start = _with_window(ppo_rnn.init_state(no_observe, jax.random.key(0)), 100.0)
+    _, batch, _, _ = ppo_rnn.collect(start)
     b, m = ppo_rnn.train_chunk(start, 1)
     assert not same(a.train_state.params, b.train_state.params)
+    # the control's params are SIL's before its steps: same seed, same PPO epochs
+    net = ppo_rnn._setup(no_observe).net
+
+    def logp(params: Any) -> jax.Array:
+        h0, obs, reset = batch["h0"], batch["obs"], batch["reset"]
+        return jax.nn.log_softmax(ppo_rnn.apply_network(net, params, h0, obs, reset)[1])
+
+    before, after = logp(a.train_state.params), logp(b.train_state.params)
+    kl = float(jnp.mean(jnp.sum(jnp.exp(before) * (before - after), -1)))
+    assert kl > 0
+    assert float(m["sil/kl_after"][0]) == pytest.approx(kl, rel=1e-4)  # type: ignore[typeddict-item]
+    assert float(m["sil/grad_norm"][0]) > 0  # type: ignore[typeddict-item]
     assert int(_adam(b.train_state)[0].count) == int(_adam(a.train_state)[0].count) + 2
     assert float(m["sil/active"][0]) == 1.0  # type: ignore[typeddict-item]
 
@@ -405,7 +427,9 @@ def test_the_runner_trains_and_evaluation_opens_the_run(
 def test_the_abort_list_holds_only_always_finite_metrics() -> None:
     """The loss parts are 0, not NaN, on an empty buffer (`test_sil_loss`), and NaN
     once the loss or the params are."""
-    assert load_method("sil").abort == {"finite": ["sil/policy_loss", "sil/value_loss"]}
+    assert load_method("sil").abort == {
+        "finite": ["sil/policy_loss", "sil/value_loss", "sil/dominates"]
+    }
 
 
 def test_trainer_configs_take_the_memory_limit_as_a_runtime_key(
@@ -466,3 +490,17 @@ def test_a_nan_sil_loss_aborts_the_run(
     assert run.info.status == "FAILED"
     assert run.data.tags[TAG_ABORT_METRIC] == "sil/policy_loss"
     assert run.data.tags[TAG_ABORT_UPDATE] == "1"
+
+
+def test_kl_after_over_the_limit_for_long_enough_aborts_the_run(
+    methods_dir: Path, run_store: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the limit at -1 and 2 updates in a row, the 2nd update aborts."""
+    monkeypatch.setattr(sil, "KL_LIMIT", -1.0)
+    monkeypatch.setattr(sil, "KL_UPDATES", 2)
+    # a width no other test compiles, so the patched constants are traced
+    (spec,) = _phase(tmp_path, methods_dir, {"ref": CONFIG, "set": {"width": 23}})
+    run = run_store.run([spec])[spec.name]
+    assert run.info.status == "FAILED"
+    assert run.data.tags[TAG_ABORT_METRIC] == "sil/dominates"
+    assert run.data.tags[TAG_ABORT_UPDATE] == "2"

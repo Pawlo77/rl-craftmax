@@ -32,6 +32,7 @@ HOOK_NAMES = (
     "intrinsic_reward_fn",
     "observe",
     "extra_loss_fn",
+    "after_extra_fn",
     "env_wrapper_fn",
     "metrics_fn",
 )
@@ -95,7 +96,13 @@ class HookFields:
     """K optimizer steps on ``extra_loss_fn`` after the PPO epochs, same Adam state; the
     learning-rate schedule is indexed by update, so K does not shift it. At 0 the extra
     loss is not active, even when set. PPO-RNN skips a step whose gradient is all zero
-    (nothing to learn): params and Adam moments stay, only the step counts advance."""
+    (nothing to learn): params and Adam moments stay, only the step counts advance.
+    PPO-RNN adds ``<group>/grad_norm`` (mean gradient norm of the K steps) and
+    ``<group>/kl_after`` (mean KL of the policy before and after them on the PPO batch)
+    to the extra loss's metrics, ``<group>`` being the one group of its names."""
+    after_extra_fn: Callable[[State, dict[str, jax.Array]], State] | None = None
+    """``(state, metrics) -> state``, once after the extra steps with their metrics
+    (averaged, plus the two above); PPO-RNN only, active with the extra loss."""
     env_wrapper_fn: Callable[[Any, Any], tuple[Any, Any]] | None = None
     """``(env, env_params) -> (env, env_params)``, once when the training or the
     evaluation env is built. The wrapped env must proxy ``name`` and keep the Craftax
@@ -143,6 +150,7 @@ class ResolvedHooks:
     observe: Callable[[State, Traj], State]
     extra_loss_fn: Callable[..., tuple[jax.Array, tuple[State, dict[str, jax.Array]]]]
     extra_steps: int
+    after_extra_fn: Callable[[State, dict[str, jax.Array]], State]
     env_wrapper_fn: Callable[[Any, Any], tuple[Any, Any]]
     metrics_fn: Callable[[State], dict[str, Any]]
     active: tuple[str, ...]
@@ -192,6 +200,10 @@ def _no_extra_loss(
     return jnp.zeros((), jnp.float32), (state, {})
 
 
+def _keep_after_extra(state: State, _metrics: dict[str, jax.Array]) -> State:
+    return state
+
+
 def _keep_env(env: Any, env_params: Any) -> tuple[Any, Any]:
     return env, env_params
 
@@ -214,7 +226,7 @@ def _checked(
 def resolve(hooks: HookFields) -> ResolvedHooks:
     """Fill the no-op defaults of ``hooks`` and report the hooks the method set.
 
-    ``extra_loss_fn`` counts as set only with ``extra_steps > 0``.
+    ``extra_loss_fn`` and ``after_extra_fn`` count as set only with ``extra_steps > 0``.
 
     Raises:
         ValueError: If ``extra_steps`` is negative, or positive with no
@@ -231,13 +243,14 @@ def resolve(hooks: HookFields) -> ResolvedHooks:
         return default if hook is None else hook  # `or` would drop a falsy callable
 
     metrics = hooks.metrics_fn
-    unused = () if hooks.extra_steps else ("extra_loss_fn",)
+    unused = () if hooks.extra_steps else ("extra_loss_fn", "after_extra_fn")
     return ResolvedHooks(
         init_state_fn=pick(hooks.init_state_fn, _no_init),
         intrinsic_reward_fn=pick(hooks.intrinsic_reward_fn, _zero_reward),
         observe=pick(hooks.observe, _keep_state),
         extra_loss_fn=pick(hooks.extra_loss_fn, _no_extra_loss),
         extra_steps=hooks.extra_steps,
+        after_extra_fn=pick(hooks.after_extra_fn, _keep_after_extra),
         env_wrapper_fn=pick(hooks.env_wrapper_fn, _keep_env),
         metrics_fn=_checked(metrics) if metrics is not None else _no_metrics,
         active=tuple(

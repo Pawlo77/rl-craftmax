@@ -21,6 +21,7 @@ from wut_murl_craftax.training.records import achievement_names
 from wut_murl_craftax.training.sil import (
     SILConfig,
     SILState,
+    after_extra,
     buffer_bytes,
     extra_loss,
     init,
@@ -260,6 +261,9 @@ NAMES = [
     "value_bias",
     "sample_age_mean",
     "sample_age_max",
+    "grad_norm",
+    "kl_after",
+    "dominates",
 ]
 """The ``sil/`` metrics besides the per-achievement ones."""
 
@@ -278,3 +282,15 @@ def test_updates_log_every_metric_and_slots_never_overfill() -> None:
     assert fill.max() <= 2
     assert fill[:, -1].sum() == int((state.method_state.buffer["stamp"] >= 0).sum()) > 0
     assert (np.asarray(m["sil/nonempty_slots"]) == (fill > 0).sum(0)).all()
+
+
+def test_the_dominance_guard_turns_nan_after_20_updates_over_the_limit() -> None:
+    st = _filled(SILConfig(), {0: [1.0]})
+    over, under = {"sil/kl_after": jnp.float32(0.6)}, {"sil/kl_after": jnp.float32(0.4)}
+    for _ in range(19):
+        st = after_extra(st, over)
+    assert float(metrics(st)["sil/dominates"]) == 0.0
+    assert np.isnan(float(metrics(after_extra(st, over))["sil/dominates"]))
+    st = after_extra(after_extra(st, under), over)  # a dip starts the count again
+    assert int(st.kl_streak) == 1
+    assert float(metrics(st)["sil/dominates"]) == 0.0

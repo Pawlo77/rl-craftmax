@@ -47,6 +47,7 @@ def _all_hooks() -> dict[str, Any]:
         "intrinsic_reward_fn": lambda s, e, e2, o, d, t: (jnp.ones_like(d, float), s),
         "observe": lambda s, traj: s,
         "extra_loss_fn": lambda p, s, k: (jnp.float32(0), (s, {})),
+        "after_extra_fn": lambda s, m: s,
         "env_wrapper_fn": lambda env, params: (env, params),
         "metrics_fn": lambda s: {"count/size": 1.0},
     }
@@ -116,6 +117,7 @@ def test_resolve_fills_noop_defaults() -> None:
     assert float(loss) == 0.0
     assert s3 is state
     assert metrics == {}
+    assert r.after_extra_fn(state, {"sil/kl_after": 0.0}) is state
     assert r.metrics_fn(state) == {}
 
 
@@ -132,11 +134,11 @@ def test_resolve_reports_active_hook_names() -> None:
 
 def test_an_extra_loss_without_extra_steps_is_not_active() -> None:
     """``extra_steps`` gates the extra loss, so the trainer never traces it at 0."""
-    loss = _all_hooks()["extra_loss_fn"]
-    assert resolve(HookFields(extra_loss_fn=loss)).active == ()
-    assert resolve(HookFields(extra_loss_fn=loss, extra_steps=1)).active == (
-        "extra_loss_fn",
-    )
+    loss, after = _all_hooks()["extra_loss_fn"], _all_hooks()["after_extra_fn"]
+    assert resolve(HookFields(extra_loss_fn=loss, after_extra_fn=after)).active == ()
+    assert resolve(
+        HookFields(extra_loss_fn=loss, after_extra_fn=after, extra_steps=1)
+    ).active == ("extra_loss_fn", "after_extra_fn")
 
 
 def test_resolve_keeps_a_falsy_callable_hook() -> None:

@@ -24,7 +24,7 @@ the control's graph stays as it is. `make_trainer` gives the registry's `Trainer
 """
 
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
@@ -274,14 +274,16 @@ def _seq_loss(
     return ppo_terms(logits.reshape(-1, logits.shape[-1]), v.reshape(-1), flat, cfg)
 
 
-def _skip_if_zero(old: TrainState, new: TrainState, g: Any) -> TrainState:
-    """``new``, or ``old`` with only its clocks moved on when ``g`` is all zero.
+def _skip_if_zero(old: TrainState, new: TrainState, norm: jax.Array) -> TrainState:
+    """``new``, or ``old`` with only its clocks moved on when the gradient norm is 0.
 
     A zero gradient (an extra loss with nothing to learn) would still move the params
-    on Adam's momentum; the step count and the schedule's count still advance, so the
-    learning rate stays indexed by update. A NaN gradient is applied.
+    on Adam's momentum, so the params and Adam's moments and count stay. The step
+    count and the schedule's count do advance, as for an applied step: the learning
+    rate stays indexed by update, aligned with the control's anneal. A NaN gradient
+    is applied, so the abort rules see it.
     """
-    live = optax.tree.norm(g) != 0
+    live = norm != 0
 
     def pick(o: Any, n: Any) -> Any:
         if isinstance(n, optax.ScaleByScheduleState):
@@ -293,6 +295,30 @@ def _skip_if_zero(old: TrainState, new: TrainState, g: Any) -> TrainState:
 
     opt = jax.tree.map(pick, old.opt_state, new.opt_state, is_leaf=is_clock)
     return new.replace(params=pick(old.params, new.params), opt_state=opt)
+
+
+def _policy_kl(net: ActorCriticRNN, before: Any, after: Any, b: Batch) -> jax.Array:
+    """Mean KL(pi_before || pi_after) over the batch's steps, both rerun from ``h0``."""
+
+    def logp(params: Any) -> jax.Array:
+        _, logits, _ = apply_network(net, params, b["h0"], b["obs"], b["reset"])
+        return jax.nn.log_softmax(logits)
+
+    lb, la = logp(before), logp(after)
+    return jnp.mean(jnp.sum(jnp.exp(lb) * (lb - la), axis=-1))
+
+
+def _extra_group(names: Iterable[str]) -> str | None:
+    """The one metric group of an extra loss's names; None if it reports none.
+
+    Raises:
+        ValueError: If the names span several groups.
+    """
+    groups = {n.partition("/")[0] for n in names}
+    if len(groups) > 1:
+        msg = f"extra-loss metrics span several groups {sorted(groups)}; use one"
+        raise ValueError(msg)
+    return next(iter(groups), None)
 
 
 def _make_learn(
@@ -325,7 +351,8 @@ def _make_learn(
         key, k = jax.random.split(key)
         (_, (ms, m)), g = extra_grad(ts.params, ms, k)
         new = ts.apply_gradients(grads=g)  # type: ignore[no-untyped-call]  # flax API
-        return (_skip_if_zero(ts, new, g), ms, key), m
+        norm = optax.tree.norm(g)
+        return (_skip_if_zero(ts, new, norm), ms, key), (m, norm)
 
     @functools.partial(jax.jit, donate_argnums=3)
     def learn(
@@ -338,10 +365,18 @@ def _make_learn(
         m = [x.mean() for x in aux]
         method: dict[str, jax.Array] = {}
         if "extra_loss_fn" in hk.active:
-            c, em = jax.lax.scan(extra_step, (ts, ms, key), None, hk.extra_steps)
+            before = ts.params
+            c, (em, norms) = jax.lax.scan(
+                extra_step, (ts, ms, key), None, hk.extra_steps
+            )
             ts, ms, key = c
             check_metric_names(em)
             method |= {k: v.mean() for k, v in em.items()}
+            if (group := _extra_group(em)) is not None:
+                method[f"{group}/grad_norm"] = norms.mean()
+                method[f"{group}/kl_after"] = _policy_kl(net, before, ts.params, b)
+            if "after_extra_fn" in hk.active:
+                ms = hk.after_extra_fn(ms, method)
         if on_learner:
             method |= hk.metrics_fn(ms)
         return ts, ms, key, jnp.array([*m[:4], ev, *m[4:]]), method
