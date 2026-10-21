@@ -16,10 +16,32 @@ from .reproducibility import collect_reproducibility_report
 
 _TRACKING_LOGGER = logging.getLogger(__name__)
 _ACTIVE_MLFLOW_RUN_ID_ENV = "MLFLOW_ACTIVE_RUN_ID"
+UNDER_PYTEST_ENV = "WUT_MURL_UNDER_PYTEST"
+"""Set by the tests' conftest; the CLIs then refuse the repo-root MLflow store."""
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _refuse_repo_store(local_path: Path) -> None:
+    """Raise when the tests would open a store inside this checkout.
+
+    Raises:
+        RuntimeError: Under pytest (`UNDER_PYTEST_ENV`) for a path inside the repo,
+            where a live queue keeps the real ``mlruns.db`` and ``mlruns/``.
+    """
+    if os.environ.get(UNDER_PYTEST_ENV) and local_path.is_relative_to(_REPO_ROOT):
+        msg = (
+            f"refusing the MLflow store {local_path} inside the repo under pytest: "
+            "pass a temporary --tracking-uri or experiment config"
+        )
+        raise RuntimeError(msg)
 
 
 def _resolve_tracking_uri(tracking_uri: str) -> str:
-    """Resolve local tracking URIs to an absolute path when needed."""
+    """Resolve local tracking URIs to an absolute path when needed.
+
+    Raises:
+        RuntimeError: Under pytest, for a store inside the repo (`_refuse_repo_store`).
+    """
     if tracking_uri.startswith("sqlite:"):
         sqlite_target = tracking_uri.removeprefix("sqlite:")
         if sqlite_target.lstrip("/") == ":memory:":
@@ -38,6 +60,7 @@ def _resolve_tracking_uri(tracking_uri: str) -> str:
             db_target = "mlruns.db"
 
         resolved_db_path = Path(db_target).expanduser().resolve()
+        _refuse_repo_store(resolved_db_path)
         resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{resolved_db_path.as_posix()}"
 
@@ -45,6 +68,7 @@ def _resolve_tracking_uri(tracking_uri: str) -> str:
         return tracking_uri
 
     resolved_path = Path(tracking_uri).expanduser().resolve()
+    _refuse_repo_store(resolved_path)
     resolved_path.mkdir(parents=True, exist_ok=True)
     return str(resolved_path)
 

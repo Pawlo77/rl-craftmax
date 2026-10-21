@@ -28,6 +28,7 @@ from typing import Any, Literal, NoReturn
 import yaml
 
 from ..config import load_experiment_config
+from .tracking import _resolve_tracking_uri
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 METHODS_DIR = REPO_ROOT / "configs" / "methods"
@@ -648,7 +649,7 @@ def _client(tracking_uri: str | None) -> Any:
     # mlflow takes seconds to import; the dry run and the expansion tests never need it
     mlflow = importlib.import_module("mlflow")
     uri = tracking_uri or load_experiment_config(EXPERIMENT_CONFIG).mlflow.tracking_uri
-    return mlflow.MlflowClient(tracking_uri=uri)
+    return mlflow.MlflowClient(tracking_uri=_resolve_tracking_uri(uri))
 
 
 def _runs(client: Any, filter_string: str) -> list[Any]:

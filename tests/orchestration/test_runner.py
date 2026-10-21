@@ -766,3 +766,62 @@ def test_saved_method_metrics_are_cut_or_padded_to_the_resumed_update(
     assert len(short) == 5
     assert all(math.isnan(v) for v in short[3:])
     assert runner._Extras.load(tmp_path / "none", 2).series == {}
+
+
+# --- lost checkpoint files ------------------------------------------------------
+
+
+def _ckpt(store: Store, name: str, update: int) -> Path:
+    return store.run_dir(name) / "ckpt" / f"{update:05d}.msgpack"
+
+
+def test_a_lost_final_checkpoint_is_rebuilt_from_the_state(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    final = _ckpt(store, spec.name, 3)
+    saved = final.read_bytes()
+    final.unlink()
+    (_ckpt(store, spec.name, 0)).unlink()  # the initial one comes back from the seed
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.updates == []  # nothing is retrained
+    assert final.read_bytes() == saved
+    assert _ckpt(store, spec.name, 0).is_file()
+    index = load_index(store.run_dir(spec.name))
+    assert [e["update"] for e in index] == [0, 1, 2, 3]
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    assert "ckpt/missing" not in run.data.tags
+    assert [e[0] for e in store.evaluated] == [spec.name] * 2
+
+
+def test_an_earlier_lost_checkpoint_fails_a_complete_run_and_is_tagged(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    _ckpt(store, spec.name, 1).unlink()
+    _ckpt(store, spec.name, 2).unlink()
+    with pytest.raises(RuntimeError, match=r"\[1, 2\] are lost"):
+        store.run([spec], FakeTrainer())
+    run = store.runs()[spec.name]
+    assert run.info.status == "FAILED"
+    assert run.data.tags["ckpt/missing"] == "1,2"
+    assert [e["update"] for e in load_index(store.run_dir(spec.name))] == [0, 3]
+    assert len(store.evaluated) == 1  # only the first call evaluated
+
+
+def test_a_lost_checkpoint_of_a_run_in_progress_is_tagged_then_fails_at_the_end(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((2, signal.SIGINT)))
+    _ckpt(store, spec.name, 1).unlink()
+    trainer = FakeTrainer()
+    with pytest.raises(RuntimeError, match=r"\[1\] are lost"):
+        store.run([spec], trainer)
+    assert trainer.updates == [3]  # it trained on: the final checkpoint is intact
+    run = store.runs()[spec.name]
+    assert (run.info.status, run.data.tags["ckpt/missing"]) == ("FAILED", "1")
+    assert _ckpt(store, spec.name, 3).is_file()

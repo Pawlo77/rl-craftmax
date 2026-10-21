@@ -34,8 +34,10 @@ from ..evaluation.episode_metrics import score_pct
 from ..training.checkpoints import (
     STATE_FILE,
     checkpoint_schedule,
+    drop_missing_checkpoints,
     load_index,
     load_state,
+    missing_checkpoints,
     save_checkpoint,
     save_state,
 )
@@ -85,6 +87,8 @@ N_CHECKPOINTS = 12
 """Log-spaced params checkpoints per run (`checkpoint_schedule`)."""
 MIN_FINAL_EPISODES = 100
 """Episodes the final-score window is widened backwards to."""
+TAG_CKPT_MISSING = "ckpt/missing"
+"""Run tag: comma-joined updates whose checkpoint file is lost and cannot be rebuilt."""
 EXTRAS_FILE = "extras.npz"
 """Per-update method metrics of a run, name -> floats, in the run directory."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
@@ -364,6 +368,32 @@ class _Extras:
         tmp.replace(self.path)
 
 
+def _repair_checkpoints(
+    trainer: Trainer,
+    out: Path,
+    fresh: dict[str, Any],
+    saved: dict[str, Any],
+    spu: int,
+) -> list[int]:
+    """Drop index entries whose file is gone; rebuild what can be; return the rest.
+
+    Update 0 is rebuilt from the same-seed initial state and the saved update from the
+    saved state. Earlier lost updates cannot be rebuilt: they are tagged
+    `TAG_CKPT_MISSING` and returned.
+    """
+    lost, update = drop_missing_checkpoints(out), saved["update"]
+    if not any(e["update"] == 0 for e in load_index(out)):
+        save_checkpoint(out, 0, 0, 0.0, trainer.params(fresh["trainer"]))
+    if update and update in lost:
+        wall, params = saved["wall_s"], trainer.params(saved["trainer"])
+        save_checkpoint(out, update, update * spu, wall, params)
+    gone = sorted(u for u in lost if 0 < u < update)
+    if gone:
+        mlflow.set_tag(TAG_CKPT_MISSING, ",".join(map(str, gone)))
+        logger.warning("checkpoints %s of %s are lost for good", gone, out)
+    return gone
+
+
 def _check_finite(
     metrics: ChunkMetrics, columns: Sequence[str], finite: Sequence[str], update: int
 ) -> None:
@@ -425,6 +455,8 @@ def _train(
 
     Raises:
         _Aborted: A chunk reported a non-finite loss; nothing of it is saved.
+        RuntimeError: The run is complete but checkpoints are lost for good (a lost
+            final one is rebuilt from ``state/``).
     """
     spu = trainer.steps_per_update(spec.config)
     n_updates = spec.steps // spu
@@ -440,9 +472,8 @@ def _train(
     log = RunLog(out, spec.env, achievement_names(spec.env))
     rows, episodes = saved["log"]
     log.rows, log.episodes = rows.tolist(), [episodes]
+    lost = _repair_checkpoints(trainer, out, fresh, saved, spu)
     written = {e["update"] for e in load_index(out)}
-    if 0 not in written:
-        save_checkpoint(out, 0, 0, 0.0, trainer.params(state))
     columns, extras = _loss_columns(trainer), _Extras.load(out, update)
     abort = spec.abort or {}
     rules, finite, flagged = abort.get("flags", []), abort.get("finite", []), set[str]()
@@ -485,6 +516,9 @@ def _train(
         log_peak_memory(roles, update * spu)
     if (compile_s := compile_seconds(chunks)) is not None:
         mlflow.log_metric("compile_s", compile_s, step=update * spu)
+    if lost and update == n_updates:
+        msg = f"{spec.name}: checkpoints {lost} are lost and cannot be rebuilt"
+        raise RuntimeError(msg)
     return log if update == n_updates else None
 
 
@@ -546,7 +580,12 @@ def _run_spec(
         msg = f"{spec.name}: MLflow opened run {active.run_name} ({active.run_id})"
         raise RuntimeError(msg)  # e.g. $MLFLOW_RUN_ID set in the environment
     out = tracker.artifact_dir
-    trains = found is None or found.info.status != "FINISHED"
+    # a FINISHED run with a lost checkpoint file goes through `_train` to repair it
+    trains = (
+        found is None
+        or found.info.status != "FINISHED"
+        or bool(missing_checkpoints(out))
+    )
     try:
         if trains:
             roles = device_roles()

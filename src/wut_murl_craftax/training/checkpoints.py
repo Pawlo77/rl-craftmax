@@ -42,6 +42,24 @@ def load_index(run_dir: Path) -> list[CheckpointEntry]:
     return entries
 
 
+def missing_checkpoints(run_dir: Path) -> list[int]:
+    """Updates whose ``ckpt/`` file is gone although ``index.json`` lists it."""
+    return [
+        e["update"]
+        for e in load_index(run_dir)
+        if not (Path(run_dir) / "ckpt" / e["file"]).is_file()
+    ]
+
+
+def drop_missing_checkpoints(run_dir: Path) -> list[int]:
+    """Drop the `missing_checkpoints` from the index; return their updates."""
+    lost = missing_checkpoints(run_dir)
+    if lost:
+        kept = [e for e in load_index(run_dir) if e["update"] not in lost]
+        (Path(run_dir) / "ckpt" / "index.json").write_text(json.dumps(kept, indent=1))
+    return lost
+
+
 def save_checkpoint[T](
     run_dir: Path, update: int, env_steps: int, wall_s: float, params: T
 ) -> Path:
@@ -53,7 +71,7 @@ def save_checkpoint[T](
     entry = CheckpointEntry(
         update=update, env_steps=env_steps, wall_s=round(wall_s, 1), file=path.name
     )
-    index = [*load_index(run_dir), entry]
+    index = sorted([*load_index(run_dir), entry], key=lambda e: e["update"])
     (ckpt / "index.json").write_text(json.dumps(index, indent=1))
     return path
 
