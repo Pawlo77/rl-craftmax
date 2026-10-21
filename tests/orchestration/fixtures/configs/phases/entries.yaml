@@ -1,0 +1,7 @@
+budget: 1m
+eval: log_spaced
+seeds: 1
+runs:
+  multi-ppo-rnn: {config: multi, configs: [a]}
+  multi-pqn-rnn: {config: multi, configs: [a]}
+  toy: {configs: [published]}

@@ -1,0 +1,30 @@
+# Toy method: one-at-a-time stage-1 grid, so the fine rule has a known answer.
+base:
+  env: Toy-v1
+  envs: 256
+  lr: 3e-4
+  gae_lambda: 0.8
+  ent: 0.01
+budgets:
+  1b: {envs: 1024, lr: 2.0e-4}
+grid:
+  coarse:
+    - {name: published, seeds: 3}
+    - {name: lr-hi, lr: 4.0e-4}
+    - {name: lr-lo, lr: 2.0e-4}
+    - {name: lam-lo, gae_lambda: 0.7}
+    - {name: lam-hi, gae_lambda: 0.9}
+    - {name: ent-0, ent: 0.0}
+    - {name: shape, envs: 1024, lr: 2.0e-4}
+  fine:
+    rule: {select: 2}
+    knobs:
+      - {key: lr, mul: [0.75, 1.5]}
+      - {key: gae_lambda, add: [-0.05, 0.05]}
+      - {key: ent, mul: [0.5, 2.0], zero: [0.001, 0.003]}
+abort: {nan: true}
+
+# written by mark_tuned
+tuned: null
+
+# trailing comment that must survive a rewrite

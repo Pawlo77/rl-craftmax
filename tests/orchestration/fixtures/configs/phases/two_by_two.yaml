@@ -1,0 +1,4 @@
+budget: 1m
+eval: final
+runs:
+  toy: {configs: [published, lr-hi], seeds: 2}

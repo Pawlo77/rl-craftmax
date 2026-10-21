@@ -1,0 +1,27 @@
+# PPO method config; the schema is documented in orchestration/queue.py.
+# `base` is the Craftax-1M column (Table 11) of the PPO plan's fixed settings.
+base:
+  env: Craftax-Symbolic-v1
+  envs: 256
+  num_steps: 16
+  update_epochs: 4
+  minibatches: 8
+  lr: 3.0e-4
+  anneal_lr: true
+  gamma: 0.99
+  gae_lambda: 0.8
+  clip: 0.2
+  vf: 0.5
+  ent: 0.01
+  max_grad_norm: 1.0
+  width: 512
+  resets: optimistic
+  reset_ratio: 16
+
+grid:
+  coarse:
+    - {name: published-1m}
+    - {name: lr-4e-4, lr: 4.0e-4}
+
+# written by `--mark-tuned ppo <hash8>`
+tuned: null

@@ -1,0 +1,13 @@
+# Two registry entries (multi-ppo-rnn, multi-pqn-rnn) share one grid.
+base:
+  ppo-rnn: {env: Toy-v1, base_from: donor.tuned, beta: 0.1}
+  pqn-rnn: {env: Toy-v1, lr: 1.0e-3, beta: 0.1}
+grid:
+  coarse:
+    - {name: a}
+    - {name: b, beta: 0.3}
+  fine:
+    rule: {select: 1}
+    knobs:
+      - {key: beta, mul: [0.5, 2.0]}
+tuned: null

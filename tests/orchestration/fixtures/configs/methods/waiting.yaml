@@ -1,0 +1,4 @@
+base: {base_from: toy.tuned}
+grid:
+  coarse:
+    - {name: a}

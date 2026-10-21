@@ -1,0 +1,12 @@
+budget: 1m
+eval: final
+seeds: 3
+runs:
+  toy:
+    configs:
+      - published
+      - lr-hi
+      - {ref: lr-lo, seeds: [5, 7]}
+      - {ref: lam-lo, set: {ent: 0.02}}
+    seeds: 1
+  donor: {configs: [published]}

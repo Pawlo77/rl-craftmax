@@ -1,0 +1,6 @@
+budget: 1m
+eval: final
+seeds: 1
+runs:
+  multi-ppo-rnn: {config: multi, configs: [a]}
+  toy: {configs: [tuned]}

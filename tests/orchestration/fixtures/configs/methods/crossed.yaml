@@ -1,0 +1,10 @@
+base: {env: Toy-v1, slots: 4, lam: 0.9}
+grid:
+  coarse:
+    - {name: c1}
+    - {name: c2, slots: 8}
+  fine:
+    rule: {combine: cross}
+    knobs:
+      - {key: slots, mul: [0.5, 1, 2], integer: true}
+      - {key: lam, add: [-0.1, 0.1], clip: [0.0, 0.95]}

@@ -1,0 +1,5 @@
+budget: 1m
+eval: final
+seeds: 3
+runs:
+  toy: {configs: fine}

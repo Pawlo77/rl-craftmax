@@ -1,0 +1,7 @@
+# Smoke test: PPO on Craftax-Classic, two configs, one seed, 200k steps.
+budget: 200k
+eval: final
+env: Craftax-Classic-Symbolic-v1
+seeds: 1
+runs:
+  ppo: {configs: [published-1m, lr-4e-4]}

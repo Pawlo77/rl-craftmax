@@ -1,0 +1,8 @@
+base: {base_from: donor.tuned, beta: 0.1}
+budgets:
+  1b: {beta: 0.05}
+grid:
+  coarse:
+    - {name: a}
+    - {name: b, beta: 0.3}
+tuned: null

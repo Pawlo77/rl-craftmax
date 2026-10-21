@@ -1,0 +1,684 @@
+"""Tests for run identity, config resolution and queue expansion."""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import mlflow
+import pytest
+import yaml
+
+from wut_murl_craftax.orchestration import queue
+from wut_murl_craftax.orchestration.queue import (
+    RunSpec,
+    budget_steps,
+    coarse_results,
+    config_hash,
+    expand_fine,
+    expand_phase,
+    load_method,
+    mark_tuned,
+    resolve_config,
+)
+
+CONFIGS = Path(__file__).parent / "fixtures" / "configs"
+METHODS = CONFIGS / "methods"
+PHASES = CONFIGS / "phases"
+REPO = Path(__file__).resolve().parents[2]
+
+STAGE1 = {
+    "published": 10.0,
+    "lr-hi": 14.0,
+    "lr-lo": 9.0,
+    "lam-lo": 11.0,
+    "lam-hi": 10.5,
+    "ent-0": 12.0,
+    "shape": 8.0,
+}
+"""Stage-1 mean scores of the toy grid: lr spread 5, entropy 2, lambda 1."""
+
+
+def phase(name: str, **kw: Any) -> list[RunSpec]:
+    return expand_phase(PHASES / f"{name}.yaml", methods_dir=METHODS, **kw)
+
+
+def resolved(
+    slug: str,
+    ref: str,
+    budget: str = "1m",
+    registry: str | None = None,
+    methods_dir: Path = METHODS,
+    **kw: Any,
+) -> dict[str, Any]:
+    return resolve_config(
+        load_method(slug, methods_dir),
+        registry or slug,
+        budget,
+        ref=ref,
+        methods_dir=methods_dir,
+        **kw,
+    )
+
+
+def stage1(slug: str, scores: dict[str, float]) -> dict[str, float]:
+    """Stage-1 results {hash8: score} from {entry name: score}."""
+    return {config_hash(resolved(slug, name)): score for name, score in scores.items()}
+
+
+def phase_from(tmp_path: Path, body: dict[str, Any]) -> list[RunSpec]:
+    (tmp_path / "p.yaml").write_text(yaml.safe_dump(body))
+    return expand_phase(tmp_path / "p.yaml", methods_dir=METHODS)
+
+
+# --- run identity ---------------------------------------------------------------
+
+
+def test_two_configs_two_seeds_expand_to_four_named_specs() -> None:
+    specs = phase("two_by_two")
+    assert len(specs) == 4
+    first = specs[0]
+    assert (first.registry_name, first.config_slug, first.budget, first.seed) == (
+        "toy",
+        "toy",
+        "1m",
+        0,
+    )
+    assert (first.env, first.phase, first.eval_mode) == (
+        "Toy-v1",
+        "two_by_two",
+        "final",
+    )
+    assert [s.seed for s in specs] == [0, 1, 0, 1]
+    assert len({s.name for s in specs}) == 4
+    assert all(re.fullmatch(r"toy-1m-[0-9a-f]{8}-s[01]", s.name) for s in specs)
+    assert first.steps == 1_000_000
+    assert first.config["method"] == "toy"
+    assert first.config_hash == config_hash(first.config)
+
+
+def test_run_names_are_stable_across_processes() -> None:
+    code = (
+        "from pathlib import Path\n"
+        "from wut_murl_craftax.orchestration.queue import expand_phase\n"
+        f"c = Path({str(CONFIGS)!r})\n"
+        "m = c / 'methods'\n"
+        "for s in expand_phase(c / 'phases/two_by_two.yaml', methods_dir=m):\n"
+        "    print(s.name)\n"
+    )
+    outs = [
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=REPO,
+        ).stdout.split()
+        for seed in ("1", "2")
+    ]
+    assert outs[0] == outs[1] == [s.name for s in phase("two_by_two")]
+
+
+def test_hash_ignores_callables_and_key_order() -> None:
+    a = {"lr": 1.0e-3, "env": "X", "hook": print, "nested": {"f": len, "k": 1}}
+    b = {"nested": {"k": 1}, "env": "X", "lr": 1.0e-3}
+    assert config_hash(a) == config_hash(b)
+    assert config_hash(a) != config_hash({**b, "lr": 2.0e-3})
+    assert re.fullmatch(r"[0-9a-f]{8}", config_hash(a))
+
+
+def test_seeds_item_beats_entry_beats_grid_beats_phase_default() -> None:
+    seeds: dict[tuple[str, str], list[int]] = {}
+    for s in phase("seeds"):
+        seeds.setdefault((s.registry_name, s.config_hash), []).append(s.seed)
+
+    def key(slug: str, ref: str, **kw: Any) -> tuple[str, str]:
+        return slug, config_hash(resolved(slug, ref, **kw))
+
+    assert seeds == {
+        key("toy", "published"): [0],  # the entry's seeds: 1 beats the grid entry's 3
+        key("toy", "lr-hi"): [0],
+        key("toy", "lr-lo"): [5, 7],  # the item's own list
+        key("toy", "lam-lo", overrides={"ent": 0.02}): [0],
+        key("donor", "published"): [0, 1, 2],  # the phase default
+    }
+
+
+def test_grid_entry_seeds_beat_the_phase_default(tmp_path: Path) -> None:
+    body = {
+        "budget": "1m",
+        "eval": "final",
+        "seeds": 2,
+        "runs": {"toy": {"configs": ["published", "lr-hi"]}},
+    }
+    specs = phase_from(tmp_path, body)
+    counts = {
+        h: sum(s.config_hash == h for s in specs)
+        for h in {s.config_hash for s in specs}
+    }
+    assert sorted(counts.values()) == [2, 3]  # published has seeds: 3 in toy.yaml
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"budget": "1m", "eval": "weird", "runs": {"toy": {}}}, "eval"),
+        ({"budget": "1x", "eval": "final", "runs": {"toy": {}}}, "budget"),
+        ({"budget": "1m", "eval": "final", "runs": {"toy": {}}, "extra": 1}, "extra"),
+        ({"budget": "1m", "eval": "final", "runs": {"toy": {"cfgs": []}}}, "cfgs"),
+        (
+            {
+                "budget": "1m",
+                "eval": "final",
+                "runs": {"toy": {"configs": ["nope"], "seeds": 1}},
+            },
+            "nope",
+        ),
+        (
+            {
+                "budget": "1m",
+                "eval": "final",
+                "runs": {"toy": {"configs": ["tuned"], "seeds": 1}},
+            },
+            "tuned",
+        ),
+        (
+            {
+                "budget": "1m",
+                "eval": "final",
+                "runs": {"toy": {"configs": "fine", "seeds": 1}},
+            },
+            "expand-fine",
+        ),
+        (
+            {"budget": "1m", "eval": "final", "runs": {"toy": {"configs": ["lr-hi"]}}},
+            "seeds",
+        ),
+        (
+            {
+                "budget": "1m",
+                "eval": "final",
+                "seeds": 1,
+                "runs": {"toy": {"configs": ["lr-hi", "lr-hi"]}},
+            },
+            "duplicate",
+        ),
+    ],
+)
+def test_phase_yaml_fails_loudly(
+    tmp_path: Path, body: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        phase_from(tmp_path, body)
+
+
+def test_budget_labels() -> None:
+    assert [budget_steps(b) for b in ("1m", "1b", "200k")] == [
+        1_000_000,
+        1_000_000_000,
+        200_000,
+    ]
+    with pytest.raises(ValueError, match="budget"):
+        budget_steps("1x")
+
+
+def test_yaml_floats_without_a_dot_are_floats() -> None:
+    lr = load_method("toy", METHODS).base[
+        "lr"
+    ]  # written `3e-4`, which plain PyYAML reads as str
+    assert isinstance(lr, float)
+    assert lr == 3.0e-4
+
+
+# --- method schema and resolution ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        {"extra": 1},
+        {"grid": {"coarse": [], "oops": 1}},
+        {
+            "grid": {
+                "coarse": [],
+                "fine": {"rule": {"select": 1, "nope": 1}, "knobs": []},
+            }
+        },
+        {
+            "grid": {
+                "coarse": [],
+                "fine": {"rule": {}, "knobs": [{"key": "lr", "mul": [2], "x": 1}]},
+            }
+        },
+        {"grid": {"coarse": [{"lr": 1}]}},
+        {"grid": {"coarse": [{"name": "a"}, {"name": "a"}]}},
+        {"grid": {"coarse": [{"name": "tuned"}]}},
+    ],
+)
+def test_method_yaml_fails_loudly(tmp_path: Path, edit: dict[str, Any]) -> None:
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump({"base": {"env": "X"}, **edit}))
+    with pytest.raises(ValueError, match="bad"):
+        load_method("bad", tmp_path)
+
+
+def test_base_from_resolves_the_donor_tuned_block_plus_own_keys() -> None:
+    assert resolved("child", "b") == {
+        "env": "Toy-v1",
+        "lr": 1.0e-3,
+        "width": 256,
+        "beta": 0.3,
+        "method": "child",
+    }
+
+
+def test_base_from_fails_while_the_donor_tuned_is_null() -> None:
+    with pytest.raises(ValueError, match=r"toy\.tuned"):
+        resolved("waiting", "a")
+
+
+def test_budget_1b_resolves_base_then_tuned_then_budgets_and_carries_the_donors() -> (
+    None
+):
+    donor = resolved("donor", "tuned", "1b")
+    # base lr 3e-4, tuned 1e-3 and width 256, then budgets.1b lr 2e-4 wins over tuned
+    assert (donor["lr"], donor["width"]) == (2.0e-4, 256)
+    child = resolved("child", "b", "1b")
+    # the donor's 1b settings come along; the child's budgets.1b overrides its beta
+    assert (child["lr"], child["width"], child["beta"]) == (2.0e-4, 256, 0.05)
+    assert (
+        resolved("toy", "lr-hi", "1b")["envs"],
+        resolved("toy", "lr-hi", "1b")["lr"],
+    ) == (1024, 2.0e-4)
+
+
+def test_phase_set_overrides_everything() -> None:
+    spec = next(s for s in phase("seeds") if s.config["ent"] == 0.02)
+    assert (spec.config["gae_lambda"], spec.config["ent"]) == (0.7, 0.02)
+
+
+def test_entry_forms_and_method_selection() -> None:
+    specs = phase("entries")
+    assert {s.registry_name for s in specs} == {"multi-ppo-rnn", "multi-pqn-rnn", "toy"}
+    ppo, pqn = (
+        next(s for s in specs if s.registry_name == n)
+        for n in ("multi-ppo-rnn", "multi-pqn-rnn")
+    )
+    assert ppo.config_slug == pqn.config_slug == "multi"
+    assert ppo.eval_mode == "log_spaced"
+    assert (
+        ppo.config["width"] == 256
+    )  # base_from donor.tuned; the pqn variant has no donor
+    assert "width" not in pqn.config
+    assert ppo.config_hash != pqn.config_hash
+    assert {s.registry_name for s in phase("entries", method="multi-ppo-rnn")} == {
+        "multi-ppo-rnn"
+    }
+    assert {s.registry_name for s in phase("entries", method="multi")} == {
+        "multi-ppo-rnn",
+        "multi-pqn-rnn",
+    }
+    with pytest.raises(ValueError, match="nope"):
+        phase("entries", method="nope")
+
+
+def test_the_method_filter_skips_the_other_entries_configs() -> None:
+    # `toy` has no tuned block, so its entry fails; selecting multi never touches it
+    assert [s.registry_name for s in phase("partial", method="multi")] == [
+        "multi-ppo-rnn"
+    ]
+    with pytest.raises(ValueError, match=r"toy\.tuned"):
+        phase("partial")
+
+
+# --- fine rule -----------------------------------------------------------------
+
+
+def test_expand_fine_picks_the_best_config_and_the_two_largest_effects() -> None:
+    fine = expand_fine("toy", stage1("toy", STAGE1), methods_dir=METHODS)
+    assert list(fine) == ["toy"]
+    # best lr-hi (lr 4e-4); lr spreads 5, entropy 2, lambda 1 (`shape` is no lr axis)
+    assert list(fine["toy"].values()) == [
+        {"lr": 3.0e-4},
+        {"lr": 6.0e-4},
+        {"lr": 4.0e-4, "ent": 0.005},
+        {"lr": 4.0e-4, "ent": 0.02},
+    ]
+    assert expand_fine("toy", stage1("toy", STAGE1), methods_dir=METHODS) == fine
+
+
+def test_expand_fine_uses_the_zero_values_when_the_best_value_is_zero() -> None:
+    fine = expand_fine(
+        "toy", stage1("toy", {**STAGE1, "ent-0": 20.0}), methods_dir=METHODS
+    )
+    assert list(fine["toy"].values()) == [
+        {"ent": 0.001},
+        {"ent": 0.003},
+        {"ent": 0.0, "lr": 2.25e-4},
+        {"ent": 0.0, "lr": 4.5e-4},
+    ]
+
+
+def test_a_fine_config_that_equals_the_stage_1_config_has_its_run_name() -> None:
+    fine = expand_fine("toy", stage1("toy", STAGE1), methods_dir=METHODS)
+    cfg = resolved("toy", "base", overrides=next(iter(fine["toy"].values())))
+    assert cfg["lr"] == 3.0e-4
+    assert config_hash(cfg) == config_hash(resolved("toy", "published"))
+
+
+def test_expand_fine_cross_integer_and_clip() -> None:
+    fine = expand_fine(
+        "crossed", stage1("crossed", {"c1": 1.0, "c2": 2.0}), methods_dir=METHODS
+    )
+    assert list(fine["crossed"].values()) == [
+        {"slots": s, "lam": lam} for s in (4, 8, 16) for lam in (0.8, 0.95)
+    ]
+
+
+def test_expand_fine_per_registry_entry_and_method_filter() -> None:
+    ppo, pqn = "multi-ppo-rnn", "multi-pqn-rnn"
+    scores = {
+        config_hash(resolved("multi", ref, registry=reg)): score
+        for reg, ref, score in (
+            (ppo, "a", 2.0),
+            (ppo, "b", 1.0),
+            (pqn, "a", 1.0),
+            (pqn, "b", 2.0),
+        )
+    }
+    fine = expand_fine("multi", scores, methods_dir=METHODS)
+    assert list(fine) == [ppo, pqn]
+    assert [v["beta"] for v in fine[ppo].values()] == [0.05, 0.2]  # best a: beta 0.1
+    assert [v["beta"] for v in fine[pqn].values()] == [0.15, 0.6]  # best b: beta 0.3
+    assert list(expand_fine("multi", scores, methods_dir=METHODS, method=pqn)) == [pqn]
+    assert list(expand_fine("multi", scores, methods_dir=METHODS, method="multi")) == [
+        ppo,
+        pqn,
+    ]
+
+
+def test_expand_fine_fails_on_missing_results_or_rule() -> None:
+    partial = stage1("toy", {k: v for k, v in STAGE1.items() if k != "shape"})
+    with pytest.raises(ValueError, match="shape"):
+        expand_fine("toy", partial, methods_dir=METHODS)
+    with pytest.raises(ValueError, match=r"grid\.fine"):
+        expand_fine("donor", {}, methods_dir=METHODS)
+
+
+def test_a_phase_uses_the_generated_fine_configs() -> None:
+    fine = expand_fine("toy", stage1("toy", STAGE1), methods_dir=METHODS)
+    assert len(phase("fine", fine=fine)) == 4 * 3
+    with pytest.raises(ValueError, match="expand-fine"):
+        phase("fine")
+
+
+# --- MLflow-backed pieces ------------------------------------------------------
+
+
+class Store:
+    """A throwaway MLflow store; `add` logs a finished run with the queue's tags."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+        self.client = mlflow.MlflowClient(tracking_uri=self.tracking_uri)
+        self.exp = self.client.create_experiment(
+            "tune-coarse", artifact_location=(tmp_path / "art").as_uri()
+        )
+
+    def add(
+        self,
+        method: str,
+        cfg: dict[str, Any],
+        score: float,
+        *,
+        seed: int = 0,
+        phases: str = "tune-coarse",
+        status: str = "FINISHED",
+    ) -> str:
+        tags = {
+            "method": method,
+            "config_hash": config_hash(cfg),
+            "phases": phases,
+            "budget": "1m",
+            "seed": str(seed),
+        }
+        rid = self.client.create_run(self.exp, tags=tags).info.run_id
+        self.client.log_metric(rid, "final_score", score)
+        self.client.log_dict(rid, cfg, "config.json")
+        self.client.set_terminated(rid, status)
+        return rid
+
+    def tag(self, rid: str, key: str) -> str | None:
+        return self.client.get_run(rid).data.tags.get(key)
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> Store:
+    return Store(tmp_path / "s")
+
+
+@pytest.fixture
+def methods(tmp_path: Path) -> Path:
+    """A writable copy of the fixture methods."""
+    shutil.copytree(METHODS, tmp_path / "methods")
+    return tmp_path / "methods"
+
+
+def test_coarse_results_are_seed_means_of_finished_tune_coarse_runs(
+    store: Store,
+) -> None:
+    pub, hi = resolved("toy", "published"), resolved("toy", "lr-hi")
+    for seed, score in enumerate((10.0, 12.0)):
+        store.add("toy", pub, score, seed=seed)
+    store.add("toy", hi, 99.0, phases="final-1m")  # not a tune-coarse run
+    store.add("toy", hi, 7.0, status="FAILED")  # not finished
+    store.add("other", hi, 55.0)  # another method
+    store.add(
+        "toy", pub, 20.0, phases="smoke,tune-coarse,final-1m", seed=2
+    )  # several phases
+    got = coarse_results("toy", tracking_uri=store.tracking_uri, methods_dir=METHODS)
+    assert got == {config_hash(pub): pytest.approx(14.0)}
+
+
+def test_mark_tuned_writes_the_block_and_the_tag_together(
+    store: Store, methods: Path
+) -> None:
+    best = resolved("toy", "lr-hi", methods_dir=methods)
+    rid = store.add("toy", best, 14.0)
+    other = store.add("toy", resolved("toy", "lr-lo", methods_dir=methods), 9.0)
+    before = (methods / "toy.yaml").read_text()
+
+    diff = mark_tuned(
+        "toy", config_hash(best), tracking_uri=store.tracking_uri, methods_dir=methods
+    )
+
+    assert load_method("toy", methods).tuned == {"lr": 4.0e-4}
+    assert "+tuned:" in diff
+    assert "-tuned: null" in diff
+    # everything but the tuned block is byte for byte what it was, comments included
+    after = (methods / "toy.yaml").read_text()
+    assert after.replace("tuned:\n  lr: 0.0004\n", "tuned: null\n") == before
+    assert store.tag(rid, "best") == "true"
+    assert store.tag(other, "best") is None
+    assert config_hash(resolved("toy", "tuned", methods_dir=methods)) == config_hash(
+        best
+    )
+
+
+def test_mark_tuned_again_moves_the_best_tag(store: Store, methods: Path) -> None:
+    first, second = (
+        resolved("toy", r, methods_dir=methods) for r in ("lr-hi", "lr-lo")
+    )
+    a, b = store.add("toy", first, 14.0), store.add("toy", second, 9.0)
+    for cfg in (first, second):
+        mark_tuned(
+            "toy",
+            config_hash(cfg),
+            tracking_uri=store.tracking_uri,
+            methods_dir=methods,
+        )
+    assert (store.tag(a, "best"), store.tag(b, "best")) == ("false", "true")
+    assert load_method("toy", methods).tuned == {"lr": 2.0e-4}
+
+
+def test_mark_tuned_fills_only_its_registry_entrys_part(
+    store: Store, methods: Path
+) -> None:
+    cfg = resolved("multi", "b", registry="multi-pqn-rnn", methods_dir=methods)
+    store.add("multi-pqn-rnn", cfg, 3.0)
+    mark_tuned(
+        "multi", config_hash(cfg), tracking_uri=store.tracking_uri, methods_dir=methods
+    )
+    assert load_method("multi", methods).tuned == {"pqn-rnn": {"beta": 0.3}}
+    with pytest.raises(ValueError, match="tuned"):
+        resolved("multi", "tuned", registry="multi-ppo-rnn", methods_dir=methods)
+    assert (
+        resolved("multi", "tuned", registry="multi-pqn-rnn", methods_dir=methods)[
+            "beta"
+        ]
+        == 0.3
+    )
+
+
+def test_mark_tuned_refuses_an_unknown_hash_and_writes_nothing(
+    store: Store, methods: Path
+) -> None:
+    before = (methods / "toy.yaml").read_text()
+    with pytest.raises(ValueError, match="deadbeef"):
+        mark_tuned(
+            "toy", "deadbeef", tracking_uri=store.tracking_uri, methods_dir=methods
+        )
+    assert (methods / "toy.yaml").read_text() == before
+
+
+def test_mark_tuned_refuses_a_config_the_yaml_cannot_reproduce(
+    store: Store, methods: Path
+) -> None:
+    cfg = resolved("toy", "lr-hi", methods_dir=methods)
+    del cfg["ent"]  # a tuned block can add or change keys, not delete a base key
+    store.add("toy", cfg, 1.0)
+    before = (methods / "toy.yaml").read_text()
+    with pytest.raises(ValueError, match="reproduce"):
+        mark_tuned(
+            "toy",
+            config_hash(cfg),
+            tracking_uri=store.tracking_uri,
+            methods_dir=methods,
+        )
+    assert (methods / "toy.yaml").read_text() == before
+
+
+# --- CLI -----------------------------------------------------------------------
+
+
+def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "wut_murl_craftax.orchestration.queue", *args],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+        check=False,
+    )
+
+
+def test_dry_run_prints_one_run_name_per_line_and_starts_nothing() -> None:
+    out = run_cli("--phase", "configs/phases/smoke.yaml", "--dry-run")
+    assert out.returncode == 0, out.stderr
+    lines = out.stdout.splitlines()
+    assert len(lines) == 2
+    assert all(re.fullmatch(r"ppo-200k-[0-9a-f]{8}-s0", line) for line in lines)
+
+
+def test_without_dry_run_the_specs_go_to_the_runner_seam() -> None:
+    with pytest.raises(NotImplementedError, match="infrastructure Task 2"):
+        queue.main(["--phase", "configs/phases/smoke.yaml"])
+
+
+def test_cli_selects_by_registry_name_and_by_slug() -> None:
+    args = (
+        "--phase",
+        str(PHASES / "entries.yaml"),
+        "--methods-dir",
+        str(METHODS),
+        "--dry-run",
+    )
+    by_slug = run_cli(*args, "--method", "multi")
+    by_name = run_cli(*args, "--method", "multi-pqn-rnn")
+    assert by_slug.returncode == by_name.returncode == 0
+    assert [ln.split("-1m-")[0] for ln in by_slug.stdout.splitlines()] == [
+        "multi-ppo-rnn",
+        "multi-pqn-rnn",
+    ]
+    assert [ln.split("-1m-")[0] for ln in by_name.stdout.splitlines()] == [
+        "multi-pqn-rnn"
+    ]
+
+
+def test_cli_mark_tuned_needs_no_phase(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        queue, "mark_tuned", lambda slug, h, **_: calls.append((slug, h)) or "DIFF"
+    )
+    queue.main(["--mark-tuned", "ppo", "abcd1234"])
+    assert calls == [("ppo", "abcd1234")]
+    assert "DIFF" in capsys.readouterr().out
+
+
+def test_cli_expand_fine_prints_the_configs_then_the_run_names(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(queue, "coarse_results", lambda slug, **_: stage1(slug, STAGE1))
+    queue.main([
+        "--phase",
+        str(PHASES / "fine.yaml"),
+        "--methods-dir",
+        str(METHODS),
+        "--expand-fine",
+        "toy",
+        "--dry-run",
+    ])
+    lines = capsys.readouterr().out.splitlines()
+    configs = [ln for ln in lines if ln.startswith("#")]
+    names = [ln for ln in lines if not ln.startswith("#")]
+    assert (len(configs), len(names)) == (4, 12)
+    assert json.loads(configs[0].split(" ", 4)[4]) == {"lr": 3.0e-4}
+
+
+# --- shipped configs -----------------------------------------------------------
+
+
+def test_shipped_smoke_phase_expands_to_two_classic_ppo_runs() -> None:
+    specs = expand_phase(REPO / "configs/phases/smoke.yaml")
+    assert [(s.registry_name, s.budget, s.env, s.seed, s.eval_mode) for s in specs] == [
+        ("ppo", "200k", "Craftax-Classic-Symbolic-v1", 0, "final")
+    ] * 2
+    assert [s.config["lr"] for s in specs] == [3.0e-4, 4.0e-4]
+    assert specs[0].steps == 200_000
+    assert load_method("ppo", REPO / "configs/methods").tuned is None
+
+
+def test_shipped_ppo_base_is_the_craftax_1m_table_11() -> None:
+    assert load_method("ppo", REPO / "configs/methods").base == {
+        "env": "Craftax-Symbolic-v1",
+        "envs": 256,
+        "num_steps": 16,
+        "update_epochs": 4,
+        "minibatches": 8,
+        "lr": 3.0e-4,
+        "anneal_lr": True,
+        "gamma": 0.99,
+        "gae_lambda": 0.8,
+        "clip": 0.2,
+        "vf": 0.5,
+        "ent": 0.01,
+        "max_grad_norm": 1.0,
+        "width": 512,
+        "resets": "optimistic",
+        "reset_ratio": 16,
+    }
