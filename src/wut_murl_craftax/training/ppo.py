@@ -248,7 +248,13 @@ def gae(
 def _make_rollout(
     cfg: PPOConfig, net: ActorCritic, env: Any, env_params: Any
 ) -> Callable[..., Any]:
-    """Jitted rollout of ``num_steps`` x ``envs`` with GAE; returns the flat batch."""
+    """Jitted rollout of ``num_steps`` x ``envs`` with GAE; returns the batch.
+
+    The batch stays ``(steps, envs, ...)``, split over the env mesh like the states:
+    flattening it here makes XLA hold the whole batch on every CPU device (8 copies
+    of the 2.2 GB obs at 1024 x 64 Symbolic), so `train_chunk` flattens it on the
+    learner.
+    """
 
     def step(c: tuple[Any, ...], _: None) -> tuple[tuple[Any, ...], dict[str, Any]]:
         params, st, obs, acc, key = c
@@ -276,16 +282,10 @@ def _make_rollout(
         _, st, obs, acc, key = carry
         _, last_v = policy_value(net, params, obs)
         adv = gae(tr["r"], tr["v"], tr["d"], last_v, cfg.gamma, cfg.gae_lambda)
-        flat = {
-            k: tr[k].reshape(cfg.batch, *tr[k].shape[2:])
-            for k in ("obs", "act", "logp", "v")
-        }
-        flat |= {
-            "adv": adv.reshape(cfg.batch),
-            "tgt": (adv + tr["v"]).reshape(cfg.batch),
-        }
+        batch = {k: tr[k] for k in ("obs", "act", "logp", "v")}
+        batch |= {"adv": adv, "tgt": adv + tr["v"]}
         ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
-        return st, obs, acc, key, flat, ep
+        return st, obs, acc, key, batch, ep
 
     return rollout
 
@@ -509,6 +509,12 @@ def init_state(cfg: PPOConfig, key: jax.Array) -> PPOState:
     )
 
 
+def _flatten(batch: Batch, learner: jax.Device) -> Batch:
+    """The ``(steps, envs, ...)`` batch on ``learner`` as the step-major flat one."""
+    put = jax.device_put(batch, learner)
+    return {k: x.reshape(-1, *x.shape[2:]) for k, x in put.items()}
+
+
 def ppo_metrics(losses: jax.Array, advs: jax.Array) -> dict[str, jax.Array]:
     """The ``ppo/*`` metrics of stacked updates: loss summaries, advantage stats, lr."""
     named = {_PPO_NAMES.get(c, c): losses[:, i] for i, c in enumerate(LOSS_COLUMNS)}
@@ -527,8 +533,8 @@ def train_chunk(state: PPOState, n_updates: int) -> tuple[PPOState, "ChunkMetric
     losses, advs, eps = [], [], []
     for _ in range(n_updates):
         params_act = jax.device_put(ts.params, s.shared_at)
-        *carry, flat, ep = s.rollout(params_act, *carry)
-        ts, key, loss, adv = s.learn(ts, jax.device_put(flat, s.learner), key)
+        *carry, batch, ep = s.rollout(params_act, *carry)
+        ts, key, loss, adv = s.learn(ts, _flatten(batch, s.learner), key)
         losses.append(loss)
         advs.append(adv)
         eps.append(ep)
