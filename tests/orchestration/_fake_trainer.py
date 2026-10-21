@@ -14,6 +14,26 @@ STEPS, ENVS, N_ACH = 4, 2, 22
 """Rollout shape of one update; 22 achievements as on Craftax-Classic."""
 STEPS_PER_UPDATE = 333_333
 """A 1m budget is 3 updates by default."""
+N_ACTIONS = 17
+"""Craftax-Classic actions, for the evaluation of the fake policy."""
+
+
+class RandomPolicy:
+    """Uniform random actions, NOOP when greedy; feed-forward (empty carry)."""
+
+    def init_carry(self, n: int) -> tuple[()]:
+        return ()
+
+    def step(
+        self,
+        params: Any,
+        carry: tuple[()],
+        obs: jax.Array,
+        key: jax.Array,
+        greedy: bool | jax.Array,
+    ) -> tuple[jax.Array, tuple[()]]:
+        sampled = jax.random.randint(key, obs.shape[:1], 0, N_ACTIONS)
+        return jnp.where(greedy, 0, sampled), carry
 
 
 class FakeTrainer:
@@ -91,5 +111,5 @@ class FakeTrainer:
     def params(self, state: dict[str, Any]) -> Any:
         return state["params"]
 
-    def policy(self, state: dict[str, Any]) -> None:
-        return None
+    def policy(self, state: dict[str, Any]) -> RandomPolicy:
+        return RandomPolicy()

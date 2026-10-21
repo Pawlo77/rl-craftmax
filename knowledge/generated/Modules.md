@@ -22,7 +22,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 |  |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 869 |  |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 466 |  |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 489 |  |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 141 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 |  |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 225 | [[orchestration]] |

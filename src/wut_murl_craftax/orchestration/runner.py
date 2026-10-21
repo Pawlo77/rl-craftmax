@@ -6,9 +6,11 @@ A run's directory is its MLflow artifact directory: ``config.json``, ``metrics.n
 the phase (tag ``phases``) and gets its missing evaluations; any other run resumes
 from ``state/`` (or restarts in place without it); a new name starts in the phase's
 experiment. SIGINT or SIGTERM end the current chunk, save the state and mark the run
-KILLED. Trainers come from ``training.interface.METHODS``; see `Trainer`.
+KILLED. Trainers come from ``training.interface.METHODS``; see `Trainer`. Evaluation:
+``visualisation.eval_rollouts.evaluate_spec``, imported after ``configure_runtime``.
 """
 
+import functools
 import importlib
 import json
 import logging
@@ -132,7 +134,11 @@ class Trainer(Protocol):
         ...
 
     def policy(self, state: Any) -> Any:
-        """The acting policy (``Policy.init_carry``, ``Policy.step``) for evaluation."""
+        """The acting policy (``Policy.init_carry``, ``Policy.step``) for evaluation.
+
+        Evaluation passes the abstract state of ``jax.eval_shape(init)``: read its
+        structure and static fields only; acting reads values from the params alone.
+        """
         ...
 
 
@@ -141,11 +147,25 @@ Evaluate = Callable[[Path, RunSpec, Callable[[], bool]], None]
 returns early once the third argument, ``should_stop()``, is true (SIGINT, SIGTERM)."""
 
 
-def no_evaluation(
-    run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]
+def evaluate_fixed_seeds(
+    trainers: Mapping[str, Trainer],
+    run_dir: Path,
+    spec: RunSpec,
+    should_stop: Callable[[], bool],
 ) -> None:
-    """Default `Evaluate`: fixed-seed evaluation arrives in infrastructure Task 5."""
-    del run_dir, spec, should_stop
+    """Default `Evaluate` (with ``trainers`` bound): ``eval/<mode>/<update>.npz``.
+
+    Logs ``eval/<mode>/return`` and ``eval/<mode>/score_pct`` (% of the maximum
+    reward) at the checkpoint's env step. The module imports Craftax, which starts
+    the JAX backends, so it is imported here, after ``configure_runtime``.
+    """
+    module = importlib.import_module("..visualisation.eval_rollouts", __package__)
+    for s in module.evaluate_spec(run_dir, spec, should_stop, methods=trainers):
+        metrics = {
+            f"eval/{s.mode}/return": s.ret,
+            f"eval/{s.mode}/score_pct": s.score_pct,
+        }
+        mlflow.log_metrics(metrics, step=s.env_steps)
 
 
 def final_score(update_scores: np.ndarray, episode_counts: np.ndarray) -> float:
@@ -424,7 +444,7 @@ def main(
     experiment_config: Path = EXPERIMENT_CONFIG,
     tracking_uri: str | None = None,
     methods: Mapping[str, Trainer] | None = None,
-    evaluate: Evaluate = no_evaluation,
+    evaluate: Evaluate | None = None,
 ) -> None:
     """Train, evaluate and log this worker's specs, at most ``max_runs`` trained ones.
 
@@ -433,6 +453,7 @@ def main(
     FINISHED do not count towards ``max_runs``. MLflow settings come from
     ``experiment_config``, the experiment name replaced by each spec's phase and the
     tracking URI by ``tracking_uri`` when given (a cluster node's own store).
+    ``evaluate`` defaults to `evaluate_fixed_seeds` with this worker's trainers.
 
     Raises:
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
@@ -446,6 +467,8 @@ def main(
     if missing:
         msg = f"no trainer registered for {missing}"
         raise ValueError(msg)
+    if evaluate is None:
+        evaluate = functools.partial(evaluate_fixed_seeds, trainers)
     for variable in _RUN_ID_VARIABLES:
         if os.environ.pop(variable, None):
             logger.warning("ignoring %s: the runner picks runs by name", variable)

@@ -35,6 +35,7 @@ METHODS = HERE / "fixtures" / "configs" / "methods"
 PROFILE = HERE / "fixtures" / "profiles" / "test.yaml"
 REPO = HERE.parents[1]
 ENV = "Craftax-Classic-Symbolic-v1"
+EVAL_MODULE = "wut_murl_craftax.visualisation.eval_rollouts"
 RUN_FILES = ["ckpt", "config.json", "episodes.npz", "eval", "metrics.npz", "state"]
 
 
@@ -490,12 +491,14 @@ def test_main_configures_the_runtime_once_before_the_trainers(store: Store) -> N
 
 
 def test_main_splits_the_cpu_into_the_profiles_host_devices(store: Store) -> None:
+    """With the real evaluation wired: the runner imports it after configure_runtime."""
     (spec,) = store.phase("tune-coarse", ["published"])
     code = (
         f"import sys; sys.path.insert(0, {str(HERE)!r})\n"
         "from pathlib import Path\n"
         "from _fake_trainer import FakeTrainer\n"
         "from wut_murl_craftax.orchestration import runner\n"
+        f"assert {EVAL_MODULE!r} not in sys.modules\n"
         "from wut_murl_craftax.orchestration.queue import expand_phase\n"
         f"specs = expand_phase(Path({str(store.tmp / 'tune-coarse.yaml')!r}),"
         f" methods_dir=Path({str(METHODS)!r}))\n"
@@ -515,4 +518,16 @@ def test_main_splits_the_cpu_into_the_profiles_host_devices(store: Store) -> Non
     )
     assert out.returncode == 0, out.stderr[-3000:]
     assert out.stdout.split()[-1] == str(load_profile(PROFILE).host_devices)
-    assert store.runs()[spec.name].info.status == "FINISHED"
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    last = load_index(store.run_dir(spec.name))[-1]
+    for mode in ("stochastic", "greedy"):
+        assert (store.run_dir(spec.name) / "eval" / mode / "00003.npz").exists()
+        for name in ("return", "score_pct"):
+            (point,) = store.client.get_metric_history(
+                run.info.run_id, f"eval/{mode}/{name}"
+            )
+            assert point.step == last["env_steps"]
+    ret = store.client.get_metric_history(run.info.run_id, "eval/greedy/return")
+    pct = store.client.get_metric_history(run.info.run_id, "eval/greedy/score_pct")
+    assert pct[0].value == pytest.approx(ret[0].value / 22 * 100)
