@@ -35,7 +35,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 
 import flax.linen as nn
 import jax
@@ -172,8 +172,32 @@ def make_network(
     return ActorCritic(env.action_space(params).n, width), env, params
 
 
+class TrainEnvConfig(Protocol):
+    """What `make_train_env` reads of a trainer config (PPO and PQN configs)."""
+
+    @property
+    def env(self) -> str:
+        """Craftax env name."""
+        ...
+
+    @property
+    def envs(self) -> int:
+        """Parallel envs."""
+        ...
+
+    @property
+    def resets(self) -> str:
+        """One of `RESETS`."""
+        ...
+
+    @property
+    def reset_ratio(self) -> int:
+        """Envs per new world of an optimistic reset."""
+        ...
+
+
 def make_train_env(
-    cfg: PPOConfig, wrap: Callable[[Any, Any], tuple[Any, Any]] | None = None
+    cfg: TrainEnvConfig, wrap: Callable[[Any, Any], tuple[Any, Any]] | None = None
 ) -> tuple[Any, Any]:
     """Batched training env and its params, built as Craftax_Baselines ``ppo.py``.
 
@@ -394,6 +418,29 @@ def env_placement(
         msg = f"{envs} envs do not split over {mesh.devices.size} CPU devices"
         raise ValueError(msg)
     return roles, mesh, NamedSharding(mesh, PartitionSpec())  # type: ignore[no-untyped-call]
+
+
+def place_on_actor(
+    tree: Any,
+    envs: int,
+    actor: jax.Device,
+    mesh: Mesh | None,
+    shared_at: jax.Device | NamedSharding,
+) -> Any:
+    """Place a pytree for the rollout: per-env leaves split over the mesh, if any.
+
+    A leaf is per-env when its leading dim is ``envs``; the others go to
+    ``shared_at`` (replicated over the mesh).
+    """
+    if mesh is None:
+        return jax.device_put(tree, actor)
+    split = NamedSharding(mesh, PartitionSpec("envs"))  # type: ignore[no-untyped-call]
+
+    def put(x: Any) -> Any:
+        per_env = jnp.ndim(x) > 0 and jnp.shape(x)[0] == envs
+        return jax.device_put(x, split if per_env else shared_at)
+
+    return jax.tree.map(put, tree)
 
 
 @functools.cache

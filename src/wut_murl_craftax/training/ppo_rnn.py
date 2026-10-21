@@ -26,7 +26,7 @@ the control's graph stays as it is. `make_trainer` gives the registry's `Trainer
 import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import flax.linen as nn
 import jax
@@ -36,7 +36,7 @@ import optax
 from flax import struct
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.sharding import Mesh, NamedSharding
 
 from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
 from ..orchestration import shard_envs
@@ -55,6 +55,7 @@ from .ppo import (
     gae,
     make_train_env,
     optimizer,
+    place_on_actor,
     ppo_terms,
 )
 from .records import achievement_names
@@ -169,22 +170,40 @@ def apply_network(
     )
 
 
-def minibatches(b: Batch, key: jax.Array, cfg: PPORNNConfig) -> Batch:
+class SeqBatchConfig(Protocol):
+    """What `minibatches` reads of a recurrent trainer config (PPO-RNN, PQN-RNN)."""
+
+    @property
+    def envs(self) -> int:
+        """Parallel envs."""
+        ...
+
+    @property
+    def minibatches(self) -> int:
+        """Minibatches per epoch."""
+        ...
+
+
+def minibatches[B: Mapping[str, Any]](b: B, key: jax.Array, cfg: SeqBatchConfig) -> B:
     """Shuffle the envs and split them into ``minibatches`` groups of whole sequences.
 
     A ``(steps, envs, ...)`` leaf becomes ``(minibatches, steps, envs / mb, ...)``;
-    ``h0``, the ``(envs, hidden)`` start hidden, becomes ``(minibatches, envs / mb,
-    hidden)``.
+    the leaves of ``h0``, the ``(envs, hidden)`` start hidden (an array or a pytree),
+    become ``(minibatches, envs / mb, hidden)``.
     """
     perm = jax.random.permutation(key, cfg.envs)
 
-    def split(name: str, x: jax.Array) -> jax.Array:
-        if name == "h0":
-            return x[perm].reshape(cfg.minibatches, -1, *x.shape[1:])
+    def env_major(x: jax.Array) -> jax.Array:
+        return x[perm].reshape(cfg.minibatches, -1, *x.shape[1:])
+
+    def time_major(x: jax.Array) -> jax.Array:
         x = x[:, perm].reshape(x.shape[0], cfg.minibatches, -1, *x.shape[2:])
         return jnp.swapaxes(x, 0, 1)
 
-    return {name: split(name, x) for name, x in b.items()}
+    split = {
+        n: jax.tree.map(env_major if n == "h0" else time_major, x) for n, x in b.items()
+    }
+    return cast(B, split)
 
 
 def _make_rollout(
@@ -356,16 +375,8 @@ def _setup(cfg: PPORNNConfig) -> _Setup:
 
 
 def _on_actor(tree: Any, s: _Setup, envs: int) -> Any:
-    """Place a pytree for the rollout: per-env leaves split over the mesh, if any."""
-    if s.mesh is None:
-        return jax.device_put(tree, s.actor)
-    split = NamedSharding(s.mesh, PartitionSpec("envs"))  # type: ignore[no-untyped-call]
-
-    def put(x: Any) -> Any:
-        per_env = jnp.ndim(x) > 0 and jnp.shape(x)[0] == envs
-        return jax.device_put(x, split if per_env else s.shared_at)
-
-    return jax.tree.map(put, tree)
+    """`place_on_actor` with this setup's devices."""
+    return place_on_actor(tree, envs, s.actor, s.mesh, s.shared_at)
 
 
 class PPORNNState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API

@@ -1,4 +1,4 @@
-"""Shared fixtures of the training tests: PPO-RNN configs, equality, CPU runs."""
+"""Shared fixtures of the training tests: recurrent configs, equality, CPU runs."""
 
 import os
 import subprocess
@@ -12,9 +12,10 @@ import numpy as np
 import pytest
 
 from wut_murl_craftax.training.ppo_rnn import PPORNNConfig
+from wut_murl_craftax.training.pqn_rnn import PQNRNNConfig
 
 TEST_ENV = os.environ.get("CRAFTAX_TEST_ENV", "Craftax-Classic-Symbolic-v1")
-"""Env of the PPO-RNN tests; Craftax-Symbolic reruns them at the real scale."""
+"""Env of the recurrent tests; Craftax-Symbolic reruns them at the real scale."""
 
 
 @pytest.fixture(scope="session")
@@ -25,6 +26,17 @@ def rnn_cfg() -> Callable[..., PPORNNConfig]:
         base = {"env": TEST_ENV, "envs": 8, "num_steps": 8, "width": 512}
         base |= {"minibatches": 2, "steps": 4 * 8 * 8}
         return PPORNNConfig(**(base | overrides))
+
+    return make
+
+
+@pytest.fixture(scope="session")
+def pqn_cfg() -> Callable[..., PQNRNNConfig]:
+    """Tiny PQN-RNN config (8 envs x 8 steps, the repo widths, 4 updates of budget)."""
+
+    def make(**overrides: Any) -> PQNRNNConfig:
+        base = {"env": TEST_ENV, "envs": 8, "num_steps": 8, "minibatches": 2}
+        return PQNRNNConfig(**(base | {"steps": 4 * 8 * 8} | overrides))
 
     return make
 

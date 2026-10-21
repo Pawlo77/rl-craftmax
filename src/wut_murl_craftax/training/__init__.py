@@ -1,4 +1,4 @@
-"""Training: registry, PPO, PPO-RNN, hooks, checkpoints, resume state, metrics."""
+"""Training: registry, PPO(-RNN), PQN-RNN, hooks, checkpoints, resume state, metrics."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -33,6 +33,14 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         build_network,
         make_trainer,
     )
+    from .pqn_rnn import (
+        PQNRNNConfig,
+        PQNRNNPolicy,
+        PQNRNNTrainer,
+        RNNQNetwork,
+        learn,
+        q_lambda_targets,
+    )
     from .records import (
         Episodes,
         RunLog,
@@ -58,7 +66,11 @@ _EXPORTS: dict[str, str] = {
     "PPORNNConfig": "ppo_rnn",
     "PPORNNPolicy": "ppo_rnn",
     "PPORNNTrainer": "ppo_rnn",
+    "PQNRNNConfig": "pqn_rnn",
+    "PQNRNNPolicy": "pqn_rnn",
+    "PQNRNNTrainer": "pqn_rnn",
     "Policy": "interface",
+    "RNNQNetwork": "pqn_rnn",
     "ResolvedHooks": "hooks",
     "RunLog": "records",
     "TrainingMetrics": "records",
@@ -70,6 +82,7 @@ _EXPORTS: dict[str, str] = {
     "checkpoint_schedule": "checkpoints",
     "config_dict": "hooks",
     "first_unlocks": "records",
+    "learn": "pqn_rnn",
     "load_episodes": "records",
     "load_index": "checkpoints",
     "load_metrics": "records",
@@ -77,6 +90,7 @@ _EXPORTS: dict[str, str] = {
     "load_state": "checkpoints",
     "make_network": "ppo",
     "make_trainer": "ppo_rnn",
+    "q_lambda_targets": "pqn_rnn",
     "resolve": "hooks",
     "save_checkpoint": "checkpoints",
     "save_state": "checkpoints",
@@ -99,7 +113,11 @@ __all__ = [
     "PPORNNPolicy",
     "PPORNNTrainer",
     "PPOTrainer",
+    "PQNRNNConfig",
+    "PQNRNNPolicy",
+    "PQNRNNTrainer",
     "Policy",
+    "RNNQNetwork",
     "ResolvedHooks",
     "RunLog",
     "TrainingMetrics",
@@ -111,6 +129,7 @@ __all__ = [
     "checkpoint_schedule",
     "config_dict",
     "first_unlocks",
+    "learn",
     "load_episodes",
     "load_index",
     "load_metrics",
@@ -118,6 +137,7 @@ __all__ = [
     "load_state",
     "make_network",
     "make_trainer",
+    "q_lambda_targets",
     "resolve",
     "save_checkpoint",
     "save_state",
