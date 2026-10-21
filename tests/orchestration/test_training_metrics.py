@@ -320,3 +320,36 @@ def test_a_real_runs_wall_clock_covers_its_training(
     store, spec, _ = tiny
     wall = load_metrics(store.run_dir(spec.name)).col("wall_s")[-1]
     assert 0.99 * store.busy <= wall <= store.elapsed
+
+
+# --- a tiny Classic run through the runner and METHODS["pqn-rnn"] -------------------
+
+PQN_TINY = {"method": "pqn-rnn", "env": CLASSIC, "envs": 16, "num_steps": 8}
+PQN_TINY |= {"hidden": 16, "minibatches": 2, "epochs": 1}
+
+
+def test_a_pqn_rnn_run_logs_only_the_loss_columns_it_fills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The TD loss (``value_loss``) and ``grad_norm`` are logged and finite; the
+    PPO-only columns, NaN in ``metrics.npz``, are neither logged nor abort-checked."""
+    store = Store(tmp_path, monkeypatch)
+    spec = RunSpec(
+        "pqn-rnn", "tiny", BUDGET, CLASSIC, 0, PQN_TINY, queue.config_hash(PQN_TINY),
+        "smoke", "final",
+    )  # fmt: skip
+    runner.main(
+        [spec], PROFILE, experiment_config=store.config, evaluate=store.evaluate
+    )
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    assert not any(k.startswith("abort/") for k in run.data.tags)
+    filled = set(METHODS["pqn-rnn"].loss_columns)  # type: ignore[attr-defined]
+    assert filled == {"value_loss", "grad_norm"}
+    logged = {k for k in run.data.metrics if k[len("train/") :] in LOSS_COLUMNS}
+    assert logged == {f"train/{c}" for c in filled}
+    for key in logged:
+        assert all(math.isfinite(m.value) for m in _history(store, run, key))
+    m = load_metrics(store.run_dir(spec.name))
+    assert np.isnan(m.col("policy_loss")).all()  # the npz keeps the full layout
+    assert np.isfinite(m.col("value_loss")).all()

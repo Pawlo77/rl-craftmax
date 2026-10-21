@@ -24,7 +24,7 @@ import dataclasses
 import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 
 import flax.linen as nn
 import jax
@@ -63,6 +63,8 @@ NO_ACTION = -1
 """Last action at an episode start: its one-hot input is all zeros."""
 LR_END = 1e-20
 """Learning rate at the end of the linear decay, as the original."""
+FILLED_LOSS_COLUMNS = ("value_loss", "grad_norm")
+"""`LOSS_COLUMNS` an update fills: the TD loss and the gradient norm; others NaN."""
 _LEARNER_HOOKS = {"observe", "extra_loss_fn", "metrics_fn"}
 """Hooks that read the method state on the learner, so it moves there each update."""
 _CLI_ONLY = {"seed"}
@@ -800,7 +802,8 @@ def _update(
     """Learner side of one update: ``observe``, `learn`, extra steps, method metrics.
 
     The losses come in ``records.LOSS_COLUMNS`` order: the TD loss as
-    ``value_loss``, ``grad_norm`` (before clipping); PPO-only columns are NaN.
+    ``value_loss``, ``grad_norm`` (before clipping); the PPO-only columns are NaN,
+    and `PQNRNNTrainer.loss_columns` keeps them out of logging and abort checks.
     """
     key, k_learn, k_extra = jax.random.split(state.key, 3)
     ms = state.method_state
@@ -817,7 +820,7 @@ def _update(
     state = state.replace(
         train_state=ts, method_state=ms, key=key, updates=updates, eps=eps
     )
-    cols = {"value_loss": m["td_loss"], "grad_norm": m["grad_norm"]}
+    cols = dict(zip(FILLED_LOSS_COLUMNS, (m["td_loss"], m["grad_norm"]), strict=True))
     nan = jnp.full((), jnp.nan, jnp.float32)
     return state, jnp.stack([cols.get(c, nan) for c in LOSS_COLUMNS]), method
 
@@ -897,6 +900,8 @@ class PQNRNNTrainer:
     """
 
     cfg: PQNRNNConfig
+    loss_columns: ClassVar[tuple[str, ...]] = FILLED_LOSS_COLUMNS
+    """The runner logs and abort-checks only these (the others are NaN)."""
 
     def config(self, config: Mapping[str, Any]) -> PQNRNNConfig:
         """The factory config with the run config's keys on top."""
