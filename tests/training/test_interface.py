@@ -39,7 +39,7 @@ trainer = METHODS["ppo"]
 state = trainer.init(cfg, jax.random.key(0))
 
 def sharded(s):
-    leaves = jax.tree.leaves((s.env_state, s.obs, s.ep_ret, s.ep_len))
+    leaves = jax.tree.leaves((s.env_state, s.obs, s.episode))
     return all(
         len(x.sharding.device_set) == 2 and x.sharding.spec[0] == "envs"
         for x in leaves

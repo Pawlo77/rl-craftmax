@@ -127,7 +127,10 @@ class MlflowRunTracker:
                 resume_run_id = self.run_id or env_run_id
                 if not (resume_run_id and self._resume(mlflow, resume_run_id)):
                     _use_experiment(mlflow, tracking_uri, self.tracking.experiment_name)
-                    mlflow.start_run(run_name=self.run_name or self.tracking.run_name)
+                    mlflow.start_run(
+                        run_name=self.run_name or self.tracking.run_name,
+                        log_system_metrics=self.tracking.log_system_metrics,
+                    )
 
             self._mlflow = mlflow
             self._run_active = True
@@ -154,7 +157,9 @@ class MlflowRunTracker:
         try:
             experiment_id = mlflow.get_run(run_id).info.experiment_id
             mlflow.set_experiment(experiment_id=experiment_id)
-            mlflow.start_run(run_id=run_id)
+            mlflow.start_run(
+                run_id=run_id, log_system_metrics=self.tracking.log_system_metrics
+            )
         except Exception as e:
             if self.strict:
                 msg = f"cannot reopen MLflow run {self.run_name} ({run_id}): {e}"

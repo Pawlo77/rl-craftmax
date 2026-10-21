@@ -13,23 +13,25 @@ parent: "[[wut_murl_craftax]]"
 | Module | Summary | Lines | Architecture note |
 |---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. | 3 |  |
-| [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 147 |  |
-| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables and the per-step events every metric reads. | 78 |  |
+| [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 149 |  |
+| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables and the per-step events every metric reads. | 104 |  |
+| [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online score and achievement metrics of training episodes, read from step events. | 126 |  |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. | 394 |  |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. | 145 |  |
-| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 104 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 111 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 |  |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 869 |  |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 436 |  |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 453 |  |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 141 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 |  |
-| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 220 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 225 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 159 |  |
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: method registry, PPO, checkpoints, resume state, metrics, episodes. | 85 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 36 |  |
-| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 582 | [[training]] |
-| [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 188 | [[training]] |
+| [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 571 | [[training]] |
+| [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 187 | [[training]] |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. | 237 |  |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. | 100 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |
@@ -52,11 +54,13 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/__init__.py]]
 - [[src/wut_murl_craftax/config.py]]
 - [[src/wut_murl_craftax/evaluation/__init__.py]]
+- [[src/wut_murl_craftax/evaluation/episode_metrics.py]]
 - [[src/wut_murl_craftax/evaluation/events.py]]
 - [[src/wut_murl_craftax/evaluation/milestones.py]]
 - [[src/wut_murl_craftax/orchestration/profiles.py]]
 - [[src/wut_murl_craftax/orchestration/queue.py]]
 - [[src/wut_murl_craftax/orchestration/runner.py]]
 - [[src/wut_murl_craftax/orchestration/store.py]]
+- [[src/wut_murl_craftax/orchestration/train_metrics.py]]
 - [[src/wut_murl_craftax/training/interface.py]]
 - [[src/wut_murl_craftax/training/wrappers.py]]

@@ -29,6 +29,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     )
     from .store import merge_stores, phase_status
     from .tracking import MlflowRunTracker, build_mlflow_tracker
+    from .train_metrics import log_every, log_points, metric_points
 
 _EXPORTS: dict[str, str] = {
     "ChunkMetrics": "runner",
@@ -51,8 +52,11 @@ _EXPORTS: dict[str, str] = {
     "final_score": "runner",
     "load_method": "queue",
     "load_profile": "profiles",
+    "log_every": "train_metrics",
+    "log_points": "train_metrics",
     "mark_tuned": "queue",
     "merge_stores": "store",
+    "metric_points": "train_metrics",
     "phase_status": "store",
     "resolve_config": "queue",
     "select_platforms": "runtime",
@@ -84,8 +88,11 @@ __all__ = [
     "final_score",
     "load_method",
     "load_profile",
+    "log_every",
+    "log_points",
     "mark_tuned",
     "merge_stores",
+    "metric_points",
     "phase_status",
     "resolve_config",
     "select_platforms",

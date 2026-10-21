@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 
+from ..evaluation.episode_metrics import update_summary
 from ..evaluation.milestones import achievement_names as _names
 from ..evaluation.milestones import constants, game_of
 
@@ -72,29 +73,27 @@ class RunLog:
     ) -> None:
         """Record one update from its ``(steps, envs)`` rollout arrays.
 
-        ``ach`` holds the achievement flags of every step; only steps with ``done``
-        count, since Craftax reports achievements on the final step only.
+        ``ret``, ``length`` and ``ach`` hold the running episode at every step; only
+        steps with ``done`` count, where they are the finished episode.
         """
         d = done.astype(bool)
-        n_ep = int(d.sum())
         got = ach[d]
+        s = update_summary(d, ret, length, ach)
         self.episodes.append({
-            "update": np.full(n_ep, update, np.int32),
+            "update": np.full(s.n_episodes, update, np.int32),
             "ret": ret[d].astype(np.float32),
             "length": length[d].astype(np.int32),
             "ach": np.packbits(got, axis=-1),
         })
-        nan = float("nan")
-        rates = got.mean(0) * 100 if n_ep else np.full(len(self.names), nan)
         self.rows.append([
             update,
             env_steps,
             wall_s,
-            n_ep,
-            float(ret[d].mean()) if n_ep else nan,
-            float(length[d].mean()) if n_ep else nan,
+            s.n_episodes,
+            s.ret,
+            s.length,
             *losses.tolist(),
-            *rates.tolist(),
+            *s.success.tolist(),
         ])
 
     def flush(self) -> None:

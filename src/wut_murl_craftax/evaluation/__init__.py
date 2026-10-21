@@ -4,6 +4,16 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .episode_metrics import (
+        EpisodeAcc,
+        UpdateSummary,
+        episode_step,
+        events_of,
+        first_unlock_offsets,
+        init_acc,
+        score_pct,
+        update_summary,
+    )
     from .events import (
         DAMAGE_SOURCES,
         LAVA,
@@ -31,6 +41,7 @@ _EXPORTS: dict[str, str] = {
     "CREATURES": "milestones",
     "CREATURE_OFFSET": "milestones",
     "DAMAGE_SOURCES": "events",
+    "EpisodeAcc": "episode_metrics",
     "FLOORS": "milestones",
     "Game": "milestones",
     "HOSTILE_CLASSES": "milestones",
@@ -40,10 +51,17 @@ _EXPORTS: dict[str, str] = {
     "StepEvents": "events",
     "TECH_LADDER": "milestones",
     "UNKNOWN": "events",
+    "UpdateSummary": "episode_metrics",
     "achievement_names": "milestones",
+    "episode_step": "episode_metrics",
+    "events_of": "episode_metrics",
+    "first_unlock_offsets": "episode_metrics",
     "game_of": "milestones",
+    "init_acc": "episode_metrics",
     "ladder": "milestones",
+    "score_pct": "episode_metrics",
     "step_events": "events",
+    "update_summary": "episode_metrics",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -60,12 +78,20 @@ __all__ = [
     "RADAR_AXES",
     "TECH_LADDER",
     "UNKNOWN",
+    "EpisodeAcc",
     "Game",
     "StepEvents",
+    "UpdateSummary",
     "achievement_names",
+    "episode_step",
+    "events_of",
+    "first_unlock_offsets",
     "game_of",
+    "init_acc",
     "ladder",
+    "score_pct",
     "step_events",
+    "update_summary",
 ]
 
 

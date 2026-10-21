@@ -64,6 +64,8 @@ class MLflowTrackingConfig:
     """Log metrics to MLflow."""
     log_artifacts: bool = True
     """Log artifacts to MLflow."""
+    log_system_metrics: bool = False
+    """Sample CPU, memory and GPU use into ``system/*`` metrics (every 10 s)."""
     retain_local_checkpoints: bool = False
     """Keep local checkpoint files after they are uploaded to MLflow artifacts."""
 

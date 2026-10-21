@@ -48,6 +48,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
 from ..orchestration import configure_runtime, device_roles, env_mesh, shard_envs
 from .checkpoints import checkpoint_schedule, save_checkpoint
 from .records import RunLog, achievement_names
@@ -199,37 +200,34 @@ def gae(
 
 
 def _make_rollout(
-    cfg: PPOConfig, net: ActorCritic, env: Any, env_params: Any, names: list[str]
+    cfg: PPOConfig, net: ActorCritic, env: Any, env_params: Any
 ) -> Callable[..., Any]:
     """Jitted rollout of ``num_steps`` x ``envs`` with GAE; returns the flat batch."""
 
     def step(c: tuple[Any, ...], _: None) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        params, st, obs, ep_ret, ep_len, key = c
+        params, st, obs, acc, key = c
         key, k_a, k_s = jax.random.split(key, 3)
         logits, v = policy_value(net, params, obs)
         act = jax.random.categorical(k_a, logits)
         logp = jax.nn.log_softmax(logits)[jnp.arange(cfg.envs), act]
         obs2, st2, r, d, info = env.step(k_s, st, act, env_params)
-        # Craftax reports 100 * achieved, and only on the done step.
-        ach = jnp.stack([info[f"Achievements/{n}"] for n in names], -1) > 0
-        ep_ret2, ep_len2 = ep_ret + r, ep_len + 1
+        # the events come from the pre-reset state, so a done step keeps its unlocks
+        acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
         rec = {"obs": obs, "act": act, "logp": logp, "v": v, "r": r, "d": d}
-        rec |= {"ach": ach, "ret": ep_ret2, "len": ep_len2}
-        carry = (params, st2, obs2, ep_ret2 * (1 - d), ep_len2 * (1 - d), key)
-        return carry, rec
+        rec |= {"ach": total.ach, "ret": total.ret, "len": total.length}
+        return (params, st2, obs2, acc2, key), rec
 
     @jax.jit
     def rollout(
         params: Any,
         st: Any,
         obs: jax.Array,
-        ep_ret: jax.Array,
-        ep_len: jax.Array,
+        acc: EpisodeAcc,
         key: jax.Array,
     ) -> Any:
-        carry = (params, st, obs, ep_ret, ep_len, key)
+        carry = (params, st, obs, acc, key)
         carry, tr = jax.lax.scan(step, carry, None, cfg.num_steps)
-        _, st, obs, ep_ret, ep_len, key = carry
+        _, st, obs, acc, key = carry
         _, last_v = policy_value(net, params, obs)
         adv = gae(tr["r"], tr["v"], tr["d"], last_v, cfg.gamma, cfg.gae_lambda)
         flat = {
@@ -241,7 +239,7 @@ def _make_rollout(
             "tgt": (adv + tr["v"]).reshape(cfg.batch),
         }
         ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
-        return st, obs, ep_ret, ep_len, key, flat, ep
+        return st, obs, acc, key, flat, ep
 
     return rollout
 
@@ -359,7 +357,6 @@ def _setup(cfg: PPOConfig) -> _Setup:
     roles = device_roles()
     env, env_params = make_train_env(cfg)
     net = ActorCritic(env.action_space(env_params).n, cfg.width)
-    names = achievement_names(cfg.env)
     mesh: Mesh | None = None
     shared_at: jax.Device | NamedSharding = roles.actor
     if roles.actor.platform == "cpu" and len(jax.devices("cpu")) > 1:
@@ -373,7 +370,7 @@ def _setup(cfg: PPOConfig) -> _Setup:
         env,
         env_params,
         _optimizer(cfg),
-        _make_rollout(cfg, net, env, env_params, names),
+        _make_rollout(cfg, net, env, env_params),
         _make_learn(cfg, net),
         roles.learner,
         roles.actor,
@@ -388,9 +385,8 @@ class PPOState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     train_state: TrainState
     env_state: Any
     obs: jax.Array
-    ep_ret: jax.Array
-    """Return of each env's running episode."""
-    ep_len: jax.Array
+    episode: EpisodeAcc
+    """Return, length and achievements of each env's running episode."""
     key: jax.Array
     """Learner key (minibatch shuffles)."""
     key_act: jax.Array
@@ -411,15 +407,14 @@ def init_state(cfg: PPOConfig, key: jax.Array) -> PPOState:
         ts = ts.replace(step=jnp.zeros((), jnp.int32))
     with jax.default_device(s.actor):
         obs, st = s.env.reset(k_reset, s.env_params)
-        ep_ret, ep_len = jnp.zeros(cfg.envs), jnp.zeros(cfg.envs, jnp.int32)
+        episode = init_acc(cfg.envs, len(achievement_names(cfg.env)))
     if s.mesh is not None:
-        obs, st, ep_ret, ep_len = shard_envs((obs, st, ep_ret, ep_len), s.mesh)
+        obs, st, episode = shard_envs((obs, st, episode), s.mesh)
     return PPOState(
         train_state=cast(TrainState, ts),
         env_state=st,
         obs=obs,
-        ep_ret=ep_ret,
-        ep_len=ep_len,
+        episode=episode,
         key=jax.device_put(key, s.learner),
         key_act=jax.device_put(jax.random.fold_in(key, 1), s.shared_at),
         cfg=cfg,
@@ -430,7 +425,7 @@ def train_chunk(state: PPOState, n_updates: int) -> tuple[PPOState, "ChunkMetric
     """Run ``n_updates`` rollout-and-update steps; metrics stacked per update."""
     s = _setup(state.cfg)
     ts, key = state.train_state, state.key
-    carry = (state.env_state, state.obs, state.ep_ret, state.ep_len, state.key_act)
+    carry = (state.env_state, state.obs, state.episode, state.key_act)
     losses, eps = [], []
     for _ in range(n_updates):
         params_act = jax.device_put(ts.params, s.shared_at)
@@ -438,15 +433,9 @@ def train_chunk(state: PPOState, n_updates: int) -> tuple[PPOState, "ChunkMetric
         ts, key, loss = s.learn(ts, jax.device_put(flat, s.learner), key)
         losses.append(loss)
         eps.append(ep)
-    st, obs, ep_ret, ep_len, key_act = carry
+    st, obs, episode, key_act = carry
     new = state.replace(
-        train_state=ts,
-        env_state=st,
-        obs=obs,
-        ep_ret=ep_ret,
-        ep_len=ep_len,
-        key=key,
-        key_act=key_act,
+        train_state=ts, env_state=st, obs=obs, episode=episode, key=key, key_act=key_act
     )
     metrics: ChunkMetrics = {
         "losses": jnp.stack(losses),

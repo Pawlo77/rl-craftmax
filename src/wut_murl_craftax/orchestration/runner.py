@@ -28,6 +28,7 @@ import mlflow
 import numpy as np
 
 from ..config import ExperimentConfig, load_experiment_config
+from ..evaluation.episode_metrics import score_pct
 from ..training.checkpoints import (
     STATE_FILE,
     checkpoint_schedule,
@@ -55,8 +56,16 @@ from .queue import (
     TAG_SEED,
     RunSpec,
 )
-from .runtime import configure_runtime, select_platforms
+from .runtime import DeviceRoles, configure_runtime, device_roles, select_platforms
 from .tracking import _resolve_tracking_uri, build_mlflow_tracker
+from .train_metrics import (
+    compile_seconds,
+    log_every,
+    log_peak_memory,
+    log_points,
+    metric_points,
+    run_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +75,6 @@ MIN_FINAL_EPISODES = 100
 """Episodes the final-score window is widened backwards to."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
 """Environment variables that make MLflow or the tracker reopen a given run."""
-_TRAIN_COLUMNS = [c for c in (*BASE_COLUMNS, *LOSS_COLUMNS) if c != "update"]
 
 
 class ChunkMetrics(TypedDict):
@@ -270,21 +278,19 @@ def _add_updates(
         )
 
 
-def _log_rows(rows: list[list[float]]) -> None:
-    """Per-update training metrics to MLflow, at their env step."""
-    for row in rows:
-        values = dict(zip((*BASE_COLUMNS, *LOSS_COLUMNS), row, strict=False))
-        step = int(values["env_steps"])
-        mlflow.log_metrics({f"train/{c}": values[c] for c in _TRAIN_COLUMNS}, step=step)
-
-
 def _train(
-    trainer: Trainer, spec: RunSpec, out: Path, profile: Profile, stop: _Stop
+    trainer: Trainer,
+    spec: RunSpec,
+    out: Path,
+    profile: Profile,
+    roles: DeviceRoles,
+    stop: _Stop,
 ) -> RunLog | None:
     """Train from ``state/`` or from scratch; the log at the budget, None on a signal.
 
     Every chunk ends at a log-spaced checkpoint, a multiple of ``checkpoint_every``
     or the budget, and is followed by a state save, so chunks are the same on resume.
+    MLflow gets windows of `log_every` updates (`train_metrics`).
     """
     spu = trainer.steps_per_update(spec.config)
     n_updates = spec.steps // spu
@@ -304,18 +310,27 @@ def _train(
     if 0 not in written:
         save_checkpoint(out, 0, 0, 0.0, trainer.params(state))
     t0 = time.monotonic() - saved["wall_s"]
+    every, max_reward = log_every(n_updates), float(achievement_weights(spec.env).sum())
+    chunks: list[tuple[int, float]] = []
     while update < n_updates and stop.signum is None:
         n = _chunk_size(update, n_updates, ckpts, profile.checkpoint_every)
         start = time.monotonic() - t0
         state, metrics = trainer.train_chunk(state, n)
         wall = time.monotonic() - t0
+        chunks.append((n, wall - start))
         _add_updates(log, update, spu, np.linspace(start, wall, n + 1)[1:], metrics)
         update += n
         if update in ckpts and update not in written:
             save_checkpoint(out, update, update * spu, wall, trainer.params(state))
         save_state(out, _snapshot(fresh, state, update, wall, log))
         log.flush()
-        _log_rows(log.rows[update - n :])
+        points = metric_points(
+            log.rows, log.names, update - n, update, every, n_updates, max_reward
+        )
+        log_points(points)
+        log_peak_memory(roles, update * spu)
+    if (compile_s := compile_seconds(chunks)) is not None:
+        mlflow.log_metric("compile_s", compile_s, step=update * spu)
     return log if update == n_updates else None
 
 
@@ -323,7 +338,7 @@ def _log_final_score(log: RunLog, env: str) -> None:
     """Log `final_score` of the per-update returns as % of the maximum reward."""
     rows = np.array(log.rows)
     cols = list(BASE_COLUMNS)
-    scores = rows[:, cols.index("return")] / achievement_weights(env).sum() * 100
+    scores = score_pct(rows[:, cols.index("return")], achievement_weights(env).sum())
     score = final_score(scores, rows[:, cols.index("n_episodes")])
     mlflow.log_metric(SCORE_METRIC, score)
 
@@ -363,8 +378,10 @@ def _run_spec(
     trains = found is None or found.info.status != "FINISHED"
     try:
         if trains:
+            roles = device_roles()
+            mlflow.set_tags(run_tags(roles))  # where it trains now, not where it began
             (out / CONFIG_ARTIFACT).write_text(json.dumps(spec.config, indent=1))
-            log = _train(trainer, spec, out, profile, stop)
+            log = _train(trainer, spec, out, profile, roles, stop)
             if log is None or stop.signum is not None:
                 tracker.close("KILLED")  # the next call logs the score and evaluates
                 return True
