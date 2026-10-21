@@ -123,7 +123,8 @@ def test_published_1m_runs_ten_seeds_and_smoke_keeps_one(tmp_path: Path) -> None
     )
     specs = expand_phase(phase, methods_dir=METHODS)
     assert len(specs) == 6 * 3 + 10
-    smoke = expand_phase(REPO / "configs/phases/smoke.yaml", methods_dir=METHODS)
+    smoke_phase = REPO / "configs/phases/smoke.yaml"
+    smoke = expand_phase(smoke_phase, method="ppo", methods_dir=METHODS)
     assert len(smoke) == 2
 
 

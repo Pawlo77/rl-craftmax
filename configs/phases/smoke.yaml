@@ -1,6 +1,7 @@
-# Smoke test: PPO on Craftax-Classic, two configs, one seed, 200k steps.
+# Smoke test: each control on Craftax-Classic, two configs, one seed, 200k steps.
 budget: 200k
 eval: final
 env: Craftax-Classic-Symbolic-v1
 runs:
   ppo: {configs: [published-1m, lr-4e-4], seeds: 1}
+  ppo-rnn: {configs: [published-1m, activation-tanh], seeds: 1}

@@ -33,6 +33,8 @@ Status: ready
 | PPO compile, Classic, fresh process | 6.3 to 7.5 s (the runner's `compile_s` reads 3.2 to 3.5 s in `smoke`: the second run reused the first run's jit cache and the resumed run measured only its last segment); the 1-minute convention below is the Symbolic estimate | measured 2026-10-21, Classic, laptop |
 | PPO end to end, Classic, 200k steps | 8,200 and 9,300 steps/s (train wall-clock with compile and state saves, no eval) | measured 2026-10-21, Classic, laptop |
 | Step events (`info["events"]`) in the PPO step | not measurable: 15,300 steps/s with them against 15,200 with them replaced by zeros (6 and 7 alternating runs, noise 5%); compile +0.7 s | measured 2026-10-21, Classic, laptop |
+| PPO-RNN on Craftax-Classic-Symbolic, `published-1m` shape (256 envs x 16 steps), CPU actor on 8 shards + Metal learner, training only (compile excluded) | 6,400 steps/s in the runner (median of `train/sps`: 6,399 and 6,310 over the 2 `smoke` runs), 0.45 x PPO's 14,000 | measured 2026-10-21, Classic, laptop, while the PPO `tune-coarse` queue shared the CPU (a lower bound) |
+| PPO-RNN end to end, Classic, 200k steps (196,608 steps) | 5,270 steps/s (37.3 s train wall-clock with compile and state saves, no eval); compile 3.1 and 3.4 s (`compile_s`, warm jit cache) | measured 2026-10-21, Classic, laptop, shared CPU as above |
 | PPO-RNN and PQN-RNN planning value | 2,400 steps/s (0.8 x PPO) | estimate |
 | CPU rollouts with metal updates | +4-5% end to end for a 256-wide MLP | measured |
 | Authors' RTX 4090, PPO 1B | about 1 hour (266,961 steps/s end to end) | [[Craftax performance]] |

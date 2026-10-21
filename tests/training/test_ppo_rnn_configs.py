@@ -122,3 +122,14 @@ def test_coarse_phase_plans_31_runs(tmp_path: Path) -> None:
     specs = expand_phase(phase, methods_dir=METHODS)
     assert len(specs) == 7 * 3 + 10
     assert len({config_hash(s.config) for s in specs}) == 8
+
+
+def test_smoke_runs_published_and_tanh_on_classic_with_one_seed() -> None:
+    smoke = REPO / "configs" / "phases" / "smoke.yaml"
+    specs = expand_phase(smoke, method="ppo-rnn", methods_dir=METHODS)
+    assert [(s.config_slug, s.seed, s.budget) for s in specs] == [
+        ("ppo-rnn", 0, "200k")
+    ] * 2
+    assert {s.env for s in specs} == {"Craftax-Classic-Symbolic-v1"}
+    assert [s.config["activation"] for s in specs] == ["relu", "tanh"]
+    assert len({s.config_hash for s in specs}) == 2
