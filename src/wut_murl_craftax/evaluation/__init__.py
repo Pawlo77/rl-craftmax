@@ -1,4 +1,4 @@
-"""Evaluation and metrics: game tables and the per-step events every metric reads."""
+"""Evaluation and metrics: game tables, per-step events and the reproduction check."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         game_of,
         ladder,
     )
+    from .reproduction import Reproduction, band
 
 _EXPORTS: dict[str, str] = {
     "ADVANCED_ACTIONS": "milestones",
@@ -48,11 +49,13 @@ _EXPORTS: dict[str, str] = {
     "LAVA": "events",
     "NO_SOURCE": "events",
     "RADAR_AXES": "milestones",
+    "Reproduction": "reproduction",
     "StepEvents": "events",
     "TECH_LADDER": "milestones",
     "UNKNOWN": "events",
     "UpdateSummary": "episode_metrics",
     "achievement_names": "milestones",
+    "band": "reproduction",
     "episode_step": "episode_metrics",
     "events_of": "episode_metrics",
     "first_unlock_offsets": "episode_metrics",
@@ -80,9 +83,11 @@ __all__ = [
     "UNKNOWN",
     "EpisodeAcc",
     "Game",
+    "Reproduction",
     "StepEvents",
     "UpdateSummary",
     "achievement_names",
+    "band",
     "episode_step",
     "events_of",
     "first_unlock_offsets",

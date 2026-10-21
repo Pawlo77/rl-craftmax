@@ -14,10 +14,11 @@ parent: "[[wut_murl_craftax]]"
 |---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. | 3 |  |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 149 |  |
-| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables and the per-step events every metric reads. | 104 |  |
+| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, per-step events and the reproduction check. | 109 |  |
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online score and achievement metrics of training episodes, read from step events. | 127 |  |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. | 394 |  |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. | 145 |  |
+| [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? | 192 |  |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 111 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 |  |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 869 |  |
@@ -59,6 +60,7 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/evaluation/episode_metrics.py]]
 - [[src/wut_murl_craftax/evaluation/events.py]]
 - [[src/wut_murl_craftax/evaluation/milestones.py]]
+- [[src/wut_murl_craftax/evaluation/reproduction.py]]
 - [[src/wut_murl_craftax/orchestration/profiles.py]]
 - [[src/wut_murl_craftax/orchestration/queue.py]]
 - [[src/wut_murl_craftax/orchestration/runner.py]]
