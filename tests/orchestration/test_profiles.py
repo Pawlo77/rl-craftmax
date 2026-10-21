@@ -185,12 +185,18 @@ else:
 def test_the_runner_picks_the_platform_before_it_splits_the_cpu(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Where runs train (each child, `_set_up_jax`): platforms, CPU split, Craftax,
+    then the registry; the queue parent itself starts no JAX backend."""
     calls: list[tuple[str, object]] = []
     monkeypatch.setattr(
         runner, "select_platforms", lambda mode: calls.append(("platforms", mode))
     )
     monkeypatch.setattr(
         runner, "configure_runtime", lambda **kw: calls.append(("runtime", kw))
+    )
+    monkeypatch.setattr(runner, "import_craftax", lambda: calls.append(("craftax", 0)))
+    monkeypatch.setattr(
+        runner, "_imported", lambda ref: calls.append(("registry", ref)) or {}
     )
     experiment = tmp_path / "experiment.yaml"
     experiment.write_text(
@@ -203,9 +209,13 @@ def test_the_runner_picks_the_platform_before_it_splits_the_cpu(
         })
     )
     runner.main([], PROFILES / "laptop.yaml", experiment_config=experiment)
+    assert calls == []  # the parent: no runs here, children set JAX up
+    runner._set_up_jax(load_profile(PROFILES / "laptop.yaml"), runner.REGISTRY, None)
     assert calls == [
         ("platforms", "cpu-actor"),
         ("runtime", {"host_devices": 8}),
+        ("craftax", 0),
+        ("registry", runner.REGISTRY),
     ]
 
 
