@@ -5,19 +5,22 @@ the window of the last ``window`` steps ending at each new unlock
 (``traj.events.unlocked``: privileged, it only picks the data and its slot) into that
 achievement's FIFO slot, with returns cut at the unlock, then writes the rollout into
 the staging ring. Observations are kept as a ``uint8`` map and a ``float32`` tail
-(`compress_obs`). `buffer_bytes` and `check_memory` size the state without building
-it. Design: [[Self-Imitation Learning design]].
+(`compress_obs`). `extra_loss` (``extra_loss_fn``, bound to the network) samples
+windows (`sample`), replays them from their stored GRU state and imitates the actions
+whose return beat the critic. `buffer_bytes` and `check_memory` size the state without
+building it. Design: [[Self-Imitation Learning design]].
 """
 
 import functools
 from dataclasses import dataclass
-from typing import Literal, NamedTuple, get_args
+from typing import Any, Literal, NamedTuple, get_args
 
 import jax
 import jax.numpy as jnp
 from flax import struct
 
 from .hooks import HookSpec, Traj
+from .ppo_rnn import ActorCriticRNN, apply_network
 
 type Layout = Literal["slots", "single"]
 """One FIFO slot per achievement, or one shared FIFO of the same capacity (ablation)."""
@@ -26,6 +29,8 @@ MAP_DIMS: dict[int, int] = {8268: 8217, 1345: 1323}
 each observation, by observation length: Craftax 9 x 11 x 83, Classic 7 x 9 x 21."""
 CRAFTAX_OBS_DIM = 8268
 """Craftax-Symbolic observation length, the default of `buffer_bytes`."""
+PRIORITY_EPS = 0.01
+"""Added to a window's mean ``(R - V)_+``, so a caught-up window can still be drawn."""
 STEP_KEYS = ("map", "tail", "act", "rew", "done")
 """Per-step arrays of the staging ring and the buffer (plus ``hidden``, ``ret``,
 ``mask``)."""
@@ -316,3 +321,117 @@ def observe(state: SILState, traj: Traj) -> SILState:
         inserted=n,
         overflow=total - n,
     )
+
+
+def sample_rows(state: SILState, key: jax.Array, n: int) -> jax.Array:
+    """Rows of ``n`` draws: a non-empty slot uniformly, then a window by ``prio^alpha``.
+
+    An empty buffer draws row 0, whose mask is all false.
+    """
+    size = state.slot_size
+    n_rows = state.buffer["stamp"].shape[0]
+    real = n_rows - n_rows % size  # the unused row of `init`, if any, is no slot
+    full = (state.buffer["stamp"][:real] >= 0).reshape(-1, size)
+    prio = state.buffer["prio"][:real].reshape(-1, size)
+    k_slot, k_win = jax.random.split(key)
+    slot_logits = jnp.where(full.any(1), 0.0, -jnp.inf)
+    slot = jax.random.categorical(k_slot, slot_logits, shape=(n,))
+    logits = jnp.where(
+        full, state.cfg.alpha * jnp.log(jnp.where(full, prio, 1.0)), -jnp.inf
+    )
+    return slot * size + jax.random.categorical(k_win, logits[slot])
+
+
+def sample(state: SILState, key: jax.Array) -> dict[str, jax.Array]:
+    """``batch`` windows, time-major ``(window, batch, ...)`` as the network reads them.
+
+    Also ``h0`` (float32 start states), ``rows`` and ``valid`` (a stored window).
+    """
+    rows = sample_rows(state, key, state.cfg.batch)
+    buf = {
+        k: state.buffer[k][rows] for k in ("map", "tail", "act", "done", "ret", "mask")
+    }
+    obs = decompress_obs(buf.pop("map"), buf.pop("tail"))
+    out = {k: jnp.swapaxes(x, 0, 1) for k, x in buf.items()}
+    return out | {
+        "obs": jnp.swapaxes(obs, 0, 1),
+        "act": out["act"].astype(jnp.int32),
+        "h0": state.buffer["h0"][rows].astype(jnp.float32),
+        "rows": rows,
+        "valid": state.buffer["stamp"][rows] >= 0,
+    }
+
+
+def replay(
+    net: ActorCriticRNN, params: Any, windows: dict[str, jax.Array]
+) -> tuple[jax.Array, jax.Array]:
+    """``(logits, values)`` of the windows, the GRU run from their stored start state.
+
+    Resets follow the stored dones; the first step needs none, ``h0`` already has it.
+    """
+    done = windows["done"]
+    resets = jnp.concatenate([jnp.zeros_like(done[:1]), done[:-1]])
+    _, logits, v = apply_network(net, params, windows["h0"], windows["obs"], resets)
+    return logits, v
+
+
+def sil_terms(
+    logp: jax.Array, v: jax.Array, ret: jax.Array, mask: jax.Array, cfg: SILConfig
+) -> tuple[jax.Array, dict[str, jax.Array]]:
+    """SIL loss over the masked steps and its parts.
+
+    ``lambda_sil * mean(-logp * sg((R - V)+) + beta_v / 2 * (R - V)+^2)``; aux holds
+    ``adv`` (``(R - V)+`` per step, 0 where masked), ``policy``, ``value`` (the two
+    means, unweighted) and ``active`` (share of steps with ``R > V``).
+    """
+    w = mask.astype(jnp.float32)
+    n = jnp.maximum(w.sum(), 1.0)  # an empty buffer gives 0, not NaN
+    adv = jnp.maximum(ret - v, 0.0)
+    policy = -jnp.sum(logp * jax.lax.stop_gradient(adv) * w) / n
+    value = jnp.sum(0.5 * adv**2 * w) / n
+    aux = {
+        "adv": jax.lax.stop_gradient(adv) * w,
+        "policy": policy,
+        "value": value,
+        "active": jnp.sum((adv > 0) * w) / n,
+    }
+    return cfg.lambda_sil * (policy + cfg.beta_v * value), aux
+
+
+def sil_loss(
+    net: ActorCriticRNN, cfg: SILConfig, params: Any, windows: dict[str, jax.Array]
+) -> tuple[jax.Array, dict[str, jax.Array]]:
+    """`sil_terms` of sampled windows replayed with ``params``."""
+    logits, v = replay(net, params, windows)
+    logp = jax.nn.log_softmax(logits)
+    logp = jnp.take_along_axis(logp, windows["act"][..., None], axis=-1)[..., 0]
+    return sil_terms(logp, v, windows["ret"], windows["mask"], cfg)
+
+
+def extra_loss(
+    net: ActorCriticRNN, params: Any, state: SILState, key: jax.Array
+) -> tuple[jax.Array, tuple[SILState, dict[str, jax.Array]]]:
+    """The ``extra_loss_fn`` hook once bound to ``net`` (``functools.partial``).
+
+    One SIL step: sample, loss, and the sampled windows' priorities rewritten as their
+    mean ``(R - V)_+ + 0.01`` under ``params``.
+    """
+    w = sample(state, key)
+    loss, aux = sil_loss(net, state.cfg, params, w)
+    steps = jnp.maximum(w["mask"].sum(0), 1)
+    prio = aux["adv"].sum(0) / steps + PRIORITY_EPS
+    n_rows = state.buffer["prio"].shape[0]
+    rows = jnp.where(w["valid"], w["rows"], n_rows)  # empty rows keep priority 0
+    buffer = state.buffer | {
+        "prio": state.buffer["prio"].at[rows].set(prio, mode="drop")
+    }
+    top = jnp.max(jnp.where(w["valid"], prio, 0.0))
+    n = jnp.maximum(w["mask"].sum(), 1)
+    metrics = {
+        "sil/policy_loss": aux["policy"],
+        "sil/value_loss": aux["value"],
+        "sil/active": aux["active"],
+        "sil/adv_pos_mean": aux["adv"].sum() / n,
+    }
+    new = state.replace(buffer=buffer, max_prio=jnp.maximum(state.max_prio, top))
+    return loss, (new, metrics)
