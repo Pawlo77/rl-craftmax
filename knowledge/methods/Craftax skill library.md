@@ -21,7 +21,7 @@ Every part of a skill reads only the observation the agent receives and the step
 |---|---|---|---|
 | Start conditions | floor, inventory, tool levels, stats, XP, attributes, ladder-open flag | observation (`decode_obs`, exact integers after undoing the encoding) | top-level mask (acting) |
 | Success tests of collect, craft, place, survival, `descend`, `open_chest`, `enchant` skills | inventory buckets, tool levels, stats, floor, sleeping flag, the facing tile and the 8 tiles around the player, enchantments | observation before and after one step | pseudo-reward and skill end |
-| `fight` success | creature channels of the facing tile and the 8 tiles around the player before and after an attack; the achievement part of the reward | observation and reward | pseudo-reward and skill end |
+| `fight` success | creature channels of the facing tile before an attack and of the 5 x 5 tiles around the player after it; the achievement part of the reward | observation and reward | pseudo-reward and skill end |
 | `unlock_any` success | the achievement part of the reward: reward minus 0.1 x the health change, health read from the observation | reward and observation | pseudo-reward and skill end |
 | Interruptions | floor, low-stat flags | observation | skill end |
 | Test agreement | `EnvState`, the wrapper's `StepEvents` (kills, unlocks) | privileged | logging only (`smdp/skill/<name>/test_agreement`), never acting or reward |
@@ -43,7 +43,7 @@ Every part of a skill reads only the observation the agent receives and the step
 - Skill pseudo-reward $r^o_t$: 1 on the success step, 0 otherwise, also 0 on death; every end is terminal for the skill's return.
 - "Next bucket": a collect skill succeeds when the material's progress-key bucket of the observed count rises (`progress_key.bucket`, recipe caps or log2 buckets, the granularity knob of [[Count-Based Progress Bonus design]]), so every successful skill changes the top-level key and the skill graph has no success self-loops.
 - A collect skill whose material bucket is already at its cap is unavailable: hoarding has no skill.
-- Observation limits, measured by `test_agreement`: on dark floors a tile with light <= 0.05 is blank in the observation, so a place, chest or fight test on an unlit facing tile fails (the skill times out); a creature that walks out of the 3 x 3 neighbourhood right after an attack counts as killed.
+- Observation limits, measured by `test_agreement`: on dark floors a tile with light <= 0.05 is blank in the observation, so a place, chest or fight test on an unlit facing tile fails (the skill times out); a creature that steps into an unlit tile right after an attack counts as killed (mobs move at most one tile a step, so the `fight` test looks at the 5 x 5 around the player).
 
 ## Skill table
 
@@ -86,7 +86,7 @@ Floors where a resource exists follow [[Craftax blocks and resources#Resource sp
 
 | # | Skill | Start condition | Success | Pursues | Rules relied on | `T_max` |
 |---|---|---|---|---|---|---|
-| 19 | `fight` | always | after a `DO` with a melee or ranged creature on the facing tile, no creature of that type is on the facing tile or the 8 tiles around the player in the next observation; or the achievement part of the reward is > 0 on an attack step (a first `DEFEAT_*`, the necromancer included) | the 8 kills that open the ladder, `DEFEAT_*` | only melee and ranged kills count; hits on the necromancer that do not finish it are not observable as kills ([[Craftax floors and progression#Ladders]], [[Craftax creatures]], [[Craftax boss fight]]) | 300 |
+| 19 | `fight` | always | after a `DO` with a melee or ranged creature on the facing tile, no creature of that type is in the 5 x 5 tiles around the player in the next observation (a survivor moves at most one tile); or the achievement part of the reward is > 0 on an attack step (a first `DEFEAT_*`, the necromancer included) | the 8 kills that open the ladder, `DEFEAT_*` | only melee and ranged kills count; hits on the necromancer that do not finish it are not observable as kills ([[Craftax floors and progression#Ladders]], [[Craftax creatures]], [[Craftax boss fight]]) | 300 |
 | 20 | `descend` | ladder-open flag of the observation set (8 kills on the floor; floor 0 starts open); floor < 8 | floor rises | `ENTER_*` (3-8 reward), new resources, 1 XP | `DESCEND` on the down ladder | 1000 |
 | 21 | `open_chest` | floor 1, 3 or 4 | the facing tile in the map view turns from chest to path | bow (floor 1), books (3, 4), ores, potions | first chest of a floor gives the bow or a book ([[Craftax items and inventory#Chest loot]]) | 500 |
 | 22 | `enchant` | floor 3 or 4; mana >= 9; a sapphire (floor 3) or ruby (floor 4); sword > 0 or an armour piece | a sword, bow or armour enchantment channel changes | elemental damage and defence | the player must face the enchantment table; costs 9 mana and 1 gem ([[Craftax magic potions and enchanting#Enchanting]]) | 500 |
@@ -174,7 +174,7 @@ From `training/progress_key.py` (designed in [[Count-Based Progress Bonus design
 - 16 skills: `collect_wood`, `collect_stone`, `collect_coal`, `collect_iron`, `collect_diamond`, `place_table`, `place_furnace`, `make_wood_pickaxe`, `make_stone_pickaxe`, `make_iron_pickaxe`, `upgrade_sword`, `drink`, `eat`, `sleep`, `fight`, `unlock_any`.
 - Classic checks specific tools, not tiers: `collect_stone` and `collect_coal` need the wood pickaxe itself ([[Craftax-Classic rules#Blocks and movement]]).
 - Floor conditions, interruptions on floor change and primitive options do not apply; lava ends the episode, which counts as death.
-- The Classic observation has creature flags per tile (zombie, cow, skeleton, arrow), so `fight` succeeds when a zombie or skeleton on the facing tile is gone from the 3 x 3 neighbourhood after a `DO`, or on an achievement reward.
+- The Classic observation has creature flags per tile (zombie, cow, skeleton, arrow), so `fight` succeeds when a zombie or skeleton on the facing tile is gone from the 5 x 5 around the player after a `DO`, or on an achievement reward.
 
 ## Prior knowledge
 
