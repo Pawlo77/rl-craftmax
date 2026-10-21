@@ -70,7 +70,7 @@ class ReproducibilityReport:
 
 def collect_reproducibility_report() -> ReproducibilityReport:
     """Capture processor, memory, packages, and git state for the current run."""
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _REPO_ROOT
     git_commit_hash = _read_git_commit_hash(repo_root)
     git_branch = _read_git_branch(repo_root)
     git_status_porcelain = _read_git_status_porcelain(repo_root)
@@ -95,15 +95,37 @@ def collect_reproducibility_report() -> ReproducibilityReport:
     )
 
 
-def code_version() -> tuple[str, bool]:
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def code_version(repo_root: Path = _REPO_ROOT) -> tuple[str, bool]:
     """The checkout's git commit and whether its working tree is dirty."""
-    repo_root = Path(__file__).resolve().parents[3]
     status = _read_git_status_porcelain(repo_root)
     return _read_git_commit_hash(repo_root), bool(status.strip())
 
 
+def _git_output(repo_root: Path, *args: str) -> str | None:
+    """``git <args>`` in ``repo_root`` without optional locks; None if it fails."""
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [git_executable, "--no-optional-locks", *args],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return completed.stdout.strip()
+
+
 def _read_git_commit_hash(repo_root: Path) -> str:
-    """Read the current commit hash from the local git metadata."""
+    """The HEAD commit: ``git rev-parse`` (worktrees, packed refs), else the files."""
+    if commit := _git_output(repo_root, "rev-parse", "HEAD"):
+        return commit
     git_dir = repo_root / ".git"
     head_path = git_dir / "HEAD"
     if git_dir.is_file():
@@ -154,20 +176,7 @@ def _read_git_branch(repo_root: Path) -> str:
 
 def _read_git_status_porcelain(repo_root: Path) -> str:
     """Read the working tree status in porcelain format."""
-    try:
-        git_executable = shutil.which("git")
-        if git_executable is None:
-            return ""
-        completed = subprocess.run(
-            [git_executable, "status", "--porcelain=v1", "-uall"],
-            cwd=repo_root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return ""
-    return completed.stdout.strip()
+    return _git_output(repo_root, "status", "--porcelain=v1", "-uall") or ""
 
 
 def _read_total_ram_bytes() -> int:
