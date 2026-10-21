@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1027,3 +1028,98 @@ def test_a_signal_to_the_parent_stops_the_child_with_its_state_saved(
     assert saved["update"] == 2
     _in_children(store, [stop])  # the rerun resumes at update 3 and finishes
     assert store.runs()[stop.name].info.status == "FINISHED"
+
+
+_QUEUE = """
+import json, sys
+from wut_murl_craftax.orchestration import runner
+from wut_murl_craftax.orchestration.queue import RunSpec
+spec = RunSpec(**json.loads(sys.argv[1]))
+runner.main([spec], sys.argv[2], experiment_config=sys.argv[3],
+            registry="_fake_registry:METHODS", evaluate="_fake_registry:no_eval")
+"""
+"""A queue process of one spec, as ``python -m ...queue`` would run it."""
+
+
+def _start_queue(
+    store: Store, spec: RunSpec, launcher: tuple[str, ...] = (sys.executable,)
+) -> subprocess.Popen[str]:
+    """The queue in its own session, as a terminal's foreground job."""
+    path = os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")])
+    argv = [json.dumps(dataclasses.asdict(spec)), str(PROFILE), str(store.config)]
+    return subprocess.Popen(
+        [*launcher, "-c", _QUEUE, *argv],
+        env={**os.environ, "PYTHONPATH": path},
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+
+def _until(cond: Callable[[], Any], what: str, timeout: float = 120.0) -> Any:
+    deadline = time.monotonic() + timeout
+    while not (got := cond()):
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(0.2)
+    return got
+
+
+def _training_pid(store: Store, name: str) -> int:
+    """The PID of the child once it trains the run."""
+
+    def pid() -> int | None:
+        run = store.runs().get(name)
+        return int(run.data.tags["pid"]) if run and "pid" in run.data.tags else None
+
+    return int(_until(pid, f"{name} to start training"))
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_child_whose_queue_dies_saves_its_state_and_stops(store: Store) -> None:
+    """kill -9 of the queue process: the orphan stops as if signalled."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    slow = _as(spec, "slow")
+    queue_process = _start_queue(store, slow)
+    child = _training_pid(store, slow.name)
+    os.kill(queue_process.pid, signal.SIGKILL)
+    queue_process.communicate()
+    _until(lambda: not _alive(child), "the orphaned child to exit", 60)
+    run = store.runs()[slow.name]
+    assert run.info.status == "KILLED"
+    out = store.run_dir(slow.name)
+    assert (out / "state" / "state.npz").is_file()
+    assert not (out / runner.OWNER_FILE).exists()
+
+
+def test_a_run_with_a_live_child_is_never_trained_twice(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    slow = _as(spec, "slow")
+    queue_process = _start_queue(store, slow)
+    child = _training_pid(store, slow.name)
+    _in_children(store, [slow])  # a second queue over the same run
+    assert f"{slow.name} is trained by live process {child}" in caplog.text
+    run = store.runs()[slow.name]
+    assert (run.info.status, run.data.tags["pid"]) == ("RUNNING", str(child))
+    os.kill(queue_process.pid, signal.SIGINT)
+    queue_process.communicate()
+    assert queue_process.returncode == 128 + signal.SIGINT
+    assert store.runs()[slow.name].info.status == "KILLED"
+
+
+def test_a_hangup_of_the_queue_stops_the_child_like_a_signal(store: Store) -> None:
+    """SIGHUP (the terminal or SSH session closed) is a stop, not a death."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    hangup = _as(spec, "hangup")
+    with pytest.raises(SystemExit) as exit_info:
+        _in_children(store, [hangup])
+    assert exit_info.value.code == 128 + signal.SIGHUP
+    assert store.runs()[hangup.name].info.status == "KILLED"

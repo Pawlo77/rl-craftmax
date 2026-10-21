@@ -19,6 +19,7 @@ import math
 import multiprocessing
 import os
 import signal
+import socket
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -83,7 +84,7 @@ from .runtime import (
     import_craftax,
     select_platforms,
 )
-from .tracking import _resolve_tracking_uri, build_mlflow_tracker
+from .tracking import _resolve_tracking_uri, artifact_path, build_mlflow_tracker
 from .train_metrics import (
     compile_seconds,
     log_every,
@@ -113,6 +114,11 @@ TAG_FAIL_COUNT = "fail/count"
 """Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
 """Per-update method metrics of a run, name -> floats, in the run directory."""
+OWNER_FILE = "owner.json"
+"""Run-directory file of the process that trains the run (pid, host); gone once the
+run is closed, so a RUNNING run with a live owner is never trained twice."""
+STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+"""Signals that stop the queue after the chunk; SIGHUP: the terminal or SSH closed."""
 REGISTRY = "wut_murl_craftax.training.interface:METHODS"
 """``module:attribute`` of the trainer registry a run's child process imports."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
@@ -313,7 +319,7 @@ class _Stop:
 @contextmanager
 def _stop_on_signals() -> Iterator[_Stop]:
     stop = _Stop()
-    old = {s: signal.signal(s, stop) for s in (signal.SIGINT, signal.SIGTERM)}
+    old = {s: signal.signal(s, stop) for s in STOP_SIGNALS}
     try:
         yield stop
     finally:
@@ -618,8 +624,31 @@ def _mark_abort(previous: Mapping[str, str], abort: _Aborted) -> None:
     logger.warning("run aborted (%d of %d allowed): %s", count, MAX_ABORTS, abort)
 
 
+def _live_owner(found: Any) -> int | None:
+    """The PID of a live process on this host that trains ``found`` (RUNNING)."""
+    if found is None or found.info.status != "RUNNING":
+        return None
+    try:
+        path = artifact_path(found.info.artifact_uri) / OWNER_FILE
+        owner = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    pid = int(owner["pid"])
+    if owner["host"] != socket.gethostname() or pid == os.getpid():
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:  # alive, another user's process
+        pass
+    return pid
+
+
 def _skip_reason(found: Any) -> str | None:
-    """Why the queue skips a run: a bug, or lost checkpoints that failed it."""
+    """Why the queue skips a run: a live owner, a bug, or lost checkpoints."""
+    if (pid := _live_owner(found)) is not None:
+        return f"is trained by live process {pid} on this host"
     tags = found.data.tags if found else {}
     if tags.get(TAG_ABORT_BUG) == "true":
         return f"is marked a bug ({TAG_ABORT_BUG})"
@@ -696,6 +725,8 @@ def _run_spec(
         msg = f"{spec.name}: MLflow opened run {active.run_name} ({active.run_id})"
         raise RuntimeError(msg)  # e.g. $MLFLOW_RUN_ID set in the environment
     out = tracker.artifact_dir
+    owner = {"pid": os.getpid(), "host": socket.gethostname()}
+    (out / OWNER_FILE).write_text(json.dumps(owner))
     # a FINISHED run with a lost checkpoint file goes through `_train` to repair it
     trains = (
         found is None
@@ -726,11 +757,12 @@ def _run_spec(
         mlflow.set_tags(_fail_tags(found.data.tags if found else {}, error))
         tracker.close("FAILED")
         raise
-    if stop.signum is not None:
-        tracker.close("KILLED")  # evaluation may have stopped early
+    else:
+        # evaluation may have stopped early
+        tracker.close("KILLED" if stop.signum is not None else "FINISHED")
         return trains
-    tracker.close("FINISHED")
-    return trains
+    finally:
+        (out / OWNER_FILE).unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -745,10 +777,15 @@ class _Job:
 
 
 def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any) -> None:
-    """One run in a fresh process; the parent sets ``stop_set`` to forward a signal."""
+    """One run in a fresh process; the parent sets ``stop_set`` to forward a signal.
+
+    The child also stops (saves the state, closes the run KILLED) when its parent
+    dies, so an orphan never trains on beside a later queue call.
+    """
     os.setpgrp()  # a terminal's Ctrl-C reaches the parent only, which forwards it
-    for s in (signal.SIGINT, signal.SIGTERM):  # also a scheduler's, sent to every PID
+    for s in STOP_SIGNALS:  # also a scheduler's, sent to every PID
         signal.signal(s, signal.SIG_IGN)
+    parent = os.getppid()
     trainers, evaluate = _set_up_jax(job.machine, job.registry, job.evaluate)
     if job.spec.registry_name not in trainers:
         msg = f"no trainer registered for {job.spec.registry_name!r} in {job.registry}"
@@ -757,7 +794,11 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any) -> None:
     stop = _Stop()
 
     def forwarded() -> None:
-        stop_set.wait()
+        while not stop_set.wait(1.0):
+            if os.getppid() != parent:  # the queue died: stop as if it had forwarded
+                logger.warning("queue process %d is gone: stopping the run", parent)
+                stop.signum = signal.SIGHUP
+                return
         stop.signum = stop_signum.value
 
     threading.Thread(target=forwarded, daemon=True).start()
@@ -777,6 +818,7 @@ def _close_orphan(name: str, status: str, error: str) -> str:
         for key, value in _fail_tags(found.data.tags, error).items():
             client.set_tag(found.info.run_id, key, value)
     client.set_terminated(found.info.run_id, status)
+    (artifact_path(found.info.artifact_uri) / OWNER_FILE).unlink(missing_ok=True)
     return error
 
 
