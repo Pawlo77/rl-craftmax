@@ -1,4 +1,4 @@
-"""Training: method registry, PPO, checkpoints, resume state, metrics, episodes."""
+"""Training: method registry, PPO, method hooks, checkpoints, resume state, episodes."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -11,6 +11,16 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_state,
         save_checkpoint,
         save_state,
+    )
+    from .hooks import (
+        HOOK_NAMES,
+        HookFields,
+        HookSpec,
+        ResolvedHooks,
+        Traj,
+        check_metric_names,
+        config_dict,
+        resolve,
     )
     from .interface import METHODS, Policy
     from .ppo import ActorCritic, PPOConfig, PPOTrainer, make_network, train
@@ -26,17 +36,24 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     )
 
 _EXPORTS: dict[str, str] = {
+    "HOOK_NAMES": "hooks",
+    "HookFields": "hooks",
+    "HookSpec": "hooks",
     "METHODS": "interface",
     "ActorCritic": "ppo",
     "Episodes": "records",
     "PPOConfig": "ppo",
     "PPOTrainer": "ppo",
     "Policy": "interface",
+    "ResolvedHooks": "hooks",
     "RunLog": "records",
     "TrainingMetrics": "records",
+    "Traj": "hooks",
     "achievement_names": "records",
     "achievement_weights": "records",
+    "check_metric_names": "hooks",
     "checkpoint_schedule": "checkpoints",
+    "config_dict": "hooks",
     "first_unlocks": "records",
     "load_episodes": "records",
     "load_index": "checkpoints",
@@ -44,6 +61,7 @@ _EXPORTS: dict[str, str] = {
     "load_params": "checkpoints",
     "load_state": "checkpoints",
     "make_network": "ppo",
+    "resolve": "hooks",
     "save_checkpoint": "checkpoints",
     "save_state": "checkpoints",
     "train": "ppo",
@@ -52,17 +70,24 @@ _EXPORTS: dict[str, str] = {
 submodule do not import it twice."""
 
 __all__ = [
+    "HOOK_NAMES",
     "METHODS",
     "ActorCritic",
     "Episodes",
+    "HookFields",
+    "HookSpec",
     "PPOConfig",
     "PPOTrainer",
     "Policy",
+    "ResolvedHooks",
     "RunLog",
     "TrainingMetrics",
+    "Traj",
     "achievement_names",
     "achievement_weights",
+    "check_metric_names",
     "checkpoint_schedule",
+    "config_dict",
     "first_unlocks",
     "load_episodes",
     "load_index",
@@ -70,6 +95,7 @@ __all__ = [
     "load_params",
     "load_state",
     "make_network",
+    "resolve",
     "save_checkpoint",
     "save_state",
     "train",
