@@ -14,6 +14,15 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         save_state,
     )
     from .count_bonus import CountBonusConfig, CountState
+    from .dyna_q import (
+        ModelState,
+        Outcome,
+        init_model,
+        model_accuracy,
+        pack_mask,
+        unpack_mask,
+        write,
+    )
     from .hooks import (
         HOOK_NAMES,
         HookFields,
@@ -113,8 +122,10 @@ _EXPORTS: dict[str, str] = {
     "Episodes": "records",
     "GymnaxWrapper": "wrappers",
     "LogWrapper": "wrappers",
+    "ModelState": "dyna_q",
     "ObsView": "skills",
     "OptimisticResetVecEnvWrapper": "wrappers",
+    "Outcome": "dyna_q",
     "PPOConfig": "ppo",
     "PPOTrainer": "ppo",
     "PPORNNConfig": "ppo_rnn",
@@ -146,6 +157,7 @@ _EXPORTS: dict[str, str] = {
     "decode_obs": "skills",
     "first_unlocks": "records",
     "gae": "ppo",
+    "init_model": "dyna_q",
     "init_rollout": "smdp",
     "init_table": "smdp",
     "key_fields": "skills",
@@ -161,6 +173,8 @@ _EXPORTS: dict[str, str] = {
     "mc_init": "smdp",
     "mc_push": "smdp",
     "mc_update": "smdp",
+    "model_accuracy": "dyna_q",
+    "pack_mask": "dyna_q",
     "ppo_terms": "ppo",
     "primitive_action": "skills",
     "q_lambda_targets": "pqn_rnn",
@@ -176,8 +190,10 @@ _EXPORTS: dict[str, str] = {
     "to_traj": "smdp",
     "top_key": "smdp",
     "train": "ppo",
+    "unpack_mask": "dyna_q",
     "unwrap_state": "wrappers",
     "with_method": "hooks",
+    "write": "dyna_q",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -200,8 +216,10 @@ __all__ = [
     "HookSpec",
     "LogWrapper",
     "MCRecords",
+    "ModelState",
     "ObsView",
     "OptimisticResetVecEnvWrapper",
+    "Outcome",
     "PPOConfig",
     "PPORNNConfig",
     "PPORNNPolicy",
@@ -232,6 +250,7 @@ __all__ = [
     "decode_obs",
     "first_unlocks",
     "gae",
+    "init_model",
     "init_rollout",
     "init_table",
     "key_fields",
@@ -247,6 +266,8 @@ __all__ = [
     "mc_init",
     "mc_push",
     "mc_update",
+    "model_accuracy",
+    "pack_mask",
     "ppo_terms",
     "primitive_action",
     "q_lambda_targets",
@@ -262,8 +283,10 @@ __all__ = [
     "to_traj",
     "top_key",
     "train",
+    "unpack_mask",
     "unwrap_state",
     "with_method",
+    "write",
 ]
 
 
