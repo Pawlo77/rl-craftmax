@@ -1,0 +1,22 @@
+# Count-bonus-like grid: beta x granularity x decay, categorical top-k in the fine rule.
+base: {env: Toy-v1, beta: 0.1, granularity: recipe, decay: constant}
+grid:
+  coarse:
+    - {name: b0.1-tiers-constant, beta: 0.1, granularity: tiers, decay: constant}
+    - {name: b0.1-tiers-linear, beta: 0.1, granularity: tiers, decay: linear}
+    - {name: b0.1-recipe-constant, beta: 0.1, granularity: recipe, decay: constant}
+    - {name: b0.1-recipe-linear, beta: 0.1, granularity: recipe, decay: linear}
+    - {name: b0.1-log2-constant, beta: 0.1, granularity: log2, decay: constant}
+    - {name: b0.1-log2-linear, beta: 0.1, granularity: log2, decay: linear}
+    - {name: b0.3-tiers-constant, beta: 0.3, granularity: tiers, decay: constant}
+    - {name: b0.3-tiers-linear, beta: 0.3, granularity: tiers, decay: linear}
+    - {name: b0.3-recipe-constant, beta: 0.3, granularity: recipe, decay: constant}
+    - {name: b0.3-recipe-linear, beta: 0.3, granularity: recipe, decay: linear}
+    - {name: b0.3-log2-constant, beta: 0.3, granularity: log2, decay: constant}
+    - {name: b0.3-log2-linear, beta: 0.3, granularity: log2, decay: linear}
+  fine:
+    rule: {select: 1, combine: cross}
+    knobs:
+      - {key: beta, mul: [0.5, 1, 2], always: true}
+      - {key: granularity, top: 2}
+      - {key: decay, top: 2}

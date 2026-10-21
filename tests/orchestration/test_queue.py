@@ -255,6 +255,24 @@ def test_yaml_floats_without_a_dot_are_floats() -> None:
                 "fine": {"rule": {}, "knobs": [{"key": "lr", "mul": [2], "x": 1}]},
             }
         },
+        {
+            "grid": {
+                "coarse": [],
+                "fine": {"rule": {}, "knobs": [{"key": "g", "top": 0}]},
+            }
+        },
+        {
+            "grid": {
+                "coarse": [],
+                "fine": {"rule": {}, "knobs": [{"key": "g", "top": 2, "mul": [2]}]},
+            }
+        },
+        {
+            "grid": {
+                "coarse": [],
+                "fine": {"rule": {}, "knobs": [{"key": "g", "top": 2, "clip": [0, 1]}]},
+            }
+        },
         {"grid": {"coarse": [{"lr": 1}]}},
         {"grid": {"coarse": [{"name": "a"}, {"name": "a"}]}},
         {"grid": {"coarse": [{"name": "tuned"}]}},
@@ -402,6 +420,52 @@ def test_expand_fine_cross_integer_and_clip() -> None:
     assert list(fine["crossed"].values()) == [
         {"slots": s, "lam": lam} for s in (4, 8, 16) for lam in (0.8, 0.95)
     ]
+
+
+def catfine_scores(decay_gap: float = 0.5) -> dict[str, float]:
+    """Stage-1 scores of `catfine`: beta 0.3 and `recipe` best, granularity spread 3."""
+    gran = {"tiers": 2.0, "recipe": 5.0, "log2": 3.0}
+    dec = {"constant": decay_gap, "linear": 0.0}
+    names = {
+        f"b{b}-{g}-{d}": gv + dv + (1.0 if b == 0.3 else 0.0)
+        for b in (0.1, 0.3)
+        for g, gv in gran.items()
+        for d, dv in dec.items()
+    }
+    return stage1("catfine", names)
+
+
+def test_expand_fine_crosses_numeric_multipliers_with_the_top_categorical_values() -> (
+    None
+):
+    fine = expand_fine("catfine", catfine_scores(), methods_dir=METHODS)
+    # beta is always chosen; granularity (spread 3) beats decay (spread 0.5); top 2 by
+    # mean: recipe, log2; the remaining knob (decay) stays at the best config's value
+    assert list(fine["catfine"].values()) == [
+        {"beta": b, "granularity": g, "decay": "constant"}
+        for b in (0.15, 0.3, 0.6)
+        for g in ("recipe", "log2")
+    ]
+    assert next(iter(fine["catfine"])) == "fine-beta=0.15-granularity=recipe"
+    assert expand_fine("catfine", catfine_scores(), methods_dir=METHODS) == fine
+
+
+def test_the_categorical_knob_with_the_larger_spread_is_chosen() -> None:
+    fine = expand_fine("catfine", catfine_scores(decay_gap=10.0), methods_dir=METHODS)
+    # decay now spreads more than granularity; its top 2 are both values
+    assert {(v["granularity"], v["decay"]) for v in fine["catfine"].values()} == {
+        ("recipe", "constant"),
+        ("recipe", "linear"),
+    }
+    assert len(fine["catfine"]) == 6
+
+
+def test_the_stage_1_best_config_is_among_the_top_categorical_crosses() -> None:
+    fine = expand_fine("catfine", catfine_scores(), methods_dir=METHODS)
+    cfg = resolved(
+        "catfine", "base", overrides=fine["catfine"]["fine-beta=0.3-granularity=recipe"]
+    )
+    assert config_hash(cfg) == config_hash(resolved("catfine", "b0.3-recipe-constant"))
 
 
 def test_expand_fine_per_registry_entry_and_method_filter() -> None:
@@ -840,6 +904,57 @@ def test_cli_allow_partial_reaches_the_coarse_results_and_the_expansion(
         queue.main(argv)
     queue.main([*argv, "--allow-partial"])
     assert seen == [False, True]
+
+
+def test_shipped_count_bonus_fine_rule_expands_on_a_fixture_store(
+    tmp_path: Path, store: Store, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # donor tuned blocks are null until tuning ends: drop `base_from`
+    raw = yaml.safe_load((REPO / "configs/methods/count-bonus.yaml").read_text())
+    for block in raw["base"].values():
+        block.pop("base_from")
+        block["env"] = "Toy-v1"  # the donor would supply it
+    methods, phases = tmp_path / "methods", tmp_path / "phases"
+    methods.mkdir()
+    phases.mkdir()
+    (methods / "count-bonus.yaml").write_text(yaml.safe_dump(raw))
+    body = {"budget": "1m", "eval": "final", "seeds": 1}
+    body["runs"] = {
+        r: {"config": "count-bonus", "configs": "coarse"}
+        for r in ("count-bonus-ppo-rnn", "count-bonus-pqn-rnn")
+    }
+    (phases / "tune-coarse.yaml").write_text(yaml.safe_dump(body))
+    gran = {"tiers": 1.0, "recipe": 3.0, "log2": 2.0}
+    beta = {0.01: 0.0, 0.03: 0.5, 0.1: 1.0, 0.3: 0.2}
+    for registry in ("count-bonus-ppo-rnn", "count-bonus-pqn-rnn"):
+        for entry in raw["grid"]["coarse"]:
+            cfg = resolved(
+                "count-bonus", entry["name"], registry=registry, methods_dir=methods
+            )
+            score = gran[entry["granularity"]] + beta[entry["beta"]]
+            store.add(registry, cfg, score + (entry["decay"] == "linear") * 0.1)
+    results = coarse_results(
+        "count-bonus",
+        tracking_uri=store.tracking_uri,
+        methods_dir=methods,
+        phases_dir=phases,
+    )
+    queue._print_fine(
+        expand_fine("count-bonus", results, methods_dir=methods), "count-bonus", methods
+    )
+    configs = [ln for ln in capsys.readouterr().out.splitlines() if ln[0] == "#"]
+    assert len(configs) == 12  # 6 per variant
+    first = json.loads(configs[0].split(" ", 4)[4])
+    # best coarse: beta 0.1, recipe, linear; granularity spreads more than decay
+    assert first == {"beta": 0.05, "granularity": "recipe", "decay": "linear"}
+    assert {c.split(" ")[1] for c in configs} == {
+        "count-bonus-ppo-rnn",
+        "count-bonus-pqn-rnn",
+    }
+    assert {json.loads(c.split(" ", 4)[4])["granularity"] for c in configs} == {
+        "recipe",
+        "log2",
+    }
 
 
 # --- shipped configs -----------------------------------------------------------

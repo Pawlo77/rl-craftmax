@@ -67,7 +67,8 @@ EvalMode = Literal["final", "log_spaced"]
 _EVAL_MODES = ("final", "log_spaced")
 _METHOD_KEYS = {"base", "budgets", "grid", "abort", "tuned"}
 _RESERVED_NAMES = {"base", "tuned", "coarse", "fine"}
-_KNOB_KEYS = {"key", "mul", "add", "zero", "clip", "integer"}
+_KNOB_KEYS = {"key", "mul", "add", "top", "always", "zero", "clip", "integer"}
+_KNOB_AXES = ("mul", "add", "top")
 _FLAG_KEYS = {"name", "metric", "above", "below", "updates", "before", "after"}
 _BUDGET_UNITS = {"k": 1e3, "m": 1e6, "b": 1e9}
 _BUDGET_LABEL = re.compile(r"(\d+(?:\.\d+)?)([kmb])")
@@ -206,8 +207,16 @@ class Method:
 
 def _check_knob(knob: object, where: str) -> None:
     knob = _check_keys(knob, _KNOB_KEYS, where)
-    if not isinstance(knob.get("key"), str) or ("mul" in knob) == ("add" in knob):
-        _fail(f"{where}: a knob needs `key` and exactly one of `mul`, `add`")
+    if not isinstance(knob.get("key"), str) or sum(k in knob for k in _KNOB_AXES) != 1:
+        _fail(f"{where}: a knob needs `key` and exactly one of `mul`, `add`, `top`")
+    if "top" in knob:
+        top = knob["top"]
+        if not isinstance(top, int) or isinstance(top, bool) or top < 1:
+            _fail(f"{where}: `top` is an int >= 1")
+        if {"zero", "clip", "integer"} & knob.keys():
+            _fail(f"{where}: a `top` knob takes no `zero`, `clip` or `integer`")
+    if not isinstance(knob.get("always", False), bool):
+        _fail(f"{where}: `always` is a bool")
     for name in ("mul", "add", "zero", "clip"):
         values = knob.get(name, [])
         if not isinstance(values, list) or not all(
@@ -576,6 +585,29 @@ def _knob_values(knob: Mapping[str, Any], best: Any) -> list[Any]:
     return list(dict.fromkeys(values))
 
 
+def _top_values(
+    method: Method,
+    cfgs: Mapping[str, Any],
+    scores: Mapping[str, float],
+    key: str,
+    top: int,
+) -> list[Any]:
+    """The ``top`` values of a categorical knob by mean stage-1 score along its axis.
+
+    Ties keep the order of first appearance in ``grid.coarse``.
+    """
+    groups: dict[str, list[float]] = {}
+    values: dict[str, Any] = {}
+    for name in (n for n in _axis(method, key) if n in scores):
+        if key not in cfgs[name]:
+            _fail(f"{method.path.name}: fine knob {key!r} is not a key of the config")
+        label = json.dumps(cfgs[name][key])
+        values.setdefault(label, cfgs[name][key])
+        groups.setdefault(label, []).append(scores[name])
+    ranked = sorted(groups, key=lambda g: -sum(groups[g]) / len(groups[g]))
+    return [values[g] for g in ranked[:top]]
+
+
 def _fine_for(
     method: Method,
     registry: str,
@@ -601,9 +633,21 @@ def _fine_for(
     fine = method.fine or {}
     rule = fine.get("rule", {})
     knobs = {k["key"]: k for k in fine["knobs"]}
-    effects = {key: _effect(method, cfgs, scores, key) for key in knobs}
-    chosen = sorted(knobs, key=lambda k: -effects[k])[: rule.get("select", len(knobs))]
-    values = {key: _knob_values(knobs[key], cfgs[best][key]) for key in chosen}
+    always = [k for k in knobs if knobs[k].get("always")]
+    ranked = [k for k in knobs if k not in always]
+    effects = {key: _effect(method, cfgs, scores, key) for key in ranked}
+    ranked = sorted(ranked, key=lambda k: -effects[k])[
+        : rule.get("select", len(ranked))
+    ]
+    chosen = always + ranked
+    values = {
+        key: (
+            _top_values(method, cfgs, scores, key, knobs[key]["top"])
+            if "top" in knobs[key]
+            else _knob_values(knobs[key], cfgs[best][key])
+        )
+        for key in chosen
+    }
     if rule.get("combine", "each") == "cross":
         combos = [
             dict(zip(chosen, c, strict=True))
@@ -642,8 +686,10 @@ def expand_fine(
     the largest effect, the range of mean scores over the knob's values along its axis
     (the entries varying only that knob plus the unmodified one; all entries if none
     vary only it); each knob's ``mul`` factors or ``add`` offsets around the best value
-    (``zero`` replaces them when it is 0; ``clip`` [low, high]; ``integer``), one knob
-    at a time (``combine: each``) or all combined (``cross``). A config equal to the
+    (``zero`` replaces them when it is 0; ``clip`` [low, high]; ``integer``) or, for a
+    categorical knob, its ``top`` values by mean stage-1 score along its axis, one knob
+    at a time (``combine: each``) or all combined (``cross``). A knob with ``always:
+    true`` is always chosen and ``select`` ranks the others only. A config equal to the
     best coarse one hashes like it, so its stage-1 run is reused. ``method`` restricts
     the registry entries (a registry name, or the slug for all). A coarse config
     without a result fails, unless ``allow_partial`` ranks the others only.
