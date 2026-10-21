@@ -8,7 +8,7 @@ same config share a run. ``configs/methods/<slug>.yaml`` holds ``base``, ``budge
 a config resolves shallowly: donor, base, tuned or grid entry, budget, overrides
 (``resolve_config``). ``configs/phases/<phase>.yaml`` picks configs and seeds
 (``expand_phase``). CLI: ``--phase P [--method M] [--dry-run] [--expand-fine SLUG]``
-plus the runner's flags (``--profile``, ``--max-runs``, workers), or ``--mark-tuned``.
+plus the runner's flags (``--profile``, ``--max-runs``, workers, ``--tracking-uri``).
 """
 
 import argparse
@@ -774,7 +774,14 @@ def run_specs(specs: Sequence[RunSpec], args: argparse.Namespace) -> None:
     # imported here: runner imports this module (a cycle), plus JAX and MLflow
     from .runner import main as run
 
-    run(specs, args.profile, args.worker_index, args.num_workers, args.max_runs)
+    run(
+        specs,
+        args.profile,
+        args.worker_index,
+        args.num_workers,
+        args.max_runs,
+        tracking_uri=args.tracking_uri,
+    )
 
 
 def _print_fine(fine: Fine, slug: str, methods_dir: Path) -> None:
@@ -786,6 +793,35 @@ def _print_fine(fine: Fine, slug: str, methods_dir: Path) -> None:
                 method, registry, TUNE_BUDGET, overrides=over, methods_dir=methods_dir
             )
             print(f"# {registry} {name} {config_hash(cfg)} {json.dumps(over)}")
+
+
+def phase_specs(
+    args: argparse.Namespace, tracking_uri: str | None = None
+) -> list[RunSpec] | None:
+    """The specs of ``args.phase`` (None without one), after ``args.expand_fine``.
+
+    ``args`` carries ``phase``, ``method``, ``expand_fine`` and ``methods_dir``; the
+    stage-2 configs come from the coarse results in ``tracking_uri`` (the default
+    store when None) and are printed.
+    """
+    fine = None
+    if args.expand_fine:
+        slug = args.expand_fine
+        results = coarse_results(
+            slug,
+            method=args.method,
+            tracking_uri=tracking_uri,
+            methods_dir=args.methods_dir,
+        )
+        fine = expand_fine(
+            slug, results, method=args.method, methods_dir=args.methods_dir
+        )
+        _print_fine(fine, slug, args.methods_dir)
+    if args.phase is None:
+        return None
+    return expand_phase(
+        args.phase, method=args.method, methods_dir=args.methods_dir, fine=fine
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -809,25 +845,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--num-workers", type=int, default=1, help="worker i takes runs i, i + k, ..."
     )
+    parser.add_argument(
+        "--tracking-uri",
+        help="store of this worker's runs instead of configs/experiment.yaml's "
+        "(a cluster node's own database, merged later by `make merge-mlflow`)",
+    )
     args = parser.parse_args(argv)
     if args.mark_tuned:
         print(mark_tuned(*args.mark_tuned, methods_dir=args.methods_dir))
         return
     if args.phase is None and args.expand_fine is None:
         parser.error("give --phase, --expand-fine or --mark-tuned")
-    fine = None
-    if args.expand_fine:
-        slug = args.expand_fine
-        results = coarse_results(slug, method=args.method, methods_dir=args.methods_dir)
-        fine = expand_fine(
-            slug, results, method=args.method, methods_dir=args.methods_dir
-        )
-        _print_fine(fine, slug, args.methods_dir)
-    if args.phase is None:
+    specs = phase_specs(args)
+    if specs is None:
         return
-    specs = expand_phase(
-        args.phase, method=args.method, methods_dir=args.methods_dir, fine=fine
-    )
     if args.dry_run:
         print("\n".join(spec.name for spec in specs))
     else:

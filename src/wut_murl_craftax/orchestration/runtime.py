@@ -5,6 +5,7 @@ Measured effect of each setting: ``knowledge/craftax/Craftax runtime setup.md``.
 
 import argparse
 import importlib
+import importlib.util
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import cast
 
 import jax
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+
+from .profiles import RoleMode
 
 DEFAULT_CACHE_DIR = Path(".cache/jax")
 """Persistent XLA compilation cache, relative to the working directory."""
@@ -27,6 +30,29 @@ class DeviceRoles:
     """Device that steps the environments."""
     learner: jax.Device
     """Device that runs the network updates."""
+
+
+def metal_installed() -> bool:
+    """Whether the Apple GPU plugin (``metaljax``, group ``metal``) is installed."""
+    try:
+        return importlib.util.find_spec("jax_plugins.metal") is not None
+    except ModuleNotFoundError:  # no jax_plugins namespace at all
+        return False
+
+
+def select_platforms(mode: RoleMode) -> None:
+    """Make the Apple GPU JAX's default backend for the ``cpu-actor`` mode.
+
+    ``device_roles`` only finds the GPU as learner when ``metal`` is the default
+    backend, which needs ``JAX_PLATFORMS=metal,cpu`` before the backends start. Other
+    machines (Linux CPU, the ``gpu`` mode) and an explicit ``JAX_PLATFORMS`` stay as
+    they are. Call before the first JAX computation, like ``configure_runtime``.
+    """
+    if mode != "cpu-actor" or os.environ.get("JAX_PLATFORMS") or not metal_installed():
+        return
+    os.environ["JAX_PLATFORMS"] = "metal,cpu"
+    # jax read the variable when it was imported, which is earlier than this call
+    jax.config.update("jax_platforms", "metal,cpu")  # type: ignore[no-untyped-call]
 
 
 def configure_runtime(

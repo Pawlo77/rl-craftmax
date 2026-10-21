@@ -55,7 +55,7 @@ from .queue import (
     TAG_SEED,
     RunSpec,
 )
-from .runtime import configure_runtime
+from .runtime import configure_runtime, select_platforms
 from .tracking import _resolve_tracking_uri, build_mlflow_tracker
 
 logger = logging.getLogger(__name__)
@@ -392,19 +392,23 @@ def main(
     max_runs: int | None = None,
     *,
     experiment_config: Path = EXPERIMENT_CONFIG,
+    tracking_uri: str | None = None,
     methods: Mapping[str, Trainer] | None = None,
     evaluate: Evaluate = no_evaluation,
 ) -> None:
     """Train, evaluate and log this worker's specs, at most ``max_runs`` trained ones.
 
-    ``configure_runtime`` runs first, before any JAX computation; runs reused as
+    ``select_platforms`` and ``configure_runtime`` run first, before any JAX
+    computation (the profile decides the backends and the CPU split); runs reused as
     FINISHED do not count towards ``max_runs``. MLflow settings come from
-    ``experiment_config``, the experiment name replaced by each spec's phase.
+    ``experiment_config``, the experiment name replaced by each spec's phase and the
+    tracking URI by ``tracking_uri`` when given (a cluster node's own store).
 
     Raises:
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
     """
     machine = load_profile(profile)
+    select_platforms(machine.device_roles)
     configure_runtime(host_devices=machine.host_devices)
     mine = worker_specs(specs, worker_index, num_workers)
     trainers = _registry() if methods is None else methods
@@ -416,6 +420,10 @@ def main(
         if os.environ.pop(variable, None):
             logger.warning("ignoring %s: the runner picks runs by name", variable)
     experiment = load_experiment_config(experiment_config)
+    if tracking_uri is not None:
+        experiment = replace(
+            experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
+        )
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
     trained = 0
     with _stop_on_signals() as stop:

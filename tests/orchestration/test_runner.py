@@ -62,6 +62,8 @@ class Store:
             "configure_runtime",
             lambda host_devices=None: self.runtime_calls.append(host_devices),
         )
+        # the platform choice would change JAX_PLATFORMS of the test process
+        monkeypatch.setattr(runner, "select_platforms", lambda mode: None)
         monkeypatch.delenv("MLFLOW_ACTIVE_RUN_ID", raising=False)
 
     def phase(
@@ -189,6 +191,23 @@ def test_two_workers_never_take_the_same_run(store: Store) -> None:
     assert names_1 == {s.name for s in second}
     with pytest.raises(ValueError, match="worker index"):
         worker_specs(specs, 2, 2)
+
+
+def test_a_tracking_uri_sends_the_runs_to_another_store(
+    store: Store, tmp_path: Path
+) -> None:
+    """A cluster node writes its own database, not the experiment file's."""
+    specs = store.phase("tune-coarse", ["published"])
+    node_uri = f"sqlite:///{tmp_path / 'node' / 'mlruns-node-1.db'}"
+    (tmp_path / "node").mkdir()
+    store.run(specs, FakeTrainer(), tracking_uri=node_uri)
+    assert store.runs() == {}
+    node = mlflow.MlflowClient(tracking_uri=node_uri)
+    ids = [e.experiment_id for e in node.search_experiments()]
+    (run,) = node.search_runs(ids)
+    assert run.info.run_name == specs[0].name
+    assert run.info.status == "FINISHED"
+    assert artifact_path(run.info.artifact_uri).is_relative_to(tmp_path / "node")
 
 
 def test_max_runs_counts_the_runs_it_trains(store: Store) -> None:

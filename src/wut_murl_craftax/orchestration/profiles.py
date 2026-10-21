@@ -3,9 +3,9 @@
 A run trains identically under every profile (``configs/profiles/<name>.yaml``).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import yaml
 
@@ -27,7 +27,26 @@ class Profile:
     checkpoint_every: int
     """Most updates between full-state saves under ``state/``; results ignore it."""
 
+    def __post_init__(self) -> None:
+        """Reject a value a machine cannot run with, naming the field."""
+        if self.device_roles not in get_args(RoleMode):
+            modes = get_args(RoleMode)
+            msg = f"device_roles is one of {modes}, got {self.device_roles!r}"
+            raise ValueError(msg)
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if field.name != "device_roles" and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 1
+            ):
+                msg = f"{field.name} is a positive integer, got {value!r}"
+                raise ValueError(msg)
+
 
 def load_profile(path: Path | str) -> Profile:
-    """Read a profile YAML file; a missing or unknown key raises ``TypeError``."""
+    """Read a profile YAML file.
+
+    Raises:
+        TypeError: A key is missing or unknown.
+        ValueError: A value is out of range (see `Profile`).
+    """
     return Profile(**yaml.safe_load(Path(path).read_text(encoding="utf-8")))

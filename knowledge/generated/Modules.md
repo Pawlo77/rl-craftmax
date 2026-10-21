@@ -14,12 +14,13 @@ parent: "[[wut_murl_craftax]]"
 |---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. | 3 |  |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 147 |  |
-| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 96 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 33 |  |
-| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 838 |  |
+| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 104 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 |  |
+| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 869 |  |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 428 |  |
-| [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 115 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 436 |  |
+| [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 141 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 |  |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 220 | [[orchestration]] |
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: method registry, PPO, checkpoints, resume state, metrics, episodes. | 85 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
@@ -49,4 +50,5 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/orchestration/profiles.py]]
 - [[src/wut_murl_craftax/orchestration/queue.py]]
 - [[src/wut_murl_craftax/orchestration/runner.py]]
+- [[src/wut_murl_craftax/orchestration/store.py]]
 - [[src/wut_murl_craftax/training/interface.py]]

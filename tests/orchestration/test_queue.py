@@ -655,7 +655,7 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[Any, ...]] = []
-    monkeypatch.setattr(runner, "main", lambda *a: calls.append(a))
+    monkeypatch.setattr(runner, "main", lambda *a, **kw: calls.append((*a, kw)))
     queue.main(["--phase", "configs/phases/smoke.yaml"])
     queue.main([
         "--phase",
@@ -668,13 +668,21 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
         "1",
         "--num-workers",
         "4",
+        "--tracking-uri",
+        "sqlite:///node.db",
     ])
     (specs, *flags), (_, *given) = calls
     assert [s.name for s in specs] == [
         s.name for s in expand_phase(REPO / "configs/phases/smoke.yaml")
     ]
-    assert flags == [REPO / "configs/profiles/laptop.yaml", 0, 1, None]
-    assert given == [Path("p.yaml"), 1, 4, 3]
+    assert flags == [
+        REPO / "configs/profiles/laptop.yaml",
+        0,
+        1,
+        None,
+        {"tracking_uri": None},
+    ]
+    assert given == [Path("p.yaml"), 1, 4, 3, {"tracking_uri": "sqlite:///node.db"}]
 
 
 def test_cli_selects_by_registry_name_and_by_slug() -> None:

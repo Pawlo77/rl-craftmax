@@ -1,0 +1,8 @@
+# Cluster node with one NVIDIA GPU: rollouts and updates on the GPU.
+# Runtime settings only; a run trains identically under every profile.
+host_devices: 1  # no CPU split: the env batch lives on the GPU
+device_roles: gpu
+# Host RAM a method's buffers may take. The node's RAM is not known yet (80 GB GPU nodes
+# usually have 128 GB or more); 64 GiB is a safe half, raise it once the cluster is measured.
+memory_limit_bytes: 68719476736
+checkpoint_every: 50  # a GPU run advances fast and is preempted rarely; state saves cost more per update

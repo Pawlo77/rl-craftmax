@@ -23,9 +23,11 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         configure_runtime,
         device_roles,
         env_mesh,
+        select_platforms,
         shard_envs,
         warm_texture_cache,
     )
+    from .store import merge_stores, phase_status
     from .tracking import MlflowRunTracker, build_mlflow_tracker
 
 _EXPORTS: dict[str, str] = {
@@ -50,7 +52,10 @@ _EXPORTS: dict[str, str] = {
     "load_method": "queue",
     "load_profile": "profiles",
     "mark_tuned": "queue",
+    "merge_stores": "store",
+    "phase_status": "store",
     "resolve_config": "queue",
+    "select_platforms": "runtime",
     "shard_envs": "runtime",
     "warm_texture_cache": "runtime",
     "worker_specs": "runner",
@@ -80,7 +85,10 @@ __all__ = [
     "load_method",
     "load_profile",
     "mark_tuned",
+    "merge_stores",
+    "phase_status",
     "resolve_config",
+    "select_platforms",
     "shard_envs",
     "warm_texture_cache",
     "worker_specs",
