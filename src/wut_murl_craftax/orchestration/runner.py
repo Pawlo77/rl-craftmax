@@ -156,16 +156,22 @@ def evaluate_fixed_seeds(
     """Default `Evaluate` (with ``trainers`` bound): ``eval/<mode>/<update>.npz``.
 
     Logs ``eval/<mode>/return`` and ``eval/<mode>/score_pct`` (% of the maximum
-    reward) at the checkpoint's env step. The module imports Craftax, which starts
-    the JAX backends, so it is imported here, after ``configure_runtime``.
+    reward) at the checkpoint's env step as each file is written, and once for files
+    a crashed call left unlogged. The module imports Craftax, which starts the JAX
+    backends, so it is imported here, after ``configure_runtime``.
     """
     module = importlib.import_module("..visualisation.eval_rollouts", __package__)
+    run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]  # the runner's run
+    client = mlflow.MlflowClient()
+    logged: dict[str, set[int]] = {}
     for s in module.evaluate_spec(run_dir, spec, should_stop, methods=trainers):
-        metrics = {
-            f"eval/{s.mode}/return": s.ret,
-            f"eval/{s.mode}/score_pct": s.score_pct,
-        }
-        mlflow.log_metrics(metrics, step=s.env_steps)
+        for name, value in (("return", s.ret), ("score_pct", s.score_pct)):
+            key = f"eval/{s.mode}/{name}"
+            if key not in logged:  # files of a crashed call exist but were not logged
+                history = client.get_metric_history(run_id, key)
+                logged[key] = {m.step for m in history}
+            if s.env_steps not in logged[key]:
+                mlflow.log_metric(key, value, step=s.env_steps)
 
 
 def final_score(update_scores: np.ndarray, episode_counts: np.ndarray) -> float:

@@ -22,7 +22,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 |  |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 869 |  |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 489 |  |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 495 |  |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 141 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 |  |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 225 | [[orchestration]] |
@@ -37,12 +37,12 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/curves.py]] | Animated training curves: % of max reward, achievements unlocked, success rates. | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/cuts.py]] | Cuts from the reviewed CSV: clips, cards, 3-min (16:9, Short) and 12-min cuts, GIFs. | 410 | [[visualisation]] |
-| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. | 509 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. | 542 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/ffmpeg.py]] | Typed ffmpeg/ffprobe wrappers: argument lists only, never a shell string. | 452 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/grid.py]] | Checkpoint comparison grid: one eval seed played by four checkpoints, 2x2, synced. | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/highlights.py]] | Highlight detection: features -> events -> scored windows -> ranked candidates. | 336 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/montage.py]] | Learning-process composites: the long-cut montage and the Short (grid over curves). | 159 | [[visualisation]] |
-| [[src/wut_murl_craftax/visualisation/overlay.py]] | Agent internals overlay: game frame \| observation, action probabilities, value. | 355 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/overlay.py]] | Agent internals overlay: game frame \| observation, action probabilities, value. | 369 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/render.py]] | Render rollouts to lossless RGB masters (one step per frame) or final-size windows. | 136 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/review.py]] | Review: keep/drop CSV (source of truth), previews, contact sheet, one static page. | 173 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/rollout.py]] | Rollout record (seed, key scheme, actions, per-step features), policies, replay. | 699 | [[visualisation]] |

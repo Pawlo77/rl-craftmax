@@ -23,7 +23,9 @@ from . import ffmpeg
 from .charts import INK, MUTED, SERIES, SURFACE, figure, frame, style
 from .eval_rollouts import (
     EVAL_SEEDS,
+    MODES,
     EvalRun,
+    Mode,
     episode_frames,
     network_outputs,
     stored_episode,
@@ -143,10 +145,12 @@ class _Episode:
     n_alive: int
 
     @classmethod
-    def load(cls, run: EvalRun, update: int, seed: int, gamma: float) -> "_Episode":
+    def load(
+        cls, run: EvalRun, update: int, seed: int, gamma: float, greedy: bool = False
+    ) -> "_Episode":
         """Replay seed + actions; re-run the network on the observations."""
-        ep, actions = stored_episode(run, update, seed)
-        probs, value = network_outputs(run, update, ep.obs, actions, ep.done, False)
+        ep, actions = stored_episode(run, update, seed, greedy)
+        probs, value = network_outputs(run, update, ep.obs, actions, ep.done, greedy)
         n = len(actions)
         return cls(
             probs,
@@ -278,26 +282,27 @@ def render_overlay(
     panel: tuple[int, int] = (840, 1080),
     gamma: float = 0.99,
     out: Path = Path("outputs/visualisation/overlay.mp4"),
+    mode: Mode = "stochastic",
 ) -> Path:
     """Game frame (``game_px`` square, letterboxed) beside the internals panel."""
     run = EvalRun.load(run_dir)
     work = out.with_suffix("")
     work.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    ep = _Episode.load(run, update, seed, gamma)
+    ep = _Episode.load(run, update, seed, gamma, mode == "greedy")
     s0, s1 = steps[0], min(steps[1], ep.n_alive)
     fig = _Panel(run, ep, panel, s0, s1)
     fig.fig.text(
         0.02,
         0.975,
-        f"checkpoint {run.env_steps(update) / 1e6:.1f}M steps, eval seed {seed}",
+        f"checkpoint {run.env_steps(update) / 1e6:.1f}M steps, {mode} eval seed {seed}",
         fontsize=panel[1] / 80,
         color=INK,
     )
     with ffmpeg.FrameWriter(work / "internals.mkv", *panel, fps=fps) as writer:
         for t in range(s0, s1):  # streamed: 300 panels at 840 x 1080 would be 0.8 GB
             writer.write(fig.draw(t))
-    frames = episode_frames(run, update, seed)[s0:s1]
+    frames = episode_frames(run, update, seed, greedy=mode == "greedy")[s0:s1]
     h, w = frames.shape[1:3]
     with ffmpeg.FrameWriter(work / "game.mkv", w, h, fps=fps) as writer:
         writer.write(frames)
@@ -329,13 +334,14 @@ def render_overlay(
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Command line: ``RUN --update U [--seed 10000] [--steps 0:300] [--fps 10]``."""
+    """Command line: ``RUN --update U [--seed S] [--mode greedy] [--steps 0:300]``."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("run", type=Path)
     p.add_argument("--update", type=int, required=True)
     p.add_argument("--seed", type=int, default=EVAL_SEEDS[0])
     p.add_argument("--steps", default="0:300")
     p.add_argument("--fps", type=int, default=10)
+    p.add_argument("--mode", choices=MODES, default="stochastic")
     p.add_argument("--game-px", type=int, default=1080)
     p.add_argument("--panel", default="840x1080")
     p.add_argument(
@@ -346,7 +352,15 @@ def main(argv: list[str] | None = None) -> None:
     pw, ph = map(int, a.panel.split("x"))
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     render_overlay(
-        a.run, a.update, a.seed, (s0, s1), a.fps, a.game_px, (pw, ph), out=a.out
+        a.run,
+        a.update,
+        a.seed,
+        (s0, s1),
+        a.fps,
+        a.game_px,
+        (pw, ph),
+        out=a.out,
+        mode=a.mode,
     )
     print(f"overlay written to {a.out}")
 

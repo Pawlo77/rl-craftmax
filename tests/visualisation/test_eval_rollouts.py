@@ -17,6 +17,7 @@ from craftax.craftax_env import make_craftax_env_from_name
 
 from wut_murl_craftax.evaluation.events import StepEvents
 from wut_murl_craftax.orchestration.queue import RunSpec
+from wut_murl_craftax.orchestration.runtime import device_roles
 from wut_murl_craftax.training.checkpoints import save_checkpoint
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.ppo import PPOPolicy
@@ -34,12 +35,13 @@ from wut_murl_craftax.visualisation.eval_rollouts import (
     load_eval,
     replay_episode,
     rollout_seeds,
+    stored_episode,
 )
 from wut_murl_craftax.visualisation.rollout import replay
 
 ENV = TINY.env
 EVENT_KEYS = {f"events/{f.name}" for f in fields(StepEvents)}
-FILE_KEYS = {"seeds", "actions", "length", "method"} | EVENT_KEYS
+FILE_KEYS = {"seeds", "actions", "length", "method", "devices"} | EVENT_KEYS
 MOVES = 5
 """The counting policy cycles NOOP and the four moves: it never eats, so it dies."""
 
@@ -179,6 +181,27 @@ def test_the_eval_file_holds_actions_events_and_declared_extras_only(
     ]
 
 
+def test_the_eval_file_records_the_devices_it_ran_on() -> None:
+    devices = json.loads(str(load_eval(tiny_run(), 4)["devices"]))
+    roles = device_roles()
+    assert devices == {
+        "actor": str(roles.actor),
+        "learner": str(roles.learner),
+        "shards": max(1, len(jax.devices("cpu"))),
+    }
+
+
+def test_replays_of_different_lengths_compile_once() -> None:
+    run = EvalRun.load(tiny_run())
+    ev = load_eval(run.dir, 4)
+    assert len(set(ev["length"].tolist())) > 1
+    for i, seed in enumerate(EVAL_SEEDS):
+        ep, actions = stored_episode(run, 4, seed)
+        assert len(ep.obs) == len(actions) == ev["length"][i]
+        assert jax.tree.leaves(ep.states)[0].shape[0] == len(actions) + 1
+    assert run._replay._cache_size() == 1
+
+
 def test_replaying_seed_and_actions_rebuilds_observations_and_events() -> None:
     run = EvalRun.load(tiny_run())
     ev = load_eval(run.dir, 4)
@@ -203,9 +226,8 @@ def test_replaying_seed_and_actions_rebuilds_observations_and_events() -> None:
 def test_tuning_runs_evaluate_the_last_checkpoint_finals_every_one(
     fresh_ppo_run: Path, phase: str, eval_mode: str, updates: list[int]
 ) -> None:
-    got = evaluate_spec(
-        fresh_ppo_run, _spec(phase, eval_mode), lambda: False, seeds=EVAL_SEEDS
-    )
+    spec = _spec(phase, eval_mode)
+    got = list(evaluate_spec(fresh_ppo_run, spec, lambda: False, seeds=EVAL_SEEDS))
     for mode in MODES:
         files = sorted((fresh_ppo_run / "eval" / mode).glob("*.npz"))
         assert [int(p.stem) for p in files] == updates
@@ -223,18 +245,23 @@ def test_an_interrupted_evaluation_skips_the_files_already_written(
     fresh_ppo_run: Path,
 ) -> None:
     spec = _spec("final-1m", "log_spaced")
-    first = evaluate_spec(
-        fresh_ppo_run,
-        spec,
-        lambda: any((fresh_ppo_run / "eval").rglob("*.npz")),
-        seeds=EVAL_SEEDS,
+    first = list(
+        evaluate_spec(
+            fresh_ppo_run,
+            spec,
+            lambda: any((fresh_ppo_run / "eval").rglob("*.npz")),
+            seeds=EVAL_SEEDS,
+        )
     )
     assert [(s.update, s.mode) for s in first] == [(0, "stochastic")]
     written = fresh_ppo_run / "eval" / "stochastic" / "00000.npz"
     stamp = written.stat().st_mtime_ns
-    rest = evaluate_spec(fresh_ppo_run, spec, lambda: False, seeds=EVAL_SEEDS)
-    assert (0, "stochastic") not in [(s.update, s.mode) for s in rest]
-    assert len(rest) == 4 * len(MODES) - 1
+    # the rerun reads the written file back (for logging) and plays the other 7
+    rest = list(evaluate_spec(fresh_ppo_run, spec, lambda: False, seeds=EVAL_SEEDS))
+    assert [(s.update, s.mode) for s in rest] == [
+        (u, m) for u in (0, 1, 2, 4) for m in MODES
+    ]
+    assert rest[0] == first[0]
     assert written.stat().st_mtime_ns == stamp
 
 

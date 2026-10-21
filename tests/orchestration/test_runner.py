@@ -1,5 +1,6 @@
 """Tests for the resumable runner: lookup, resume, signals, run directory, workers."""
 
+import functools
 import inspect
 import json
 import math
@@ -29,6 +30,7 @@ from wut_murl_craftax.training.checkpoints import (
     load_params,
     load_state,
 )
+from wut_murl_craftax.visualisation import eval_rollouts
 
 HERE = Path(__file__).parent
 METHODS = HERE / "fixtures" / "configs" / "methods"
@@ -488,6 +490,42 @@ def test_main_configures_the_runtime_once_before_the_trainers(store: Store) -> N
     trainer = FakeTrainer()
     store.run(store.phase("tune-coarse", ["published", "lr-hi"]), trainer)
     assert store.runtime_calls == [2]
+
+
+def test_eval_metrics_of_files_written_before_a_crash_are_logged_once(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    real, calls = eval_rollouts.evaluate, []
+
+    def crash_after_one_file(*args: Any, **kw: Any) -> Any:
+        calls.append(args[2])
+        if len(calls) > 1:
+            msg = "crash while evaluating"
+            raise RuntimeError(msg)
+        return real(*args, **kw)
+
+    monkeypatch.setattr(eval_rollouts, "evaluate", crash_after_one_file)
+    run_main = functools.partial(
+        runner.main,
+        [spec],
+        PROFILE,
+        experiment_config=store.config,
+        methods={"toy": FakeTrainer()},
+    )
+    with pytest.raises(RuntimeError, match="crash while evaluating"):
+        run_main()
+    assert store.runs()[spec.name].info.status == "FAILED"
+    monkeypatch.setattr(eval_rollouts, "evaluate", real)
+    run_main()
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    for mode in ("stochastic", "greedy"):
+        for name in ("return", "score_pct"):
+            history = store.client.get_metric_history(
+                run.info.run_id, f"eval/{mode}/{name}"
+            )
+            assert len(history) == 1, (mode, name)
 
 
 def test_main_splits_the_cpu_into_the_profiles_host_devices(store: Store) -> None:

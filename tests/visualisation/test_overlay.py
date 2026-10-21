@@ -47,11 +47,12 @@ def test_discounted_return_stops_at_episode_end() -> None:
     np.testing.assert_allclose(discounted_return(r, 3, 0.5), [1.25, 0.5, 1.0, 0.0])
 
 
-def test_episode_replays_observations_and_reruns_the_network() -> None:
+@pytest.mark.parametrize("greedy", [False, True])
+def test_episode_replays_observations_and_reruns_the_network(greedy: bool) -> None:
     run, seed = EvalRun.load(tiny_run()), EVAL_SEEDS[0]
-    ev = load_eval(run.dir, 4)
+    ev = load_eval(run.dir, 4, greedy)
     n = int(ev["length"][0])
-    ep = _Episode.load(run, 4, seed, 0.99)
+    ep = _Episode.load(run, 4, seed, 0.99, greedy)
     # an independent replay: the raw env and the fold_in key scheme
     net, env, env_params = make_network(TINY.env, TINY.width, auto_reset=False)
     base = jax.random.PRNGKey(seed)

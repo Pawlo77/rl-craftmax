@@ -14,7 +14,7 @@ import functools
 import json
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, cast
@@ -105,7 +105,7 @@ class EvalRun:
         index = load_index(run_dir)
         config = {**cfg, "steps": max((e["env_steps"] for e in index), default=0)}
         # shapes only: acting needs the params structure, not an env batch or values
-        state = jax.eval_shape(lambda k: trainer.init(config, k), jax.random.key(0))
+        state = jax.eval_shape(lambda: trainer.init(config, jax.random.key(0)))
         env = LogWrapper(make_craftax_env_from_name(cfg["env"], auto_reset=False))
         return cls(
             run_dir,
@@ -265,13 +265,15 @@ def rollout_seeds(
     Chunks of ``chunk`` steps repeat until every episode has ended; the env ends
     each one by `EvalRun.max_steps`, so no episode is cut.
     """
-    actor, recs = device_roles().actor, []
+    roles, recs, shards = device_roles(), [], 1
+    actor = roles.actor
     with jax.default_device(actor):  # Metal steps Craftax slowly: rollouts on the CPU
         seed_arr = jnp.asarray(seeds, jnp.int32)
         carry = run._reset(seed_arr)
         cpus = jax.devices("cpu")
         if actor.platform == "cpu" and len(cpus) > 1 and len(seeds) % len(cpus) == 0:
             mesh = env_mesh()  # the seeds split over the CPU devices, as training envs
+            shards = len(cpus)
             seed_arr, carry = shard_envs((seed_arr, carry), mesh)
             params = jax.device_put(params, NamedSharding(mesh, PartitionSpec()))  # type: ignore[no-untyped-call]  # jax API
         flag = jnp.bool_(greedy)
@@ -288,6 +290,14 @@ def rollout_seeds(
         "seeds": np.asarray(seeds),
         "actions": actions,
         "length": (actions >= 0).sum(1).astype(np.int32),
+        # results are bit-exact per device setup; other hardware may round differently
+        "devices": np.array(
+            json.dumps({
+                "actor": str(actor),
+                "learner": str(roles.learner),
+                "shards": shards,
+            })
+        ),
     }
     out |= {
         f"events/{f.name}": getattr(tr["events"], f.name) for f in fields(StepEvents)
@@ -301,6 +311,15 @@ def eval_returns(ev: Mapping[str, np.ndarray], env: str) -> np.ndarray:
     unlocks = ev["events/unlocked"].sum(1, dtype=np.float64)
     health = ev["events/health_delta"].sum(1, dtype=np.float64)
     return cast(np.ndarray, unlocks @ achievement_weights(env) + 0.1 * health)
+
+
+def _summary(
+    run: EvalRun, update: int, mode: Mode, ev: Mapping[str, np.ndarray]
+) -> EvalSummary:
+    ret = float(eval_returns(ev, run.cfg["env"]).mean())
+    return EvalSummary(
+        update, run.env_steps(update), mode, ret, score_pct(ret, run.max_reward)
+    )
 
 
 def _path(run_dir: Path, update: int, mode: Mode) -> Path:
@@ -345,11 +364,13 @@ def evaluate(
         with tmp.open("wb") as f:
             np.savez_compressed(f, **payload)
         tmp.replace(path)  # a file that exists is complete
-        ret = float(eval_returns(arrays, run.cfg["env"]).mean())
-        pct = score_pct(ret, run.max_reward)
-        written.append(EvalSummary(u, run.env_steps(u), mode, ret, pct))
+        written.append(summary := _summary(run, u, mode, arrays))
         logger.info(
-            "eval %s update %d: %.1fs, mean return %.2f", mode, u, time.time() - t0, ret
+            "eval %s update %d: %.1fs, mean return %.2f",
+            mode,
+            u,
+            time.time() - t0,
+            summary.ret,
         )
     return written
 
@@ -362,22 +383,26 @@ def evaluate_spec(
     seeds: Sequence[int] = EVAL_SEEDS,
     chunk: int = CHUNK_STEPS,
     methods: Mapping[str, Trainer] | None = None,
-) -> list[EvalSummary]:
+) -> Iterator[EvalSummary]:
     """Both modes of the final checkpoint, or of every one for ``log_spaced`` specs.
 
-    Files already written are skipped; returns early once ``should_stop()`` is true.
+    Yields a summary per scheduled file: a new one as soon as it is written, an
+    existing one read back (so a caller can log what a crashed call did not). Stops
+    early once ``should_stop()`` is true.
     """
     run = EvalRun.load(run_dir, methods)
     updates = run.updates if spec.eval_mode == "log_spaced" else run.updates[-1:]
-    written: list[EvalSummary] = []
     for u in updates:
         for mode in MODES:
-            written += evaluate(
+            if _path(run.dir, u, mode).exists():
+                yield _summary(run, u, mode, load_eval(run.dir, u, mode == "greedy"))
+                continue
+            new = evaluate(
                 run, [u], mode, seeds=seeds, chunk=chunk, should_stop=should_stop
             )
-        if should_stop():
-            break
-    return written
+            if not new:  # stopped
+                return
+            yield new[0]
 
 
 def load_eval(
@@ -389,12 +414,20 @@ def load_eval(
 
 
 def replay_episode(run: EvalRun, seed: int, actions: np.ndarray) -> Replay:
-    """Observations, rewards, events and states of seed + the episode's actions."""
+    """Observations, rewards, events and states of seed + the episode's actions.
+
+    ``actions`` may keep the eval file's -1 padding after the episode. The replay
+    runs at a width rounded up to `CHUNK_STEPS` (NOOP past the end, then sliced
+    off), so episodes of any length up to that width share one compile.
+    """
+    actions = np.asarray(actions)
+    n = int((actions >= 0).sum())
+    padded = np.zeros(-(-max(len(actions), 1) // CHUNK_STEPS) * CHUNK_STEPS, np.int32)
+    padded[:n] = actions[:n]
     with jax.default_device(device_roles().actor):
-        o, r, d, ev, states = run._replay(
-            jnp.int32(seed), jnp.asarray(actions, jnp.int32)
-        )
-    o, r, d, ev = jax.device_get((o, r, d, ev))
+        o, r, d, ev, states = run._replay(jnp.int32(seed), jnp.asarray(padded))
+        states = jax.tree.map(lambda x: x[: n + 1], states)
+    o, r, d, ev = jax.tree.map(lambda x: np.asarray(x)[:n], (o, r, d, ev))
     return Replay(o, r, d, ev, states)
 
 
@@ -404,8 +437,8 @@ def stored_episode(
     """The replayed episode of ``seed`` in an eval file, and its actions."""
     ev = load_eval(run.dir, update, greedy)
     i = int(np.flatnonzero(ev["seeds"] == seed)[0])
-    actions = ev["actions"][i, : ev["length"][i]]
-    return replay_episode(run, seed, actions), actions
+    row = ev["actions"][i]
+    return replay_episode(run, seed, row), row[: ev["length"][i]]
 
 
 def network_outputs(
