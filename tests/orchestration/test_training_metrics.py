@@ -126,6 +126,23 @@ def test_compile_time_is_the_first_chunk_beyond_the_steady_updates() -> None:
 # --- a tiny Classic run through the runner and METHODS["ppo"] -----------------------
 
 
+class _Timed:
+    """A trainer that adds up the time of each chunk, until its results exist."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner, self.busy = inner, 0.0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    def train_chunk(self, state: Any, n_updates: int) -> Any:
+        start = time.monotonic()
+        out = self.inner.train_chunk(state, n_updates)
+        jax.block_until_ready(out)
+        self.busy += time.monotonic() - start
+        return out
+
+
 @pytest.fixture(scope="module")
 def tiny(
     tmp_path_factory: pytest.TempPathFactory,
@@ -143,8 +160,10 @@ def tiny(
         "final",
     )  # fmt: skip
     t0 = time.monotonic()
-    runner.main([spec], PROFILE, experiment_config=store.config, methods=METHODS)
-    store.elapsed = time.monotonic() - t0
+    timed = _Timed(METHODS["ppo"])
+    methods = {**METHODS, "ppo": timed}
+    runner.main([spec], PROFILE, experiment_config=store.config, methods=methods)
+    store.elapsed, store.busy = time.monotonic() - t0, timed.busy
     yield store, spec, store.runs()[spec.name]
     mp.undo()
 
@@ -253,9 +272,12 @@ def test_wall_clock_and_sps_wait_for_the_chunks_computation(
     """40 updates of `_work`, in chunks of up to 13: wall_s counts all of it."""
     a = jnp.full((512, 512), 1e-3)
     _work(a).block_until_ready()
-    t0 = time.monotonic()
-    _work(a).block_until_ready()
-    nap = time.monotonic() - t0
+    naps = []
+    for _ in range(7):  # the fastest sample: load only ever makes `_work` slower
+        t0 = time.monotonic()
+        _work(a).block_until_ready()
+        naps.append(time.monotonic() - t0)
+    nap = min(naps)
     profile = tmp_path / "long-chunks.yaml"
     profile.write_text(
         PROFILE.read_text().replace("checkpoint_every: 2", "checkpoint_every: 100")
@@ -272,7 +294,9 @@ def test_wall_clock_and_sps_wait_for_the_chunks_computation(
     )
     n = 1_000_000 // spu
     wall = load_metrics(store.run_dir(spec.name)).col("wall_s")
-    assert wall[-1] >= 0.95 * n * nap
+    # waiting for every chunk gives >= n * nap; counting only dispatch leaves out the
+    # last chunk (1/3 of the updates), so 0.85 still tells them apart under load
+    assert wall[-1] >= 0.85 * n * nap
     sps = [p.value for p in _hist(store, spec, "train/sps")]
     assert sps
     assert max(sps) <= spu / (0.9 * nap)
@@ -286,7 +310,13 @@ def _hist(store: Store, spec: RunSpec, key: str) -> list[Any]:
 def test_a_real_runs_wall_clock_covers_its_training(
     tiny: tuple[Store, RunSpec, Any],
 ) -> None:
-    """wall_s ends close to the time the whole runner call took, not a dispatch time."""
+    """wall_s spans the chunks' computation and never exceeds the runner call.
+
+    Bounds that hold however loaded the machine is (evaluation and MLflow time around
+    the training vary): the chunks are timed until their results exist, and wall_s,
+    measured from before the first chunk, must contain all of that. The long-chunk
+    test below is the one that tells a dispatch time from a computation time.
+    """
     store, spec, _ = tiny
     wall = load_metrics(store.run_dir(spec.name)).col("wall_s")[-1]
-    assert 0.4 * store.elapsed < wall <= store.elapsed
+    assert 0.99 * store.busy <= wall <= store.elapsed
