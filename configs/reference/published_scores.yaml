@@ -1,0 +1,39 @@
+# Published Craftax-Symbolic-v1 scores the reproduction check compares against.
+# score: % of the maximum 226, training-episode return, mean of 10 seeds
+#   (Craftax Baselines results; Craftax README scoreboard).
+# s_pub: published standard deviation (percentage points) in the band
+#   h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2) of the PPO design note.
+#   null when no spread exists; none of the entries below is null, but several are
+#   proxies because the papers publish curves only (see each comment).
+ppo:
+  1m:
+    score: 2.2
+    source: https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d038c4e641f9481320c158f457f30c28f3/README.md
+    # proxy: no PPO 1M spread is published; per-seed sd of PPO-RNN 1M (last 5 updates
+    # per seed) from the Simulus per-run data (knowledge/methods/PPO design.md)
+    s_pub: 0.083
+  1b:
+    score: 11.9
+    source: https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d038c4e641f9481320c158f457f30c28f3/README.md
+    # proxy: largest third-party rerun sd (SimBa rerun, 2.06 / 226 x 100); other
+    # reruns 0.22 to 0.58 (knowledge/methods/PPO design.md)
+    s_pub: 0.91
+ppo-rnn:
+  1m:
+    score: 2.3
+    source: https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d038c4e641f9481320c158f457f30c28f3/README.md
+    # Simulus per-run data, 10 seeds (knowledge/methods/PPO-RNN design.md)
+    s_pub: 0.083
+  1b:
+    score: 15.3
+    source: https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d038c4e641f9481320c158f457f30c28f3/README.md
+    # largest third-party spread, Singh et al. 2026 (sd type not stated)
+    # (knowledge/methods/PPO-RNN design.md)
+    s_pub: 0.35
+pqn-rnn:
+  1b:
+    score: 16.0
+    source: https://arxiv.org/abs/2407.04811
+    # Auto-Craftax PyTorch PQN-LSTM port, 2.95 / 226 x 100, the only published spread
+    # (knowledge/methods/PQN-RNN design.md)
+    s_pub: 1.31

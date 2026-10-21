@@ -18,10 +18,30 @@ base:
   resets: optimistic
   reset_ratio: 16
 
+# Craftax-1B column (Table 7): only these three keys differ from Table 11.
+budgets:
+  1b: {envs: 1024, num_steps: 64, lr: 2.0e-4}
+
 grid:
+  # Stage 1: one knob away from `base` per entry; the published config is the
+  # reproduction check, so it gets 10 seeds (the other entries use the phase's 3).
   coarse:
-    - {name: published-1m}
+    - {name: published-1m, seeds: 10}
+    - {name: shape-1024x64, envs: 1024, num_steps: 64, lr: 2.0e-4}
+    - {name: lr-2e-4, lr: 2.0e-4}
     - {name: lr-4e-4, lr: 4.0e-4}
+    - {name: lambda-0.7, gae_lambda: 0.7}
+    - {name: lambda-0.9, gae_lambda: 0.9}
+    - {name: ent-0, ent: 0.0}
+  # Stage 2 (`--expand-fine ppo`): around the best coarse config, the 2 numeric knobs
+  # with the largest stage-1 effect, one knob at a time (4 configs); the rollout
+  # shape is categorical and never refined. Entries are generated, not written.
+  fine:
+    rule: {select: 2, combine: each}
+    knobs:
+      - {key: lr, mul: [0.75, 1.5]}
+      - {key: gae_lambda, add: [-0.05, 0.05]}
+      - {key: ent, mul: [0.5, 2.0], zero: [0.001, 0.003]}
 
 # written by `--mark-tuned ppo <hash8>`
 tuned: null
