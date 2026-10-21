@@ -74,6 +74,17 @@ flowchart LR
 - 1M: no published number; our base against the original script with the same overrides, 3 seeds each, within 2 standard errors of the difference.
 - Debug order on a fail: target test and config diff; BatchRenorm warm-up and running statistics; a comparison against auto-reset envs (a check); CPU-only learner.
 
+## Device verification
+
+Q recompute check on Craftax-Symbolic (8268 inputs, 8 envs, 4 seeds, rollouts of 8, 16 and 128 steps): the largest absolute gap between the rollout's Q-values and the inference-mode rerun from the stored float32 start carry, the learner's reset flags and the recorded last actions. The rollout runs on the CPU actor; the rerun on the learner.
+
+| Learner | Max Q gap | Bound |
+|---|---|---|
+| CPU (`JAX_PLATFORMS=cpu`) | 0 | 1e-5 |
+| Metal (`JAX_PLATFORMS=metal,cpu`, laptop profile) | 1.01e-6 | 1e-5 |
+
+Metal stays below 1e-5, so no looser bound is needed.
+
 ## Fixed vs tuned
 
 | Setting | Status |
