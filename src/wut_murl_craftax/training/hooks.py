@@ -62,7 +62,8 @@ class HookFields:
     init_state_fn: Callable[[jax.Array, HookSpec], State] | None = None
     """``(key, spec) -> state``, once in init; ``spec`` is `HookSpec` (Classic, 8 envs:
     8, 1345, 17, 22, budget). The state is one pytree in the train state, saved by
-    ``save_state`` and moved to the actor for the rollout and back."""
+    ``save_state``; it lives on the actor and moves to the learner and back each
+    update only while ``observe`` or ``extra_loss_fn`` is set."""
     intrinsic_reward_fn: (
         Callable[
             [State, Any, Any, jax.Array, jax.Array, jax.Array], tuple[jax.Array, State]
@@ -92,7 +93,8 @@ class HookFields:
     state reachable through ``.env_state`` (`unwrap_state`): step events and episode
     metrics read it; ``ppo.make_env`` refuses a wrapper that breaks either."""
     metrics_fn: Callable[[State], dict[str, Any]] | None = None
-    """``(state) -> dict``, once per update; names are ``count/..``, ``sil/..``,
+    """``(state) -> dict``, once per update where the state is (after the learner
+    hooks, else on the actor after the rollout); names are ``count/..``, ``sil/..``,
     ``smdp/..``, ``dyna/..``, logged unchanged (`check_metric_names`; the old ``hook/``
     prefix is refused, at trace time on the first update)."""
 

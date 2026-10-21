@@ -28,6 +28,18 @@ BETA = 0.1
 SPEC = HookSpec(
     n_envs=2, obs_dim=1345, n_actions=17, n_achievements=22, total_steps=1000
 )
+KNOBS = {
+    "beta": BETA,
+    "granularity": "recipe",
+    "decay": "constant",
+    "log2_k": 20,
+    "key": "progress",
+}
+"""Every method knob (the config has no defaults): smoke config A."""
+
+
+def _cfg(**over: Any) -> CountBonusConfig:
+    return CountBonusConfig(**(KNOBS | over))
 
 
 @pytest.fixture(scope="module")
@@ -69,7 +81,7 @@ def _key(s: Any) -> int:
 def test_scripted_counts_and_bonuses(start: Any, picked: Any) -> None:
     a, b = _key(start), _key(picked)
     assert a != b
-    st = init(CountBonusConfig(beta=BETA), jax.random.key(1), SPEC)
+    st = init(_cfg(), jax.random.key(1), SPEC)
     script = [
         ((start, start), [False, False], 2, [1 / math.sqrt(2)] * 2),
         ((picked, start), [False, False], 3, [1.0, 1 / math.sqrt(3)]),
@@ -84,7 +96,7 @@ def test_scripted_counts_and_bonuses(start: Any, picked: Any) -> None:
 
 
 def test_bonus_ignores_the_pre_step_state(start: Any, picked: Any) -> None:
-    st = init(CountBonusConfig(beta=BETA), jax.random.key(1), SPEC)
+    st = init(_cfg(), jax.random.key(1), SPEC)
     nxt = _batch(picked, start)
     r1, s1 = _call(st, nxt, [False, True], env_state=_batch(start, start))
     r2, s2 = _call(st, nxt, [False, True], env_state=jnp.full(7, -1))
@@ -96,7 +108,7 @@ def test_init_sizes_from_the_spec() -> None:
     spec = HookSpec(
         n_envs=4, obs_dim=8268, n_actions=43, n_achievements=67, total_steps=10**6
     )
-    st = init(CountBonusConfig(), jax.random.key(2), spec)
+    st = init(_cfg(), jax.random.key(2), spec)
     assert st.table.shape == (2**20,)
     assert st.table.dtype == jnp.int32
     assert not st.table.any()
@@ -107,7 +119,7 @@ def test_init_sizes_from_the_spec() -> None:
 
 
 def test_linear_decay_halves_beta_at_half_budget(start: Any) -> None:
-    cfg = CountBonusConfig(beta=BETA, decay="linear")
+    cfg = _cfg(decay="linear")
     st = init(cfg, jax.random.key(1), SPEC)
     r, _ = _call(st, _batch(start, start), [False, False], t=SPEC.total_steps // 2)
     np.testing.assert_allclose(r, BETA / 2 / math.sqrt(2), rtol=1e-6)
@@ -116,7 +128,7 @@ def test_linear_decay_halves_beta_at_half_budget(start: Any) -> None:
 
 
 def test_zero_beta_pays_nothing_and_calls_repeat(start: Any, picked: Any) -> None:
-    st = init(CountBonusConfig(beta=0.0), jax.random.key(1), SPEC)
+    st = init(_cfg(beta=0.0), jax.random.key(1), SPEC)
     nxt = _batch(start, picked)
     r1, s1 = _call(st, nxt, [False, False])
     r2, s2 = _call(st, nxt, [False, False])
@@ -128,7 +140,7 @@ def test_zero_beta_pays_nothing_and_calls_repeat(start: Any, picked: Any) -> Non
 
 
 def test_simhash_key_separates_one_map_tile(env: Any, start: Any) -> None:
-    proj = init(CountBonusConfig(key="simhash"), jax.random.key(3), SPEC).proj
+    proj = init(_cfg(key="simhash"), jax.random.key(3), SPEC).proj
     pos = start.player_position + jnp.array([1, 0])
     tile = int(start.map[pos[0], pos[1]])
     new = (
@@ -147,7 +159,7 @@ def test_simhash_key_separates_one_map_tile(env: Any, start: Any) -> None:
 
 
 def test_simhash_counts_observations(env: Any, start: Any) -> None:
-    cfg = CountBonusConfig(beta=BETA, key="simhash")
+    cfg = _cfg(key="simhash")
     st = init(cfg, jax.random.key(3), SPEC)
     obs = jnp.stack([env.get_obs(start)] * 2)
     r, st = jax.jit(intrinsic_reward)(
@@ -158,7 +170,7 @@ def test_simhash_counts_observations(env: Any, start: Any) -> None:
 
 
 def test_metrics_match_numpy() -> None:
-    st = init(CountBonusConfig(), jax.random.key(4), SPEC)
+    st = init(_cfg(), jax.random.key(4), SPEC)
     keys = np.random.default_rng(5).integers(0, 2**20, 3000)
     table = st.table.at[keys].add(1)
     got = jax.jit(metrics)(st.replace(table=table))
@@ -172,15 +184,21 @@ def test_metrics_match_numpy() -> None:
 
 @pytest.mark.parametrize(
     "bad",
-    [{"beta": -0.1}, {"granularity": "fine"}, {"decay": "cosine"}, {"key": "rnd"}],
+    [
+        {"beta": -0.1},
+        {"beta": math.nan},
+        {"granularity": "fine"},
+        {"decay": "cosine"},
+        {"key": "rnd"},
+    ],
 )
 def test_config_refuses_bad_values(bad: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match=next(iter(bad))):
-        CountBonusConfig(**bad)
+        _cfg(**bad)
 
 
 def test_state_round_trips_save_state(tmp_path: Path, start: Any) -> None:
-    cfg = CountBonusConfig(beta=BETA, decay="linear")
+    cfg = _cfg(decay="linear")
     st = init(cfg, jax.random.key(1), SPEC)
     _, st = _call(st, _batch(start, start), [False, False], t=40)
     save_state(tmp_path, st)

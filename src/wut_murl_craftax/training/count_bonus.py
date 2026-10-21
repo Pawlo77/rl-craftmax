@@ -5,7 +5,9 @@ The hooks of `training/hooks.py`: `init` builds the state (``init_state_fn``),
 (``intrinsic_reward_fn``), `metrics` reports the table (``metrics_fn``). The key is
 `progress_key` of the inner next state, or a SimHash of the next observation (the
 ablation). Done steps are neither counted nor paid: their next state already starts
-a new episode. Design: [[Count-Based Progress Bonus design]].
+a new episode. `METHOD` builds these hooks per run config for the registry entries
+``count-bonus-ppo-rnn`` and ``count-bonus-pqn-rnn``. Design: [[Count-Based Progress
+Bonus design]].
 """
 
 import functools
@@ -16,7 +18,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from .hooks import HookSpec
+from .hooks import HookFields, HookMethod, HookSpec
 from .progress_key import Granularity, fields, hash_fields, unwrap
 
 type Decay = Literal["constant", "linear"]
@@ -27,24 +29,24 @@ SIMHASH_BITS = 64
 """Sign bits of the SimHash projection, folded by `hash_fields`."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CountBonusConfig:
-    """Method knobs of the count bonus."""
+    """Method knobs of the count bonus; no defaults, so every run config sets each."""
 
-    beta: float = 0.1
-    granularity: Granularity = "recipe"
-    decay: Decay = "constant"
-    log2_k: int = 20
+    beta: float
+    granularity: Granularity
+    decay: Decay
+    log2_k: int
     """Table size ``2^log2_k`` slots, also the hash width."""
-    key: KeyKind = "progress"
+    key: KeyKind
 
     def __post_init__(self) -> None:
-        """Refuse a negative β, a table outside 1-31 bits and unknown knob values.
+        """Refuse a negative or NaN β, a table outside 1-31 bits, unknown knob values.
 
         Raises:
             ValueError: On any of these.
         """
-        if self.beta < 0 or not 0 < self.log2_k < 32:
+        if not self.beta >= 0 or not 0 < self.log2_k < 32:
             msg = f"need beta >= 0 and 0 < log2_k < 32, got {self.beta}, {self.log2_k}"
             raise ValueError(msg)
         knobs = (("granularity", Granularity), ("decay", Decay), ("key", KeyKind))
@@ -132,3 +134,17 @@ def metrics(state: CountState) -> dict[str, jax.Array]:
         "count/distinct_keys": distinct,
         "count/occupancy": distinct / state.table.shape[0],
     }
+
+
+def hooks(cfg: CountBonusConfig, base: Any) -> HookFields:
+    """The count-bonus hooks of one run config, on either recurrent base."""
+    del base  # the bonus reads no base setting
+    return HookFields(
+        init_state_fn=functools.partial(init, cfg),
+        intrinsic_reward_fn=intrinsic_reward,
+        metrics_fn=metrics,
+    )
+
+
+METHOD = HookMethod(CountBonusConfig, hooks)
+"""The method both registry entries build their trainers with."""

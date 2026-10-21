@@ -1,0 +1,54 @@
+# Count-based progress bonus config; the schema is documented in orchestration/queue.py.
+# Two registry entries share it: count-bonus-ppo-rnn and count-bonus-pqn-rnn. Each `base`
+# block starts from its tuned control and sets every method knob, so no code default
+# decides a run: beta, key granularity and decay (the design defaults, smoke config A),
+# plus the fixed table of 2^20 int32 slots over the progress key.
+base:
+  ppo-rnn:
+    base_from: ppo-rnn.tuned
+    beta: 0.1
+    granularity: recipe
+    decay: constant
+    log2_k: 20
+    key: progress
+  pqn-rnn:
+    base_from: pqn-rnn.tuned
+    beta: 0.1
+    granularity: recipe
+    decay: constant
+    log2_k: 20
+    key: progress
+
+grid:
+  # Stage 1: beta x granularity x decay, 4 x 3 x 2 = 24 configs for each variant, 3 seeds.
+  # Stage 2 (beta x {0.5, 1, 2} crossed with the best and runner-up value of the
+  # categorical knob with the larger spread) is not written yet: the fine-rule schema has
+  # numeric knobs only.
+  coarse:
+    - {name: b0.01-tiers-constant, beta: 0.01, granularity: tiers, decay: constant}
+    - {name: b0.01-tiers-linear, beta: 0.01, granularity: tiers, decay: linear}
+    - {name: b0.01-recipe-constant, beta: 0.01, granularity: recipe, decay: constant}
+    - {name: b0.01-recipe-linear, beta: 0.01, granularity: recipe, decay: linear}
+    - {name: b0.01-log2-constant, beta: 0.01, granularity: log2, decay: constant}
+    - {name: b0.01-log2-linear, beta: 0.01, granularity: log2, decay: linear}
+    - {name: b0.03-tiers-constant, beta: 0.03, granularity: tiers, decay: constant}
+    - {name: b0.03-tiers-linear, beta: 0.03, granularity: tiers, decay: linear}
+    - {name: b0.03-recipe-constant, beta: 0.03, granularity: recipe, decay: constant}
+    - {name: b0.03-recipe-linear, beta: 0.03, granularity: recipe, decay: linear}
+    - {name: b0.03-log2-constant, beta: 0.03, granularity: log2, decay: constant}
+    - {name: b0.03-log2-linear, beta: 0.03, granularity: log2, decay: linear}
+    - {name: b0.1-tiers-constant, beta: 0.1, granularity: tiers, decay: constant}
+    - {name: b0.1-tiers-linear, beta: 0.1, granularity: tiers, decay: linear}
+    - {name: b0.1-recipe-constant, beta: 0.1, granularity: recipe, decay: constant}
+    - {name: b0.1-recipe-linear, beta: 0.1, granularity: recipe, decay: linear}
+    - {name: b0.1-log2-constant, beta: 0.1, granularity: log2, decay: constant}
+    - {name: b0.1-log2-linear, beta: 0.1, granularity: log2, decay: linear}
+    - {name: b0.3-tiers-constant, beta: 0.3, granularity: tiers, decay: constant}
+    - {name: b0.3-tiers-linear, beta: 0.3, granularity: tiers, decay: linear}
+    - {name: b0.3-recipe-constant, beta: 0.3, granularity: recipe, decay: constant}
+    - {name: b0.3-recipe-linear, beta: 0.3, granularity: recipe, decay: linear}
+    - {name: b0.3-log2-constant, beta: 0.3, granularity: log2, decay: constant}
+    - {name: b0.3-log2-linear, beta: 0.3, granularity: log2, decay: linear}
+
+# written by `--mark-tuned count-bonus <hash8>`, one block per variant
+tuned: null

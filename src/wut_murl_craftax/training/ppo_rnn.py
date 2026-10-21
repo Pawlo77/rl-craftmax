@@ -71,8 +71,9 @@ ACTIVATIONS: dict[str, Callable[[jax.Array], jax.Array]] = {
     "tanh": nn.tanh,
 }
 """``activation`` values: ReLU as the original code, tanh as the paper's text."""
-_LEARNER_HOOKS = {"observe", "extra_loss_fn", "metrics_fn"}
-"""Hooks that read the method state on the learner, so it moves there each update."""
+_LEARNER_HOOKS = {"observe", "extra_loss_fn"}
+"""Hooks that read the method state on the learner, so it moves there each update;
+without them ``metrics_fn`` reads it on the actor, where the rollout keeps it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,8 +277,10 @@ def _make_learn(
     """Jitted update: ``observe``, PPO epochs, extra-loss steps, method metrics.
 
     Returns the losses in ``records.LOSS_COLUMNS`` order and the method's metrics
-    (extra-loss metrics averaged over the extra steps, then ``metrics_fn``).
+    (extra-loss metrics averaged over the extra steps, then ``metrics_fn`` if the
+    state is on the learner).
     """
+    on_learner = bool(_LEARNER_HOOKS & set(hk.active))
     grad = jax.value_and_grad(lambda p, mb: _seq_loss(cfg, net, p, mb), has_aux=True)
     extra_grad = jax.value_and_grad(hk.extra_loss_fn, has_aux=True)
 
@@ -314,7 +317,8 @@ def _make_learn(
             ts, ms, key = c
             check_metric_names(em)
             method |= {k: v.mean() for k, v in em.items()}
-        method |= hk.metrics_fn(ms)
+        if on_learner:
+            method |= hk.metrics_fn(ms)
         return ts, ms, key, jnp.array([*m[:4], ev, *m[4:]]), method
 
     return learn
@@ -331,6 +335,8 @@ class _Setup:
     hooks: ResolvedHooks
     rollout: Callable[..., Any]
     learn: Callable[..., Any]
+    metrics: Callable[..., Any]
+    """Jitted ``metrics_fn`` on the actor, for a state that never leaves it."""
     learner: jax.Device
     actor: jax.Device
     mesh: Mesh | None
@@ -347,6 +353,11 @@ class _Setup:
     def learner_state(self) -> bool:
         """Whether the method state moves to the learner for the update."""
         return bool(_LEARNER_HOOKS & set(self.hooks.active))
+
+    @property
+    def actor_metrics(self) -> bool:
+        """Whether ``metrics_fn`` runs on the actor (the state stays there)."""
+        return "metrics_fn" in self.hooks.active and not self.learner_state
 
 
 @functools.cache
@@ -370,6 +381,7 @@ def _setup(cfg: PPORNNConfig) -> _Setup:
         hk,
         _make_rollout(cfg, net, env, env_params, hk),
         _make_learn(cfg, net, hk),
+        jax.jit(hk.metrics_fn),
         roles.learner,
         roles.actor,
         mesh,
@@ -498,6 +510,8 @@ def train_chunk(
         )
         if s.learner_state:
             state = state.replace(method_state=ms)
+        elif s.actor_metrics:
+            m |= s.metrics(state.method_state)
         state = state.replace(train_state=ts, key=key)
         losses.append(loss)
         eps.append(ep)

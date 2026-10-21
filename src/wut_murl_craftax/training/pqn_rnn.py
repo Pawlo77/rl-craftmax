@@ -68,8 +68,9 @@ LR_END = 1e-20
 """Learning rate at the end of the linear decay, as the original."""
 FILLED_LOSS_COLUMNS = ("value_loss", "grad_norm")
 """`LOSS_COLUMNS` an update fills: the TD loss and the gradient norm; others NaN."""
-_LEARNER_HOOKS = {"observe", "extra_loss_fn", "metrics_fn"}
-"""Hooks that read the method state on the learner, so it moves there each update."""
+_LEARNER_HOOKS = {"observe", "extra_loss_fn"}
+"""Hooks that read the method state on the learner, so it moves there each update;
+without them ``metrics_fn`` reads it on the actor, where the rollout keeps it."""
 _CLI_ONLY = {"seed"}
 """Fields the runner sets itself (the key), never in a config."""
 
@@ -508,8 +509,10 @@ def _make_learn(cfg: PQNRNNConfig, net: RNNQNetwork) -> Callable[..., Any]:
 def _make_finish(hk: ResolvedHooks) -> Callable[..., Any]:
     """Jitted end of an update: ``extra_steps`` extra-loss steps, then ``metrics_fn``.
 
-    Extra-loss metrics are averaged over the steps.
+    Extra-loss metrics are averaged over the steps; ``metrics_fn`` runs here only if
+    the state is on the learner.
     """
+    on_learner = bool(_LEARNER_HOOKS & set(hk.active))
     extra_grad = jax.value_and_grad(hk.extra_loss_fn, has_aux=True)
 
     def extra_step(c: tuple[QTrainState, Any, jax.Array], _: None) -> Any:
@@ -528,7 +531,8 @@ def _make_finish(hk: ResolvedHooks) -> Callable[..., Any]:
             )
             check_metric_names(em)
             method |= {k: v.mean() for k, v in em.items()}
-        method |= hk.metrics_fn(ms)
+        if on_learner:
+            method |= hk.metrics_fn(ms)
         return ts, ms, method
 
     return finish
@@ -547,6 +551,8 @@ class _Setup:
     learn: Callable[..., Any]
     observe: Callable[..., Any]
     finish: Callable[..., Any]
+    metrics: Callable[..., Any]
+    """Jitted ``metrics_fn`` on the actor, for a state that never leaves it."""
     learner: jax.Device
     actor: jax.Device
     mesh: Mesh | None
@@ -565,9 +571,16 @@ class _Setup:
         return bool(_LEARNER_HOOKS & set(self.hooks.active))
 
     @property
+    def actor_metrics(self) -> bool:
+        """Whether ``metrics_fn`` runs on the actor (the state stays there)."""
+        return "metrics_fn" in self.hooks.active and not self.learner_state
+
+    @property
     def finishes(self) -> bool:
-        """Whether an update ends with extra-loss steps or method metrics."""
-        return bool({"extra_loss_fn", "metrics_fn"} & set(self.hooks.active))
+        """Whether an update ends with extra-loss steps or learner-side metrics."""
+        return "extra_loss_fn" in self.hooks.active or (
+            "metrics_fn" in self.hooks.active and self.learner_state
+        )
 
 
 @functools.cache
@@ -593,6 +606,7 @@ def _setup(cfg: PQNRNNConfig) -> _Setup:
         _make_learn(cfg, net),
         jax.jit(hk.observe),
         _make_finish(hk),
+        jax.jit(hk.metrics_fn),
         roles.learner,
         roles.actor,
         mesh,
@@ -818,6 +832,8 @@ def _update(
     method: dict[str, jax.Array] = {}
     if s.finishes:
         ts, ms, method = s.finish(ts, ms, k_extra)
+    if s.actor_metrics:
+        method |= s.metrics(ms)
     updates = state.updates + 1
     eps = jax.device_put(epsilon(state.cfg, updates), s.shared_at)
     state = state.replace(
