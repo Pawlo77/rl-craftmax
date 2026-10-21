@@ -1,0 +1,8 @@
+# Stage 1 of the PPO tuning: one knob at a time away from Table 11, Craftax-1M, 3 seeds
+# per config (published-1m keeps its 10: it is the reproduction check).
+budget: 1m
+eval: final
+env: Craftax-Symbolic-v1
+seeds: 3
+runs:
+  ppo: {configs: coarse}

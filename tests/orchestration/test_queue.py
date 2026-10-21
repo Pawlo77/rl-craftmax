@@ -812,3 +812,19 @@ def test_shipped_ppo_abort_flags_are_the_plans_thresholds() -> None:
             },
         ]
     }
+
+
+def test_shipped_tune_coarse_phase_is_the_28_run_ppo_stage_1() -> None:
+    specs = expand_phase(REPO / "configs/phases/tune-coarse.yaml")
+    assert len(specs) == 28
+    assert {(s.registry_name, s.budget, s.env) for s in specs} == {
+        ("ppo", "1m", "Craftax-Symbolic-v1")
+    }
+    assert {s.eval_mode for s in specs} == {"final"}
+    by_config = {}
+    for s in specs:
+        by_config.setdefault(s.config_hash, []).append(s.seed)
+    assert sorted(len(v) for v in by_config.values()) == [3] * 6 + [10]
+    method = load_method("ppo", REPO / "configs/methods")
+    published = resolve_config(method, "ppo", "1m", ref="published-1m")
+    assert by_config[config_hash(published)] == list(range(10))
