@@ -95,6 +95,13 @@ def collect_reproducibility_report() -> ReproducibilityReport:
     )
 
 
+def code_version() -> tuple[str, bool]:
+    """The checkout's git commit and whether its working tree is dirty."""
+    repo_root = Path(__file__).resolve().parents[3]
+    status = _read_git_status_porcelain(repo_root)
+    return _read_git_commit_hash(repo_root), bool(status.strip())
+
+
 def _read_git_commit_hash(repo_root: Path) -> str:
     """Read the current commit hash from the local git metadata."""
     git_dir = repo_root / ".git"

@@ -73,6 +73,7 @@ from .queue import (
     TAG_SEED,
     RunSpec,
 )
+from .reproducibility import code_version
 from .runtime import (
     DeviceRoles,
     configure_runtime,
@@ -100,6 +101,12 @@ TAG_CKPT_MISSING = "ckpt/missing"
 """Run tag: comma-joined updates whose checkpoint file is lost and cannot be rebuilt."""
 TAG_FAIL_ERROR = "fail/error"
 """Run tag: the error of the last failed call (type and message, truncated)."""
+TAG_CODE_COMMIT = "code/commit"
+"""Run tag: the git commit the run started training under (``code/dirty`` beside)."""
+TAG_CODE_SEGMENTS = "code/segments"
+"""Run tag: comma-joined 12-hex commits (``+dirty``) of each training segment."""
+TAG_CODE_CHANGED = "code/changed"
+"""Run tag: ``true`` once a segment resumed under another commit than the last one."""
 TAG_FAIL_COUNT = "fail/count"
 """Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
@@ -612,6 +619,25 @@ def _fail_tags(
     return {TAG_FAIL_ERROR: text[:500], TAG_FAIL_COUNT: str(count)}
 
 
+def _code_tags(name: str, previous: Mapping[str, str]) -> dict[str, str]:
+    """Code version tags of a training segment; a commit change is tagged and logged.
+
+    A resume under another commit is allowed (fixes must reach running runs).
+    """
+    commit, dirty = code_version()
+    segment = commit[:12] + ("+dirty" if dirty else "")
+    segments = [s for s in previous.get(TAG_CODE_SEGMENTS, "").split(",") if s]
+    tags = {TAG_CODE_SEGMENTS: ",".join([*segments, segment])}
+    if TAG_CODE_COMMIT not in previous:
+        tags |= {TAG_CODE_COMMIT: commit, "code/dirty": str(dirty).lower()}
+    if segments and segments[-1].split("+")[0] != commit[:12]:
+        tags[TAG_CODE_CHANGED] = "true"
+        logger.warning(
+            "%s resumes under commit %s, not %s", name, commit[:12], segments[-1]
+        )
+    return tags
+
+
 def _run_spec(
     spec: RunSpec,
     trainer: Trainer,
@@ -662,6 +688,7 @@ def _run_spec(
         if trains:
             roles = device_roles()
             mlflow.set_tags(run_tags(roles))  # where it trains now, not where it began
+            mlflow.set_tags(_code_tags(spec.name, found.data.tags if found else {}))
             (out / CONFIG_ARTIFACT).write_text(json.dumps(spec.config, indent=1))
             log = _train(trainer, spec, out, profile, roles, stop)
             if log is None or stop.signum is not None:

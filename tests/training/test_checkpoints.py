@@ -133,6 +133,35 @@ def test_load_state_refuses_another_structure(tmp_path: Path) -> None:
         load_state(tmp_path, {"a": jnp.ones(2), "b": jnp.ones(2)})
 
 
+@pytest.mark.parametrize(
+    ("like", "error"),
+    [
+        ({"a": jnp.ones(3), "b": jnp.zeros(2, jnp.int32)}, r"\['a'\].*\(2,\).*\(3,\)"),
+        ({"a": jnp.ones(2), "b": jnp.zeros(2)}, r"\['b'\].*int32.*float32"),
+        ({"a": jnp.ones(2), "c": jnp.zeros(2, jnp.int32)}, "other tree"),
+        ({"a": np.ones((0, 4)), "b": jnp.zeros(2, jnp.int32)}, r"\['a'\].*\(2,\)"),
+    ],
+)
+def test_load_state_refuses_other_shapes_dtypes_and_fields(
+    tmp_path: Path, like: dict[str, Any], error: str
+) -> None:
+    """Same leaf count, but the code that saved it had another state layout."""
+    save_state(tmp_path, {"a": jnp.ones(2), "b": jnp.zeros(2, jnp.int32)})
+    with pytest.raises(ValueError, match=error):
+        load_state(tmp_path, like)
+
+
+def test_a_state_saved_without_the_tree_paths_still_loads(tmp_path: Path) -> None:
+    """Runs saved before the paths were stored resume; leaves are still checked."""
+    state = _state()
+    save_state(tmp_path, state)
+    path = tmp_path / "state" / "state.npz"
+    with np.load(path) as z:
+        old = {k: z[k] for k in z.files if k != "paths"}
+    np.savez(path, **old)
+    _assert_identical(load_state(tmp_path, _zeros_like(state)), state)
+
+
 def test_params_checkpoints_and_state_live_apart(tmp_path: Path) -> None:
     save_checkpoint(tmp_path, 0, 0, 0.0, {"w": jnp.ones(2)})
     save_state(tmp_path, _state())

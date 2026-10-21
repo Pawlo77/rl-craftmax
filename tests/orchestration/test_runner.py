@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import mlflow
 import numpy as np
 import pytest
@@ -347,6 +348,49 @@ def test_a_signal_saves_the_state_and_marks_the_run_killed(
     assert (out / "state" / "state.npz").is_file()
     assert _npz(out / "metrics.npz")["data"].shape[0] == 2
     assert {s: signal.getsignal(s) for s in handlers} == handlers
+
+
+def test_each_training_segment_records_its_code_version(
+    store: Store, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A resume under another commit is tagged and logged, never refused."""
+    versions = iter([("a" * 40, False), ("b" * 40, True)])
+    monkeypatch.setattr(runner, "code_version", lambda: next(versions))
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((2, signal.SIGINT)))
+    tags = store.runs()[spec.name].data.tags
+    assert (tags["code/commit"], tags["code/dirty"]) == ("a" * 40, "false")
+    assert tags["code/segments"] == "a" * 12
+    assert "code/changed" not in tags
+    store.run([spec], FakeTrainer())
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    tags = run.data.tags
+    assert (tags["code/commit"], tags["code/dirty"]) == ("a" * 40, "false")
+    assert tags["code/segments"] == f"{'a' * 12},{'b' * 12}+dirty"
+    assert tags["code/changed"] == "true"
+    assert f"{spec.name} resumes under commit {'b' * 12}" in caplog.text
+
+
+def test_a_resume_into_another_state_layout_fails_the_run_clearly(store: Store) -> None:
+    """New code with another state shape never restores a run's old state."""
+
+    class Wider(FakeTrainer):
+        def init(self, config: Any, key: jax.Array) -> dict[str, Any]:
+            state = super().init(config, key)
+            return {**state, "params": {"w": jnp.zeros(4)}}
+
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((2, signal.SIGINT)))
+    trainer = Wider()
+    with pytest.raises(RuntimeError, match=r"\['w'\].*\(3,\).*\(4,\)"):
+        store.run([spec], trainer)
+    run = store.runs()[spec.name]
+    assert run.info.status == "FAILED"
+    assert "comes from other code" in run.data.tags["fail/error"]
+    assert trainer.updates == []
 
 
 @pytest.mark.parametrize("left", ["KILLED", "RUNNING"])
