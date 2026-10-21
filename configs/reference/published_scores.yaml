@@ -27,8 +27,9 @@ ppo-rnn:
   1b:
     score: 15.3
     source: https://github.com/MichaelTMatthews/Craftax/blob/c3c2e0d038c4e641f9481320c158f457f30c28f3/README.md
-    # largest third-party spread, Singh et al. 2026 (sd type not stated)
-    # (knowledge/methods/PPO-RNN design.md)
+    # largest third-party spread: Singh et al. 2026, 0.78 raw return / 226 x 100 (sd type
+    # not stated); research/Existing Implementations/PPO-RNN (Matthews 2024).md line 75,
+    # knowledge/methods/PPO-RNN design.md
     s_pub: 0.35
 pqn-rnn:
   1b:

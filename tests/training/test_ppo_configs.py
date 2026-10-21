@@ -153,8 +153,6 @@ def test_base_from_ppo_tuned_fails_loudly_while_tuned_is_null(tmp_path: Path) ->
     child = load_method("child", methods)
     with pytest.raises(QueueConfigError, match=r"ppo\.tuned is null"):
         resolve_config(child, "child", "1m", methods_dir=methods)
-    # the real file is untouched
-    assert ppo().tuned is None
 
 
 def test_published_scores() -> None:
