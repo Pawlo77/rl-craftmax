@@ -301,6 +301,17 @@ def _filled(model: ModelState, p: jax.Array) -> jax.Array:
     return jnp.arange(slots) < jnp.minimum(model.count[p], slots)[:, None]
 
 
+def _targets(
+    q: jax.Array, model: ModelState, p: jax.Array, kappa: float, t: jax.Array | float
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Targets ``[len(p), M]`` of every ring slot (bonus included), filled, bonus."""
+    t = jnp.asarray(t, jnp.float32)
+    slots = model.m_R.shape[1]
+    r = _records(model, p[:, None], jnp.arange(slots)[None], kappa, t)
+    y = smdp_target(q, r.ret, r.disc, r.k_next, r.avail, r.done)
+    return y, _filled(model, p), _bonus(model, p, kappa, t)
+
+
 def _full(
     q: jax.Array,
     model: ModelState,
@@ -310,12 +321,46 @@ def _full(
     t: jax.Array | float,
     alpha: float,
 ) -> tuple[jax.Array, PlanStats]:
-    """`full_backup` and its `PlanStats` (over the stored outcomes)."""
-    slots = model.m_R.shape[1]
-    pp = jnp.repeat(p, slots)
-    mm = jnp.tile(jnp.arange(slots), p.shape[0])
-    mask = (valid[:, None] & _filled(model, p)).ravel()
-    return _backup(q, model, (pp, mm), mask, kappa, t, alpha)
+    """`full_backup` and its `PlanStats` (over the stored outcomes).
+
+    One masked mean per pair and one scatter: distinct pair slots are distinct
+    (key, skill) entries, so the duplicate-mean rule needs no sort.
+    """
+    return _full_change(q, model, p, valid, kappa, t, alpha)[:2]
+
+
+def _full_change(
+    q: jax.Array,
+    model: ModelState,
+    p: jax.Array,
+    valid: jax.Array,
+    kappa: float,
+    t: jax.Array | float,
+    alpha: float,
+) -> tuple[jax.Array, PlanStats, jax.Array]:
+    """`_full` and the largest change of an entry (only backed-up entries move)."""
+    y, filled, bonus = _targets(q, model, p, kappa, t)
+    mask = valid[:, None] & filled
+    k, o = model.pair_k[p], model.pair_o[p]
+    old = q[k, o]
+    td = y - old[:, None]
+    n = jnp.sum(mask, 1, dtype=jnp.int32)
+    step = jnp.sum(jnp.where(mask, td, 0.0), 1) / jnp.maximum(n, 1)
+    q = q.at[k, o].add(alpha * jnp.where(n > 0, step, 0.0))
+    new, upd = q[k, o], n > 0
+    ok = jnp.isfinite(new)
+    change = jnp.max(jnp.where(upd, jnp.abs(new - old), 0.0), initial=0.0)
+    return (
+        q,
+        {
+            "td_abs": jnp.sum(jnp.where(mask, jnp.abs(td), 0.0)),
+            "td_n": jnp.sum(n),
+            "bonus": jnp.sum(jnp.where(mask, bonus[:, None], 0.0)),
+            "q_upd": jnp.max(jnp.where(upd & ok, new, -jnp.inf)),
+            "q_bad": jnp.any(upd & ~ok),
+        },
+        change,
+    )
 
 
 def full_backup(
@@ -329,8 +374,9 @@ def full_backup(
 ) -> jax.Array:
     """``Q += alpha (mean stored-outcome target - Q)`` for pairs ``p`` where ``valid``.
 
-    A `sample_backup` of every filled slot: the duplicate-mean rule of
-    `smdp.smdp_update` averages them.
+    The pair slots ``p`` must be distinct. Equals a `sample_backup` of every filled
+    slot (the duplicate-mean rule of `smdp.smdp_update` averages them) up to the
+    summation order, without its sort.
     """
     return _full(q, model, p, valid, kappa, t, alpha)[0]
 
@@ -354,11 +400,8 @@ def priorities(
     q: jax.Array, model: ModelState, kappa: float, t: jax.Array | float
 ) -> jax.Array:
     """``|full-backup target - Q|`` of every pair slot, float32 ``[P]``; -1 unused."""
-    pairs, slots = model.m_R.shape
-    p = jnp.arange(pairs)
-    r = _records(model, p[:, None], jnp.arange(slots)[None], kappa, jnp.float32(t))
-    y = smdp_target(q, r.ret, r.disc, r.k_next, r.avail, r.done)
-    filled = _filled(model, p)
+    p = jnp.arange(model.m_R.shape[0])
+    y, filled, _ = _targets(q, model, p, kappa, t)
     mean = jnp.sum(jnp.where(filled, y, 0.0), 1) / jnp.maximum(filled.sum(1), 1)
     prio = jnp.abs(mean - q[model.pair_k, model.pair_o])
     return jnp.where(p < model.n_pairs, prio, -1.0)
@@ -396,8 +439,8 @@ def _value_iteration(
 
     def body(c: tuple[jax.Array, jax.Array, jax.Array, PlanStats]) -> Any:
         q, _, n, stats = c
-        q2, s = _full(q, model, p, visited, kappa, t, 1.0)
-        return q2, jnp.max(jnp.abs(q2 - q)), n + 1, _merge(stats, s)
+        q, s, change = _full_change(q, model, p, visited, kappa, t, 1.0)
+        return q, change, n + 1, _merge(stats, s)
 
     def more(c: tuple[jax.Array, jax.Array, jax.Array, PlanStats]) -> jax.Array:
         _, change, n, _ = c

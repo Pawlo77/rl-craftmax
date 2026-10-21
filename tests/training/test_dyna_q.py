@@ -384,3 +384,25 @@ def test_a_non_finite_planned_value_is_reported() -> None:
     _, stats = plan_(q, m, 1, "uniform", 0.0, 0.0, jax.random.key(0), alpha=1.0)
     assert bool(stats["q_bad"])
     assert float(stats["q_upd"]) == -np.inf
+
+
+def test_full_backup_equals_sample_backups_of_every_filled_slot() -> None:
+    """The sort-free full backup against the duplicate-mean rule of `smdp_update`."""
+    rng = np.random.default_rng(0)
+    m = init_model(4, S, 16, 4)
+    for _ in range(30):
+        k, o = rng.integers(0, 6, 5).tolist(), rng.integers(0, S, 5).tolist()
+        k_next, done = rng.integers(0, 6, 5).tolist(), (rng.random(5) < 0.2).tolist()
+        rec = outcome(k, o, rng.random(5).tolist(), k_next, done)
+        m = write(m, rec, jnp.asarray(rng.random(5) < 0.7), jnp.float32(0.0))
+    q = jnp.asarray(rng.random((16, S)), jnp.float32)
+    p = jnp.arange(16)
+    valid = (p < m.n_pairs) & (p % 3 != 0)
+    got = full_backup(q, m, p, valid, 0.01, 5.0, 0.3)
+    slots = jnp.arange(4)
+    mask = (valid[:, None] & (slots < jnp.minimum(m.count, 4)[:, None])).ravel()
+    want = sample_backup(q, m, jnp.repeat(p, 4), jnp.tile(slots, 16), mask, 0.01, 5.0,
+                         0.3)  # fmt: skip
+    assert int(m.n_pairs) > 8
+    np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6)
+    assert not np.array_equal(got, q)
