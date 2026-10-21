@@ -258,12 +258,34 @@ def test_yaml_floats_without_a_dot_are_floats() -> None:
         {"grid": {"coarse": [{"lr": 1}]}},
         {"grid": {"coarse": [{"name": "a"}, {"name": "a"}]}},
         {"grid": {"coarse": [{"name": "tuned"}]}},
+        {"abort": {"nan": True}},
+        {"abort": {"flags": [{"name": "a", "metric": "m"}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "below": 0}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "x": 0}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "updates": 0}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "before": 2}]}},
+        {"abort": {"flags": [{"metric": "m", "above": 1}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1}] * 2}},
     ],
 )
 def test_method_yaml_fails_loudly(tmp_path: Path, edit: dict[str, Any]) -> None:
     (tmp_path / "bad.yaml").write_text(yaml.safe_dump({"base": {"env": "X"}, **edit}))
     with pytest.raises(ValueError, match="bad"):
         load_method("bad", tmp_path)
+
+
+def test_the_abort_block_reaches_every_spec_of_the_method() -> None:
+    flags = load_method("toy", METHODS).abort["flags"]  # type: ignore[index]
+    assert [f["name"] for f in flags] == [
+        "kl_high",
+        "entropy_collapse",
+        "value_failure",
+    ]
+    specs = phase("entries")
+    toy = [s for s in specs if s.registry_name == "toy"]
+    assert toy
+    assert all(s.abort == {"flags": flags} for s in toy)
+    assert all(s.abort is None for s in specs if s.registry_name != "toy")
 
 
 def test_base_from_resolves_the_donor_tuned_block_plus_own_keys() -> None:
@@ -768,4 +790,25 @@ def test_shipped_ppo_base_is_the_craftax_1m_table_11() -> None:
         "width": 512,
         "resets": "optimistic",
         "reset_ratio": 16,
+    }
+
+
+def test_shipped_ppo_abort_flags_are_the_plans_thresholds() -> None:
+    abort = load_method("ppo", REPO / "configs/methods").abort
+    assert abort == {
+        "flags": [
+            {"name": "kl_high", "metric": "ppo/approx_kl", "above": 0.1, "updates": 3},
+            {
+                "name": "entropy_collapse",
+                "metric": "ppo/entropy",
+                "below": 0.2,
+                "before": 0.1,
+            },
+            {
+                "name": "value_failure",
+                "metric": "ppo/explained_variance",
+                "below": 0.0,
+                "after": 0.2,
+            },
+        ]
     }

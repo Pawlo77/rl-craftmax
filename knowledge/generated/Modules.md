@@ -19,15 +19,16 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. | 394 |  |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. | 145 |  |
 | [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? | 192 |  |
-| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 111 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 116 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. | 88 |  |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 |  |
-| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 869 |  |
+| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 910 |  |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 224 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 495 |  |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 628 |  |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 141 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 219 |  |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 225 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 159 |  |
+| [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 173 |  |
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO, PPO-RNN, hooks, checkpoints, resume state, metrics. | 131 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 129 | [[training]] |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 241 |  |
@@ -61,6 +62,7 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/evaluation/events.py]]
 - [[src/wut_murl_craftax/evaluation/milestones.py]]
 - [[src/wut_murl_craftax/evaluation/reproduction.py]]
+- [[src/wut_murl_craftax/orchestration/abort.py]]
 - [[src/wut_murl_craftax/orchestration/profiles.py]]
 - [[src/wut_murl_craftax/orchestration/queue.py]]
 - [[src/wut_murl_craftax/orchestration/runner.py]]

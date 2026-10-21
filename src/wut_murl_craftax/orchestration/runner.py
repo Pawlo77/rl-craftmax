@@ -20,7 +20,7 @@ import signal
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol, TypedDict, cast
@@ -45,6 +45,16 @@ from ..training.records import (
     RunLog,
     achievement_names,
     achievement_weights,
+)
+from .abort import (
+    FLAG_PREFIX,
+    MAX_ABORTS,
+    TAG_ABORT_BUG,
+    TAG_ABORT_COUNT,
+    TAG_ABORT_METRIC,
+    TAG_ABORT_UPDATE,
+    first_nonfinite,
+    flag_hits,
 )
 from .profiles import Profile, load_profile
 from .queue import (
@@ -75,12 +85,17 @@ N_CHECKPOINTS = 12
 """Log-spaced params checkpoints per run (`checkpoint_schedule`)."""
 MIN_FINAL_EPISODES = 100
 """Episodes the final-score window is widened backwards to."""
+EXTRAS_FILE = "extras.npz"
+"""Per-update method metrics of a run, name -> floats, in the run directory."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
 """Environment variables that make MLflow or the tracker reopen a given run."""
 
 
 class ChunkMetrics(TypedDict):
     """What `Trainer.train_chunk` reports; every array has a leading update axis.
+
+    A trainer may add method metrics under ``<group>/<name>`` keys (e.g.
+    ``ppo/entropy``): ``(updates,)`` floats that the runner logs unchanged.
 
     ``ach``, ``ret`` and ``length`` are read on done steps only, and there they are
     the WHOLE finished episode, the done step included: its reward, its step and
@@ -92,7 +107,8 @@ class ChunkMetrics(TypedDict):
     """
 
     losses: jax.Array | np.ndarray
-    """(updates, len(LOSS_COLUMNS)) floats in `LOSS_COLUMNS` order."""
+    """(updates, len(LOSS_COLUMNS)) floats in `LOSS_COLUMNS` order; the columns the
+    trainer does not report (see `Trainer`) are NaN."""
     done: jax.Array | np.ndarray
     """(updates, steps, envs) bools: the episode ended at this step."""
     ach: jax.Array | np.ndarray
@@ -110,6 +126,10 @@ class Trainer(Protocol):
     with n then m updates must equal one call with n + m. Its `ChunkMetrics` must
     follow that class's episode rules; the runner times the chunk after
     ``jax.block_until_ready`` on the returned state and metrics.
+
+    A trainer may set the attribute ``loss_columns: tuple[str, ...]``, the
+    `LOSS_COLUMNS` it fills (default: all; PQN-RNN leaves the PPO-only ones NaN). The
+    runner logs and abort-checks only those; ``metrics.npz`` keeps the full layout.
     """
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
@@ -281,6 +301,78 @@ def find_run(name: str) -> Any:
     )
 
 
+class _Aborted(Exception):  # noqa: N818 - control flow, not an error of the caller
+    """A chunk reported a non-finite loss: ``update`` (1-based) and ``metric``."""
+
+    def __init__(self, update: int, metric: str) -> None:
+        super().__init__(f"{metric} is not finite at update {update}")
+        self.update, self.metric = update, metric
+
+
+def _loss_columns(trainer: Trainer) -> tuple[str, ...]:
+    """The `LOSS_COLUMNS` the trainer reports (its ``loss_columns``, default all)."""
+    columns = tuple(getattr(trainer, "loss_columns", LOSS_COLUMNS))
+    if unknown := set(columns) - set(LOSS_COLUMNS):
+        msg = f"loss_columns {sorted(unknown)} are not in {LOSS_COLUMNS}"
+        raise ValueError(msg)
+    return columns
+
+
+def _method_metrics(metrics: ChunkMetrics) -> dict[str, np.ndarray]:
+    """The chunk's method metrics: every key beyond `ChunkMetrics`, as float arrays."""
+    return {
+        k: np.asarray(v, float)
+        for k, v in metrics.items()
+        if k not in ChunkMetrics.__annotations__
+    }
+
+
+@dataclass
+class _Extras:
+    """Method metrics per update: ``series[name][update - 1]``, NaN where absent."""
+
+    path: Path
+    series: dict[str, list[float]] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, out: Path, update: int) -> "_Extras":
+        """The saved series cut to ``update`` (the file may run ahead of ``state/``)."""
+        extras = cls(out / EXTRAS_FILE)
+        if extras.path.is_file():
+            with np.load(extras.path) as z:
+                extras.series = {k: z[k][:update].tolist() for k in z.files}
+        extras.pad(update)  # a run saved before it reported these has no history
+        return extras
+
+    def pad(self, n: int) -> None:
+        """Fill every series with NaN up to ``n`` updates."""
+        for values in self.series.values():
+            values += [math.nan] * (n - len(values))
+
+    def extend(self, first: int, new: Mapping[str, np.ndarray]) -> None:
+        """Append a chunk that starts after update ``first``."""
+        self.pad(first)
+        for name, values in new.items():
+            self.series.setdefault(name, []).extend(values.tolist())
+        self.pad(first + max((len(v) for v in new.values()), default=0))
+
+    def save(self) -> None:
+        """Write the file atomically; it goes before ``state/`` so it never lags it."""
+        tmp = self.path.with_name("extras.tmp.npz")
+        arrays: dict[str, Any] = {k: np.array(v) for k, v in self.series.items()}
+        np.savez(tmp, **arrays)
+        tmp.replace(self.path)
+
+
+def _check_finite(metrics: ChunkMetrics, columns: Sequence[str], update: int) -> None:
+    """Raise `_Aborted` on the first non-finite logged loss of the chunk."""
+    hit = first_nonfinite(
+        np.asarray(metrics["losses"], float), columns, _method_metrics(metrics)
+    )
+    if hit is not None:
+        raise _Aborted(update + hit[0] + 1, hit[1])
+
+
 def _registry() -> Mapping[str, Trainer]:
     """``training.interface.METHODS``, imported after ``configure_runtime``.
 
@@ -328,6 +420,9 @@ def _train(
     Every chunk ends at a log-spaced checkpoint, a multiple of ``checkpoint_every``
     or the budget, and is followed by a state save, so chunks are the same on resume.
     MLflow gets windows of `log_every` updates (`train_metrics`).
+
+    Raises:
+        _Aborted: A chunk reported a non-finite loss; nothing of it is saved.
     """
     spu = trainer.steps_per_update(spec.config)
     n_updates = spec.steps // spu
@@ -346,6 +441,8 @@ def _train(
     written = {e["update"] for e in load_index(out)}
     if 0 not in written:
         save_checkpoint(out, 0, 0, 0.0, trainer.params(state))
+    columns, extras = _loss_columns(trainer), _Extras.load(out, update)
+    rules, flagged = (spec.abort or {}).get("flags", []), set[str]()
     t0 = time.monotonic() - saved["wall_s"]
     every, max_reward = log_every(n_updates), float(achievement_weights(spec.env).sum())
     chunks: list[tuple[int, float]] = []
@@ -356,15 +453,30 @@ def _train(
         # dispatch is asynchronous: without waiting, wall_s and SPS time the dispatch
         jax.block_until_ready((state, metrics))  # type: ignore[no-untyped-call]  # jax API
         wall = time.monotonic() - t0
+        _check_finite(metrics, columns, update)
         chunks.append((n, wall - start))
         _add_updates(log, update, spu, np.linspace(start, wall, n + 1)[1:], metrics)
+        extras.extend(update, _method_metrics(metrics))
         update += n
+        for name, at in flag_hits(rules, extras.series, n_updates).items():
+            if name not in flagged:  # the first update the rule held at
+                mlflow.set_tag(f"{FLAG_PREFIX}{name}", str(at))
+                flagged.add(name)
         if update in ckpts and update not in written:
             save_checkpoint(out, update, update * spu, wall, trainer.params(state))
+        extras.save()
         save_state(out, _snapshot(fresh, state, update, wall, log))
         log.flush()
         points = metric_points(
-            log.rows, log.names, update - n, update, every, n_updates, max_reward
+            log.rows,
+            log.names,
+            update - n,
+            update,
+            every,
+            n_updates,
+            max_reward,
+            loss_columns=columns,
+            extras=extras.series,
         )
         log_points(points)
         log_peak_memory(roles, update * spu)
@@ -382,6 +494,20 @@ def _log_final_score(log: RunLog, env: str) -> None:
     mlflow.log_metric(SCORE_METRIC, score)
 
 
+def _mark_abort(previous: Mapping[str, str], abort: _Aborted) -> None:
+    """Tag the active run with the abort; the `MAX_ABORTS`-th one marks it a bug."""
+    count = int(previous.get(TAG_ABORT_COUNT, 0)) + 1
+    tags = {
+        TAG_ABORT_COUNT: str(count),
+        TAG_ABORT_METRIC: abort.metric,
+        TAG_ABORT_UPDATE: str(abort.update),
+    }
+    if count >= MAX_ABORTS:
+        tags[TAG_ABORT_BUG] = "true"
+    mlflow.set_tags(tags)
+    logger.warning("run aborted (%d of %d allowed): %s", count, MAX_ABORTS, abort)
+
+
 def _run_spec(
     spec: RunSpec,
     trainer: Trainer,
@@ -392,6 +518,9 @@ def _run_spec(
 ) -> bool:
     """Bring one run to FINISHED, or to KILLED on a signal; return if it trained."""
     found = find_run(spec.name)
+    if found and found.data.tags.get(TAG_ABORT_BUG) == "true":
+        logger.warning("%s is marked a bug (%s), skipped", spec.name, TAG_ABORT_BUG)
+        return False
     phases = found.data.tags.get(TAG_PHASES, "").split(",") if found else []
     tags = {
         TAG_METHOD: spec.registry_name,
@@ -430,6 +559,10 @@ def _run_spec(
     except KeyboardInterrupt:
         tracker.close("KILLED")
         raise
+    except _Aborted as abort:
+        _mark_abort(found.data.tags if found else {}, abort)
+        tracker.close("FAILED")  # its last state/ stays for the one retry
+        return True
     except Exception:
         tracker.close("FAILED")
         raise

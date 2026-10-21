@@ -91,3 +91,17 @@ flowchart LR
 
 - At 1M the paper sees progress only on basic achievements; a plateau is expected, not a bug ([[Craftax Baselines results]]).
 - At 1B `defeat_zombie` success falls over training; no progress in Advanced or Very Advanced achievements ([[Craftax floors and progression]], [[Game]]).
+
+## Obstacles to watch
+
+Handed to [[2026-10-20-craftax-training-analysis]]. A non-finite loss aborts a run (one retry from `state/`, then a bug); the flags below are tags `flag/<name>` set from the method's `abort:` block and never stop a run.
+
+| Obstacle | Where it shows | Signal |
+|---|---|---|
+| Plateau at 1M | score flat after the basic achievements; expected, the paper sees the same ([[Craftax Baselines results]]) | `train/score_pct`, `train/ach/*` |
+| Entropy collapse | policy goes deterministic early | `ppo/entropy` < 0.2 nats before 10% of the budget (`flag/entropy_collapse`) |
+| Value failure | critic explains none of the return variance | `ppo/explained_variance` < 0 after 20% of the budget (`flag/value_failure`) |
+| Unstable updates | policy moves too far per update | `ppo/approx_kl` > 0.1 for 3 updates in a row (`flag/kl_high`); also `ppo/clip_frac` |
+| Skill forgetting at 1B | `defeat_zombie` success falls over training | `train/ach/defeat_zombie` |
+| Exploration failure | rare dungeon entry, no deeper floors ([[Craftax floors and progression]]) | `train/funnel/floor_*` |
+| Survival failure | episodes end early from low food, drink or energy | `train/length`, `train/death/*` |

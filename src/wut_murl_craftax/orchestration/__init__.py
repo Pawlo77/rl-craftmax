@@ -4,6 +4,7 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .abort import first_nonfinite, flag_hits
     from .profiles import Profile, load_profile
     from .queue import (
         RunSpec,
@@ -50,6 +51,8 @@ _EXPORTS: dict[str, str] = {
     "expand_fine": "queue",
     "expand_phase": "queue",
     "final_score": "runner",
+    "first_nonfinite": "abort",
+    "flag_hits": "abort",
     "load_method": "queue",
     "load_profile": "profiles",
     "log_every": "train_metrics",
@@ -86,6 +89,8 @@ __all__ = [
     "expand_fine",
     "expand_phase",
     "final_score",
+    "first_nonfinite",
+    "flag_hits",
     "load_method",
     "load_profile",
     "log_every",

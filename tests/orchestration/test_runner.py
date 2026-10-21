@@ -30,6 +30,7 @@ from wut_murl_craftax.training.checkpoints import (
     load_params,
     load_state,
 )
+from wut_murl_craftax.training.records import LOSS_COLUMNS
 from wut_murl_craftax.visualisation import eval_rollouts
 
 HERE = Path(__file__).parent
@@ -569,3 +570,184 @@ def test_main_splits_the_cpu_into_the_profiles_host_devices(store: Store) -> Non
     ret = store.client.get_metric_history(run.info.run_id, "eval/greedy/return")
     pct = store.client.get_metric_history(run.info.run_id, "eval/greedy/score_pct")
     assert pct[0].value == pytest.approx(ret[0].value / 22 * 100)
+
+
+# --- abort rules and flags ------------------------------------------------------
+
+
+def nan_at(update: int) -> Callable[[int], dict[str, float]]:
+    return lambda u: {"ppo/value_loss": float("nan") if u == update else 0.5}
+
+
+def tags_of(store: Store, name: str, prefix: str) -> dict[str, str]:
+    tags = store.runs()[name].data.tags
+    return {k: v for k, v in tags.items() if k.startswith(prefix)}
+
+
+def test_a_non_finite_loss_fails_the_run_and_keeps_its_last_state(store: Store) -> None:
+    specs = store.phase("tune-coarse", ["published", "lr-hi"])
+    trainer = FakeTrainer(extra=nan_at(3))
+    store.run(specs, trainer)  # the queue goes on with the next run
+    assert trainer.updates == [1, 2, 3, 1, 2, 3]
+    for spec in specs:
+        run = store.runs()[spec.name]
+        assert run.info.status == "FAILED"
+        assert queue.SCORE_METRIC not in run.data.metrics
+        out = store.run_dir(spec.name)
+        saved = load_state(out, runner.state_template(_state_of(out, spec), spec))
+        assert saved["update"] == 2  # the chunk with the NaN was not saved
+        assert _npz(out / "metrics.npz")["data"].shape[0] == 2
+        assert tags_of(store, spec.name, "abort/") == {
+            "abort/count": "1",
+            "abort/metric": "ppo/value_loss",
+            "abort/update": "3",
+        }
+        steps = [
+            m.step
+            for m in store.client.get_metric_history(run.info.run_id, "ppo/value_loss")
+        ]
+        assert steps == [STEPS_PER_UPDATE * u for u in (1, 2)]
+    assert store.evaluated == []
+
+
+def test_the_next_call_resumes_it_once_and_a_second_nan_marks_a_bug(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer(extra=nan_at(3)))
+    resumed = FakeTrainer(extra=nan_at(3))
+    store.run([spec], resumed)
+    assert resumed.updates == [3]  # from the state after update 2
+    assert tags_of(store, spec.name, "abort/") == {
+        "abort/count": "2",
+        "abort/metric": "ppo/value_loss",
+        "abort/update": "3",
+        "abort/bug": "true",
+    }
+    assert store.runs()[spec.name].info.status == "FAILED"
+    skipped = FakeTrainer()
+    store.run([spec], skipped, max_runs=1)
+    assert skipped.updates == []
+    assert [r.info.status for r in store.runs().values()] == ["FAILED"]
+    assert store.evaluated == []
+
+
+def test_a_rerun_that_stays_finite_equals_the_uninterrupted_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (spec,) = (whole := Store(tmp_path / "whole", monkeypatch)).phase(
+        "tune-coarse", ["published"]
+    )
+    clean = lambda u: {"ppo/value_loss": 0.5 / u}  # noqa: E731
+    whole.run([spec], FakeTrainer(extra=clean))
+    cut = Store(tmp_path / "cut", monkeypatch)
+    cut.run(
+        [spec],
+        FakeTrainer(
+            extra=lambda u: {"ppo/value_loss": float("nan") if u == 3 else 0.5 / u}
+        ),
+    )
+    second = FakeTrainer(extra=clean)
+    cut.run([spec], second)
+    assert second.updates == [3]
+    assert cut.runs()[spec.name].info.status == "FINISHED"
+    _assert_same_run(cut.run_dir(spec.name), whole.run_dir(spec.name), spec)
+    np.testing.assert_array_equal(
+        _npz(cut.run_dir(spec.name) / "extras.npz")["ppo/value_loss"],
+        _npz(whole.run_dir(spec.name) / "extras.npz")["ppo/value_loss"],
+    )
+    rid = cut.runs()[spec.name].info.run_id
+    history = cut.client.get_metric_history(rid, "ppo/value_loss")
+    assert [(m.step, m.value) for m in history] == [
+        (STEPS_PER_UPDATE * u, pytest.approx(0.5 / u)) for u in (1, 2, 3)
+    ]
+
+
+def test_a_non_finite_reported_loss_column_aborts(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer(loss_nan_at=2))
+    assert store.runs()[spec.name].info.status == "FAILED"
+    assert tags_of(store, spec.name, "abort/")["abort/update"] == "2"
+
+
+def test_unreported_loss_columns_are_neither_checked_nor_logged(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    reported = ("value_loss", "grad_norm")
+    store.run([spec], FakeTrainer(loss_columns=reported))
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    logged = {k for k in run.data.metrics if k.startswith("train/")}
+    assert {"train/value_loss", "train/grad_norm"} <= logged
+    assert not logged & {f"train/{c}" for c in LOSS_COLUMNS if c not in reported}
+    table = _npz(store.run_dir(spec.name) / "metrics.npz")
+    unreported = table["data"][:, list(table["cols"]).index("policy_loss")]
+    assert np.isnan(unreported).all()  # the fixed layout keeps NaN for them
+
+
+def test_flags_tag_the_run_without_stopping_it(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+
+    def metrics(u: int) -> dict[str, float]:
+        return {
+            "ppo/approx_kl": 0.2,  # above 0.1 at all 3 updates: flagged at the 3rd
+            "ppo/entropy": 0.1 if u == 1 else 3.0,  # collapse in the first half only
+            "ppo/explained_variance": -1.0 if u == 1 else 0.5,  # before the 2nd half
+        }
+
+    trainer = FakeTrainer(extra=metrics)
+    store.run([spec], trainer)
+    assert trainer.updates == [1, 2, 3]
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert tags_of(store, spec.name, "flag/") == {
+        "flag/kl_high": "3",
+        "flag/entropy_collapse": "1",
+    }
+
+
+def test_a_flag_needs_consecutive_updates_and_a_later_value_failure_counts(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    kl = {1: 0.2, 2: 0.05, 3: 0.2}
+    ev = {1: 0.5, 2: -0.1, 3: 0.5}
+    store.run(
+        [spec],
+        FakeTrainer(
+            extra=lambda u: {"ppo/approx_kl": kl[u], "ppo/explained_variance": ev[u]}
+        ),
+    )
+    assert tags_of(store, spec.name, "flag/") == {"flag/value_failure": "2"}
+
+
+def test_method_metrics_are_logged_at_their_env_step_and_survive_a_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (spec,) = (whole := Store(tmp_path / "whole", monkeypatch)).phase(
+        "tune-coarse", ["published"]
+    )
+    extra = lambda u: {"ppo/lr": 1e-3 / u}  # noqa: E731
+    whole.run([spec], FakeTrainer(extra=extra))
+    cut = Store(tmp_path / "cut", monkeypatch)
+    with pytest.raises(SystemExit):
+        cut.run([spec], FakeTrainer((2, signal.SIGINT), extra=extra))
+    cut.run([spec], FakeTrainer(extra=extra))
+    for store in (whole, cut):
+        rid = store.runs()[spec.name].info.run_id
+        history = store.client.get_metric_history(rid, "ppo/lr")
+        assert [(m.step, m.value) for m in history] == [
+            (STEPS_PER_UPDATE * u, pytest.approx(1e-3 / u)) for u in (1, 2, 3)
+        ]
+
+
+def test_saved_method_metrics_are_cut_or_padded_to_the_resumed_update(
+    tmp_path: Path,
+) -> None:
+    extras = runner._Extras(tmp_path / runner.EXTRAS_FILE)
+    extras.extend(0, {"ppo/lr": np.array([1.0, 2.0, 3.0])})
+    extras.save()  # a crash after this and before the state save leaves it ahead
+    assert runner._Extras.load(tmp_path, 2).series == {"ppo/lr": [1.0, 2.0]}
+    short = runner._Extras.load(tmp_path, 5).series["ppo/lr"]
+    assert short[:3] == [1.0, 2.0, 3.0]
+    assert len(short) == 5
+    assert all(math.isnan(v) for v in short[3:])
+    assert runner._Extras.load(tmp_path / "none", 2).series == {}

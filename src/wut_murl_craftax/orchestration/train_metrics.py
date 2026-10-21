@@ -5,9 +5,10 @@ The full per-update record is ``metrics.npz`` (every update). MLflow gets window
 log every update, a 1B run of 15k updates every 8th. A window averages its updates
 (returns, lengths and success rates weighted by finished episodes) and is logged at
 the env step of its last update. Names: ``train/{env_steps, wall_s, n_episodes,
-return, score_pct, length, sps, <loss>, ach/<achievement>}``, run-level
-``compile_s``, ``peak_rss_mb``, ``peak_device_mb`` and tags ``actor_device``,
-``learner_device``, ``device_kind``, ``host_name``.
+return, score_pct, length, sps, <loss>, ach/<achievement>}`` (``<loss>``: the loss
+columns the trainer reports) and the trainer's method metrics under their own names
+(``ppo/entropy``), run-level ``compile_s``, ``peak_rss_mb``, ``peak_device_mb`` and tags
+``actor_device``, ``learner_device``, ``device_kind``, ``host_name``.
 """
 
 import math
@@ -16,7 +17,7 @@ import socket
 import statistics
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import mlflow
@@ -43,7 +44,11 @@ def log_every(n_updates: int) -> int:
 
 
 def _window(
-    w: np.ndarray, prev: np.ndarray | None, ix: dict[str, int], names: Sequence[str]
+    w: np.ndarray,
+    prev: np.ndarray | None,
+    ix: dict[str, int],
+    names: Sequence[str],
+    loss_columns: Sequence[str],
 ) -> dict[str, float]:
     """The metrics of the updates in ``w``; ``prev`` is the row before the window."""
     n = w[:, ix["n_episodes"]]
@@ -52,7 +57,7 @@ def _window(
         "train/env_steps": last[ix["env_steps"]],
         "train/wall_s": last[ix["wall_s"]],
         "train/n_episodes": n.sum(),
-        **{f"train/{c}": w[:, ix[c]].mean() for c in LOSS_COLUMNS},
+        **{f"train/{c}": w[:, ix[c]].mean() for c in loss_columns},
     }
     start = prev if prev is not None else np.zeros_like(last)
     seconds = last[ix["wall_s"]] - start[ix["wall_s"]]
@@ -73,12 +78,17 @@ def metric_points(
     every: int,
     n_updates: int,
     max_reward: float,
+    loss_columns: Sequence[str] = LOSS_COLUMNS,
+    extras: Mapping[str, Sequence[float]] | None = None,
 ) -> Points:
     """Windows ending in updates ``first + 1 .. last``, as ``(env step, metrics)``.
 
     ``rows`` is the run log's table (one row per update); a window ends at a multiple
     of ``every`` or at ``n_updates``, so the points do not depend on where chunks or
-    resumes cut the run. Windows without finished episodes carry no score.
+    resumes cut the run. Windows without finished episodes carry no score. Only
+    ``loss_columns`` of the loss layout are reported (a trainer may fill a subset);
+    ``extras`` are method metrics by name, per update, averaged over the window under
+    their own names (NaN updates skipped).
     """
     cols = [*BASE_COLUMNS, *LOSS_COLUMNS, *(f"ach/{a}" for a in names)]
     ix = {c: i for i, c in enumerate(cols)}
@@ -90,7 +100,11 @@ def metric_points(
             continue
         start = (end - 1) // every * every
         prev = table[start - 1 - lo] if start else None
-        metrics = _window(table[start - lo : end - lo], prev, ix, names)
+        metrics = _window(table[start - lo : end - lo], prev, ix, names, loss_columns)
+        for name, series in (extras or {}).items():
+            values = np.asarray(series[start:end], float)
+            if (values := values[~np.isnan(values)]).size:
+                metrics[name] = float(values.mean())
         if "train/return" in metrics:
             metrics["train/score_pct"] = float(
                 score_pct(metrics["train/return"], max_reward)

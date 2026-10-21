@@ -22,7 +22,11 @@ grid:
       - {key: lr, mul: [0.75, 1.5]}
       - {key: gae_lambda, add: [-0.05, 0.05]}
       - {key: ent, mul: [0.5, 2.0], zero: [0.001, 0.003]}
-abort: {nan: true}
+abort:
+  flags:
+    - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
+    - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.5}
+    - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.5}
 
 # written by mark_tuned
 tuned: null

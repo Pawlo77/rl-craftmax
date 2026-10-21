@@ -4,8 +4,8 @@ A run is one (registry entry, config, budget, seed), named
 ``<registry>-<budget>-<confighash8>-s<seed>``; the hash covers the fully resolved
 config (not the seed, the budget or the config's label), so phases that resolve to the
 same config share a run. ``configs/methods/<slug>.yaml`` holds ``base``, ``budgets``,
-``grid`` (``coarse`` entries, ``fine`` rule), ``abort`` and ``tuned`` (``load_method``);
-a config resolves shallowly: donor, base, tuned or grid entry, budget, overrides
+``grid``, ``abort`` (flag rules, see `abort`) and ``tuned`` (``load_method``); a config
+resolves shallowly: donor, base, tuned or grid entry, budget, overrides
 (``resolve_config``). ``configs/phases/<phase>.yaml`` picks configs and seeds
 (``expand_phase``). CLI: ``--phase P [--method M] [--dry-run] [--expand-fine SLUG]``
 plus the runner's flags (``--profile``, ``--max-runs``, workers, ``--tracking-uri``).
@@ -60,6 +60,7 @@ _EVAL_MODES = ("final", "log_spaced")
 _METHOD_KEYS = {"base", "budgets", "grid", "abort", "tuned"}
 _RESERVED_NAMES = {"base", "tuned", "coarse", "fine"}
 _KNOB_KEYS = {"key", "mul", "add", "zero", "clip", "integer"}
+_FLAG_KEYS = {"name", "metric", "above", "below", "updates", "before", "after"}
 _BUDGET_UNITS = {"k": 1e3, "m": 1e6, "b": 1e9}
 _BUDGET_LABEL = re.compile(r"(\d+(?:\.\d+)?)([kmb])")
 _HASH8 = re.compile(r"[0-9a-f]{8}")
@@ -137,6 +138,8 @@ class RunSpec:
     config_hash: str
     phase: str
     eval_mode: EvalMode
+    abort: dict[str, Any] | None = None
+    """The method's ``abort`` block (flag rules for the runner), not hashed."""
 
     @property
     def name(self) -> str:
@@ -239,6 +242,43 @@ def _check_coarse(entries: object, where: str) -> tuple[dict[str, Any], ...]:
     return tuple(entries)
 
 
+def _is_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _check_flag(flag: object, where: str) -> str:
+    """Validate one ``abort.flags`` rule and return its name."""
+    flag = _check_keys(flag, _FLAG_KEYS, where)
+    name = flag.get("name")
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_]+", name):
+        _fail(f"{where}: `name` is a lower-case word (tag flag/<name>), got {name!r}")
+    if not isinstance(flag.get("metric"), str):
+        _fail(f"{where} {name}: `metric` is a metric name")
+    limits = [k for k in ("above", "below") if k in flag]
+    if len(limits) != 1 or not _is_number(flag[limits[0]]):
+        _fail(f"{where} {name}: exactly one numeric `above` or `below`")
+    updates = flag.get("updates", 1)
+    if not isinstance(updates, int) or isinstance(updates, bool) or updates < 1:
+        _fail(f"{where} {name}: `updates` is an int >= 1")
+    for key in ("before", "after"):
+        if key in flag and not (_is_number(flag[key]) and 0 < flag[key] <= 1):
+            _fail(f"{where} {name}: `{key}` is a budget share in (0, 1]")
+    return name
+
+
+def _check_abort(block: object, where: str) -> dict[str, Any] | None:
+    if block is None:
+        return None
+    block = _check_keys(block, {"flags"}, f"{where} abort")
+    flags = block.get("flags", [])
+    if not isinstance(flags, list):
+        _fail(f"{where} abort.flags: expected a list")
+    names = [_check_flag(f, f"{where} abort.flags") for f in flags]
+    if len(set(names)) != len(names):
+        _fail(f"{where} abort.flags: `name` must be unique")
+    return block
+
+
 def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
     """Load and validate a method file; any unknown key fails loudly.
 
@@ -267,7 +307,7 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
         budgets=budgets,
         coarse=_check_coarse(grid.get("coarse", []), where),
         fine=None if fine is None else _check_fine(fine, where),
-        abort=raw.get("abort"),
+        abort=_check_abort(raw.get("abort"), where),
         tuned=raw.get("tuned"),
     )
     if method.tuned is not None and method.variants is not None:
@@ -430,6 +470,7 @@ def _entry_specs(
                 config_hash(cfg),
                 path.stem,
                 raw["eval"],
+                method.abort,
             )
             for seed in _seed_list(seeds, f"{where} config {ref}")
         ]
