@@ -96,7 +96,9 @@ class HookFields:
     """K optimizer steps on ``extra_loss_fn`` after the PPO epochs, same Adam state; the
     learning-rate schedule is indexed by update, so K does not shift it. At 0 the extra
     loss is not active, even when set. PPO-RNN skips a step whose gradient is all zero
-    (nothing to learn): params and Adam moments stay, only the step counts advance.
+    (nothing to learn): the params and Adam's moments and count stay, while the step
+    count and the schedule's count advance as for an applied step, so the learning-rate
+    anneal stays aligned with the control's.
     PPO-RNN adds ``<group>/grad_norm`` (mean gradient norm of the K steps) and
     ``<group>/kl_after`` (mean KL of the policy before and after them on the PPO batch)
     to the extra loss's metrics, ``<group>`` being the one group of its names."""
