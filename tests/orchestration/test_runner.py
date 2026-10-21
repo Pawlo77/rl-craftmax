@@ -1043,9 +1043,14 @@ runner.main([spec], sys.argv[2], experiment_config=sys.argv[3],
 
 
 def _start_queue(
-    store: Store, spec: RunSpec, launcher: tuple[str, ...] = (sys.executable,)
+    store: Store,
+    spec: RunSpec,
+    launcher: tuple[str, ...] = (sys.executable,),
+    *,
+    nohup: bool = False,
 ) -> subprocess.Popen[str]:
-    """The queue in its own session, as a terminal's foreground job."""
+    """The queue in its own session, as a terminal's foreground job (under ``nohup``:
+    SIGHUP ignored, as the queue inherits it)."""
     path = os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")])
     argv = [json.dumps(dataclasses.asdict(spec)), str(PROFILE), str(store.config)]
     return subprocess.Popen(
@@ -1054,6 +1059,9 @@ def _start_queue(
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        preexec_fn=(lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
+        if nohup
+        else None,
     )
 
 
@@ -1090,7 +1098,7 @@ def test_a_child_whose_queue_dies_saves_its_state_and_stops(store: Store) -> Non
     queue_process = _start_queue(store, slow)
     child = _training_pid(store, slow.name)
     os.kill(queue_process.pid, signal.SIGKILL)
-    queue_process.communicate()
+    queue_process.communicate(timeout=120)
     _until(lambda: not _alive(child), "the orphaned child to exit", 60)
     run = store.runs()[slow.name]
     assert run.info.status == "KILLED"
@@ -1111,7 +1119,7 @@ def test_a_run_with_a_live_child_is_never_trained_twice(
     run = store.runs()[slow.name]
     assert (run.info.status, run.data.tags["pid"]) == ("RUNNING", str(child))
     os.kill(queue_process.pid, signal.SIGINT)
-    queue_process.communicate()
+    queue_process.communicate(timeout=120)
     assert queue_process.returncode == 128 + signal.SIGINT
     assert store.runs()[slow.name].info.status == "KILLED"
 
@@ -1176,10 +1184,26 @@ def test_one_ctrl_c_under_uv_run_stops_the_child_cleanly(store: Store) -> None:
     queue_process = _start_queue(store, slow, (uv, "run", "--no-sync", "python"))
     _training_pid(store, slow.name)
     os.killpg(queue_process.pid, signal.SIGINT)  # the whole foreground job
-    _, stderr = queue_process.communicate()
+    _, stderr = queue_process.communicate(timeout=120)
     assert queue_process.returncode == 128 + signal.SIGINT, stderr[-2000:]
     assert "KeyboardInterrupt" not in stderr
     assert stderr.count("signal 2: stopping") == 1
     run = store.runs()[slow.name]
     assert run.info.status == "KILLED"
     assert (store.run_dir(slow.name) / "state" / "state.npz").is_file()
+
+
+def test_a_queue_under_nohup_keeps_ignoring_hangups(store: Store) -> None:
+    """``nohup make queue``: the inherited SIG_IGN for SIGHUP stays in force."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    slow = _as(spec, "slow")
+    queue_process = _start_queue(store, slow, nohup=True)
+    _training_pid(store, slow.name)
+    os.kill(queue_process.pid, signal.SIGHUP)
+    time.sleep(2.0)  # a stop would end the run within a chunk (0.5 s)
+    assert queue_process.poll() is None
+    assert store.runs()[slow.name].info.status == "RUNNING"
+    os.kill(queue_process.pid, signal.SIGINT)
+    queue_process.communicate(timeout=120)
+    assert queue_process.returncode == 128 + signal.SIGINT
+    assert store.runs()[slow.name].info.status == "KILLED"

@@ -118,7 +118,8 @@ OWNER_FILE = "owner.json"
 """Run-directory file of the process that trains the run (pid, host); gone once the
 run is closed, so a RUNNING run with a live owner is never trained twice."""
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-"""Signals that stop the queue after the chunk; SIGHUP: the terminal or SSH closed."""
+"""Signals that stop the queue after the chunk; SIGHUP: the terminal or SSH closed
+(unless the queue inherited it ignored, as under ``nohup``)."""
 ECHO_S = 1.0
 """A repeat of the first signal within this many seconds is the same signal: ``uv run``
 forwards the terminal's Ctrl-C, which python also got (measured 0.2 s apart)."""
@@ -326,7 +327,13 @@ class _Stop:
 @contextmanager
 def _stop_on_signals() -> Iterator[_Stop]:
     stop = _Stop()
-    old = {s: signal.signal(s, stop) for s in STOP_SIGNALS}
+    # an inherited SIG_IGN for SIGHUP (``nohup``) stays: the queue outlives a hangup
+    kept = signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+    old = {
+        s: signal.signal(s, stop)
+        for s in STOP_SIGNALS
+        if not (kept and s == signal.SIGHUP)
+    }
     try:
         yield stop
     finally:
@@ -792,7 +799,7 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any, done: Any) 
     os.setpgrp()  # a terminal's Ctrl-C reaches the parent only, which forwards it
     for s in STOP_SIGNALS:  # also a scheduler's, sent to every PID
         signal.signal(s, signal.SIG_IGN)
-    parent = os.getppid()
+    parent = multiprocessing.parent_process()  # its sentinel sees a death at once
     trainers, evaluate = _set_up_jax(job.machine, job.registry, job.evaluate)
     if job.spec.registry_name not in trainers:
         msg = f"no trainer registered for {job.spec.registry_name!r} in {job.registry}"
@@ -802,8 +809,8 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any, done: Any) 
 
     def forwarded() -> None:
         while not stop_set.wait(1.0):
-            if os.getppid() != parent:  # the queue died: stop as if it had forwarded
-                logger.warning("queue process %d is gone: stopping the run", parent)
+            if parent is not None and not parent.is_alive():  # the queue died
+                logger.warning("queue process %d is gone: stopping", parent.pid)
                 stop.signum = signal.SIGHUP
                 return
         stop.signum = stop_signum.value
