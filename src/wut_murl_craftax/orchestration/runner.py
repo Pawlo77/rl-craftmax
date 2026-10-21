@@ -96,7 +96,12 @@ class Trainer(Protocol):
         ...
 
     def init(self, config: Mapping[str, Any], key: jax.Array) -> Any:
-        """Initial state: params, optimizer, env states, keys, method state."""
+        """Initial state: params, optimizer, env states, keys, method state.
+
+        ``config`` is the run's config plus ``steps``, the budget in env steps: the
+        one runtime key the runner injects (it is not hashed or saved in
+        ``config.json``); later runtime inputs, such as the profile, follow suit.
+        """
         ...
 
     def train_chunk(self, state: Any, n_updates: int) -> tuple[Any, ChunkMetrics]:
@@ -288,7 +293,8 @@ def _train(
         raise ValueError(msg)
     ckpts = checkpoint_schedule(n_updates, N_CHECKPOINTS)
     # a resume needs init too: it gives the tree, key implementations and placement
-    fresh = state_template(trainer.init(spec.config, jax.random.key(spec.seed)), spec)
+    config = {**spec.config, "steps": spec.steps}
+    fresh = state_template(trainer.init(config, jax.random.key(spec.seed)), spec)
     saved = load_state(out, fresh) if (out / STATE_FILE).exists() else fresh
     state, update = saved["trainer"], saved["update"]
     log = RunLog(out, spec.env, achievement_names(spec.env))

@@ -30,12 +30,14 @@ class FakeTrainer:
         self.spu = steps_per_update
         self.updates: list[int] = []
         self.cpu_devices = 0
+        self.init_steps: list[int | None] = []
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
         return self.spu
 
     def init(self, config: Mapping[str, Any], key: jax.Array) -> dict[str, Any]:
         self.cpu_devices = len(jax.devices("cpu"))
+        self.init_steps.append(config.get("steps"))
         k_w, key = jax.random.split(key)
         return {
             "params": {"w": jax.random.normal(k_w, (3,)) * config["lr"]},

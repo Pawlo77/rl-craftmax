@@ -226,6 +226,16 @@ def test_the_run_directory_is_the_mlflow_artifact_directory(store: Store) -> Non
     assert [m.step for m in history] == [STEPS_PER_UPDATE * u for u in (1, 2, 3)]
 
 
+def test_init_gets_the_budget_steps_outside_the_saved_config(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.init_steps == [spec.steps]
+    assert "steps" not in spec.config
+    config = json.loads((store.run_dir(spec.name) / queue.CONFIG_ARTIFACT).read_text())
+    assert config == spec.config
+
+
 def test_the_tracker_comes_from_experiment_yaml_named_after_the_phase(
     store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
