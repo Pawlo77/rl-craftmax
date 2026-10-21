@@ -1,5 +1,6 @@
 """Tests for the resumable runner: lookup, resume, signals, run directory, workers."""
 
+import dataclasses
 import functools
 import inspect
 import json
@@ -17,6 +18,7 @@ import mlflow
 import numpy as np
 import pytest
 import yaml
+from _fake_registry import NO_EVAL, REGISTRY
 from _fake_trainer import STEPS_PER_UPDATE, FakeTrainer
 from _toy_method import TINY, TOY
 
@@ -905,3 +907,62 @@ def test_a_methods_knobs_reach_its_hooks_in_training_and_evaluation(
             p, policy.init_carry(1), obs[None], jax.random.key(1), True
         )
         assert act.shape == (1,)
+
+
+# --- one child process per run ----------------------------------------------------
+
+
+def _in_children(store: Store, specs: list[RunSpec]) -> None:
+    """``runner.main`` as the queue calls it: no live trainers, a child per run."""
+    runner.main(
+        specs,
+        PROFILE,
+        experiment_config=store.config,
+        registry=REGISTRY,
+        evaluate=NO_EVAL,
+    )
+
+
+def _as(spec: RunSpec, registry: str) -> RunSpec:
+    return dataclasses.replace(spec, registry_name=registry)
+
+
+def test_each_run_trains_in_its_own_child_process(store: Store) -> None:
+    specs = store.phase("tune-coarse", ["published", "lr-hi"])
+    _in_children(store, specs)
+    runs = store.runs()
+    assert {runs[s.name].info.status for s in specs} == {"FINISHED"}
+    pids = {runs[s.name].data.tags["pid"] for s in specs}
+    assert len(pids) == 2
+    assert str(os.getpid()) not in pids
+    assert store.runtime_calls == []  # the parent never sets up JAX
+
+
+def test_a_crashed_child_fails_its_run_and_the_queue_continues(store: Store) -> None:
+    published, hi = store.phase("tune-coarse", ["published", "lr-hi"])
+    crash = _as(published, "crash")
+    with pytest.raises(RuntimeError, match=rf"1 of 2 runs failed: {crash.name}.*-9"):
+        _in_children(store, [crash, hi])
+    runs = store.runs()
+    assert runs[crash.name].info.status == "FAILED"
+    assert "exited with -9" in runs[crash.name].data.tags["fail/error"]
+    assert runs[hi.name].info.status == "FINISHED"
+
+
+def test_a_signal_to_the_parent_stops_the_child_with_its_state_saved(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    stop = _as(spec, "stop")
+    with pytest.raises(SystemExit) as exit_info:
+        _in_children(store, [stop])
+    assert exit_info.value.code == 128 + signal.SIGINT
+    run = store.runs()[stop.name]
+    assert run.info.status == "KILLED"
+    saved = load_state(
+        store.run_dir(stop.name),
+        runner.state_template(FakeTrainer().init(stop.config, jax.random.key(0)), stop),
+    )
+    assert saved["update"] == 2
+    _in_children(store, [stop])  # the rerun resumes at update 3 and finishes
+    assert store.runs()[stop.name].info.status == "FINISHED"

@@ -339,7 +339,11 @@ def test_a_pqn_rnn_run_logs_only_the_loss_columns_it_fills(
         "smoke", "final",
     )  # fmt: skip
     runner.main(
-        [spec], PROFILE, experiment_config=store.config, evaluate=store.evaluate
+        [spec],
+        PROFILE,
+        experiment_config=store.config,
+        methods=METHODS,
+        evaluate=store.evaluate,
     )
     run = store.runs()[spec.name]
     assert run.info.status == "FINISHED"

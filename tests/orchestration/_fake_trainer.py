@@ -1,6 +1,7 @@
 """A deterministic 3-update trainer with the shape of a registry entry."""
 
 import os
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -40,7 +41,9 @@ class FakeTrainer:
     """Params random walk, Adam-like moments, env counters, typed keys, BatchRenorm.
 
     ``signal_at`` sends that signal to this process during the given update, as
-    Ctrl-C or a scheduler's SIGTERM would in the middle of a chunk. ``extra`` maps an
+    Ctrl-C or a scheduler's SIGTERM would in the middle of a chunk; ``to_parent``
+    sends it to the parent process instead (a runner child's), then waits a second
+    for the parent to forward the stop. ``extra`` maps an
     update number to the method metrics reported at it (``{"ppo/entropy": 0.1}``);
     ``loss_columns`` makes the trainer report only those loss columns (NaN in the
     others, as PQN-RNN leaves the PPO-only ones) and ``loss_nan_at`` turns the
@@ -54,8 +57,9 @@ class FakeTrainer:
         extra: Callable[[int], Mapping[str, float]] | None = None,
         loss_columns: tuple[str, ...] | None = None,
         loss_nan_at: int | None = None,
+        to_parent: bool = False,
     ) -> None:
-        self.signal_at = signal_at
+        self.signal_at, self.to_parent = signal_at, to_parent
         self.spu = steps_per_update
         self.extra = extra
         self.loss_nan_at = loss_nan_at
@@ -128,7 +132,11 @@ class FakeTrainer:
             metrics |= self._reported(metrics["losses"], u)
             rows.append(metrics)
             if self.signal_at and self.signal_at[0] == self.updates[-1]:
-                os.kill(os.getpid(), self.signal_at[1])
+                os.kill(
+                    os.getppid() if self.to_parent else os.getpid(), self.signal_at[1]
+                )
+                if self.to_parent:
+                    time.sleep(1.0)
         return state, {k: jnp.stack([r[k] for r in rows]) for k in rows[0]}
 
     def params(self, state: dict[str, Any]) -> Any:

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 from _fake_trainer import FakeTrainer
-from conftest import ROOT, store_listing
 from test_runner import PROFILE, Store
 
+from tests.conftest import ROOT, store_listing  # the root one, not a sibling conftest
 from wut_murl_craftax.orchestration import queue, runner
 from wut_murl_craftax.orchestration import store as store_cli
 from wut_murl_craftax.orchestration.tracking import (
