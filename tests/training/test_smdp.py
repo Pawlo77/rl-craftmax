@@ -39,6 +39,7 @@ from wut_murl_craftax.training.smdp import (
     MCRecords,
     RolloutCarry,
     SMDPConfig,
+    SMDPPolicy,
     accumulate,
     init_rollout,
     init_table,
@@ -467,3 +468,31 @@ def test_a_network_without_the_skill_inputs_is_refused(rig: Rig) -> None:
         init_rollout(
             TOY, rig.env, narrow, None, jax.random.key(0), env_params=rig.params
         )
+
+
+@pytest.mark.parametrize("flags", [True, False])
+def test_the_low_stat_interruption_follows_the_flags(rig: Rig, flags: bool) -> None:
+    """Food falls to 3 on the next step: a running skill ends there with the flags,
+    and runs on in the no-flags ablation, in the rollout and in the policy."""
+    cfg = SMDPConfig(gamma_top=GAMMA, alpha=ALPHA, log2_rows=10, low_flags=flags)
+    c = rig.carry(cfg)
+    st = c.per_env.env_state
+    hungry = st.env_state.replace(
+        player_food=jnp.full(ENVS, 4, jnp.int32), player_hunger=jnp.full(ENVS, 25.0)
+    )
+    c = force(c.replace(per_env=c.per_env.replace(
+        env_state=st.replace(env_state=hungry))), [DESCEND] * 2)  # fmt: skip
+    obs0 = c.per_env.obs
+    c2, out = rig.run(c, 1)
+    reason = "low_stat" if flags else "running"
+    assert [REASONS[int(x)] for x in out["reason"][0]] == [reason] * ENVS
+    policy = SMDPPolicy(rig.net, cfg)
+    pc = policy.init_carry(ENVS)
+    act = out["action"][0]
+    pc = (pc[0], act, jnp.full(ENVS, DESCEND), jnp.zeros(ENVS, jnp.int32), obs0,
+          jnp.ones(ENVS, bool))  # fmt: skip
+    rows = {"rows": np.zeros(0, np.int32), "q_rows": np.zeros((0, NUM_SKILLS))}
+    params = rows | {"variables": rig.variables, "eps": 0.0, "eps_top": 0.0}
+    r, d = out["native_reward"][0], out["episode_done"][0]
+    _, pc2 = policy.step(params, pc, c2.per_env.obs, jax.random.key(0), True, r, d)
+    np.testing.assert_array_equal(pc2[3], 0 if flags else 1)  # steps in the skill

@@ -320,7 +320,7 @@ class SMDPConfig:
     log2_rows: int = 20
     q_init: float = 10.0
     low_flags: bool = True
-    """Low-stat flags in the key (off: the no-flags ablation)."""
+    """Low-stat flags in the key and their skill interruption (off: the ablation)."""
     monte_carlo: bool = False
     """Monte Carlo top level (ablation) instead of the SMDP backup."""
     mc_length: int = 1024
@@ -631,8 +631,9 @@ def rollout_step(
 
     def end(k: Any, a: Any, act: Any, r: Any, b: Any, d: Any, n: Any) -> Any:
         return skill_step(
-            k, a, act, r, b, d, n, cfg.timeout_mult, granularity=cfg.granularity
-        )
+            k, a, act, r, b, d, n, cfg.timeout_mult,
+            granularity=cfg.granularity, low_interrupt=cfg.low_flags,
+        )  # fmt: skip
 
     success, ended, reason = jax.vmap(end)(
         sk.skill, view, act, r, view2, done, sk.steps
@@ -1167,8 +1168,9 @@ class SMDPPolicy:
 
         def end(k: Any, a: Any, act: Any, r: Any, b: Any, n: Any) -> Any:
             return skill_step(
-                k, a, act, r, b, False, n, cfg.timeout_mult, granularity=cfg.granularity
-            )
+                k, a, act, r, b, False, n, cfg.timeout_mult,
+                granularity=cfg.granularity, low_interrupt=cfg.low_flags,
+            )  # fmt: skip
 
         _, ended = jax.vmap(end)(skill, _views(prev), last, r, view2, steps)[:2]
         ended = ended | new

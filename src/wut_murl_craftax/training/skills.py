@@ -498,6 +498,7 @@ def skill_step(
     timeout_mult: jax.Array | float,
     *,
     granularity: Granularity = "recipe",
+    low_interrupt: bool = True,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Success, end flag and `REASONS` index of the step ``view -(action)-> view2``.
 
@@ -505,8 +506,9 @@ def skill_step(
     `step_limit`. The first match wins:
     episode end (``done``: ``view2`` is a reset, so no test, no success), success,
     failure (``sleep`` woken below max energy), floor change, a low-stat flag
-    switching on (not during ``drink``, ``eat``, ``sleep``), step limit. Collect
-    skills succeed when the material's ``granularity`` bucket rises.
+    switching on (not during ``drink``, ``eat``, ``sleep``; never without
+    ``low_interrupt``, the no-low-stat-flags ablation), step limit. Collect skills
+    succeed when the material's ``granularity`` bucket rises.
     """
     skill = jnp.asarray(skill, jnp.int32)
     ach = achievement_reward(r, view, view2)
@@ -520,7 +522,8 @@ def skill_step(
     exempt = jnp.isin(skill, jnp.asarray(_LOW_STAT_EXEMPT))
     limit = step_limit(skill, timeout_mult)
     done = jnp.asarray(done, jnp.bool_)
-    ends = [done, passed, woken, view2.floor != view.floor, new_low & ~exempt]
+    low = new_low & ~exempt & low_interrupt
+    ends = [done, passed, woken, view2.floor != view.floor, low]
     ends.append(steps_in_skill + 1 >= limit)
     reasons = [EPISODE_END, SUCCESS, FAILURE, FLOOR_CHANGE, LOW_STAT, TIMEOUT]
     reason = jnp.select(ends, reasons, RUNNING).astype(jnp.int32)

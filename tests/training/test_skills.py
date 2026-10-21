@@ -119,11 +119,13 @@ def step(
     steps: int = 0,
     mult: float = 1.0,
     granularity: str = "recipe",
+    low_interrupt: bool = True,
 ) -> tuple[bool, bool, str]:
     """``skill_step`` of one named skill as Python values (success, ended, reason)."""
     out = skill_step(
-        SKILL_IDS[skill], a, action, r, b, done, steps, mult, granularity=granularity
-    )
+        SKILL_IDS[skill], a, action, r, b, done, steps, mult,
+        granularity=granularity, low_interrupt=low_interrupt,
+    )  # fmt: skip
     success, ended, reason = out
     return bool(success), bool(ended), REASONS[int(reason)]
 
@@ -547,6 +549,9 @@ def test_floor_change_and_low_stats_interrupt(craftax: Game) -> None:
     assert step("collect_iron", four, three) == (False, True, "low_stat")
     assert step("eat", four, three) == (False, False, "running")
     assert step("collect_iron", three, three)[1] is False  # already low at the start
+    # the no-low-stat-flags ablation: no interruption either
+    off = step("collect_iron", four, three, low_interrupt=False)
+    assert off == (False, False, "running")
     np.testing.assert_array_equal(low_stats(three), [True, False, False, False])
 
 
