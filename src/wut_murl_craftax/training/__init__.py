@@ -4,6 +4,7 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .batch_renorm import BatchRenorm
     from .checkpoints import (
         checkpoint_schedule,
         load_index,
@@ -50,6 +51,7 @@ _EXPORTS: dict[str, str] = {
     "METHODS": "interface",
     "ActorCritic": "ppo",
     "ActorCriticRNN": "ppo_rnn",
+    "BatchRenorm": "batch_renorm",
     "Episodes": "records",
     "PPOConfig": "ppo",
     "PPOTrainer": "ppo",
@@ -88,6 +90,7 @@ __all__ = [
     "METHODS",
     "ActorCritic",
     "ActorCriticRNN",
+    "BatchRenorm",
     "Episodes",
     "HookFields",
     "HookSpec",
