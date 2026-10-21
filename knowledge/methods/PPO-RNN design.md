@@ -73,6 +73,17 @@ flowchart LR
 - 1B: s_pub 0.35 (largest third-party spread, Singh et al. 2026, type not stated); with our 3 seeds the planning band is 14.79 to 15.81 (indicative). Third-party reruns with separate evaluation report 16.2-16.4%, which is a different protocol ([[PPO-RNN (Matthews 2024)]]).
 - Debug order on a fail: first make sure the PPO control passes; then the recompute check, the hidden reset and the sequence minibatching; then the original `ppo_rnn.py` at 1M in an isolated environment.
 
+## Device verification
+
+Recompute check on Craftax-Symbolic (8268 inputs, 8 envs, 4 seeds x 2 minibatches, sequences of 8, 16 and 64 steps): the largest absolute gap between the rollout's log-probs and values and the sequence rerun from the stored start hidden. The rollout runs on the CPU actor; the rerun on the learner.
+
+| Learner | Max log-prob gap | Max value gap | Bound |
+|---|---|---|---|
+| CPU (`JAX_PLATFORMS=cpu`) | 4.8e-7 | 0 | 1e-5 |
+| Metal (`JAX_PLATFORMS=metal,cpu`, laptop profile) | 7.2e-7 | 1.76e-6 | 1e-5 |
+
+Metal stays below 1e-5, so no looser bound is needed; the first-minibatch ratio rule keeps its 1e-3 limit in the abort rule.
+
 ## Fixed vs tuned
 
 | Setting | Status |
