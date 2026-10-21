@@ -7,3 +7,4 @@ seeds: 3
 runs:
   ppo: {configs: coarse}
   ppo-rnn: {configs: coarse}
+  pqn-rnn: {configs: coarse}

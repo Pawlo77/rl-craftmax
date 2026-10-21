@@ -137,3 +137,13 @@ def test_smoke_runs_base_and_lambda_0_on_classic_with_one_seed() -> None:
     assert {s.env for s in specs} == {"Craftax-Classic-Symbolic-v1"}
     assert [s.config["lam"] for s in specs] == [0.5, 0.0]
     assert len({s.config_hash for s in specs}) == 2
+
+
+def test_tune_coarse_phase_plans_30_runs() -> None:
+    phase = PHASES / "tune-coarse.yaml"
+    specs = expand_phase(phase, method="pqn-rnn", methods_dir=METHODS)
+    assert len(specs) == 10 * 3
+    assert {s.budget for s in specs} == {"1m"}
+    assert {s.env for s in specs} == {"Craftax-Symbolic-v1"}
+    assert len({config_hash(s.config) for s in specs}) == 10
+    assert {s.seed for s in specs} == {0, 1, 2}
