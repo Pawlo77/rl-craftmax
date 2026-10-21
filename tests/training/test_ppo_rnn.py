@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.orchestration import device_roles
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training.hooks import HookFields
 from wut_murl_craftax.training.interface import METHODS
@@ -92,6 +93,7 @@ def test_recomputed_logp_and_values_match_the_rollout(
     """Epoch 1, before any gradient step: the sequence rerun from the stored start
     hidden gives the rollout's log-probs and values to 1e-5."""
     _, batch, _, _ = rollout
+    batch = jax.device_put(batch, device_roles().learner)  # as `train_chunk` does
     _, k = jax.random.split(start.key)  # epoch 1's shuffle key
     mbs = minibatches(batch, k, cfg)
     params = start.train_state.params

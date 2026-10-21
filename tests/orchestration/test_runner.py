@@ -795,33 +795,39 @@ def test_a_lost_final_checkpoint_is_rebuilt_from_the_state(store: Store) -> None
     assert [e[0] for e in store.evaluated] == [spec.name] * 2
 
 
-def test_an_earlier_lost_checkpoint_fails_a_complete_run_and_is_tagged(
+def test_an_earlier_lost_checkpoint_fails_a_complete_run_on_every_call(
     store: Store,
 ) -> None:
     (spec,) = store.phase("tune-coarse", ["published"])
     store.run([spec], FakeTrainer())
     _ckpt(store, spec.name, 1).unlink()
     _ckpt(store, spec.name, 2).unlink()
-    with pytest.raises(RuntimeError, match=r"\[1, 2\] are lost"):
-        store.run([spec], FakeTrainer())
-    run = store.runs()[spec.name]
-    assert run.info.status == "FAILED"
-    assert run.data.tags["ckpt/missing"] == "1,2"
+    for _ in range(3):  # the cleaned index must not hide the loss from later calls
+        with pytest.raises(RuntimeError, match=r"\[1, 2\] are lost"):
+            store.run([spec], FakeTrainer())
+        run = store.runs()[spec.name]
+        assert run.info.status == "FAILED"
+        assert run.data.tags["ckpt/missing"] == "1,2"
     assert [e["update"] for e in load_index(store.run_dir(spec.name))] == [0, 3]
     assert len(store.evaluated) == 1  # only the first call evaluated
 
 
-def test_a_lost_checkpoint_of_a_run_in_progress_is_tagged_then_fails_at_the_end(
+def test_a_lost_checkpoint_of_a_run_in_progress_stays_tagged_and_fails_at_the_end(
     store: Store,
 ) -> None:
+    spu = 25_000  # 40 updates: the schedule has checkpoints at 1, 2, ...
     (spec,) = store.phase("tune-coarse", ["published"])
     with pytest.raises(SystemExit):
-        store.run([spec], FakeTrainer((2, signal.SIGINT)))
+        store.run([spec], FakeTrainer((11, signal.SIGINT), steps_per_update=spu))
     _ckpt(store, spec.name, 1).unlink()
-    trainer = FakeTrainer()
-    with pytest.raises(RuntimeError, match=r"\[1\] are lost"):
-        store.run([spec], trainer)
-    assert trainer.updates == [3]  # it trained on: the final checkpoint is intact
+    with pytest.raises(SystemExit):  # tagged at once, interrupted again after it
+        store.run([spec], FakeTrainer((20, signal.SIGINT), steps_per_update=spu))
     run = store.runs()[spec.name]
-    assert (run.info.status, run.data.tags["ckpt/missing"]) == ("FAILED", "1")
-    assert _ckpt(store, spec.name, 3).is_file()
+    assert (run.info.status, run.data.tags["ckpt/missing"]) == ("KILLED", "1")
+    for _ in range(2):  # it trains on, then fails; a rerun fails at once
+        trainer = FakeTrainer(steps_per_update=spu)
+        with pytest.raises(RuntimeError, match=r"\[1\] are lost"):
+            store.run([spec], trainer)
+        run = store.runs()[spec.name]
+        assert (run.info.status, run.data.tags["ckpt/missing"]) == ("FAILED", "1")
+    assert _ckpt(store, spec.name, 40).is_file()

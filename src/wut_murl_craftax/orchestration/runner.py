@@ -373,25 +373,34 @@ def _repair_checkpoints(
     out: Path,
     fresh: dict[str, Any],
     saved: dict[str, Any],
+    ckpts: Sequence[int],
     spu: int,
 ) -> list[int]:
-    """Drop index entries whose file is gone; rebuild what can be; return the rest.
+    """Rebuild lost checkpoint files that can be rebuilt; return the ones that cannot.
 
-    Update 0 is rebuilt from the same-seed initial state and the saved update from the
-    saved state. Earlier lost updates cannot be rebuilt: they are tagged
-    `TAG_CKPT_MISSING` and returned.
+    Lost means: in the log-spaced schedule, before the saved update, no file on disk
+    (not what ``index.json`` says: it is cleaned of missing files here, so a later call
+    must not take the index's word). Update 0 is rebuilt from the same-seed initial
+    state, the saved update from the saved state. Earlier ones cannot be rebuilt and
+    stay lost: they are tagged `TAG_CKPT_MISSING` (also when an earlier call tagged
+    them) and returned.
     """
-    lost, update = drop_missing_checkpoints(out), saved["update"]
-    if not any(e["update"] == 0 for e in load_index(out)):
+    drop_missing_checkpoints(out)
+    update, ckpt_dir = saved["update"], out / "ckpt"
+    on_disk = {u for u in ckpts if (ckpt_dir / f"{u:05d}.msgpack").is_file()}
+    if 0 not in on_disk:
         save_checkpoint(out, 0, 0, 0.0, trainer.params(fresh["trainer"]))
-    if update and update in lost:
+    if update in ckpts and update and update not in on_disk:
         wall, params = saved["wall_s"], trainer.params(saved["trainer"])
         save_checkpoint(out, update, update * spu, wall, params)
-    gone = sorted(u for u in lost if 0 < u < update)
-    if gone:
-        mlflow.set_tag(TAG_CKPT_MISSING, ",".join(map(str, gone)))
-        logger.warning("checkpoints %s of %s are lost for good", gone, out)
-    return gone
+    gone = {u for u in ckpts if 0 < u < update and u not in on_disk}
+    run = mlflow.get_run(mlflow.active_run().info.run_id)  # type: ignore[union-attr]  # the runner's run
+    tagged = run.data.tags.get(TAG_CKPT_MISSING, "")
+    lost = sorted(gone | {int(u) for u in tagged.split(",") if u})
+    if lost:
+        mlflow.set_tag(TAG_CKPT_MISSING, ",".join(map(str, lost)))
+        logger.warning("checkpoints %s of %s are lost for good", lost, out)
+    return lost
 
 
 def _check_finite(
@@ -472,7 +481,7 @@ def _train(
     log = RunLog(out, spec.env, achievement_names(spec.env))
     rows, episodes = saved["log"]
     log.rows, log.episodes = rows.tolist(), [episodes]
-    lost = _repair_checkpoints(trainer, out, fresh, saved, spu)
+    lost = _repair_checkpoints(trainer, out, fresh, saved, ckpts, spu)
     written = {e["update"] for e in load_index(out)}
     columns, extras = _loss_columns(trainer), _Extras.load(out, update)
     abort = spec.abort or {}

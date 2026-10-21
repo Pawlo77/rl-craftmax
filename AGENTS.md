@@ -15,6 +15,7 @@ Experiments: edit `configs/experiment.yaml`; local MLflow: `make mlflow`.
 - No new markdown or doc expansion unless asked.
 - No runtime dependency without a justification in `pyproject.toml`.
 - Use `prek`, never the `pre-commit` CLI; change dependencies in `pyproject.toml` plus `uv lock`.
+- Tests fail the session if the real `mlruns.db` or `mlruns/` changed; set `WUT_MURL_STORE_GUARD=off` only while a live queue runs beside them.
 - Never edit generated files: `.claude/rules/` (edit `.cursor/rules/*.mdc`, then `uv run python scripts/sync_rules.py`), `.codex/agents/` and the tool configs (`make configs`).
 
 ## Load order
