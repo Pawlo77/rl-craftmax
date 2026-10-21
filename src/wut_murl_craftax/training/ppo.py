@@ -362,12 +362,11 @@ def _setup(cfg: PPOConfig) -> _Setup:
     names = achievement_names(cfg.env)
     mesh: Mesh | None = None
     shared_at: jax.Device | NamedSharding = roles.actor
-    n_cpu = len(jax.devices("cpu"))
-    if roles.actor.platform == "cpu" and n_cpu > 1:
-        if cfg.envs % n_cpu:
-            msg = f"{cfg.envs} envs do not split over {n_cpu} CPU devices"
-            raise ValueError(msg)
+    if roles.actor.platform == "cpu" and len(jax.devices("cpu")) > 1:
         mesh = env_mesh()
+        if cfg.envs % mesh.devices.size:
+            msg = f"{cfg.envs} envs do not split over {mesh.devices.size} CPU devices"
+            raise ValueError(msg)
         shared_at = NamedSharding(mesh, PartitionSpec())  # type: ignore[no-untyped-call]
     return _Setup(
         net,
