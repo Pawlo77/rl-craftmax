@@ -95,13 +95,15 @@ def block(s: Any, pos: tuple[int, int], kind: BlockType, floor: int = 0) -> Any:
     return s.replace(map=s.map.at[floor, *pos].set(kind.value))
 
 
-def mob(s: Any, group: str, pos: tuple[int, int], type_id: int = 0) -> Any:
-    """Slot 0 of ``group`` alive at ``pos`` on floor 0 with 5 health."""
+def mob(
+    s: Any, group: str, pos: tuple[int, int], type_id: int = 0, health: float = 5.0
+) -> Any:
+    """Slot 0 of ``group`` alive at ``pos`` on floor 0."""
     m = getattr(s, group)
     m = m.replace(
         position=m.position.at[0, 0].set(jnp.array(pos)),
         mask=m.mask.at[0, 0].set(True),
-        health=m.health.at[0, 0].set(5.0),
+        health=m.health.at[0, 0].set(health),
         type_id=m.type_id.at[0, 0].set(type_id),
     )
     return s.replace(**{group: m})
@@ -193,14 +195,14 @@ def _random_craftax(base: Any, rng: np.random.Generator) -> Any:
         armour_enchantments=ints(2, 4), monsters_killed=ints(12, 9),
         map=s.map.at[floor, r0 : r0 + 3, c0 : c0 + 3].set(ints(36, (3, 3))),
         item_map=s.item_map.at[floor, r0 : r0 + 3, c0 : c0 + 3].set(ints(4, (3, 3))),
-        light_map=s.light_map.at[floor, r0 : r0 + 3, c0 : c0 + 3].set(
-            jnp.asarray(rng.choice([0.0, 0.04, 0.5, 1.0], (3, 3)), jnp.float32)
+        light_map=s.light_map.at[floor, r0 - 1 : r0 + 4, c0 - 1 : c0 + 4].set(
+            jnp.asarray(rng.choice([0.0, 0.04, 0.5, 1.0], (5, 5)), jnp.float32)
         ),
     )  # fmt: skip
-    for slot in range(3):  # up to three creatures, one slot each, any class
+    for slot in range(4):  # up to four creatures, one slot each, any class
         g = CRAFTAX_GROUPS[rng.integers(5)]
         m = getattr(s, g)
-        at = jnp.asarray(p + rng.integers(-1, 2, 2), jnp.int32)
+        at = jnp.asarray(p + rng.integers(-2, 3, 2), jnp.int32)
         m = m.replace(
             position=m.position.at[floor, slot].set(at),
             mask=m.mask.at[floor, slot].set(True),
@@ -213,7 +215,7 @@ def _random_craftax(base: Any, rng: np.random.Generator) -> Any:
 
 
 def _expected_tiles(s: Any, groups: tuple[str, ...], floor: Any) -> tuple[Any, ...]:
-    """Blocks, items and creature channels of the 3 x 3 tiles around the player."""
+    """Blocks and items of the 3 x 3 around the player, creatures of the 5 x 5."""
     p = np.asarray(s.player_position)
     r0, c0 = p - 1
     pick = (lambda x: x[floor]) if floor is not None else (lambda x: x)
@@ -221,17 +223,18 @@ def _expected_tiles(s: Any, groups: tuple[str, ...], floor: Any) -> tuple[Any, .
     items = np.zeros((3, 3), int)
     if floor is not None:
         items = np.asarray(s.item_map[floor])[r0 : r0 + 3, c0 : c0 + 3]
-    mobs = np.zeros((3, 3, 40), bool)
+    mobs = np.zeros((5, 5, 40), bool)
     for cls, g in enumerate(groups):
         m = getattr(s, g)
         pos, mask = np.asarray(pick(m.position)), np.asarray(pick(m.mask))
         types = np.asarray(pick(m.type_id)) if floor is not None else 0 * mask
         for (r, c), alive, t in zip(pos, mask, types, strict=True):
-            if alive and abs(r - p[0]) <= 1 and abs(c - p[1]) <= 1:
-                mobs[r - r0, c - c0, cls * 8 + t] = True
+            if alive and abs(r - p[0]) <= 2 and abs(c - p[1]) <= 2:
+                mobs[r - r0 + 1, c - c0 + 1, cls * 8 + t] = True
     if floor is not None:  # dark tiles are blank in the observation
-        lit = np.asarray(s.light_map[floor])[r0 : r0 + 3, c0 : c0 + 3] > 0.05
-        blocks, items, mobs = blocks * lit, items * lit, mobs & lit[..., None]
+        lit = np.asarray(s.light_map[floor])[r0 - 1 : r0 + 4, c0 - 1 : c0 + 4] > 0.05
+        blocks, items = blocks * lit[1:4, 1:4], items * lit[1:4, 1:4]
+        mobs &= lit[..., None]
     return blocks, items, mobs
 
 
@@ -243,7 +246,7 @@ def _check_tiles(v: ObsView, s: Any, groups: tuple[str, ...], floor: Any) -> Non
     dr, dc = [(0, 0), (0, -1), (0, 1), (-1, 0), (1, 0)][int(s.player_direction)]
     assert int(v.facing_block) == blocks[1 + dr, 1 + dc]
     assert int(v.facing_item) == items[1 + dr, 1 + dc]
-    np.testing.assert_array_equal(v.facing_creature, mobs[1 + dr, 1 + dc])
+    np.testing.assert_array_equal(v.facing_creature, mobs[2 + dr, 2 + dc])
 
 
 @pytest.fixture(scope="module")
@@ -312,7 +315,7 @@ def _random_classic(base: Any, rng: np.random.Generator) -> Any:
     )  # fmt: skip
     for slot, g in enumerate(rng.choice(CLASSIC_GROUPS, 2)):
         m = getattr(s, g)
-        at = jnp.asarray(p + rng.integers(-1, 2, 2), jnp.int32)
+        at = jnp.asarray(p + rng.integers(-2, 3, 2), jnp.int32)
         m = m.replace(
             position=m.position.at[slot].set(at), mask=m.mask.at[slot].set(True)
         )
@@ -450,6 +453,21 @@ def test_fight_needs_a_hostile_gone_from_the_neighbourhood(craftax: Game) -> Non
     assert step("fight", craftax.view(zombie), near, do, r=1.0)[0]
 
 
+def test_fight_looks_for_the_attacked_mob_in_the_5_by_5(craftax: Game) -> None:
+    """A mob moves at most one tile a step, so one still within 2 tiles survived."""
+    s, do = craftax.start(), Action.DO.value
+    skeleton = craftax.view(mob(s, "ranged_mobs", UP))
+    away = craftax.view(mob(s, "ranged_mobs", (22, 24)))  # stepped back, 2 tiles off
+    assert not step("fight", skeleton, away, do)[0]
+    assert step("fight", skeleton, craftax.view(s), do)[0]
+    weak = mob(s, "ranged_mobs", UP, health=1.0)
+    s2, r, _ = craftax.play(weak, do)
+    assert not bool(s2.ranged_mobs.mask[0, 0])
+    assert step("fight", craftax.view(weak), craftax.view(s2), do, r) == (
+        True, True, "success",
+    )  # fmt: skip
+
+
 def test_classic_fight_and_tools(classic: Game) -> None:
     """Classic: zombies and skeletons are hostile, cows not; each tool is one bit."""
     s, do = classic.start(), Action.DO.value
@@ -483,8 +501,14 @@ def test_open_chest_and_enchant(craftax: Game) -> None:
     a = craftax.view(vault)
     assert can("enchant", a)
     assert not can("enchant", craftax.view(inv(vault, ruby=0)))
-    b = craftax.view(vault.replace(sword_enchantment=jnp.int32(1)))
+    fire = vault.replace(sword_enchantment=jnp.int32(1))
+    b = craftax.view(fire)
     assert step("enchant", a, b, Action.ENCHANT_SWORD.value)[0]
+    assert not can("enchant", b)  # every enchantable item already fire
+    helmet = inv(fire, armour=fire.inventory.armour.at[0].set(1))
+    assert can("enchant", craftax.view(helmet))
+    all_fire = helmet.replace(armour_enchantments=jnp.ones(4, jnp.int32))
+    assert not can("enchant", craftax.view(all_fire))
 
 
 def test_unlock_any_reads_the_achievement_part(craftax: Game) -> None:
@@ -613,8 +637,11 @@ def test_agreement_with_step_events(craftax: Game) -> None:
     weak = weak.replace(melee_mobs=weak.melee_mobs.replace(
         health=weak.melee_mobs.health.at[0, 0].set(1.0)
     ))  # fmt: skip
-    m = weak.melee_mobs  # one step up: out of the 3 x 3 view, not killed
-    walked = weak.replace(melee_mobs=m.replace(position=m.position.at[0, 0, 0].set(22)))
+    m = weak.melee_mobs  # one step up into a dark tile: unseen, not killed
+    walked = weak.replace(
+        melee_mobs=m.replace(position=m.position.at[0, 0, 0].set(22)),
+        light_map=weak.light_map.at[0, 22, 24].set(0.0),
+    )
     fight = SKILL_IDS["fight"]
     for s2 in (craftax.play(weak, do)[0], walked):
         ev = step_events("craftax", weak, do, s2)
@@ -636,21 +663,46 @@ def _batch(views: list[ObsView]) -> ObsView:
 def test_vmap_matches_a_loop_and_jit_compiles_once(
     craftax: Game, random_craftax: list[Any]
 ) -> None:
-    a = [craftax.view(x) for x in random_craftax[:8]]
-    b = [craftax.view(x) for x in random_craftax[8:16]]
-    ids = jnp.array([0, 6, 12, 15, 17, 18, 19, 22], jnp.int32)
-    acts = jnp.array([5, 8, 14, 5, 6, 5, 18, 0], jnp.int32)
-    r = jnp.linspace(-0.5, 1.5, 8)
-    steps = jnp.arange(8) * 40
+    """All 25 skill ids batched on real (state, next state) pairs, five of them
+    scripted successes."""
+    acts = np.random.default_rng(3).integers(0, 17, NUM_SKILLS)
+    pairs = [
+        craftax.play(x, int(k)) for x, k in zip(random_craftax, acts, strict=False)
+    ]
+    a = [craftax.view(x) for x in random_craftax[:NUM_SKILLS]]
+    b = [craftax.view(s2) for s2, _, _ in pairs]
+    r = [rr for _, rr, _ in pairs]
+    done = [d for _, _, d in pairs]
+    s = craftax.start()
+    tree = block(s, UP, BlockType.TREE)
+    grass = block(inv(s, wood=2), UP, BlockType.GRASS)
+    wins = {
+        "collect_wood": (tree, Action.DO.value),
+        "place_table": (grass, Action.PLACE_TABLE.value),
+        "fight": (mob(s, "melee_mobs", UP, health=1.0), Action.DO.value),
+        "drink": (s.replace(player_drink=8), Action.NOOP.value),
+        "unlock_any": (grass, Action.PLACE_TABLE.value),
+    }
+    for name, (x, k) in wins.items():
+        i, (x2, rr, d) = SKILL_IDS[name], craftax.play(x, k)
+        if name == "drink":
+            x2 = x.replace(player_drink=9)
+        a[i], b[i], r[i], done[i], acts[i] = craftax.view(x), craftax.view(x2), rr, d, k
+    ids = jnp.arange(NUM_SKILLS, dtype=jnp.int32)
+    steps = jnp.arange(NUM_SKILLS) * 20
 
-    def run(k: Any, va: Any, act: Any, rr: Any, vb: Any, n: Any) -> Any:
-        return skill_step(k, va, act, rr, vb, False, n, 1.0)
+    def run(k: Any, va: Any, act: Any, rr: Any, vb: Any, d: Any, n: Any) -> Any:
+        return skill_step(k, va, act, rr, vb, d, n, 1.0)
 
-    batched = jax.vmap(run)(ids, _batch(a), acts, r, _batch(b), steps)
-    for i in range(8):
-        one = run(ids[i], a[i], acts[i], r[i], b[i], steps[i])
+    args = (jnp.asarray(acts), jnp.asarray(r), _batch(b), jnp.asarray(done), steps)
+    batched = jax.vmap(run)(ids, _batch(a), *args)
+    for i in range(NUM_SKILLS):
+        one = run(ids[i], a[i], acts[i], r[i], b[i], done[i], steps[i])
         for x, y in zip(batched, one, strict=True):
-            assert bool(x[i] == y)
+            assert bool(x[i] == y), (SKILLS[i].name, x[i], y)
+    reasons = [REASONS[int(k)] for k in batched[2]]
+    assert all(reasons[SKILL_IDS[n]] == "success" for n in wins), reasons
+    assert reasons.count("floor_change") < NUM_SKILLS // 2, reasons
     np.testing.assert_array_equal(
         jax.vmap(available)(_batch(a)), np.stack([available(x) for x in a])
     )

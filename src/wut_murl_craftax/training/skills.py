@@ -116,8 +116,9 @@ class ObsView(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """What one observation shows, as exact integers; per env (``vmap`` for batches).
 
     Classic leaves the Craftax-only fields at 0 (``False``) and keeps its six tools
-    in ``tools``; tiles are the 3 x 3 around the player, the player in the centre,
-    blank (block 0, item 0, no creature) where the tile is too dark to see.
+    in ``tools``. Blocks and items cover the 3 x 3 around the player, creatures the
+    5 x 5 (a mob moves at most one tile a step), the player in the centre; a tile too
+    dark to see is blank (block 0, item 0, no creature).
     """
 
     materials: jax.Array
@@ -157,7 +158,7 @@ class ObsView(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     items: jax.Array
     """``BlockType`` and ``ItemType`` of the 3 x 3 tiles, int32[3, 3]."""
     creatures: jax.Array
-    """Creature channels of the 3 x 3 tiles, bool[3, 3, 40]."""
+    """Creature channels of the 5 x 5 tiles, bool[5, 5, 40]."""
     classic: bool = struct.field(pytree_node=False, default=False)  # type: ignore[no-untyped-call]  # flax API
 
     def _front(self) -> tuple[jax.Array, jax.Array]:
@@ -177,7 +178,8 @@ class ObsView(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     @property
     def facing_creature(self) -> jax.Array:
         """Creature channels of the faced tile, bool[40]."""
-        return self.creatures[self._front()]
+        r, c = self._front()
+        return self.creatures[r + 1, c + 1]
 
 
 def _int(x: jax.Array) -> jax.Array:
@@ -190,7 +192,8 @@ def _count(x: jax.Array) -> jax.Array:
 
 
 def _decode_craftax(obs: jax.Array) -> ObsView:
-    tiles = obs[:8217].reshape(9, 11, 83)[3:6, 4:7]
+    near = obs[:8217].reshape(9, 11, 83)[2:7, 3:8]
+    tiles = near[1:4, 1:4]
     inv, stats, special = obs[8217:8233], obs[8239:8248], obs[8260:8268]
     counts, potions = _count(inv[:10]), _count(obs[8233:8239])
     books = _int(2 * inv[10])
@@ -218,20 +221,21 @@ def _decode_craftax(obs: jax.Array) -> ObsView:
         direction=jnp.argmax(obs[8248:8252]).astype(jnp.int32) + 1,
         blocks=jnp.argmax(tiles[..., :37], -1).astype(jnp.int32),
         items=jnp.argmax(tiles[..., 37:42], -1).astype(jnp.int32),
-        creatures=tiles[..., 42:82] > 0.5,
+        creatures=near[..., 42:82] > 0.5,
     )  # fmt: skip
 
 
 def _decode_classic(obs: jax.Array) -> ObsView:
-    tiles = obs[:1323].reshape(7, 9, 21)[2:5, 3:6]
+    near = obs[:1323].reshape(7, 9, 21)[1:6, 2:7]
+    tiles = near[1:4, 1:4]
     inv, stats = _int(10 * obs[1323:1335]), _int(10 * obs[1335:1339])
     where = np.array([MATERIALS.index(n) for n in CLASSIC_MATERIALS])
     zero, zeros4 = jnp.int32(0), jnp.zeros(4, jnp.int32)
     creatures = (
         jnp
-        .zeros((3, 3, 40), bool)
+        .zeros((5, 5, 40), bool)
         .at[..., CLASSIC_CREATURES]
-        .set(tiles[..., 17:21] > 0.5)
+        .set(near[..., 17:21] > 0.5)
     )
     return ObsView(
         materials=jnp.zeros(len(MATERIALS), jnp.int32).at[where].set(inv[:6]),
@@ -336,7 +340,8 @@ def _below_cap(v: ObsView, name: str, g: Granularity) -> jax.Array:
 def available(view: ObsView, granularity: Granularity = "recipe") -> jax.Array:
     """Start condition per skill id, bool[25]; ``fight`` and ``unlock_any`` always.
 
-    A collect skill needs its material's ``granularity`` bucket below the top one.
+    A collect skill needs its material's ``granularity`` bucket below the top one;
+    ``enchant`` an item whose enchantment differs from the table's.
     """
     v, g = view, granularity
     wood, stone, coal, iron = (_n(v, n) >= 1 for n in ("wood", "stone", "coal", "iron"))
@@ -353,7 +358,12 @@ def available(view: ObsView, granularity: Granularity = "recipe") -> jax.Array:
     armour = ((_n(v, "iron") >= 3) & (_n(v, "coal") >= 3) & jnp.any(v.armour == 0)) | (
         (diamond >= 3) & jnp.any(v.armour < 2)
     )
-    gear = (v.sword > 0) | (v.bow > 0) | (jnp.sum(v.armour) > 0)
+    kind = jnp.where(v.floor == 3, 2, 1)  # ice table on floor 3, fire on floor 4
+    gear = ((v.sword > 0) & (v.ench_sword != kind)) | (
+        (v.bow > 0) & (v.ench_bow != kind)
+    )
+    # ENCHANT_ARMOUR picks a slot whose enchantment differs from the table's
+    gear |= (jnp.sum(v.armour) > 0) & jnp.any(v.ench_armour != kind)
     attrs = jnp.stack([v.dexterity, v.strength, v.intelligence])
 
     def collect(name: str, tool: jax.Array, floors: tuple[int, ...]) -> jax.Array:
@@ -431,6 +441,7 @@ def _success_tests(g: Granularity) -> list[_Test]:
 
     def fight(s: _Step) -> jax.Array:
         hostile = s.a.facing_creature & HOSTILE
+        # a survivor moves at most one tile, so it stays in the next 5 x 5
         gone = ~jnp.any(s.b.creatures, axis=(0, 1))
         boss = jnp.isin(s.a.facing_block, jnp.array(_BOSS))
         attack = (s.act == DO) & ~s.a.sleeping & (jnp.any(hostile) | boss)

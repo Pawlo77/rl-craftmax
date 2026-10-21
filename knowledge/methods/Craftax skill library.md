@@ -7,7 +7,7 @@ tags: [concept, method, skills, options, hierarchical-rl, prior-knowledge]
 created: 2026-10-20
 updated: 2026-10-21
 aliases: [Skill library, Hand-defined skills]
-related-code: []
+related-code: ["[[src/wut_murl_craftax/training/skills.py]]"]
 ---
 # Craftax skill library
 
