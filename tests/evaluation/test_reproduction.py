@@ -122,7 +122,24 @@ def published(budget: str = "1m") -> dict[str, Any]:
     return resolve_config(method, "toy", budget, ref="published", methods_dir=METHODS)
 
 
-def run_check(store: Store, reference: Path, **kw: Any) -> Any:
+def write_phase(
+    root: Path, name: str, budget: str, method: str, ref: str, seeds_n: int
+) -> Path:
+    """A phases directory with one phase file listing ``seeds_n`` runs of ``ref``."""
+    root.mkdir(exist_ok=True)
+    body = {"budget": budget, "eval": "final", "seeds": seeds_n}
+    body["runs"] = {method: {"configs": [ref]}}
+    (root / f"{name}.yaml").write_text(yaml.safe_dump(body))
+    return root
+
+
+@pytest.fixture
+def phases(tmp_path: Path) -> Path:
+    """tune-coarse lists the published toy config with 3 seeds."""
+    return write_phase(tmp_path / "phases", "tune-coarse", "1m", "toy", "published", 3)
+
+
+def run_check(store: Store, reference: Path, phases: Path, **kw: Any) -> Any:
     return check(
         "toy",
         "1m",
@@ -130,12 +147,13 @@ def run_check(store: Store, reference: Path, **kw: Any) -> Any:
         tracking_uri=store.tracking_uri,
         methods_dir=METHODS,
         reference=reference,
+        phases_dir=phases,
         **kw,
     )
 
 
 def test_check_reads_the_published_config_runs_and_tags_them(
-    store: Store, reference: Path
+    store: Store, reference: Path, phases: Path
 ) -> None:
     ids = [store.add(published(), s) for s in seeds(3, 2.25, 0.05)]
     other = store.add(
@@ -147,7 +165,7 @@ def test_check_reads_the_published_config_runs_and_tags_them(
     failed = store.add(published(), 99.0, status="FAILED")
     elsewhere = store.add(published(), 99.0, phases="final-1m")
 
-    result = run_check(store, reference)
+    result = run_check(store, reference, phases)
 
     assert result.passed
     assert result.n == 3
@@ -163,31 +181,63 @@ def test_check_reads_the_published_config_runs_and_tags_them(
         assert not any(k.startswith("repro/") for k in store.tags(rid))
 
 
-def test_check_fails_outside_the_band_and_main_exits_nonzero(
-    store: Store, reference: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    ids = [store.add(published(), s) for s in seeds(10, 2.6, 0.083)]
-    assert not run_check(store, reference).passed
-    assert store.tags(ids[0])["repro/passed"] == "false"
-    argv = ["--method", "toy", "--budget", "1m", "--phase", "tune-coarse"]
+def cli(store: Store, reference: Path, phases: Path, budget: str = "1m") -> list[str]:
+    argv = ["--method", "toy", "--budget", budget, "--phase", "tune-coarse"]
     argv += ["--tracking-uri", store.tracking_uri, "--methods-dir", str(METHODS)]
-    argv += ["--reference", str(reference)]
+    return [*argv, "--reference", str(reference), "--phases-dir", str(phases)]
+
+
+def test_check_fails_outside_the_band_and_main_exits_nonzero(
+    store: Store, reference: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    phases = write_phase(tmp_path / "ten", "tune-coarse", "1m", "toy", "published", 10)
+    ids = [store.add(published(), s) for s in seeds(10, 2.6, 0.083)]
+    assert not run_check(store, reference, phases).passed
+    assert store.tags(ids[0])["repro/passed"] == "false"
     with pytest.raises(SystemExit) as exit_info:
-        main(argv)
+        main(cli(store, reference, phases))
     assert exit_info.value.code == 1
     out = capsys.readouterr().out
     assert "FAIL" in out
     assert "2.6" in out
 
 
-def test_check_needs_two_finished_runs(store: Store, reference: Path) -> None:
+def test_main_refuses_while_the_phase_has_unfinished_published_runs(
+    store: Store,
+    reference: Path,
+    phases: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ids = [store.add(published(), s) for s in seeds(2, 2.2, 0.05)]
+    store.add(published(), 2.2, status="RUNNING")  # the third seed is not done
+    with pytest.raises(ValueError, match="2 of 3"):
+        run_check(store, reference, phases)
+    with pytest.raises(SystemExit) as exit_info:
+        main(cli(store, reference, phases))
+    assert exit_info.value.code == 2
+    assert "refused: 2 of 3" in capsys.readouterr().err
+    assert not any(k.startswith("repro/") for k in store.tags(ids[0]))
+
+
+def test_check_needs_at_least_two_finished_runs(
+    store: Store, reference: Path, tmp_path: Path
+) -> None:
+    one = write_phase(tmp_path / "one", "tune-coarse", "1m", "toy", "published", 1)
     store.add(published(), 2.2)
     with pytest.raises(ValueError, match="at least 2"):
-        run_check(store, reference)
+        run_check(store, reference, one)
+
+
+def test_check_refuses_a_phase_that_lists_other_configs_only(
+    store: Store, reference: Path, tmp_path: Path
+) -> None:
+    other = write_phase(tmp_path / "o", "tune-coarse", "1m", "toy", "lr-hi", 3)
+    with pytest.raises(ValueError, match="lists no toy run"):
+        run_check(store, reference, other)
 
 
 def test_check_needs_a_published_score_for_the_budget(
-    store: Store, reference: Path
+    store: Store, reference: Path, phases: Path
 ) -> None:
     with pytest.raises(ValueError, match="1b"):
         check(
@@ -197,25 +247,44 @@ def test_check_needs_a_published_score_for_the_budget(
             tracking_uri=store.tracking_uri,
             methods_dir=METHODS,
             reference=reference,
+            phases_dir=phases,
         )
 
 
 def test_the_published_config_at_1b_is_the_base_with_the_budget_block(
-    store: Store, reference: Path
+    store: Store, tmp_path: Path
 ) -> None:
-    text = yaml.safe_load(reference.read_text())
-    text["toy"]["1b"] = {"score": 11.9, "s_pub": 0.91}
-    reference.write_text(yaml.safe_dump(text))
+    """The real ppo method: a final-1b phase entry of its base is found at 1b."""
+    method = load_method("ppo")
+    base_1b = resolve_config(method, "ppo", "1b")
+    assert (base_1b["envs"], base_1b["num_steps"], base_1b["lr"]) == (1024, 64, 2.0e-4)
+    base_1m = resolve_config(method, "ppo", "1m")
+    phases = write_phase(tmp_path / "p", "final-1b", "1b", "ppo", "base", 3)
     for s in seeds(3, 11.9, 0.91):
-        store.add(published("1b"), s, phases="final-1b", budget="1b")
+        store.add(base_1b, s, phases="final-1b", budget="1b", method="ppo")
+    store.add(base_1m, 99.0, phases="final-1b", budget="1b", method="ppo")  # wrong cfg
     result = check(
-        "toy",
+        "ppo",
         "1b",
         "final-1b",
         tracking_uri=store.tracking_uri,
-        methods_dir=METHODS,
-        reference=reference,
+        phases_dir=phases,
     )
-    assert result.passed
+    assert (result.n, result.passed) == (3, True)
     assert result.half_width == pytest.approx(1.25, abs=0.01)
     assert reproduction.SCORE_METRIC == queue.SCORE_METRIC
+
+
+def test_a_tuned_1b_phase_entry_would_find_no_published_runs(
+    store: Store, tmp_path: Path
+) -> None:
+    """Guards the final-1b phase: it must run the base (Table 7), not `tuned`."""
+    method = load_method("ppo")
+    tuned = {**resolve_config(method, "ppo", "1b"), "lr": 1.0e-4}
+    for s in seeds(3, 11.9, 0.91):
+        store.add(tuned, s, phases="final-1b", budget="1b", method="ppo")
+    phases = write_phase(tmp_path / "p", "final-1b", "1b", "ppo", "base", 3)
+    with pytest.raises(ValueError, match="0 of 3"):
+        check(
+            "ppo", "1b", "final-1b", tracking_uri=store.tracking_uri, phases_dir=phases
+        )

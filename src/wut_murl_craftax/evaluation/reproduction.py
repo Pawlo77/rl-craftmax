@@ -3,16 +3,16 @@
 ``band`` is the acceptance band of the PPO plan (Task 5): half-width
 h = 0.05 + 2 sqrt(SE_ours^2 + (s_pub / sqrt(10))^2), pass when |mean - published| <= h.
 The CLI reads the final scores of the method's runs of the published config in a phase
-(the ``published-<budget>`` grid entry, else the method's base at that budget, matched
-by config hash) from MLflow, prints mean, SE, h and pass/fail, and tags each of those
-runs ``repro/*`` (MLflow has no phase-level object). Exit status 1 on a fail.
-
-Usage: ``python -m wut_murl_craftax.evaluation.reproduction --method ppo --budget 1m
---phase tune-coarse``
+(its base resolved at the budget: 1m is base, 1b is base + ``budgets.1b``; matched by
+config hash) from MLflow, prints mean, SE, h and pass/fail, and tags each of those
+runs ``repro/*``. Exit status 1 on a fail, 2 when it refuses: fewer finished runs
+than the phase file lists. Usage: ``python -m wut_murl_craftax.evaluation.reproduction
+--method ppo --budget 1m --phase tune-coarse``
 """
 
 import argparse
 import math
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,10 +32,12 @@ from ..orchestration.queue import (
     _client,
     _runs,
     config_hash,
+    expand_phase,
     load_method,
     resolve_config,
 )
 
+PHASES_DIR = REPO_ROOT / "configs" / "phases"
 PUBLISHED_SCORES = REPO_ROOT / "configs" / "reference" / "published_scores.yaml"
 ROUNDING = 0.05
 """Half of the published score's one-decimal rounding step, added to every band."""
@@ -85,15 +87,32 @@ def published_config_hashes(
 ) -> dict[str, str]:
     """Registry name -> hash of the published config at ``budget``."""
     method = load_method(method_slug, methods_dir)
-    ref = f"published-{budget}"
-    if ref not in {e["name"] for e in method.coarse}:
-        ref = "base"
     return {
-        r: config_hash(
-            resolve_config(method, r, budget, ref=ref, methods_dir=methods_dir)
-        )
+        r: config_hash(resolve_config(method, r, budget, methods_dir=methods_dir))
         for r in method.registry_names
     }
+
+
+def _expected_runs(
+    method: str,
+    budget: str,
+    phase: str,
+    hashes: dict[str, str],
+    methods_dir: Path,
+    phases_dir: Path,
+) -> int:
+    """Runs of the published config (seeds) that the phase file lists at ``budget``."""
+    specs = expand_phase(
+        phases_dir / f"{phase}.yaml", method=method, methods_dir=methods_dir
+    )
+    n = sum(
+        s.budget == budget and s.config_hash == hashes.get(s.registry_name)
+        for s in specs
+    )
+    if not n:
+        msg = f"phase {phase} lists no {method} run of the published config at {budget}"
+        raise ValueError(msg)
+    return n
 
 
 def check(
@@ -104,6 +123,7 @@ def check(
     tracking_uri: str | None = None,
     methods_dir: Path = METHODS_DIR,
     reference: Path = PUBLISHED_SCORES,
+    phases_dir: Path = PHASES_DIR,
 ) -> Reproduction:
     """Compare the finished runs of the published config in ``phase`` with the paper.
 
@@ -111,8 +131,9 @@ def check(
     passed}``.
 
     Raises:
-        ValueError: Without a published score for ``method`` at ``budget``, or with
-            fewer than 2 finished runs of the published config in ``phase``.
+        ValueError: Without a published score for ``method`` at ``budget``, if the
+            phase file lists no run of the published config, or with fewer finished
+            runs of it (at least 2) than the phase file lists.
     """
     ref: dict[str, Any] = yaml.safe_load(reference.read_text(encoding="utf-8"))
     entry = (ref.get(method) or {}).get(budget)
@@ -130,10 +151,11 @@ def check(
         and SCORE_METRIC in r.data.metrics
     ]
     scores = [r.data.metrics[SCORE_METRIC] for r in runs]
-    if len(scores) < 2:
+    expected = _expected_runs(method, budget, phase, hashes, methods_dir, phases_dir)
+    if len(scores) < max(expected, 2):
         msg = (
-            f"need at least 2 finished {method} runs of the published config at "
-            f"{budget} in {phase}, found {len(scores)}"
+            f"{len(scores)} of {expected} {method} runs of the published config at "
+            f"{budget} are finished in {phase} (at least 2 needed); finish them first"
         )
         raise ValueError(msg)
     half_width, passed = band(scores, entry["score"], entry["s_pub"])
@@ -172,15 +194,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--methods-dir", type=Path, default=METHODS_DIR)
     parser.add_argument("--reference", type=Path, default=PUBLISHED_SCORES)
+    parser.add_argument("--phases-dir", type=Path, default=PHASES_DIR)
     args = parser.parse_args(argv)
-    r = check(
-        args.method,
-        args.budget,
-        args.phase,
-        tracking_uri=args.tracking_uri,
-        methods_dir=args.methods_dir,
-        reference=args.reference,
-    )
+    try:
+        r = check(
+            args.method,
+            args.budget,
+            args.phase,
+            tracking_uri=args.tracking_uri,
+            methods_dir=args.methods_dir,
+            reference=args.reference,
+            phases_dir=args.phases_dir,
+        )
+    except ValueError as refusal:
+        print(f"refused: {refusal}", file=sys.stderr)
+        raise SystemExit(2) from refusal
     verdict = "PASS" if r.passed else "FAIL"
     print(f"{args.method} {args.budget} in {args.phase}: published {r.published}")
     print(f"n={r.n} mean={r.mean:.4f} SE={r.se:.4f} h={r.half_width:.4f} {verdict}")
