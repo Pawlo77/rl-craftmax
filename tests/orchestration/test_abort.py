@@ -3,7 +3,12 @@
 import numpy as np
 import pytest
 
-from wut_murl_craftax.orchestration.abort import first_nonfinite, flag_hits
+from wut_murl_craftax.orchestration.abort import (
+    first_nonfinite,
+    first_out_of_bounds,
+    flag_hits,
+    unreported,
+)
 from wut_murl_craftax.training.records import LOSS_COLUMNS
 
 
@@ -81,3 +86,54 @@ def test_a_series_shorter_than_the_run_still_flags_by_its_own_updates(
 ) -> None:
     rule = {"name": "x", "metric": "m", "above": 0.0}
     assert flag_hits([rule], {"m": [1.0] * length}, 100) == {"x": 1}
+
+
+# --- limits and spans -------------------------------------
+
+RATIO = {"metric": "ppo/ratio_first_mb", "min": 0.999, "max": 1.001}
+
+
+def test_a_limit_names_the_earliest_update_outside_its_bounds() -> None:
+    series = {"ppo/ratio_first_mb": np.array([1.0, 1.0005, 1.002, 0.99])}
+    assert first_out_of_bounds(series, [RATIO]) == (2, "ppo/ratio_first_mb")
+    q = {"metric": "pqn/q_max_mean", "max": 300}
+    both = series | {"pqn/q_max_mean": np.array([1.0, 400.0, 1.0, 1.0])}
+    assert first_out_of_bounds(both, [RATIO, q]) == (1, "pqn/q_max_mean")
+    assert first_out_of_bounds({"ppo/ratio_first_mb": np.ones(3)}, [RATIO]) is None
+
+
+def test_a_limit_leaves_nan_and_unreported_metrics_to_the_finite_check() -> None:
+    nan = {"ppo/ratio_first_mb": np.array([np.nan, 1.0])}
+    assert first_out_of_bounds(nan, [RATIO]) is None
+    assert first_out_of_bounds({}, [RATIO]) is None
+
+
+def test_the_bounds_are_inclusive() -> None:
+    edge = {"ppo/ratio_first_mb": np.array([0.999, 1.001])}
+    assert first_out_of_bounds(edge, [RATIO]) is None
+
+
+def test_a_span_is_a_share_of_the_budget_in_a_row() -> None:
+    rule = {
+        "name": "sat",
+        "metric": "rnn/hidden_saturation",
+        "above": 0.9,
+        "span": 0.05,
+    }
+    hot, cold = 0.95, 0.1
+    two = {"rnn/hidden_saturation": [cold, hot, hot, cold, cold]}
+    assert flag_hits([rule], two, 40) == {"sat": 3}  # 5% of 40 updates: 2 in a row
+    one = {"rnn/hidden_saturation": [cold, hot, cold, hot, cold]}
+    assert flag_hits([rule], one, 40) == {}
+    assert flag_hits([rule], one, 20) == {"sat": 2}  # 5% of 20 updates is 1
+
+
+def test_a_span_never_asks_for_fewer_than_updates() -> None:
+    rule = {"name": "x", "metric": "m", "above": 0.0, "span": 0.01, "updates": 3}
+    assert flag_hits([rule], {"m": [1.0, 1.0, 0.0, 1.0, 1.0, 1.0]}, 10) == {"x": 6}
+
+
+def test_unreported_names_limit_metrics_too() -> None:
+    rule = {"name": "g", "metric": "a", "below": 1}
+    names = unreported([rule], ["c"], ["c"], [{"metric": "d", "max": 1}])
+    assert names == ["a", "d"]

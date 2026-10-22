@@ -286,6 +286,14 @@ def test_yaml_floats_without_a_dot_are_floats() -> None:
         {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "before": 2}]}},
         {"abort": {"flags": [{"metric": "m", "above": 1}]}},
         {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1}] * 2}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "span": 0}]}},
+        {"abort": {"limits": {"metric": "m", "max": 1}}},
+        {"abort": {"limits": [{"metric": "m"}]}},
+        {"abort": {"limits": [{"metric": "m", "max": "1"}]}},
+        {"abort": {"limits": [{"metric": "m", "min": 2, "max": 1}]}},
+        {"abort": {"limits": [{"max": 1}]}},
+        {"abort": {"limits": [{"metric": "m", "max": 1, "x": 0}]}},
+        {"abort": {"limits": [{"metric": "m", "max": 1}, {"metric": "m", "min": 0}]}},
     ],
 )
 def test_method_yaml_fails_loudly(tmp_path: Path, edit: dict[str, Any]) -> None:

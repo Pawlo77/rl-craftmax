@@ -48,16 +48,24 @@ grid:
       - {key: gae_lambda, add: [-0.05, 0.05]}
       - {key: ent, mul: [0.5, 2.0], zero: [0.001, 0.003]}
 
-# Runner rules, PPO's thresholds (orchestration/abort.py). A non-finite loss column
-# (all seven are checked) or a metric in `finite` aborts the run; `flags` only tag it.
-# The ppo/* names are the ones the PPO-RNN plan's Task 8 makes the trainer emit; until
-# then the trainer reports none, so the flags are skipped and `finite` adds nothing.
+# Runner rules, PPO's thresholds plus the recurrent ones (orchestration/abort.py). A
+# non-finite loss column (all seven are checked) or a metric in `finite` aborts the run
+# (one retry from state/, then a bug). `limits` end a run for good (tag abort/guard) when
+# a metric leaves its bounds: ppo/ratio_first_mb, the mean ratio of epoch 1's first
+# minibatch, is exactly 1 when the sequence rerun from the stored start hidden
+# reproduces the rollout; a gap beyond 1e-3 is a recompute bug (the device check of
+# knowledge/methods/PPO-RNN design.md found 7.2e-7 on Metal), and a retry repeats it.
+# `flags` only tag a run: hidden_saturation is the share of GRU units above 0.95 in
+# absolute value, here above 0.9 for 5% of the budget in a row. No rule reads the score.
 abort:
   finite: [ppo/policy_loss, ppo/value_loss]
+  limits:
+    - {metric: ppo/ratio_first_mb, min: 0.999, max: 1.001}
   flags:
     - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
     - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
     - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
+    - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
 
 # written by `--mark-tuned ppo-rnn <hash8>`
 tuned: {}

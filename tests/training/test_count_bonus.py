@@ -417,6 +417,7 @@ def test_the_method_file_aborts_on_the_bonus_and_the_guards() -> None:
     assert load_method("count-bonus").abort == {
         "finite": ppo["finite"] + pqn["finite"] + finite,
         "permanent": ["count/table_full"],  # a retry fills it again
+        "limits": ppo["limits"],
         "flags": ppo["flags"],
     }
 

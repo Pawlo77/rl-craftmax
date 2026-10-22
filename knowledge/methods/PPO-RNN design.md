@@ -5,7 +5,7 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, control, ppo, recurrent, actor-critic]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 aliases: [PPO-RNN control, PPO-GRU]
 related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
 ---
@@ -109,3 +109,17 @@ Metal stays below 1e-5, so no looser bound is needed; the first-minibatch ratio 
 - The paper's signature: more dungeon entries than PPO, drives the score; `defeat_zombie` success falls most for PPO-RNN; `eat_plant` ignored ([[Craftax Baselines results]], [[Craftax farming and food]], [[Craftax floors and progression]]).
 - No progress into the Gnomish Mines, even at 10B steps ([[Game]]).
 - The late rise of the 1B curve comes from the learning-rate decay, not from late learning.
+
+## Obstacles to watch
+
+Handed to [[2026-10-20-craftax-training-analysis]]. A non-finite loss aborts a run (one retry from `state/`, then a bug); a first-minibatch ratio off 1 by more than 1e-3 ends it for good (`abort/guard`: the recompute is wrong and a retry repeats it); the flags below are tags `flag/<name>` set from the method's `abort:` block and never stop a run. The PPO flags (`kl_high`, `entropy_collapse`, `value_failure`) apply unchanged ([[PPO design#Obstacles to watch]]).
+
+| Obstacle | Where it shows | Signal |
+|---|---|---|
+| Recompute error | the sequence rerun from the stored start hidden does not reproduce the rollout | `ppo/ratio_first_mb` outside 0.999 to 1.001 (abort); the device check measured 7.2e-7 |
+| Hidden-state saturation | GRU units pinned at their limits, so the memory carries nothing new | `rnn/hidden_saturation` > 0.9 for 5% of the budget in a row (`flag/hidden_saturation`); also `rnn/hidden_norm` |
+| Plateau at 1M | score flat after the basic achievements; expected ([[Craftax Baselines results]]) | `train/score_pct`, `train/ach/*` |
+| Skill forgetting | `defeat_zombie` success falls over training, though least for PPO-RNN in the paper | `train/ach/defeat_zombie` |
+| `eat_plant` never unlocked | the sapling-to-ripe-plant chain is ignored ([[Craftax farming and food]]) | `train/ach/eat_plant` |
+| Dungeon entry | the expected signature: floor 1 reached more often than with PPO; a rate no higher than PPO's means the memory adds nothing | `train/funnel/floor_*` ([[Craftax floors and progression]]) |
+| Gnomish Mines not reached | no progress below the first dungeon floors, even at 10B steps ([[Game]]) | `train/funnel/floor_*`, `train/funnel/depth_*` |

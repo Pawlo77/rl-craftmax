@@ -3,14 +3,15 @@
 A NaN or inf in a logged loss (the trainer's ``loss_columns`` and the metrics the method
 YAML lists under ``abort.finite``) aborts the run: it ends FAILED with its last
 ``state/`` kept. The next queue call resumes it once; a second abort marks it a bug
-(tag ``abort/bug``), skipped from then on. A metric also under ``abort.permanent`` (a
-capacity or divergence guard, broken again by any retry) ends the run FAILED with
-``abort/guard``, skipped from then on, as does a config over the machine's memory
-(``MemoryLimitError``, tag ``abort/memory``). Flags (``flag/<name>`` tags) come from a
-method's ``abort.flags`` rules, see `flag_hits`; they never stop a run, and nothing
-here looks at the score (no early stopping).
+(tag ``abort/bug``). A metric under ``abort.permanent`` (a guard), one outside the
+bounds of an ``abort.limits`` rule (`first_out_of_bounds`: a recompute error, a diverged
+value) and a config over the machine's memory (tag ``abort/memory``) end the run for
+good (tag ``abort/guard``): a retry repeats them. Flags (``flag/<name>`` tags) come from
+``abort.flags`` rules, see `flag_hits`; they never stop a run, and nothing here looks at
+the score (no early stopping).
 """
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -62,11 +63,37 @@ def first_nonfinite(
     return min(hits, key=lambda h: h[0]) if hits else None
 
 
+def first_out_of_bounds(
+    method_metrics: Mapping[str, np.ndarray], limits: Sequence[Mapping[str, Any]]
+) -> tuple[int, str] | None:
+    """The earliest update (0-based, in the chunk) with a metric outside its bounds.
+
+    A limit is ``{metric, min, max}`` (at least one bound): the metric is out of bounds
+    below ``min`` or above ``max``. NaN is not out of bounds (a metric in
+    ``abort.finite`` catches it); a metric the trainer does not report is skipped.
+    Returns that update and the metric name, or None.
+    """
+    hits = []
+    for limit in limits:
+        values = np.asarray(method_metrics.get(limit["metric"], ()), float)
+        with np.errstate(invalid="ignore"):
+            bad = (values < limit.get("min", -math.inf)) | (
+                values > limit.get("max", math.inf)
+            )
+        if bad.any():
+            hits.append((int(np.argmax(bad)), limit["metric"]))
+    return min(hits, key=lambda h: h[0]) if hits else None
+
+
 def unreported(
-    rules: Sequence[Mapping[str, Any]], finite: Sequence[str], reported: Iterable[str]
+    rules: Sequence[Mapping[str, Any]],
+    finite: Sequence[str],
+    reported: Iterable[str],
+    limits: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
-    """The ``finite`` and flag-rule metrics missing from the ``reported`` names."""
-    return sorted({*finite, *(r["metric"] for r in rules)} - set(reported))
+    """The ``finite``, limit and flag-rule metrics not among the ``reported`` names."""
+    named = {*finite, *(r["metric"] for r in (*rules, *limits))}
+    return sorted(named - set(reported))
 
 
 def _first_run(cond: np.ndarray, length: int) -> int | None:
@@ -84,11 +111,12 @@ def flag_hits(
 ) -> dict[str, int]:
     """Flag name -> the update (1-based) at which its rule first held.
 
-    A rule is ``{name, metric, above | below, updates, before, after}``: the metric is
-    above (below) the threshold for ``updates`` updates in a row (default 1); ``before``
-    and ``after`` are budget fractions, and only updates at or before (at or after)
-    that share of the ``n_updates`` count. NaN never satisfies a threshold; a metric
-    the trainer does not report is skipped.
+    A rule is ``{name, metric, above | below, updates, span, before, after}``: the
+    metric is above (below) the threshold for ``updates`` updates in a row (default 1),
+    or for ``span`` of the budget in a row (a share of ``n_updates``; the longer of the
+    two counts); ``before`` and ``after`` are budget fractions, and only updates at or
+    before (at or after) that share of the ``n_updates`` count. NaN never satisfies a
+    threshold; a metric the trainer does not report is skipped.
     """
     hits = {}
     for rule in rules:
@@ -102,6 +130,8 @@ def flag_hits(
             cond &= share <= rule["before"]
         if "after" in rule:
             cond &= share >= rule["after"]
-        if (update := _first_run(cond, rule.get("updates", 1))) is not None:
+        span = math.ceil(rule.get("span", 0) * n_updates - 1e-9)  # 0.05 * 20 is 1
+        length = max(rule.get("updates", 1), span)
+        if (update := _first_run(cond, length)) is not None:
             hits[rule["name"]] = update
     return hits

@@ -472,6 +472,7 @@ def test_the_abort_list_holds_only_always_finite_metrics() -> None:
     assert load_method("sil").abort == {
         "finite": control["finite"] + own,
         "permanent": ["sil/dominates"],  # the KL streak recurs on a retry
+        "limits": control["limits"],  # the SIL steps follow the PPO epochs: ratio 1
         "flags": control["flags"],  # kl_high watches the off-policy SIL steps
     }
 

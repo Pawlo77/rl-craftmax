@@ -55,14 +55,18 @@ grid:
 # run for good, tag abort/guard). The other sil/* metrics are not listed. A config whose
 # 3 copies of the SIL state (the runner's peak) pass the profile's memory_limit_bytes
 # fails at init (training/sil.py `check_memory`). The PPO-RNN control's rules come first,
-# copied from ppo-rnn.yaml (kl_high also watches the off-policy SIL steps).
+# copied from ppo-rnn.yaml (kl_high also watches the off-policy SIL steps; the first
+# minibatch ratio stays 1, as the SIL steps come after the PPO epochs of an update).
 abort:
   finite: [ppo/policy_loss, ppo/value_loss, sil/policy_loss, sil/value_loss, sil/dominates]
   permanent: [sil/dominates]
+  limits:
+    - {metric: ppo/ratio_first_mb, min: 0.999, max: 1.001}
   flags:
     - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
     - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
     - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
+    - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
 
 # written by `--mark-tuned sil <hash8>`
 tuned: null

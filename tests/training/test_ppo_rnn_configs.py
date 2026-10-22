@@ -107,6 +107,27 @@ def test_tuned_is_null_and_the_abort_block_is_valid() -> None:
     assert ppo_rnn().abort["finite"]
 
 
+def test_abort_rules_are_ppos_plus_the_recompute_bound_and_saturation_flag() -> None:
+    abort = ppo_rnn().abort
+    ppo = load_method("ppo", METHODS).abort
+    assert abort is not None
+    assert ppo is not None
+    assert abort["finite"] == ppo["finite"]
+    assert abort["flags"][:3] == ppo["flags"]  # kl, entropy, value: as PPO
+    assert abort["flags"][3:] == [
+        {
+            "name": "hidden_saturation",
+            "metric": "rnn/hidden_saturation",
+            "above": 0.9,
+            "span": 0.05,
+        }
+    ]
+    assert abort["limits"] == [
+        {"metric": "ppo/ratio_first_mb", "min": 0.999, "max": 1.001}
+    ]
+    assert "permanent" not in abort  # a NaN is retried once; only the limit is final
+
+
 def test_tune_coarse_phase_plans_31_runs() -> None:
     phase = REPO / "configs" / "phases" / "tune-coarse.yaml"
     specs = expand_phase(phase, method="ppo-rnn", methods_dir=METHODS)

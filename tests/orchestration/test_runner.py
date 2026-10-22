@@ -860,6 +860,107 @@ def test_a_flag_needs_consecutive_updates_and_a_later_value_failure_counts(
     assert tags_of(store, spec.name, "flag/") == {"flag/value_failure": "2"}
 
 
+# --- the controls' shipped abort rules --------------------------------------------
+
+TEN_UPDATES = 100_000
+"""Steps per update of a 1m run of 10 updates."""
+
+
+def under_shipped_rules(slug: str, spec: RunSpec) -> RunSpec:
+    """``spec`` with the abort block of the shipped ``configs/methods/<slug>.yaml``."""
+    abort = queue.load_method(slug, REPO / "configs" / "methods").abort
+    return dataclasses.replace(spec, abort=abort)
+
+
+def ppo_rnn_report(**over: float) -> dict[str, float]:
+    """A healthy PPO-RNN update's metrics, with ``over`` replacing some of them."""
+    ok = {
+        "ppo/policy_loss": 0.1,
+        "ppo/value_loss": 0.5,
+        "ppo/approx_kl": 0.01,
+        "ppo/entropy": 2.0,
+        "ppo/explained_variance": 0.5,
+        "ppo/ratio_first_mb": 1.0,
+        "rnn/hidden_saturation": 0.1,
+    }
+    return ok | over
+
+
+def test_a_recompute_error_in_the_first_minibatch_ends_the_run_for_good(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("ppo-rnn", spec)
+
+    def off(u: int) -> dict[str, float]:
+        return ppo_rnn_report(**{"ppo/ratio_first_mb": 1.002 if u == 1 else 1.0})
+
+    first = FakeTrainer(steps_per_update=TEN_UPDATES, extra=off)
+    store.run([spec], first)
+    assert first.updates == [1]
+    assert store.runs()[spec.name].info.status == "FAILED"
+    assert tags_of(store, spec.name, "abort/") == {
+        "abort/guard": "ppo/ratio_first_mb",
+        "abort/metric": "ppo/ratio_first_mb",
+        "abort/update": "1",
+    }
+    again = FakeTrainer(steps_per_update=TEN_UPDATES, extra=off)
+    store.run([spec], again)
+    assert again.updates == []  # a recompute bug repeats: no retry
+
+
+def test_a_ratio_within_the_bound_does_not_stop_the_run(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("ppo-rnn", spec)
+
+    def near(u: int) -> dict[str, float]:
+        return ppo_rnn_report(**{"ppo/ratio_first_mb": 1.0 + 9e-4 * (-1) ** u})
+
+    trainer = FakeTrainer(steps_per_update=TEN_UPDATES, extra=near)
+    store.run([spec], trainer)
+    assert trainer.updates == list(range(1, 11))
+    assert store.runs()[spec.name].info.status == "FINISHED"
+
+
+def test_ppo_rnn_nan_rules_are_ppos_one_retry_then_a_bug(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("ppo-rnn", spec)
+
+    def nan(u: int) -> dict[str, float]:
+        return ppo_rnn_report(**{"ppo/value_loss": math.nan if u == 3 else 0.5})
+
+    store.run([spec], FakeTrainer(steps_per_update=TEN_UPDATES, extra=nan))
+    assert tags_of(store, spec.name, "abort/") == {
+        "abort/count": "1",
+        "abort/metric": "ppo/value_loss",
+        "abort/update": "3",
+    }
+    store.run([spec], FakeTrainer(steps_per_update=TEN_UPDATES, extra=nan))
+    assert tags_of(store, spec.name, "abort/")["abort/bug"] == "true"
+
+
+def test_ppo_rnn_flags_tag_saturation_kl_and_early_entropy_collapse(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("ppo-rnn", spec)
+
+    def sick(u: int) -> dict[str, float]:
+        return ppo_rnn_report(**{
+            "rnn/hidden_saturation": 0.95 if u >= 4 else 0.1,  # 5% of 10 updates: 1
+            "ppo/approx_kl": 0.2 if u >= 6 else 0.01,
+            "ppo/entropy": 0.1 if u <= 1 else 2.0,  # before 10% of the budget
+        })
+
+    store.run([spec], FakeTrainer(steps_per_update=TEN_UPDATES, extra=sick))
+    assert store.runs()[spec.name].info.status == "FINISHED"  # flags never stop a run
+    assert tags_of(store, spec.name, "flag/") == {
+        "flag/hidden_saturation": "4",
+        "flag/kl_high": "8",
+        "flag/entropy_collapse": "1",
+    }
+
+
 def test_method_metrics_are_logged_at_their_env_step_and_survive_a_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
