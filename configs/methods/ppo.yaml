@@ -53,4 +53,4 @@ abort:
     - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
 
 # written by `--mark-tuned ppo <hash8>`
-tuned: null
+tuned: {}

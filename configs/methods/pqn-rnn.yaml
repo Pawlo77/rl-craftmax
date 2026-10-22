@@ -61,4 +61,4 @@ abort:
   finite: [pqn/td_loss]
 
 # written by `--mark-tuned pqn-rnn <hash8>`
-tuned: null
+tuned: {}
