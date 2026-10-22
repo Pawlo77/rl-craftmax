@@ -325,7 +325,7 @@ def _closed_over(fn: Any) -> list[Any]:
 
 
 @functools.cache
-def _built(method: HookMethod[Any], cfg: Any, base: Any) -> HookFields:
+def build_hooks(method: HookMethod[Any], cfg: Any, base: Any) -> HookFields:
     """One `HookFields` per method and base config, so equal run configs compile once.
 
     Equal run configs give equal trainer configs: the per-config setup caches hit.
@@ -364,7 +364,7 @@ def with_method[T: HookFields](
     except ValueError as error:
         error.add_note(f"method keys: {sorted(method.keys)}")
         raise
-    hooks = _built(method, method.config(**mine), base)
+    hooks = build_hooks(method, method.config(**mine), base)
     names = (f.name for f in dataclasses.fields(HookFields))
     return dataclasses.replace(base, **{n: getattr(hooks, n) for n in names})
 

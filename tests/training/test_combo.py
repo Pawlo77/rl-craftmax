@@ -260,9 +260,29 @@ def _write_combo(out: Path, base: str, methods: list[str]) -> Path:
     return out
 
 
+def test_combo_knobs_are_the_methods_tuned_knobs() -> None:
+    """Step 1 pastes each method's resolved tuned knobs; skipped while one is null."""
+    combo = load_method("combo")
+    assert combo.combine is not None
+    slugs = {
+        name: load_method(path.stem)
+        for path in (REPO / "configs/methods").glob("*.yaml")
+        for name in load_method(path.stem).registry_names
+    }
+    for name in combo.combine["methods"]:
+        method = slugs[name]
+        variant = method.variant(name)
+        if method.tuned is None or (variant and method.tuned.get(variant) is None):
+            pytest.skip(f"{method.slug}.tuned is still null")
+        tuned = resolve_config(method, name, "1m", ref="tuned")
+        knobs = METHODS[name].method.keys  # type: ignore[attr-defined]
+        assert {k: combo.base[k] for k in knobs} == {k: tuned[k] for k in knobs}, name
+
+
 @pytest.mark.parametrize(
     ("base", "methods", "error", "message"),
     [
+        ("ppo-rnn", ["sil", "nope"], ValueError, "unknown registry entries"),
         ("pqn-rnn", ["smdp-skills", "count-bonus-pqn-rnn"], TypeError, "hook methods"),
         ("ppo-rnn", ["sil", "dyna-q"], TypeError, "hook methods only"),
         ("ppo-rnn", ["count-bonus-pqn-rnn", "sil"], ValueError, "not built on ppo-rnn"),

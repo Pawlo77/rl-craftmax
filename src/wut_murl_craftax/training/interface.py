@@ -29,7 +29,7 @@ from .hooks import (
     SplitState,
     State,
     Traj,
-    _built,
+    build_hooks,
     resolve,
 )
 from .ppo import PPOTrainer
@@ -198,7 +198,8 @@ def _pair_hooks(pair: tuple[HookMethod[Any], ...], cfg: Any, base: Any) -> HookF
         ValueError: If both set a field of `_SOLE`.
     """
     built = [
-        _built(m, m.config(**{k: getattr(cfg, k) for k in m.keys}), base) for m in pair
+        build_hooks(m, m.config(**{k: getattr(cfg, k) for k in m.keys}), base)
+        for m in pair
     ]
     if clash := [n for n in _SOLE if all(getattr(h, n) for h in built)]:
         msg = f"both methods of the pair set {clash}; {_SOLE} do not compose"
@@ -285,14 +286,20 @@ def combo_trainer(
 ) -> Trainer:
     """The ``combo`` entry: `combine` of the pair ``combo.yaml`` names, on its control.
 
+    The pair comes from ``methods_dir`` (the registry's: the shipped configs), so a
+    queue run with another ``--methods-dir`` must name the same pair there.
+
     Raises:
         TypeError: If a named entry is not a hook method (`HOOKS_ONLY`).
-        ValueError: If combo.yaml names no pair, or a method is not built on the
-            named control.
+        ValueError: If combo.yaml names no pair or an unknown entry, or a method is
+            not built on the named control.
     """
     spec = load_method("combo", methods_dir).combine
     if spec is None:
         msg = "combo.yaml has no `combine` block naming the pair"
+        raise ValueError(msg)
+    if unknown := sorted({spec["base"], *spec["methods"]} - entries.keys()):
+        msg = f"combo.yaml names unknown registry entries {unknown}"
         raise ValueError(msg)
     base = entries[spec["base"]]
     pair: list[HookMethod[Any]] = []

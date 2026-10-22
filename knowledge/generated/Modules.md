@@ -29,13 +29,13 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 251 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 249 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 202 | [[orchestration]] |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. | 366 | [[training]] |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. | 369 | [[training]] |
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 231 | [[training]] |
 | [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. | 350 |  |
 | [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. | 929 |  |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 393 | [[training]] |
-| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 353 | [[training]] |
+| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 360 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 735 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 804 | [[training]] |
 | [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 1075 | [[training]] |

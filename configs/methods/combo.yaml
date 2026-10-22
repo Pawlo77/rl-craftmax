@@ -7,7 +7,9 @@
 # control, then each method's tuned config: its `base` keys with its `tuned` block applied,
 # unchanged) and `abort` (both methods' rules). No retuning: one config, `combined`.
 # `combine` composes hook methods only; a pair with a skill method (smdp-skills, dyna-q)
-# needs its own path, decided at Step 1.
+# needs its own path, decided at Step 1. Compatible hook methods share the control and do
+# not both train an extra loss or both wrap the env (the reward, observe, state and metrics
+# hooks always compose); a test compares these knobs with the methods' tuned ones.
 combine:
   base: ppo-rnn
   methods: [count-bonus-ppo-rnn, sil]
