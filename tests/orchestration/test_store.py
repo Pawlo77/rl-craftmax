@@ -251,6 +251,36 @@ def test_status_prefers_a_finished_run_among_same_named_ones(
     )
 
 
+def test_status_lists_a_fine_phase_from_the_store_without_expanding(
+    main_store: Node,
+) -> None:
+    """``make status PHASE=tune-fine`` without FINE: the runs tagged with the phase."""
+    fine = CONFIGS / "phases" / "fine.yaml"
+    main_store.add("toy-1m-aaaaaaaa-s0", "tune-coarse,fine", status="RUNNING")
+    main_store.add("toy-1m-bbbbbbbb-s1", "fine", experiment="fine")
+    main_store.add("toy-1m-cccccccc-s0", "tune-coarse")  # not in the phase
+    want = {"toy-1m-aaaaaaaa-s0": "running", "toy-1m-bbbbbbbb-s1": "finished"}
+    assert phase_status(fine, main_store.uri, methods_dir=METHODS) == want
+    assert phase_status(fine, main_store.uri, method="toy", methods_dir=METHODS) == want
+    with pytest.raises(queue.QueueConfigError, match="no phase entry"):
+        phase_status(fine, main_store.uri, method="donor", methods_dir=METHODS)
+
+
+def test_status_of_a_mixed_phase_lists_its_specs_then_the_fine_runs(
+    main_store: Node, tmp_path: Path
+) -> None:
+    path = tmp_path / "mixed.yaml"
+    path.write_text(ENTRIES.read_text() + "  waiting: {configs: fine}\n")
+    main_store.add("waiting-1m-dddddddd-s0", "mixed")  # tagged method toy: not fine
+    run_id = main_store.add("waiting-1m-eeeeeeee-s0", "mixed", status="KILLED")
+    main_store.client.set_tag(run_id, "method", "waiting")
+    status = phase_status(path, main_store.uri, methods_dir=METHODS)
+    assert list(status) == [*_names(), "waiting-1m-eeeeeeee-s0"]
+    assert status["waiting-1m-eeeeeeee-s0"] == "killed"
+    only = phase_status(path, main_store.uri, method="waiting", methods_dir=METHODS)
+    assert only == {"waiting-1m-eeeeeeee-s0": "killed"}
+
+
 def test_status_cli_prints_each_run_and_the_counts(main_store: Node) -> None:
     ppo, _, toy, *_ = _names()
     main_store.add(ppo, "entries", status="KILLED")

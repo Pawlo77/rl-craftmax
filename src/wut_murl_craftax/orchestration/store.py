@@ -1,11 +1,13 @@
 """MLflow store tools: the status of a phase's runs and the merge of node stores.
 
 ``status`` lists each run of a phase file as pending, running, finished, killed or
-failed, counting only runs whose tag ``phases`` contains the phase. ``merge`` copies
-the runs and artifact directories of another SQLite store (a cluster node's) into the
-main one, keyed by run name: a run already there only gets the ``phases`` merged,
-unless the node's copy is FINISHED and the main one is not (the finished run replaces
-it). CLI: ``status --phase P [--method M] [--expand-fine SLUG]``, ``merge SRC``.
+failed, counting only runs whose tag ``phases`` contains the phase; without
+``--expand-fine`` a ``configs: fine`` entry lists its runs in the store. ``merge``
+copies the runs and artifact directories of another SQLite store (a cluster node's)
+into the main one, keyed by run name: a run already there only gets the ``phases``
+merged, unless the node's copy is FINISHED and the main one is not (the finished run
+replaces it). CLI: ``status --phase P [--method M] [--expand-fine SLUG]``,
+``merge SRC``.
 """
 
 import argparse
@@ -18,7 +20,14 @@ import mlflow
 from mlflow.entities import Metric, Param
 
 from ..config import load_experiment_config
-from .queue import EXPERIMENT_CONFIG, METHODS_DIR, TAG_PHASES, phase_specs
+from .queue import (
+    EXPERIMENT_CONFIG,
+    METHODS_DIR,
+    TAG_METHOD,
+    TAG_PHASES,
+    fine_registries,
+    phase_specs,
+)
 from .tracking import _artifact_location, _resolve_tracking_uri, artifact_path
 
 STATES = ("pending", "running", "finished", "killed", "failed")
@@ -78,7 +87,9 @@ def phase_status(
     """State of every run of ``phase``, by run name, in the phase file's order.
 
     A run counts only when its tag ``phases`` lists the phase (the file stem); a run
-    of that name outside the phase, such as one yet to join it, is pending.
+    of that name outside the phase, such as one yet to join it, is pending. Without
+    ``expand_fine``, the runs of a ``configs: fine`` entry are the phase's runs with
+    its registry name (tag ``method``), by name after the listed ones; none is pending.
     """
     args = argparse.Namespace(
         phase=phase,
@@ -87,13 +98,18 @@ def phase_status(
         allow_partial=False,  # status shows an incomplete coarse stage as an error
         methods_dir=methods_dir,
     )
-    specs = phase_specs(args, tracking_uri) or []
+    specs = phase_specs(args, tracking_uri, skip_fine=True) or []
+    fine = [] if expand_fine else fine_registries(phase, method)
     client = mlflow.MlflowClient(tracking_uri=_main_uri(tracking_uri))
     found = _by_name([r for r in _active_runs(client) if phase.stem in _phases(r)])
-    return {
+    states = {
         s.name: found[s.name].info.status.lower() if s.name in found else "pending"
         for s in specs
     }
+    for name in sorted(found):
+        if found[name].data.tags.get(TAG_METHOD) in fine and name not in states:
+            states[name] = found[name].info.status.lower()
+    return states
 
 
 def _source_artifacts(run: Any, experiment: str, db: Path) -> Path:
