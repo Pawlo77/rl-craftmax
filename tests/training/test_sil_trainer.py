@@ -244,6 +244,30 @@ def test_a_sil_step_with_no_active_step_leaves_adam_untouched(
     assert float(m["sil/grad_norm"][0]) == float(m["sil/kl_after"][0]) == 0.0  # type: ignore[typeddict-item]
 
 
+def test_kl_after_skips_its_forward_passes_when_every_step_is_skipped(
+    methods_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``kl_after`` is 0 without the two batch passes; an applied step runs them."""
+    calls: list[int] = []
+    real = ppo_rnn._policy_kl
+
+    def counted(*args: Any) -> jax.Array:
+        jax.debug.callback(lambda: calls.append(1))
+        return real(*args)
+
+    monkeypatch.setattr(ppo_rnn, "_policy_kl", counted)
+    cfg = METHODS["sil"].config(_config(methods_dir, width=21))  # traces the patch
+    cfg = dataclasses.replace(cfg, observe=None)  # the buffer is what the test writes
+    start = ppo_rnn.init_state(cfg, jax.random.key(0))
+    _, m = ppo_rnn.train_chunk(start, 1)
+    jax.effects_barrier()
+    assert (calls, float(m["sil/kl_after"][0])) == ([], 0.0)  # type: ignore[typeddict-item]
+    _, m = ppo_rnn.train_chunk(_with_window(start, 100.0), 1)
+    jax.effects_barrier()
+    assert calls == [1]
+    assert float(m["sil/kl_after"][0]) > 0  # type: ignore[typeddict-item]
+
+
 def test_a_sil_step_with_active_steps_moves_the_params(
     methods_dir: Path, no_observe: Any, same: Callable[[Any, Any], bool]
 ) -> None:

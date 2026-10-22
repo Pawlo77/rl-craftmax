@@ -375,7 +375,12 @@ def _make_learn(
             method |= {k: v.mean() for k, v in em.items()}
             if (group := _extra_group(em)) is not None:
                 method[f"{group}/grad_norm"] = norms.mean()
-                method[f"{group}/kl_after"] = _policy_kl(net, before, ts.params, b)
+                # all K steps skipped leave the params: KL 0 without the two passes
+                method[f"{group}/kl_after"] = jax.lax.cond(
+                    jnp.any(norms != 0),
+                    lambda: _policy_kl(net, before, ts.params, b),
+                    lambda: jnp.zeros((), jnp.float32),
+                )
             if "after_extra_fn" in hk.active:
                 ms = hk.after_extra_fn(ms, method)
         if on_learner:

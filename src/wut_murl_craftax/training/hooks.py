@@ -108,8 +108,9 @@ class HookFields:
     count and the schedule's count advance as for an applied step, so the learning-rate
     anneal stays aligned with the control's.
     PPO-RNN adds ``<group>/grad_norm`` (mean gradient norm of the K steps) and
-    ``<group>/kl_after`` (mean KL of the policy before and after them on the PPO batch)
-    to the extra loss's metrics, ``<group>`` being the one group of its names."""
+    ``<group>/kl_after`` (mean KL of the policy before and after them on the PPO batch;
+    0, without its two batch passes, when all K steps were skipped) to the extra
+    loss's metrics, ``<group>`` being the one group of its names."""
     after_extra_fn: Callable[[State, dict[str, jax.Array]], State] | None = None
     """``(state, metrics) -> state``, once after the extra steps with their metrics
     (averaged, plus the two above); PPO-RNN only, active with the extra loss."""
