@@ -264,6 +264,31 @@ def test_a_node_seeded_from_the_main_store_reuses_and_returns_its_runs(
     assert [m.step for m in history] == [7]
 
 
+def test_a_stop_during_the_seed_lands_after_it_and_opens_no_run(
+    store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review p2b I1: scancel at job start never cuts a seed copy in half."""
+    (coarse,) = store.phase("tune-coarse", ["published"])
+    store.run([coarse], FakeTrainer())
+    final = store.phase("final-1m", ["published", "lr-hi"], eval_mode="log_spaced")
+    node_uri = f"sqlite:///{tmp_path / 'node' / 'mlruns-node-0.db'}"
+
+    def stopped_seed(*args: Any, **kw: Any) -> dict[str, int]:
+        os.kill(os.getpid(), signal.SIGTERM)
+        return merge_stores(*args, **kw)
+
+    monkeypatch.setattr(runner, "merge_stores", stopped_seed)
+    trainer = FakeTrainer()
+    with pytest.raises(SystemExit) as exit_info:
+        store.run(final, trainer, tracking_uri=node_uri, seed_from=store.tracking_uri)
+    assert exit_info.value.code == 128 + signal.SIGTERM
+    assert trainer.updates == []
+    node = mlflow.MlflowClient(tracking_uri=node_uri)
+    (run,) = node.search_runs([e.experiment_id for e in node.search_experiments()])
+    assert (run.info.run_name, run.info.status) == (coarse.name, "FINISHED")
+    assert run.data.tags[queue.TAG_PHASES] == "tune-coarse"  # it never joined
+
+
 def test_max_runs_counts_the_runs_it_trains(store: Store) -> None:
     specs = store.phase("tune-coarse", ["published", "lr-hi", "lr-lo"])
     store.run(specs[:1], FakeTrainer())
@@ -455,6 +480,24 @@ def test_each_training_segment_records_its_code_version(
     assert tags["code/segments"] == f"{'a' * 12},{'b' * 12}+dirty"
     assert tags["code/changed"] == "true"
     assert f"{spec.name} resumes under commit {'b' * 12}" in caplog.text
+
+
+def test_an_unreadable_state_restarts_the_run_instead_of_failing_every_start(
+    store: Store,
+) -> None:
+    """Review p2b I1: a cut copy's truncated ``state.npz`` must not stall the run."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((2, signal.SIGINT)))
+    state = store.run_dir(spec.name) / "state" / "state.npz"
+    state.write_bytes(state.read_bytes()[:100])
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.updates == [1, 2, 3]  # from scratch: the progress was lost
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    assert run.data.tags["warn/state_unreadable"] == "true"
+    assert (state.parent / "state.unreadable").is_file()
 
 
 def test_a_resume_into_another_state_layout_fails_the_run_clearly(store: Store) -> None:

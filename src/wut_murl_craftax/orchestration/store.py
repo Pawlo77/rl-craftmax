@@ -41,6 +41,12 @@ _BATCH = 1000
 """Most metrics MLflow accepts in one ``log_batch`` call."""
 EVAL = "eval"
 """Run-directory folder and metric prefix of the evaluation results."""
+TAG_MERGE_PARTIAL = "merge/partial"
+"""Run tag: ``true`` while a merge copies the run. A copy a kill left with it is no
+run: lookups skip it and the next merge drops it and copies again (review p2b I1)."""
+TAG_STATE_UNREADABLE = "warn/state_unreadable"
+"""Run tag: ``true`` once its ``state/`` could not be read (a cut copy); a merge then
+prefers the other copy, a resume starts afresh."""
 
 
 def _main_uri(tracking_uri: str | None) -> str:
@@ -49,8 +55,8 @@ def _main_uri(tracking_uri: str | None) -> str:
     return _resolve_tracking_uri(uri)
 
 
-def _active_runs(client: Any) -> list[Any]:
-    """Every active run of every experiment."""
+def _all_runs(client: Any) -> list[Any]:
+    """Every active run of every experiment, half-merged copies included."""
     ids = [e.experiment_id for e in client.search_experiments()]
     runs: list[Any] = []
     token = None
@@ -61,6 +67,16 @@ def _active_runs(client: Any) -> list[Any]:
         if not token:
             break
     return runs
+
+
+def is_partial(run: Any) -> bool:
+    """Whether ``run`` is a copy a merge was cut in (`TAG_MERGE_PARTIAL`)."""
+    return bool(run.data.tags.get(TAG_MERGE_PARTIAL) == "true")
+
+
+def _active_runs(client: Any) -> list[Any]:
+    """Every active run of every experiment, except half-merged copies."""
+    return [r for r in _all_runs(client) if not is_partial(r)]
 
 
 def _rank(run: Any) -> tuple[bool, int]:
@@ -172,11 +188,12 @@ def _copy_run(
 ) -> None:
     """Copy a run with its params, metric histories, tags and artifact directory.
 
-    A copy cut short (a full disk, Ctrl-C) is deleted with its artifacts, so no
-    half-copied run is ever resumed (infra-6 review M1).
+    The artifacts go to a staging directory renamed into place, and the copy is
+    tagged `TAG_MERGE_PARTIAL` until it is whole. A copy cut short is deleted with
+    its artifacts (infra-6 review M1); one a kill left is dropped by the next merge.
     """
     info = run.info
-    tags = {**run.data.tags, TAG_PHASES: ",".join(phases)}
+    tags = {**run.data.tags, TAG_PHASES: ",".join(phases), TAG_MERGE_PARTIAL: "true"}
     new = target.create_run(
         experiment_id, start_time=info.start_time, tags=tags, run_name=info.run_name
     )
@@ -185,12 +202,35 @@ def _copy_run(
         params = [Param(k, v) for k, v in run.data.params.items()]
         target.log_batch(run_id, params=params)
         _log_points(target, run_id, _points(source, run, run.data.metrics))
-        shutil.copytree(artifacts, out, dirs_exist_ok=True)
+        staging = _staging(out)
+        shutil.copytree(artifacts, staging)
+        shutil.rmtree(out, ignore_errors=True)  # MLflow may have made it, empty
+        staging.replace(out)
         target.set_terminated(run_id, info.status, info.end_time)
+        target.delete_tag(run_id, TAG_MERGE_PARTIAL)
     except BaseException:
-        target.delete_run(run_id)  # soft: run lookups skip it
-        shutil.rmtree(out, ignore_errors=True)
+        _drop(target, new)
         raise
+
+
+def _staging(out: Path) -> Path:
+    return out.with_name(f"{out.name}.staging")
+
+
+def _whole_runs(target: Any) -> dict[str, Any]:
+    """`_by_name` of the target's runs, after dropping the copies a kill cut."""
+    every = _all_runs(target)
+    for run in filter(is_partial, every):  # copied again by this merge
+        _drop(target, run)
+    return _by_name([r for r in every if not is_partial(r)])
+
+
+def _drop(target: Any, run: Any) -> None:
+    """Delete a half-merged copy and its artifacts (staged or in place)."""
+    target.delete_run(run.info.run_id)  # soft: run lookups skip it
+    out = artifact_path(run.info.artifact_uri)
+    for path in (out, _staging(out)):
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _copy_missing(src: Path, dst: Path) -> None:
@@ -206,6 +246,18 @@ def _copy_missing(src: Path, dst: Path) -> None:
 
 def _dir(run: Any) -> Path:
     return artifact_path(run.info.artifact_uri)
+
+
+def _further(artifacts: Path, here: Any, target: Any) -> bool:
+    """Whether the source state at ``artifacts`` is past the one of ``here``.
+
+    An unreadable state counts as none (-1): the readable copy wins, and ``here``
+    gets `TAG_STATE_UNREADABLE` when its own is the unreadable one.
+    """
+    ours = saved_update(_dir(here))
+    if ours < 0:
+        target.set_tag(here.info.run_id, TAG_STATE_UNREADABLE, "true")
+    return saved_update(artifacts) > ours
 
 
 def _pending(run: Any) -> bool:
@@ -262,7 +314,7 @@ def merge_stores(
     dst_uri = _main_uri(dst)
     target = mlflow.MlflowClient(tracking_uri=dst_uri)
     experiments = {e.experiment_id: e.name for e in source.search_experiments()}
-    existing = _by_name(_active_runs(target))
+    existing = _whole_runs(target)
 
     def src_dir(run: Any) -> Path:
         return _source_artifacts(run, experiments[run.info.experiment_id], db)
@@ -280,7 +332,7 @@ def merge_stores(
             copies.append((run, here, experiment, src_dir(run), phases))
         elif finished or here.info.status == "FINISHED":
             joins.append((here, run, src_dir(run) if finished else None, phases))
-        elif saved_update(found := src_dir(run)) > saved_update(_dir(here)):
+        elif _further(found := src_dir(run), here, target):
             copies.append((run, here, experiment, found, phases))  # both unfinished
         else:
             joins.append((here, run, None, phases))

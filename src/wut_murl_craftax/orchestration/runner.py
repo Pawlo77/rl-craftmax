@@ -52,6 +52,7 @@ from ..training.checkpoints import (
     missing_checkpoints,
     save_checkpoint,
     save_state,
+    saved_update,
 )
 from ..training.hooks import MEMORY_LIMIT_KEY, MemoryLimitError
 from ..training.records import (
@@ -101,7 +102,7 @@ from .runtime import (
     import_craftax,
     select_platforms,
 )
-from .store import merge_stores
+from .store import TAG_STATE_UNREADABLE, is_partial, merge_stores
 from .tracking import _resolve_tracking_uri, artifact_path, build_mlflow_tracker
 from .train_metrics import (
     compile_seconds,
@@ -390,6 +391,7 @@ def find_run(name: str) -> Any:
         filter_string=f"tags.mlflow.runName = '{name}'",
         output_format="list",
     )
+    runs = [r for r in runs if not is_partial(r)]  # a merge a kill cut
     if len(runs) > 1:
         logger.warning("%d runs are named %s; using one", len(runs), name)
     return max(
@@ -662,12 +664,16 @@ def _checkpoint(
 
 
 def _resume(out: Path, fresh: dict[str, Any], spu: int) -> dict[str, Any]:
-    """The saved state of ``out``, else ``fresh``.
+    """The saved state of ``out``, else ``fresh`` (also for an unreadable one).
 
     A state saved before the online families gets fresh accumulators that count
     env steps from its update on, and the run is tagged `TAG_ONLINE_FROM`.
     """
     if not (out / STATE_FILE).exists():
+        return fresh
+    if saved_update(out) < 0:  # a cut copy: its progress is lost, start afresh
+        (out / STATE_FILE).replace(out / STATE_FILE.with_suffix(".unreadable"))
+        mlflow.set_tag(TAG_STATE_UNREADABLE, "true")
         return fresh
     saved, filled = load_state_filling(out, fresh, added_paths(fresh))
     if filled:
@@ -1182,6 +1188,18 @@ def _runs_in_children(
     return run
 
 
+def _seed(seed_from: str, node: str, specs: Sequence[RunSpec], stop: _Stop) -> None:
+    """Merge the specs' runs of ``seed_from`` into ``node``; a stop then ends `main`.
+
+    It runs under `main`'s signal handlers: a stop lands after the seed (the merge
+    leaves no half copy, see `merge_stores`) and opens no run.
+    """
+    counts = merge_stores(seed_from, node, names={s.name for s in specs})
+    logger.info("seeded from %s: %s", seed_from, counts)
+    if stop.signum is not None:
+        raise SystemExit(128 + stop.signum)
+
+
 def main(
     specs: Sequence[RunSpec],
     profile: Path | str,
@@ -1231,13 +1249,9 @@ def main(
             experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
         )
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
-    if seed_from is not None:
-        if tracking_uri is None:
-            msg = "seed_from needs tracking_uri: a node store to seed"
-            raise ValueError(msg)
-        names = {s.name for s in mine}
-        counts = merge_stores(seed_from, tracking_uri, names=names)
-        logger.info("seeded from %s: %s", seed_from, counts)
+    if seed_from is not None and tracking_uri is None:
+        msg = "seed_from needs tracking_uri: a node store to seed"
+        raise ValueError(msg)
     run_one = (
         _runs_in_children(machine, experiment, registry, evaluate)
         if methods is None
@@ -1245,6 +1259,8 @@ def main(
     )
     trained, failed = 0, []
     with _stop_on_signals() as stop:
+        if seed_from is not None:
+            _seed(seed_from, str(tracking_uri), mine, stop)
         for spec in mine:
             if max_runs is not None and trained >= max_runs:
                 break

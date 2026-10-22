@@ -1,7 +1,9 @@
 """Log-spaced params-only checkpoints with an index, and the full resume state."""
 
 import json
+import logging
 import os
+import zipfile
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -10,6 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import serialization
+
+logger = logging.getLogger(__name__)
 
 STATE_FILE = Path("state") / "state.npz"
 """Full training state of a run, relative to the run directory."""
@@ -232,15 +236,20 @@ def load_state_filling[T](
 
 
 def saved_update(run_dir: Path) -> int:
-    """The top-level ``update`` leaf of the saved state; 0 without one.
+    """The top-level ``update`` leaf of the saved state; 0 without one, -1 unreadable.
 
     Reads that one array, not the state, so comparing two copies of a run is cheap.
+    A file `save_state` wrote is whole; a cut copy of it is not (logged).
     """
     path = Path(run_dir) / STATE_FILE
     if not path.is_file():
         return 0
-    with np.load(path) as z:
-        paths = z["paths"].tolist() if "paths" in z.files else []
-        if "['update']" not in paths:
-            return 0
-        return int(z[f"a{paths.index("['update']")}"])
+    try:
+        with np.load(path) as z:
+            paths = z["paths"].tolist() if "paths" in z.files else []
+            if "['update']" not in paths:
+                return 0
+            return int(z[f"a{paths.index("['update']")}"])
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile) as error:
+        logger.warning("unreadable state %s: %r", path, error)
+        return -1

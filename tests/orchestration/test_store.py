@@ -220,6 +220,67 @@ def test_of_two_unfinished_copies_the_one_further_on_is_kept(
     assert saved_update(artifact_path(run.info.artifact_uri)) == max(main_at, node_at)
 
 
+_KILLED_COPY = """
+import os, signal, shutil, sys
+from pathlib import Path
+from wut_murl_craftax.orchestration import store
+
+def cut(src, dst, **kw):
+    Path(dst, "state").mkdir(parents=True)
+    Path(dst, "state", "state.npz").write_bytes(b"PK half a state")
+    os.kill(os.getpid(), signal.SIGKILL)
+
+shutil.copytree = cut
+store.merge_stores(sys.argv[1], sys.argv[2])
+"""
+
+
+def test_a_seed_killed_mid_copy_is_redone_by_the_next_seed(
+    main_store: Node, node: Node
+) -> None:
+    """Review p2b I1: SIGKILL (node loss) during seeding leaves a tagged half copy,
+    which lookups skip and the next seed replaces with a whole one."""
+    name = "a-1b-aaaaaaaa-s0"
+    run_id = main_store.add(name, "final-1b", status="KILLED", files={"m.npz": "m"})
+    _saved_at(main_store, run_id, 5)
+    cmd = [sys.executable, "-c", _KILLED_COPY, str(main_store.root / "mlruns.db")]
+    cut = subprocess.run([*cmd, node.uri], capture_output=True, text=True, check=False)
+    assert cut.returncode == -9, cut.stderr[-2000:]
+    (half,) = node.client.search_runs([
+        e.experiment_id for e in node.client.search_experiments()
+    ])
+    assert half.data.tags[store.TAG_MERGE_PARTIAL] == "true"
+    assert store._active_runs(node.client) == []
+    assert merge_stores(main_store.root / "mlruns.db", node.uri)["copied"] == 1
+    run = node.runs()[name]  # the half copy is gone: no duplicate
+    assert store.TAG_MERGE_PARTIAL not in run.data.tags
+    out = artifact_path(run.info.artifact_uri)
+    assert (out / "m.npz").read_text() == "m"
+    assert saved_update(out) == 5
+    assert list(node.root.rglob("*.staging")) == []
+
+
+def test_an_unreadable_state_loses_to_a_readable_copy_and_never_raises(
+    main_store: Node, node: Node
+) -> None:
+    """A cut copy's truncated ``state.npz`` counts as no state (-1)."""
+    name = "a-1b-aaaaaaaa-s0"
+    _saved_at(main_store, main_store.add(name, "final-1b", status="KILLED"), 5)
+    broken = node.add(name, "final-1b", status="KILLED")
+    state = artifact_path(node.client.get_run(broken).info.artifact_uri) / "state"
+    state.mkdir()
+    (state / "state.npz").write_bytes(b"PK truncated")
+    assert saved_update(state.parent) == -1
+    assert merge_stores(node.uri, main_store.uri)["joined"] == 1  # main's stays
+    assert saved_update(_dir_of(main_store, name)) == 5
+    assert merge_stores(main_store.root / "mlruns.db", node.uri)["copied"] == 1
+    assert saved_update(_dir_of(node, name)) == 5
+
+
+def _dir_of(copy: Node, name: str) -> Path:
+    return artifact_path(copy.runs()[name].info.artifact_uri)
+
+
 def test_a_failed_copy_leaves_the_main_store_as_it_was(
     main_store: Node, node: Node, monkeypatch: pytest.MonkeyPatch
 ) -> None:
