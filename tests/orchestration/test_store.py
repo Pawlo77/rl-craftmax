@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import mlflow
+import numpy as np
 import pytest
 
-from wut_murl_craftax.orchestration import queue
+from wut_murl_craftax.orchestration import queue, store
 from wut_murl_craftax.orchestration.store import merge_stores, phase_status
 from wut_murl_craftax.orchestration.tracking import _artifact_location, artifact_path
+from wut_murl_craftax.training.checkpoints import save_state, saved_update
 
 CONFIGS = Path(__file__).parent / "fixtures" / "configs"
 METHODS = CONFIGS / "methods"
@@ -195,6 +197,58 @@ def test_merge_fails_before_writing_when_artifacts_are_missing(
     assert main_store.runs() == {}
 
 
+def _saved_at(node: Node, run_id: str, update: int) -> None:
+    """A ``state/`` saved after ``update``, as the runner lays it out."""
+    out = artifact_path(node.client.get_run(run_id).info.artifact_uri)
+    save_state(out, {"trainer": {"w": np.zeros(2)}, "update": update, "wall_s": 1.0})
+
+
+@pytest.mark.parametrize(
+    ("main_at", "node_at", "copied"), [(100, 200, 1), (200, 100, 0)]
+)
+def test_of_two_unfinished_copies_the_one_further_on_is_kept(
+    main_store: Node, node: Node, main_at: int, node_at: int, copied: int
+) -> None:
+    """infra-6 review M2: a node's progress is not dropped for a staler main copy."""
+    name = "a-1b-aaaaaaaa-s0"
+    _saved_at(main_store, main_store.add(name, "final-1b", status="KILLED"), main_at)
+    _saved_at(node, node.add(name, "final-1b", status="KILLED"), node_at)
+    counts = merge_stores(node.uri, main_store.uri)
+    assert counts == {"copied": copied, "joined": 1 - copied}
+    run = main_store.runs()[name]
+    assert run.info.status == "KILLED"
+    assert saved_update(artifact_path(run.info.artifact_uri)) == max(main_at, node_at)
+
+
+def test_a_failed_copy_leaves_the_main_store_as_it_was(
+    main_store: Node, node: Node, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """infra-6 review M1: no half-copied RUNNING run, the replaced one stays."""
+    name = "a-1m-aaaaaaaa-s0"
+    main_store.add(name, "tune-coarse", status="KILLED", files={"config.json": "old"})
+    node.add(name, "tune-coarse", files={"config.json": "new", "ckpt/x.npz": "x"})
+    real = shutil.copytree
+
+    def disk_full(src: Path, dst: Path, **kw: Any) -> Any:
+        Path(dst, "ckpt").mkdir(parents=True)
+        Path(dst, "ckpt", "x.npz").write_text("half")
+        msg = "No space left on device"
+        raise OSError(msg)
+
+    monkeypatch.setattr(store.shutil, "copytree", disk_full)
+    with pytest.raises(OSError, match="No space"):
+        merge_stores(node.uri, main_store.uri)
+    (run,) = main_store.runs().values()
+    assert run.info.status == "KILLED"
+    out = artifact_path(run.info.artifact_uri)
+    assert (out / "config.json").read_text() == "old"
+    leftovers = {p.parent.name for p in main_store.root.rglob("x.npz")}
+    assert leftovers == set()
+    monkeypatch.setattr(store.shutil, "copytree", real)
+    assert merge_stores(node.uri, main_store.uri)["copied"] == 1
+    assert main_store.runs()[name].info.status == "FINISHED"
+
+
 def test_merge_ignores_deleted_runs(main_store: Node, node: Node) -> None:
     run_id = node.add("a-1m-aaaaaaaa-s0", "tune-coarse")
     node.client.delete_run(run_id)
@@ -257,13 +311,13 @@ def test_a_join_carries_the_pending_evaluation_tag(
     name = "a-1m-aaaaaaaa-s0"
     main_id = main_store.add(name, "tune-coarse")
     node_id = node.add(name, node_phases, experiment="final-1m")
-    for store, run_id, pending in (
+    for copy, run_id, pending in (
         (main_store, main_id, main_pending),
         (node, node_id, node_pending),
     ):
         if pending:
-            store.client.set_tag(run_id, "eval/pending", "true")
-            store.client.set_tag(run_id, "fail/error", "OSError: disk full")
+            copy.client.set_tag(run_id, "eval/pending", "true")
+            copy.client.set_tag(run_id, "fail/error", "OSError: disk full")
     merge_stores(node.uri, main_store.uri)
     tags = main_store.runs()[name].data.tags
     assert ("eval/pending" in tags) == want

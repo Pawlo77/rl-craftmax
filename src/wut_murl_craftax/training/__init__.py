@@ -13,6 +13,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_state_filling,
         save_checkpoint,
         save_state,
+        saved_update,
     )
     from .count_bonus import CountBonusConfig, CountState
     from .dyna_q import (
@@ -225,6 +226,7 @@ _EXPORTS: dict[str, str] = {
     "sample_backup": "dyna_q",
     "save_checkpoint": "checkpoints",
     "save_state": "checkpoints",
+    "saved_update": "checkpoints",
     "select_skill": "smdp",
     "skill_step": "skills",
     "smdp_target": "smdp",
@@ -342,6 +344,7 @@ __all__ = [
     "sample_backup",
     "save_checkpoint",
     "save_state",
+    "saved_update",
     "select_skill",
     "skill_step",
     "smdp_target",

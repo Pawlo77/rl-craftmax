@@ -229,3 +229,18 @@ def load_state_filling[T](
             for name, leaf in zip(names, leaves, strict=True)
         ]
     return cast(T, jax.tree.unflatten(treedef, restored)), absent
+
+
+def saved_update(run_dir: Path) -> int:
+    """The top-level ``update`` leaf of the saved state; 0 without one.
+
+    Reads that one array, not the state, so comparing two copies of a run is cheap.
+    """
+    path = Path(run_dir) / STATE_FILE
+    if not path.is_file():
+        return 0
+    with np.load(path) as z:
+        paths = z["paths"].tolist() if "paths" in z.files else []
+        if "['update']" not in paths:
+            return 0
+        return int(z[f"a{paths.index("['update']")}"])

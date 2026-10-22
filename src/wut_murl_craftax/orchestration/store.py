@@ -21,6 +21,7 @@ import mlflow
 from mlflow.entities import Metric, Param
 
 from ..config import load_experiment_config
+from ..training.checkpoints import saved_update
 from .queue import (
     EXPERIMENT_CONFIG,
     METHODS_DIR,
@@ -169,17 +170,27 @@ def _copy_run(
     artifacts: Path,
     phases: list[str],
 ) -> None:
-    """Copy a run with its params, metric histories, tags and artifact directory."""
+    """Copy a run with its params, metric histories, tags and artifact directory.
+
+    A copy cut short (a full disk, Ctrl-C) is deleted with its artifacts, so no
+    half-copied run is ever resumed (infra-6 review M1).
+    """
     info = run.info
     tags = {**run.data.tags, TAG_PHASES: ",".join(phases)}
     new = target.create_run(
         experiment_id, start_time=info.start_time, tags=tags, run_name=info.run_name
     )
-    run_id = new.info.run_id
-    target.log_batch(run_id, params=[Param(k, v) for k, v in run.data.params.items()])
-    _log_points(target, run_id, _points(source, run, run.data.metrics))
-    shutil.copytree(artifacts, artifact_path(new.info.artifact_uri), dirs_exist_ok=True)
-    target.set_terminated(run_id, info.status, info.end_time)
+    run_id, out = new.info.run_id, artifact_path(new.info.artifact_uri)
+    try:
+        params = [Param(k, v) for k, v in run.data.params.items()]
+        target.log_batch(run_id, params=params)
+        _log_points(target, run_id, _points(source, run, run.data.metrics))
+        shutil.copytree(artifacts, out, dirs_exist_ok=True)
+        target.set_terminated(run_id, info.status, info.end_time)
+    except BaseException:
+        target.delete_run(run_id)  # soft: run lookups skip it
+        shutil.rmtree(out, ignore_errors=True)
+        raise
 
 
 def _copy_missing(src: Path, dst: Path) -> None:
@@ -191,6 +202,10 @@ def _copy_missing(src: Path, dst: Path) -> None:
             part = to.with_name(f"{to.name}.part")
             shutil.copy2(path, part)
             part.replace(to)
+
+
+def _dir(run: Any) -> Path:
+    return artifact_path(run.info.artifact_uri)
 
 
 def _pending(run: Any) -> bool:
@@ -207,7 +222,7 @@ def _join_evaluation(
     listed in every phase of ``here`` (it never evaluated for those).
     """
     run_id = here.info.run_id
-    _copy_missing(artifacts / EVAL, artifact_path(here.info.artifact_uri) / EVAL)
+    _copy_missing(artifacts / EVAL, _dir(here) / EVAL)
     keys = [k for k in run.data.metrics if k.startswith(f"{EVAL}/")]
     have = {(m.key, m.step) for m in _points(target, here, keys)}
     new = [m for m in _points(source, run, keys) if (m.key, m.step) not in have]
@@ -227,15 +242,16 @@ def merge_stores(
 ) -> dict[str, int]:
     """Merge the runs of the SQLite store ``src`` into ``dst`` (default: the main one).
 
-    Returns the runs ``copied`` (new to ``dst``, or FINISHED replacing an unfinished
-    copy) and ``joined`` (already in ``dst``: the ``phases`` tag merged, plus the
-    evaluation of a FINISHED ``src`` copy, `_join_evaluation`). ``names`` limits the
-    merge to those run names. Every needed source artifact directory is found before
-    anything is written.
+    Returns the runs ``copied`` (new to ``dst``, or replacing a copy that is not
+    FINISHED: a FINISHED one, or one with a later saved update, infra-6 review M2) and
+    ``joined`` (already in ``dst``: the ``phases`` tag merged, plus the evaluation of
+    a FINISHED ``src`` copy, `_join_evaluation`). ``names`` limits the merge to those
+    run names. Every needed source artifact directory is found before anything is
+    written; a replaced copy is deleted only once its replacement is whole.
 
     Raises:
-        FileNotFoundError: ``src`` is no database, or a run to copy or a FINISHED run
-            to join has no artifacts.
+        FileNotFoundError: ``src`` is no database, or a run to copy, a FINISHED run
+            to join or an unfinished one to compare has no artifacts.
     """
     text = str(src)
     db = Path(text.removeprefix("sqlite:///")).resolve()
@@ -247,6 +263,10 @@ def merge_stores(
     target = mlflow.MlflowClient(tracking_uri=dst_uri)
     experiments = {e.experiment_id: e.name for e in source.search_experiments()}
     existing = _by_name(_active_runs(target))
+
+    def src_dir(run: Any) -> Path:
+        return _source_artifacts(run, experiments[run.info.experiment_id], db)
+
     joins: list[tuple[Any, Any, Path | None, list[str]]] = []
     copies: list[tuple[Any, Any | None, str, Path, list[str]]] = []
     for name, run in _by_name(_active_runs(source)).items():
@@ -256,21 +276,23 @@ def merge_stores(
         phases = list(dict.fromkeys([*_phases(here), *_phases(run)]))
         experiment = experiments[run.info.experiment_id]
         finished = run.info.status == "FINISHED"
-        if here is not None and not (finished and here.info.status != "FINISHED"):
-            artifacts = _source_artifacts(run, experiment, db) if finished else None
-            joins.append((here, run, artifacts, phases))
-            continue
-        artifacts = _source_artifacts(run, experiment, db)
-        copies.append((run, here, experiment, artifacts, phases))
-    for here, run, found, phases in joins:
+        if here is None or (finished and here.info.status != "FINISHED"):
+            copies.append((run, here, experiment, src_dir(run), phases))
+        elif finished or here.info.status == "FINISHED":
+            joins.append((here, run, src_dir(run) if finished else None, phases))
+        elif saved_update(found := src_dir(run)) > saved_update(_dir(here)):
+            copies.append((run, here, experiment, found, phases))  # both unfinished
+        else:
+            joins.append((here, run, None, phases))
+    for here, run, node_dir, phases in joins:
         target.set_tag(here.info.run_id, TAG_PHASES, ",".join(phases))
-        if found is not None:
-            _join_evaluation(target, source, here, run, found)
+        if node_dir is not None:
+            _join_evaluation(target, source, here, run, node_dir)
     for run, here, experiment, artifacts, phases in copies:
-        if here is not None:
-            target.delete_run(here.info.run_id)  # soft: the old artifacts stay on disk
         experiment_id = _experiment_id(target, experiment, dst_uri)
         _copy_run(target, source, run, experiment_id, artifacts, phases)
+        if here is not None:
+            target.delete_run(here.info.run_id)  # soft: the old artifacts stay on disk
     return {"copied": len(copies), "joined": len(joins)}
 
 
