@@ -70,28 +70,34 @@ grid:
       - {key: granularity, top: 2}
       - {key: decay, top: 2}
 
-# Runner rules (orchestration/abort.py): a non-finite loss column of the base aborts the
-# run, and so does a metric in `finite`. A NaN or inf bonus makes count/r_int_mean
-# non-finite; the two guards of training/count_bonus.py turn NaN when the table is fuller
-# than `max_occupancy` or a count is below 0. Every count/* metric is finite otherwise.
-# A full table fills again on any retry, so `permanent` ends that run for good (tag
-# abort/guard). The controls' rules come first, copied from ppo-rnn.yaml and pqn-rnn.yaml
-# (one block serves both variants: each reports only its base's names, the runner skips
-# the others): the method only adds a reward, so the base's checks still hold.
+# Runner rules (orchestration/abort.py), one block per variant: a non-finite loss column
+# of the base aborts the run, and so does a metric in `finite`. A NaN or inf bonus makes
+# count/r_int_mean non-finite; the two guards of training/count_bonus.py turn NaN when the
+# table is fuller than `max_occupancy` or a count is below 0. Every count/* metric is
+# finite otherwise. A full table fills again on any retry, so `permanent` ends that run
+# for good (tag abort/guard). Each variant's control rules come first, copied from
+# ppo-rnn.yaml or pqn-rnn.yaml: the method only adds a reward, so the base's checks still
+# hold, and a variant names no metric of the other base (no warn/abort_unreported noise).
 abort:
-  finite: [ppo/policy_loss, ppo/value_loss, pqn/td_loss, count/r_int_mean, count/table_full, count/negative_counts]
-  permanent: [count/table_full]
-  limits:
-    - {metric: ppo/ratio_first_mb, min: 0.999, max: 1.001}
-    - {metric: pqn/q_max_mean, max: 300}
-  flags:
-    - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
-    - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
-    - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
-    - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
-    - {name: td_spike, metric: pqn/td_loss, above_median: 10, updates: 3}
-    - {name: action_gap_flat, metric: pqn/action_gap, below: 1.0e-3, updates: 3, when: {metric: pqn/epsilon, below: 0.0051}}
-    - {name: bn_var_low, metric: pqn/bn_var_min, below: 1.0e-6}
+  ppo-rnn:
+    finite: [ppo/policy_loss, ppo/value_loss, count/r_int_mean, count/table_full, count/negative_counts]
+    permanent: [count/table_full]
+    limits:
+      - {metric: ppo/ratio_first_mb, min: 0.999, max: 1.001}
+    flags:
+      - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
+      - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
+      - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
+      - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
+  pqn-rnn:
+    finite: [pqn/td_loss, count/r_int_mean, count/table_full, count/negative_counts]
+    permanent: [count/table_full]
+    limits:
+      - {metric: pqn/q_max_mean, max: 300}
+    flags:
+      - {name: td_spike, metric: pqn/td_loss, above_median: 10, updates: 3}
+      - {name: action_gap_flat, metric: pqn/action_gap, below: 1.0e-3, updates: 3, when: {metric: pqn/epsilon, below: 0.0051}}
+      - {name: bn_var_low, metric: pqn/bn_var_min, below: 1.0e-6}
 
 # written by `--mark-tuned count-bonus <hash8>`, one block per variant
 tuned: null

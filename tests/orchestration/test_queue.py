@@ -368,6 +368,39 @@ def test_the_abort_block_reaches_every_spec_of_the_method() -> None:
     assert all(s.abort is None for s in specs if s.registry_name != "toy")
 
 
+def _variant_abort(tmp_path: Path, abort: object) -> Path:
+    """A copy of the fixture methods whose ``multi`` has ``abort``."""
+    methods = tmp_path / "methods"
+    shutil.copytree(METHODS, methods)
+    raw = yaml.safe_load((methods / "multi.yaml").read_text())
+    (methods / "multi.yaml").write_text(yaml.safe_dump({**raw, "abort": abort}))
+    return methods
+
+
+def test_each_variant_gets_its_own_abort_block(tmp_path: Path) -> None:
+    ppo = {"finite": ["ppo/value_loss"], "flags": []}
+    pqn = {"finite": ["pqn/td_loss"], "limits": [{"metric": "q", "max": 3}]}
+    methods = _variant_abort(tmp_path, {"ppo-rnn": ppo, "pqn-rnn": pqn})
+    specs = expand_phase(PHASES / "entries.yaml", methods_dir=methods)
+    blocks = {s.registry_name: s.abort for s in specs}
+    assert blocks["multi-ppo-rnn"] == ppo
+    assert blocks["multi-pqn-rnn"] == pqn
+    method = load_method("multi", methods)
+    assert method.abort_rules("multi-pqn-rnn") == pqn
+
+
+@pytest.mark.parametrize(
+    "abort",
+    [
+        {"ppo-rnn": {"finite": "x"}},  # a variant's block is checked
+        {"ppo-rnn": {"finite": []}, "dqn": {"finite": []}},  # not a variant
+    ],
+)
+def test_a_bad_variant_abort_block_fails_loudly(tmp_path: Path, abort: object) -> None:
+    with pytest.raises(queue.QueueConfigError, match=r"multi\.yaml"):
+        load_method("multi", _variant_abort(tmp_path, abort))
+
+
 def test_base_from_resolves_the_donor_tuned_block_plus_own_keys() -> None:
     assert resolved("child", "b") == {
         "env": "Toy-v1",

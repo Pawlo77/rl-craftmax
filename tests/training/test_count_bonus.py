@@ -13,6 +13,7 @@ from craftax.craftax.craftax_state import StaticEnvParams
 from craftax.craftax_classic.constants import BlockType
 from craftax.craftax_env import make_craftax_env_from_name
 
+from wut_murl_craftax.orchestration.abort import unreported
 from wut_murl_craftax.orchestration.queue import RunSpec, config_hash, load_method
 from wut_murl_craftax.training import count_bonus
 from wut_murl_craftax.training.checkpoints import load_state, save_state
@@ -410,16 +411,24 @@ def test_the_guards_stay_zero_until_the_table_breaks(start: Any) -> None:
     assert float(decremented["count/table_full"]) == 0.0
 
 
-def test_the_method_file_aborts_on_the_bonus_and_the_guards() -> None:
-    """Plus both controls' rules: each variant still reports its base's metrics."""
+@pytest.mark.parametrize("variant", ["ppo-rnn", "pqn-rnn"])
+def test_each_variant_aborts_on_the_bonus_the_guards_and_its_controls_rules(
+    variant: str,
+) -> None:
+    """Only its own control's rules: no run lists the other variant's metrics as
+    unreported (`warn/abort_unreported`)."""
     finite = ["count/r_int_mean", "count/table_full", "count/negative_counts"]
-    ppo, pqn = (load_method(m).abort or {} for m in ("ppo-rnn", "pqn-rnn"))
-    assert load_method("count-bonus").abort == {
-        "finite": ppo["finite"] + pqn["finite"] + finite,
+    control = load_method(variant).abort or {}
+    got = load_method("count-bonus").abort_rules(f"count-bonus-{variant}") or {}
+    assert got == {
+        "finite": control["finite"] + finite,
         "permanent": ["count/table_full"],  # a retry fills it again
-        "limits": ppo["limits"] + pqn["limits"],
-        "flags": ppo["flags"] + pqn["flags"],
+        "limits": control["limits"],
+        "flags": control["flags"],
     }
+    other = "pqn/" if variant == "ppo-rnn" else "ppo/"
+    names = unreported(got["flags"], got["finite"], (), got["limits"])
+    assert not [n for n in names if n.startswith(other)]
 
 
 def _spec(**over: Any) -> RunSpec:
@@ -435,7 +444,7 @@ def _spec(**over: Any) -> RunSpec:
         "rnn_width": 16,
         **KNOBS,
     } | over
-    abort = load_method("count-bonus").abort
+    abort = load_method("count-bonus").abort_rules(name)
     return RunSpec(
         name,
         "count-bonus",

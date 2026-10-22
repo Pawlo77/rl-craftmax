@@ -25,7 +25,7 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, NoReturn
+from typing import Any, Literal, NoReturn, cast
 
 import yaml
 
@@ -197,6 +197,13 @@ class Method:
             else [f"{self.slug}-{v}" for v in self.variants]
         )
 
+    def abort_rules(self, registry: str) -> dict[str, Any] | None:
+        """The ``abort`` block of a registry entry (its variant's, if keyed by one)."""
+        variant = self.variant(registry)
+        if variant is None or not _by_variant(self.abort, self.variants):
+            return self.abort
+        return (self.abort or {}).get(variant)
+
     def variant(self, registry: str) -> str | None:
         """The variant block a registry entry uses; None for a single-block method."""
         if self.variants is None:
@@ -308,9 +315,25 @@ def _check_limit(limit: object, where: str) -> str:
     return metric
 
 
-def _check_abort(block: object, where: str) -> dict[str, Any] | None:
+def _by_variant(block: object, variants: Sequence[str] | None) -> bool:
+    """Whether an ``abort`` block is keyed by variant (one block per variant)."""
+    return (
+        isinstance(block, dict)
+        and bool(block)
+        and variants is not None
+        and set(block) <= set(variants)
+    )
+
+
+def _check_abort(
+    block: object, where: str, variants: Sequence[str] | None = None
+) -> dict[str, Any] | None:
     if block is None:
         return None
+    if _by_variant(block, variants):
+        for variant, rules in cast(dict[str, Any], block).items():
+            _check_abort(rules, f"{where} {variant}")
+        return cast(dict[str, Any], block)
     allowed = {"flags", "finite", "permanent", "limits"}
     block = _check_keys(block, allowed, f"{where} abort")
     finite = block.get("finite", [])
@@ -339,7 +362,8 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
 
     ``base`` is one config block, or one block per variant (every value a mapping) for a
     slug with several registry entries (``<slug>-<variant>``); a block may say
-    ``base_from: <slug>.tuned``. A ``grid.coarse`` entry is ``name`` plus the keys it
+    ``base_from: <slug>.tuned``. ``abort`` of such a slug may also be keyed by
+    variant (`Method.abort_rules`). A ``grid.coarse`` entry is ``name`` plus the keys it
     overrides (``seeds`` is its seed count at the tuning budget, see `expand_phase`);
     ``grid.fine`` is in ``expand_fine``.
     """
@@ -363,9 +387,10 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
         budgets=budgets,
         coarse=_check_coarse(grid.get("coarse", []), where),
         fine=None if fine is None else _check_fine(fine, where),
-        abort=_check_abort(raw.get("abort"), where),
+        abort=raw.get("abort"),
         tuned=raw.get("tuned"),
     )
+    _check_abort(method.abort, where, method.variants)
     if method.tuned is not None and method.variants is not None:
         _check_keys(method.tuned, set(method.variants), f"{where} tuned")
     return method
@@ -528,7 +553,7 @@ def _entry_specs(
                 config_hash(cfg),
                 path.stem,
                 raw["eval"],
-                method.abort,
+                method.abort_rules(registry),
             )
             for seed in _seed_list(seeds, f"{where} config {ref}")
         ]
