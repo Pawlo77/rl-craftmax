@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -182,18 +183,49 @@ def load_state[T](run_dir: Path, like: T) -> T:
         ValueError: If the saved state has another number of leaves, other tree
             paths (fields renamed or reordered), or a leaf of another shape or dtype.
     """
+    return load_state_filling(run_dir, like)[0]
+
+
+def _absent(saved: list[str], names: list[str], fill: Collection[str]) -> list[str]:
+    """Template paths a saved state lacks, if exactly all of ``fill``; else none.
+
+    Every other path must be saved, in the template's order, so the only accepted
+    change is the one that added the ``fill`` leaves.
+    """
+    absent = [p for p in names if p not in set(saved)]
+    rest = [p for p in names if p not in set(absent)]
+    return absent if absent and set(absent) == set(fill) and rest == saved else []
+
+
+def load_state_filling[T](
+    run_dir: Path, like: T, fill: Collection[str] = ()
+) -> tuple[T, list[str]]:
+    """`load_state` that takes the leaves at paths ``fill`` from ``like`` when absent.
+
+    For a state saved before a release added exactly those leaves (all of them);
+    returns the state and the paths filled (empty for a current state).
+
+    Raises:
+        ValueError: As `load_state`, for any other difference.
+    """
     leaves, treedef = jax.tree.flatten(like)
     names = _paths(like)
     with np.load(Path(run_dir) / STATE_FILE) as z:
-        n = len([f for f in z.files if f != "paths"])
+        saved = z["paths"].tolist() if "paths" in z.files else None
+        absent = _absent(saved, names, fill) if saved and fill else []
+        n = len([f for f in z.files if f != "paths"]) + len(absent)
         if n != len(leaves):
-            msg = f"saved state has {n} leaves, the template has {len(leaves)}"
+            got_n = n - len(absent)
+            msg = f"saved state has {got_n} leaves, the template has {len(leaves)}"
             raise ValueError(msg)
-        if "paths" in z.files and (saved := z["paths"].tolist()) != names:
-            got, want = next(
-                (a, b) for a, b in zip(saved, names, strict=True) if a != b
-            )
+        kept = [p for p in names if p not in set(absent)]
+        if saved is not None and saved != kept:
+            got, want = next((a, b) for a, b in zip(saved, kept, strict=True) if a != b)
             msg = f"saved state has another tree: {got} where the template has {want}"
             raise ValueError(msg)
-        restored = [_restore(z, i, leaf, names[i]) for i, leaf in enumerate(leaves)]
-    return cast(T, jax.tree.unflatten(treedef, restored))
+        at = {p: i for i, p in enumerate(kept)}
+        restored = [
+            leaf if name in absent else _restore(z, at[name], leaf, name)
+            for name, leaf in zip(names, leaves, strict=True)
+        ]
+    return cast(T, jax.tree.unflatten(treedef, restored)), absent

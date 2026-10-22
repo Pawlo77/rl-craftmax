@@ -329,6 +329,43 @@ def stack_online(updates: Sequence[Mapping[str, jax.Array]]) -> dict[str, jax.Ar
     return {k: jnp.stack([u[k] for u in updates]) for k in ONLINE_KEYS}
 
 
+ADDED_FIELDS: tuple[str, ...] = tuple(
+    f.name
+    for f in dataclasses.fields(EpisodeAcc)
+    if f.name not in {"ret", "length", "ach"}
+)
+"""`EpisodeAcc` fields the online families added; states saved before lack them."""
+
+
+def _accs(tree: Any) -> list[tuple[str, EpisodeAcc]]:
+    """(tree path, node) of every `EpisodeAcc` in ``tree``."""
+    found = jax.tree_util.tree_flatten_with_path(
+        tree, is_leaf=lambda x: isinstance(x, EpisodeAcc)
+    )[0]
+    return [(jax.tree_util.keystr(p), x) for p, x in found if isinstance(x, EpisodeAcc)]
+
+
+def added_paths(tree: Any) -> set[str]:
+    """Tree paths of the `ADDED_FIELDS` leaves of every `EpisodeAcc` in ``tree``."""
+    return {f"{path}.{f}" for path, _ in _accs(tree) for f in ADDED_FIELDS}
+
+
+def resume_from(tree: Any, env_steps: int) -> Any:
+    """``tree`` with every `EpisodeAcc` counting env steps from ``env_steps`` on.
+
+    For accumulators filled in fresh into a run that already took ``env_steps``
+    steps: first unlocks then carry the run's env steps, not the resume's.
+    """
+
+    def move(x: Any) -> Any:
+        if not isinstance(x, EpisodeAcc):
+            return x
+        # from x.t, not a new array: keeps its env-mesh placement
+        return dataclasses.replace(x, t=x.t * 0 + env_steps // x.t.shape[0])
+
+    return jax.tree.map(move, tree, is_leaf=lambda x: isinstance(x, EpisodeAcc))
+
+
 def first_unlock_offsets(unlocked: jax.Array) -> jax.Array:
     """Env steps into an update at which any env first unlocked each achievement.
 

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import yaml
 from _fake_trainer import STEPS_PER_UPDATE, FakeTrainer
+from flax import struct
 from test_runner import PROFILE, Store
 
 from wut_murl_craftax.config import MLflowTrackingConfig, load_experiment_config
@@ -19,6 +20,7 @@ from wut_murl_craftax.evaluation.episode_metrics import metric_keys
 from wut_murl_craftax.orchestration import queue, runner, train_metrics
 from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runner import final_score
+from wut_murl_craftax.training.checkpoints import save_state
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.records import (
     LOSS_COLUMNS,
@@ -247,25 +249,85 @@ def test_first_unlocks_are_logged_once_at_their_env_step(
         assert wall.value > 0
 
 
-def test_a_replayed_chunk_logs_a_first_unlock_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.fixture
+def active(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """An active MLflow run in a throwaway store; yields ``(store, run)``."""
     store = Store(tmp_path, monkeypatch)
     mlflow, previous = runner.mlflow, runner.mlflow.get_tracking_uri()
     mlflow.set_tracking_uri(store.tracking_uri)
-    stamps = np.array([[-1, 150], [250, 150]])
     try:
-        exp = store.client.create_experiment("replay")
-        with mlflow.start_run(experiment_id=exp) as active:
-            for _ in range(2):  # a chunk replayed after a crash before its state save
-                walls = np.array([5.0, 6.0])
-                runner._log_first_unlocks(stamps, ["a", "b"], 1, 100, walls)
+        exp = store.client.create_experiment("unit")
+        with mlflow.start_run(experiment_id=exp) as run:
+            yield store, run
     finally:
         mlflow.set_tracking_uri(previous)
-    history = store.client.get_metric_history(active.info.run_id, "first_unlock/b")
+
+
+def test_a_replayed_chunk_logs_a_first_unlock_once(active: Any) -> None:
+    store, run = active
+    stamps = np.array([[-1, 150], [250, 150]])
+    for _ in range(2):  # a chunk replayed after a crash before its state save
+        runner._log_first_unlocks(stamps, ["a", "b"], 1, 100, np.array([5.0, 6.0]))
+    history = store.client.get_metric_history(run.info.run_id, "first_unlock/b")
     assert [(m.step, m.value) for m in history] == [(150, 150.0)]
-    wall = store.client.get_metric_history(active.info.run_id, "first_unlock_wall/a")
+    wall = store.client.get_metric_history(run.info.run_id, "first_unlock_wall/a")
     assert [(m.step, m.value) for m in wall] == [(250, 6.0)]
+
+
+@struct.dataclass
+class _OldAcc:
+    """``EpisodeAcc`` before the online families (a5352cf): the live queue's states."""
+
+    ret: jax.Array
+    length: jax.Array
+    ach: jax.Array | None = None
+    """None: a state that lacks it too (no leaf)."""
+
+
+def _old_state(tmp_path: Path, fields: tuple[str, ...]) -> tuple[Any, int]:
+    """A tiny PPO run's fresh template, and its state at update 4 saved with only
+    ``fields`` of the episode accumulator (returns 1.5, lengths 3)."""
+    trainer, envs = METHODS["ppo"], TINY["envs"]
+    spec = RunSpec("ppo", "old", BUDGET, CLASSIC, 0, TINY, "h", "smoke", "final")
+    fresh = runner.state_template(
+        trainer.init(TINY | {"steps": 4000}, jax.random.key(0)), spec
+    )
+    ep = fresh["trainer"].episode
+    kept = {"ret": ep.ret + 1.5, "length": ep.length + 3, "ach": ep.ach}
+    old = fresh["trainer"].replace(episode=_OldAcc(**{k: kept[k] for k in fields}))
+    save_state(tmp_path, {**fresh, "trainer": old, "update": 4, "wall_s": 9.0})
+    return fresh, envs
+
+
+def test_a_state_saved_before_the_online_families_resumes_with_them(
+    active: Any, tmp_path: Path
+) -> None:
+    store, run = active
+    fresh, envs = _old_state(tmp_path, ("ret", "length", "ach"))
+    saved = runner._resume(tmp_path, fresh, STEP)
+    tags = store.client.get_run(run.info.run_id).data.tags
+    assert tags[runner.TAG_ONLINE_FROM] == "4"
+    ep = saved["trainer"].episode
+    assert (np.asarray(ep.ret) == 1.5).all()
+    assert (np.asarray(ep.length) == 3).all()
+    assert not np.asarray(ep.counts).any()
+    assert (np.asarray(ep.first) == -1).all()
+    # env steps go on from the saved update, so first unlocks land after it
+    assert (np.asarray(ep.t) * envs == 4 * STEP).all()
+    state, m = METHODS["ppo"].train_chunk(saved["trainer"], 1)
+    stamps = np.asarray(m["first_unlock"])
+    assert ((stamps == -1) | (stamps > 4 * STEP)).all()
+    assert int(state.episode.t[0]) * envs == 5 * STEP
+
+
+def test_a_state_missing_more_than_the_online_leaves_is_refused(
+    active: Any, tmp_path: Path
+) -> None:
+    store, run = active
+    fresh, _ = _old_state(tmp_path, ("ret", "length"))
+    with pytest.raises(ValueError, match="saved state has"):
+        runner._resume(tmp_path, fresh, STEP)
+    assert runner.TAG_ONLINE_FROM not in store.client.get_run(run.info.run_id).data.tags
 
 
 def test_hardware_facts_are_logged_per_run(tiny: tuple[Store, RunSpec, Any]) -> None:

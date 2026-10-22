@@ -16,6 +16,7 @@ from wut_murl_craftax.training.checkpoints import (
     load_index,
     load_params,
     load_state,
+    load_state_filling,
     save_checkpoint,
     save_state,
 )
@@ -150,6 +151,51 @@ def test_load_state_refuses_other_shapes_dtypes_and_fields(
     save_state(tmp_path, {"a": jnp.ones(2), "b": jnp.zeros(2, jnp.int32)})
     with pytest.raises(ValueError, match=error):
         load_state(tmp_path, like)
+
+
+NEW = {"['ep']['new']", "['ep']['newer']"}
+"""Leaves a later layout added, that an older state may lack."""
+
+
+def _grown() -> dict[str, Any]:
+    """The later layout: ``ep`` gained ``new`` and ``newer`` after ``old``."""
+    ep = {"old": jnp.ones(2), "new": jnp.full(2, 7.0), "newer": jnp.zeros(3, bool)}
+    return {"a": jnp.zeros(2, jnp.int32), "ep": ep}
+
+
+def test_a_state_without_the_added_leaves_takes_them_from_the_template(
+    tmp_path: Path,
+) -> None:
+    save_state(tmp_path, {"a": jnp.arange(2), "ep": {"old": jnp.full(2, 3.0)}})
+    got, filled = load_state_filling(tmp_path, _grown(), NEW)
+    assert sorted(filled) == sorted(NEW)
+    assert got["a"].tolist() == [0, 1]
+    assert got["ep"]["old"].tolist() == [3.0, 3.0], "saved leaves keep their values"
+    assert got["ep"]["new"].tolist() == [7.0, 7.0], (
+        "added leaves come from the template"
+    )
+    assert load_state_filling(tmp_path, _grown(), NEW)[0]["ep"]["newer"].shape == (3,)
+    save_state(tmp_path, _grown())
+    assert load_state_filling(tmp_path, _grown(), NEW)[1] == [], "nothing to fill"
+
+
+@pytest.mark.parametrize(
+    ("saved", "fill"),
+    [
+        ({"a": jnp.arange(2), "ep": {"old": jnp.ones(2)}}, set()),  # not allowed
+        ({"ep": {"old": jnp.ones(2)}}, NEW),  # another leaf is missing too
+        ({"a": jnp.arange(2), "ep": {"renamed": jnp.ones(2)}}, NEW),
+        ({"a": jnp.arange(2), "ep": {"old": jnp.ones(2), "x": jnp.ones(2)}}, NEW),
+        ({"a": jnp.arange(2), "ep": {"new": jnp.ones(2), "old": jnp.ones(2)}}, NEW),
+    ],
+)
+def test_filling_refuses_every_other_structure_change(
+    tmp_path: Path, saved: dict[str, Any], fill: set[str]
+) -> None:
+    """Only the listed leaves may be absent; renamed, extra or partial ones fail."""
+    save_state(tmp_path, saved)
+    with pytest.raises(ValueError, match="saved state has"):
+        load_state_filling(tmp_path, _grown(), fill)
 
 
 def test_a_state_saved_without_the_tree_paths_still_loads(tmp_path: Path) -> None:

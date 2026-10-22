@@ -34,14 +34,20 @@ import mlflow
 import numpy as np
 
 from ..config import ExperimentConfig, load_experiment_config
-from ..evaluation.episode_metrics import chunk_series, new_first_unlocks, score_pct
+from ..evaluation.episode_metrics import (
+    added_paths,
+    chunk_series,
+    new_first_unlocks,
+    resume_from,
+    score_pct,
+)
 from ..evaluation.milestones import game_of
 from ..training.checkpoints import (
     STATE_FILE,
     checkpoint_schedule,
     drop_missing_checkpoints,
     load_index,
-    load_state,
+    load_state_filling,
     missing_checkpoints,
     save_checkpoint,
     save_state,
@@ -117,6 +123,9 @@ TAG_CODE_SEGMENTS = "code/segments"
 """Run tag: comma-joined 12-hex commits (``+dirty``) of each training segment."""
 TAG_CODE_CHANGED = "code/changed"
 """Run tag: ``true`` once a segment resumed under another commit than the last one."""
+TAG_ONLINE_FROM = "metrics/online_from_update"
+"""Run tag: the update a state saved before the online families resumed at; their
+sums start from zero there (the episodes running then are partly counted)."""
 TAG_FAIL_COUNT = "fail/count"
 """Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
@@ -639,6 +648,23 @@ def _checkpoint(
     _checkpoint_artifacts(trainer, state, out, update)
 
 
+def _resume(out: Path, fresh: dict[str, Any], spu: int) -> dict[str, Any]:
+    """The saved state of ``out``, else ``fresh``.
+
+    A state saved before the online families gets fresh accumulators that count
+    env steps from its update on, and the run is tagged `TAG_ONLINE_FROM`.
+    """
+    if not (out / STATE_FILE).exists():
+        return fresh
+    saved, filled = load_state_filling(out, fresh, added_paths(fresh))
+    if filled:
+        update = saved["update"]
+        saved = {**saved, "trainer": resume_from(saved["trainer"], update * spu)}
+        mlflow.set_tag(TAG_ONLINE_FROM, str(update))
+        logger.warning("online metrics of %s start at update %d", out, update)
+    return saved
+
+
 def _train(
     trainer: Trainer,
     spec: RunSpec,
@@ -672,7 +698,7 @@ def _train(
         MEMORY_LIMIT_KEY: profile.memory_limit_bytes,
     }
     fresh = state_template(trainer.init(config, jax.random.key(spec.seed)), spec)
-    saved = load_state(out, fresh) if (out / STATE_FILE).exists() else fresh
+    saved = _resume(out, fresh, spu)
     state, update = saved["trainer"], saved["update"]
     log = RunLog(out, spec.env, achievement_names(spec.env))
     rows, episodes = saved["log"]

@@ -5,11 +5,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .episode_metrics import (
+        ADDED_FIELDS,
         CAUSES,
         ONLINE_KEYS,
         ONLINE_LAYOUT,
         EpisodeAcc,
         UpdateSummary,
+        added_paths,
         chunk_series,
         close_update,
         episode_step,
@@ -18,6 +20,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         init_acc,
         metric_keys,
         new_first_unlocks,
+        resume_from,
         score_pct,
         stack_online,
         update_metrics,
@@ -50,6 +53,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .reproduction import Reproduction, band
 
 _EXPORTS: dict[str, str] = {
+    "ADDED_FIELDS": "episode_metrics",
     "ADVANCED_ACHIEVEMENTS": "milestones",
     "ADVANCED_ACTIONS": "milestones",
     "CAUSES": "episode_metrics",
@@ -72,6 +76,7 @@ _EXPORTS: dict[str, str] = {
     "UpdateSummary": "episode_metrics",
     "achievement_names": "milestones",
     "action_names": "milestones",
+    "added_paths": "episode_metrics",
     "band": "reproduction",
     "chunk_series": "episode_metrics",
     "close_update": "episode_metrics",
@@ -83,6 +88,7 @@ _EXPORTS: dict[str, str] = {
     "ladder": "milestones",
     "metric_keys": "episode_metrics",
     "new_first_unlocks": "episode_metrics",
+    "resume_from": "episode_metrics",
     "reward_weights": "milestones",
     "score_pct": "episode_metrics",
     "stack_online": "episode_metrics",
@@ -94,6 +100,7 @@ _EXPORTS: dict[str, str] = {
 submodule do not import it twice."""
 
 __all__ = [
+    "ADDED_FIELDS",
     "ADVANCED_ACHIEVEMENTS",
     "ADVANCED_ACTIONS",
     "CAUSES",
@@ -116,6 +123,7 @@ __all__ = [
     "UpdateSummary",
     "achievement_names",
     "action_names",
+    "added_paths",
     "band",
     "chunk_series",
     "close_update",
@@ -127,6 +135,7 @@ __all__ = [
     "ladder",
     "metric_keys",
     "new_first_unlocks",
+    "resume_from",
     "reward_weights",
     "score_pct",
     "stack_online",

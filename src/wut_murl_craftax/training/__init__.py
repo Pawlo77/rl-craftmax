@@ -10,6 +10,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_index,
         load_params,
         load_state,
+        load_state_filling,
         save_checkpoint,
         save_state,
     )
@@ -197,6 +198,7 @@ _EXPORTS: dict[str, str] = {
     "load_metrics": "records",
     "load_params": "checkpoints",
     "load_state": "checkpoints",
+    "load_state_filling": "checkpoints",
     "low_stats": "skills",
     "make_env": "ppo",
     "make_network": "ppo",
@@ -309,6 +311,7 @@ __all__ = [
     "load_metrics",
     "load_params",
     "load_state",
+    "load_state_filling",
     "low_stats",
     "make_env",
     "make_network",
