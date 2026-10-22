@@ -348,6 +348,7 @@ def test_a_cut_evaluation_of_a_reused_run_keeps_it_finished(
     run = store.runs()[final.name]
     assert run.info.status == "FINISHED"
     assert runner.TAG_EVAL_PENDING not in run.data.tags
+    assert "fail/error" not in run.data.tags  # stale once the evaluation completed
 
 
 def test_a_run_of_another_phase_is_found_not_duplicated(store: Store) -> None:

@@ -240,6 +240,23 @@ def test_status_names(main_store: Node, mlflow_status: str, shown: str) -> None:
     assert phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)[name] == shown
 
 
+def test_status_shows_a_finished_run_with_a_pending_evaluation_apart(
+    main_store: Node,
+) -> None:
+    ppo, pqn, *_ = _names()
+    rid = main_store.add(ppo, "entries")
+    main_store.client.set_tag(rid, "eval/pending", "true")
+    main_store.add(pqn, "entries")
+    status = phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)
+    assert (status[ppo], status[pqn]) == ("eval-pending", "finished")
+    cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.store", "status"]
+    cmd += ["--phase", str(ENTRIES), "--methods-dir", str(METHODS)]
+    cmd += ["--tracking-uri", main_store.uri]
+    out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, check=True)
+    last = out.stdout.strip().splitlines()[-1]
+    assert last == "pending 3, running 0, eval-pending 1, finished 1, killed 0"
+
+
 def test_status_prefers_a_finished_run_among_same_named_ones(
     main_store: Node, node: Node
 ) -> None:

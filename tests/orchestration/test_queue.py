@@ -761,6 +761,7 @@ def test_coarse_results_are_seed_means_of_complete_configs(
         {"phases": "final-1m"},  # not a tune-coarse run
         {"score": float("nan")},  # no episodes
         {"extra_tags": {"abort/bug": "true"}},
+        {"extra_tags": {"eval/pending": "true"}},  # its final evaluation is missing
         None,  # not started
     ],
 )

@@ -55,6 +55,9 @@ TAG_PHASES = "phases"
 """Run tag: comma-joined names of the phases that list the run."""
 TAG_ABORT_BUG = "abort/bug"
 """Run tag: ``true`` after a second abort; the queue skips such a run."""
+TAG_EVAL_PENDING = "eval/pending"
+"""Run tag: ``true`` while a reused FINISHED run's evaluation is incomplete (the runner
+keeps it FINISHED through a cut evaluation); results readers count it not complete."""
 TAG_BEST = "best"
 """Run tag set by `mark_tuned`: ``true`` on the tuned config's tuning runs."""
 CONFIG_ARTIFACT = "config.json"
@@ -853,7 +856,8 @@ def coarse_results(
     """Mean final score per config hash over its ``tune-coarse`` seeds, complete only.
 
     A config is complete when every run the phase file lists for it is FINISHED in
-    the store with a finite ``final_score`` and is not marked ``abort/bug``.
+    the store with a finite ``final_score`` and is not marked ``abort/bug`` or
+    ``eval/pending``.
 
     Raises:
         ValueError: Naming each incomplete config's missing runs, unless
@@ -878,6 +882,7 @@ def coarse_results(
         if (
             COARSE_PHASE in tags[TAG_PHASES].split(",")
             and tags.get(TAG_ABORT_BUG) != "true"
+            and tags.get(TAG_EVAL_PENDING) != "true"
             and math.isfinite(score)
         ):
             done[run.info.run_name] = score

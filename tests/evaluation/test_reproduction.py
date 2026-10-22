@@ -87,12 +87,14 @@ class Store:
         status: str = "FINISHED",
         budget: str = "1m",
         method: str = "toy",
+        extra_tags: dict[str, str] | None = None,
     ) -> str:
         tags = {
             queue.TAG_METHOD: method,
             queue.TAG_CONFIG_HASH: config_hash(cfg),
             queue.TAG_PHASES: phases,
             queue.TAG_BUDGET: budget,
+            **(extra_tags or {}),
         }
         rid = self.client.create_run(self.exp, tags=tags).info.run_id
         self.client.log_metric(rid, queue.SCORE_METRIC, score)
@@ -217,6 +219,18 @@ def test_main_refuses_while_the_phase_has_unfinished_published_runs(
     assert exit_info.value.code == 2
     assert "refused: 2 of 3" in capsys.readouterr().err
     assert not any(k.startswith("repro/") for k in store.tags(ids[0]))
+
+
+def test_check_refuses_runs_whose_evaluation_is_pending(
+    store: Store, reference: Path, phases: Path
+) -> None:
+    """A FINISHED run tagged eval/pending (a cut evaluation) is not complete yet."""
+    for score in seeds(2, 2.2, 0.05):
+        store.add(published(), score)
+    pending = store.add(published(), 2.2, extra_tags={queue.TAG_EVAL_PENDING: "true"})
+    with pytest.raises(ValueError, match=r"2 of 3.*1 with evaluation pending"):
+        run_check(store, reference, phases)
+    assert not any(k.startswith("repro/") for k in store.tags(pending))
 
 
 def test_check_needs_at_least_two_finished_runs(

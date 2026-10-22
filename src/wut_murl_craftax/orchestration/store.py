@@ -23,6 +23,7 @@ from ..config import load_experiment_config
 from .queue import (
     EXPERIMENT_CONFIG,
     METHODS_DIR,
+    TAG_EVAL_PENDING,
     TAG_METHOD,
     TAG_PHASES,
     fine_registries,
@@ -30,8 +31,9 @@ from .queue import (
 )
 from .tracking import _artifact_location, _resolve_tracking_uri, artifact_path
 
-STATES = ("pending", "running", "finished", "killed", "failed")
-"""Run states `phase_status` reports, in print order."""
+STATES = ("pending", "running", "eval-pending", "finished", "killed", "failed")
+"""Run states `phase_status` reports, in print order; ``eval-pending`` is FINISHED with
+tag ``eval/pending`` (its evaluation was cut short, results readers skip it)."""
 _BATCH = 1000
 """Most metrics MLflow accepts in one ``log_batch`` call."""
 
@@ -76,6 +78,13 @@ def _phases(run: Any | None) -> list[str]:
     return [p for p in tag.split(",") if p]
 
 
+def _state(run: Any) -> str:
+    """A run's `STATES` name."""
+    if run.data.tags.get(TAG_EVAL_PENDING) == "true" and run.info.status == "FINISHED":
+        return "eval-pending"
+    return str(run.info.status).lower()
+
+
 def phase_status(
     phase: Path,
     tracking_uri: str | None = None,
@@ -103,12 +112,11 @@ def phase_status(
     client = mlflow.MlflowClient(tracking_uri=_main_uri(tracking_uri))
     found = _by_name([r for r in _active_runs(client) if phase.stem in _phases(r)])
     states = {
-        s.name: found[s.name].info.status.lower() if s.name in found else "pending"
-        for s in specs
+        s.name: _state(found[s.name]) if s.name in found else "pending" for s in specs
     }
     for name in sorted(found):
         if found[name].data.tags.get(TAG_METHOD) in fine and name not in states:
-            states[name] = found[name].info.status.lower()
+            states[name] = _state(found[name])
     return states
 
 
@@ -231,7 +239,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     for name, state in states.items():
         print(f"{state:<8} {name}")
     totals = {s: list(states.values()).count(s) for s in STATES}
-    shown = [f"{s} {n}" for s, n in totals.items() if n or s != "failed"]
+    shown = [
+        f"{s} {n}"
+        for s, n in totals.items()
+        if n or s not in ("failed", "eval-pending")
+    ]
     print(", ".join(shown))
 
 

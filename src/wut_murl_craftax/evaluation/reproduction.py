@@ -6,8 +6,9 @@ The CLI reads the final scores of the method's runs of the published config in a
 (its base resolved at the budget: 1m is base, 1b is base + ``budgets.1b``; matched by
 config hash) from MLflow, prints mean, SE, h and pass/fail, and tags each of those
 runs ``repro/*``. Exit status 1 on a fail, 2 when it refuses: fewer finished runs
-than the phase file lists. Usage: ``python -m wut_murl_craftax.evaluation.reproduction
---method ppo --budget 1m --phase tune-coarse``
+than the phase file lists (a run tagged ``eval/pending`` is not finished). Usage:
+``python -m wut_murl_craftax.evaluation.reproduction --method ppo --budget 1m --phase
+tune-coarse``
 """
 
 import argparse
@@ -27,6 +28,7 @@ from ..orchestration.queue import (
     SCORE_METRIC,
     TAG_BUDGET,
     TAG_CONFIG_HASH,
+    TAG_EVAL_PENDING,
     TAG_METHOD,
     TAG_PHASES,
     _client,
@@ -142,7 +144,7 @@ def check(
         raise ValueError(msg)
     hashes = published_config_hashes(method, budget, methods_dir)
     client = _client(tracking_uri)
-    runs = [
+    finished = [
         r
         for r in _runs(client, "attributes.status = 'FINISHED'")
         if hashes.get(r.data.tags.get(TAG_METHOD)) == r.data.tags.get(TAG_CONFIG_HASH)
@@ -150,12 +152,16 @@ def check(
         and phase in r.data.tags.get(TAG_PHASES, "").split(",")
         and SCORE_METRIC in r.data.metrics
     ]
+    # a cut evaluation (tag eval/pending) still lacks its final-checkpoint files
+    runs = [r for r in finished if r.data.tags.get(TAG_EVAL_PENDING) != "true"]
     scores = [r.data.metrics[SCORE_METRIC] for r in runs]
     expected = _expected_runs(method, budget, phase, hashes, methods_dir, phases_dir)
     if len(scores) < max(expected, 2):
+        pending = len(finished) - len(runs)
         msg = (
             f"{len(scores)} of {expected} {method} runs of the published config at "
-            f"{budget} are finished in {phase} (at least 2 needed); finish them first"
+            f"{budget} are finished in {phase}, {pending} with evaluation pending "
+            "(at least 2 needed); finish them first"
         )
         raise ValueError(msg)
     half_width, passed = band(scores, entry["score"], entry["s_pub"])

@@ -82,6 +82,7 @@ from .queue import (
     SCORE_METRIC,
     TAG_BUDGET,
     TAG_CONFIG_HASH,
+    TAG_EVAL_PENDING,
     TAG_METHOD,
     TAG_PHASES,
     TAG_SEED,
@@ -126,9 +127,6 @@ TAG_CODE_CHANGED = "code/changed"
 TAG_ONLINE_FROM = "metrics/online_from_update"
 """Run tag: the update a state saved before the online families resumed at; their
 sums start from zero there (the episodes running then are partly counted)."""
-TAG_EVAL_PENDING = "eval/pending"
-"""Run tag: ``true`` while a reused FINISHED run's evaluation is incomplete; a signal,
-error or crash in it keeps the run FINISHED, and the next call only evaluates."""
 TAG_FAIL_COUNT = "fail/count"
 """Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
@@ -877,12 +875,16 @@ def _close(tracker: Any, status: str, trained: bool) -> None:
     """Close the active run ``status``; one that did not train this call stays FINISHED.
 
     Phase 0 review I6: a cut evaluation of a reused FINISHED run must not send it
-    back through `_train`; it keeps `TAG_EVAL_PENDING`, which a FINISHED close clears.
+    back through `_train`; it keeps `TAG_EVAL_PENDING`, which a FINISHED close clears
+    with the error of the cut call (`TAG_FAIL_ERROR`; `TAG_FAIL_COUNT` stays).
     """
     if status == "FINISHED":
         run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]  # the runner's run
-        if TAG_EVAL_PENDING in mlflow.get_run(run_id).data.tags:
-            mlflow.delete_tag(TAG_EVAL_PENDING)
+        tags = mlflow.get_run(run_id).data.tags
+        if TAG_EVAL_PENDING in tags:
+            for key in (TAG_EVAL_PENDING, TAG_FAIL_ERROR):
+                if key in tags:
+                    mlflow.delete_tag(key)
     elif not trained:
         status = "FINISHED"
     tracker.close(status)
