@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
+from _methods import copy_methods
 
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
@@ -58,15 +59,7 @@ CONFIG_A = "b0.1-recipe-constant"
 @pytest.fixture(scope="module")
 def methods_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Copies of configs/methods with the two controls' ``tuned`` filled in."""
-    out = tmp_path_factory.mktemp("methods")
-    for path in (REPO / "configs" / "methods").glob("*.yaml"):
-        text = path.read_text(encoding="utf-8")
-        if path.stem in TINY:
-            assert text.count("\ntuned: null\n") == 1
-            tuned = yaml.safe_dump({"tuned": TINY[path.stem]}, sort_keys=False)
-            text = text.replace("\ntuned: null\n", "\n" + tuned)
-        (out / path.name).write_text(text, encoding="utf-8")
-    return out
+    return copy_methods(tmp_path_factory.mktemp("methods"), TINY)
 
 
 def _config(methods_dir: Path, variant: str, ref: str = CONFIG_A, **over: Any) -> Any:

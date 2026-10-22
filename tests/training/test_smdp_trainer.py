@@ -17,6 +17,7 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
+from _methods import copy_methods
 
 from wut_murl_craftax.orchestration.abort import (
     TAG_ABORT_GUARD,
@@ -91,14 +92,7 @@ TOP_KNOBS = {
 @pytest.fixture(scope="module")
 def methods_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Copies of configs/methods with the PQN-RNN control's ``tuned`` filled in."""
-    out = tmp_path_factory.mktemp("methods")
-    for path in (REPO / "configs" / "methods").glob("*.yaml"):
-        text = path.read_text(encoding="utf-8")
-        if path.stem == "pqn-rnn":
-            tuned = yaml.safe_dump({"tuned": TINY}, sort_keys=False)
-            text = text.replace("\ntuned: null\n", "\n" + tuned)
-        (out / path.name).write_text(text, encoding="utf-8")
-    return out
+    return copy_methods(tmp_path_factory.mktemp("methods"), {"pqn-rnn": TINY})
 
 
 def _config(methods_dir: Path, ref: str = "base", **over: Any) -> dict[str, Any]:
