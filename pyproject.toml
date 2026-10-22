@@ -70,9 +70,11 @@ build-backend = "uv_build"
 metal = [
   "metaljax==0.11.9; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# NVIDIA GPU backend for the Linux clusters, matched to jax 0.11.2.
+# NVIDIA GPU backend for the Linux clusters, matched to jax 0.11.2. nvidia-ml-py provides
+# `pynvml`, which MLflow's system metrics need to log GPU utilisation and memory per run.
 cuda = [
   "jax[cuda12]==0.11.2; sys_platform == 'linux'",
+  "nvidia-ml-py>=12.535; sys_platform == 'linux'",
 ]
 dev = [
   "bandit>=1.9.4",

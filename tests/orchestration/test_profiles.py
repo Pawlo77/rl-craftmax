@@ -1,11 +1,14 @@
 """Tests for the machine profiles, the platform choice and the make targets."""
 
+import importlib.util
+import inspect
 import os
 import platform
 import re
 import shlex
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,6 +67,24 @@ def test_cuda_profile_runs_everything_on_one_device() -> None:
     assert (cuda.host_devices, cuda.device_roles) == (1, "gpu")
     assert cuda.memory_limit_bytes > 0
     assert cuda.checkpoint_every > 0
+
+
+def test_the_cuda_group_gives_mlflow_gpu_metrics_on_linux_only() -> None:
+    """MLflow's GPU monitor imports ``pynvml`` (nvidia-ml-py), else logs no GPU."""
+    from mlflow.system_metrics.metrics import gpu_monitor
+
+    assert "import pynvml" in inspect.getsource(gpu_monitor)
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text())
+    linux = "sys_platform == 'linux'"
+    wanted = [r for r in pyproject["dependency-groups"]["cuda"] if "nvidia-ml-py" in r]
+    assert len(wanted) == 1
+    assert linux in wanted[0]
+    lock = tomllib.loads((REPO / "uv.lock").read_text())
+    (project,) = (p for p in lock["package"] if p["name"] == "wut-murl-craftax")
+    pin = {"name": "nvidia-ml-py", "marker": linux}
+    assert pin in project["dev-dependencies"]["cuda"]
+    if sys.platform != "linux":  # the laptop never gets it
+        assert importlib.util.find_spec("pynvml") is None
 
 
 def test_profiles_hold_runtime_settings_only() -> None:
