@@ -5,7 +5,7 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, control, q-learning, recurrent]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 aliases: [PQN-RNN control, Parallelised Q-Network]
 related-code: []
 ---
@@ -111,3 +111,17 @@ Metal stays below 1e-5, so no looser bound is needed.
 - Exploration after epsilon reaches 0.005: the PQN paper calls epsilon-greedy "too simple" for hard exploration; compare floors reached with PPO-RNN ([[Craftax floors and progression]]).
 - Q-value growth beyond the maximum return (226 plus a small health term): bootstrapping without a target network is the classic instability ([[09b Control with approximation, bootstrapping]], [[Craftax scoring and evaluation]]).
 - At 1M, BatchRenorm statistics are still warming up for a quarter of training.
+
+## Obstacles to watch
+
+Handed to [[2026-10-20-craftax-training-analysis]]. A non-finite loss aborts a run (one retry from `state/`, then a bug); a mean max-Q above 300 ends it for good (`abort/guard`: no episode returns more than the 226 achievement points plus a small health term, so the Q-values have diverged, and a retry repeats it); the flags below are tags `flag/<name>` set from the method's `abort:` block and never stop a run.
+
+| Obstacle | Where it shows | Signal |
+|---|---|---|
+| Exploration failure | once epsilon reaches its floor of 0.005 the policy is almost greedy, and epsilon-greedy is "too simple" for hard exploration (PQN paper); compare the dungeon-entry rate with PPO-RNN ([[Craftax floors and progression]]) | `pqn/epsilon`, `pqn/greedy_share`, `train/funnel/floor_*`, `train/ach/*` |
+| Value failure | bootstrapping with no target network: Q-values grow past any possible return ([[09b Control with approximation, bootstrapping]], [[Craftax scoring and evaluation]]) | `pqn/q_max_mean` > 300 (abort); `pqn/td_loss` above 10 x its running median for 3 updates (`flag/td_spike`); also `pqn/q_taken_mean`, `pqn/target_mean` |
+| Q-values that do not separate actions | the greedy action is arbitrary, so the policy cannot improve | `pqn/action_gap` < 1e-3 for 3 updates once epsilon is at its floor (`flag/action_gap_flat`) |
+| Numerical failure | a non-finite TD loss, or input statistics that collapse: the input BatchRenorm's running variance of a feature near 0 (a feature that never varies) and a warm-up that covers a quarter of a 1M run | non-finite `pqn/td_loss` (abort); `pqn/bn_var_min` < 1e-6 (`flag/bn_var_low`); `pqn/bn_warm`; `pqn/grad_norm` |
+| Plateau at 1M | score flat after the basic achievements; no published 1M number to compare with | `train/score_pct`, `train/ach/*` |
+| Skill forgetting | achievements unlocked early stop being repeated | `train/ach/*` over training |
+| Survival failure | episodes end early from low food, drink or energy; epsilon-greedy episodes are the training episodes behind the score | `train/length`, `train/death/*` |

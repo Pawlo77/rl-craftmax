@@ -11,6 +11,7 @@ good (tag ``abort/guard``): a retry repeats them. Flags (``flag/<name>`` tags) c
 the score (no early stopping).
 """
 
+import bisect
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
@@ -38,6 +39,8 @@ FLAG_PREFIX = "flag/"
 """Prefix of the flag tags; the value is the update at which the rule first held."""
 MAX_ABORTS = 2
 """Aborts after which a run counts as a bug: the first is retried once."""
+MEDIAN_WARMUP = 5
+"""Earlier updates a metric needs before an ``above_median`` rule compares to them."""
 
 
 def first_nonfinite(
@@ -92,7 +95,8 @@ def unreported(
     limits: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
     """The ``finite``, limit and flag-rule metrics not among the ``reported`` names."""
-    named = {*finite, *(r["metric"] for r in (*rules, *limits))}
+    gates = (r["when"]["metric"] for r in rules if "when" in r)
+    named = {*finite, *(r["metric"] for r in (*rules, *limits)), *gates}
     return sorted(named - set(reported))
 
 
@@ -104,6 +108,49 @@ def _first_run(cond: np.ndarray, length: int) -> int | None:
     return int(np.argmax(full)) + length if full.any() else None
 
 
+def _running_median(values: np.ndarray) -> np.ndarray:
+    """Median of the earlier updates' values, NaN until `MEDIAN_WARMUP` are known.
+
+    NaN values are left out of the median, and the current update never counts.
+    """
+    seen: list[float] = []
+    out = np.full(len(values), np.nan)
+    for i, value in enumerate(values):
+        if len(seen) >= MEDIAN_WARMUP:
+            out[i] = (seen[len(seen) // 2] + seen[(len(seen) - 1) // 2]) / 2
+        if not np.isnan(value):
+            bisect.insort(seen, float(value))
+    return out
+
+
+def _rule_holds(
+    rule: Mapping[str, Any],
+    values: np.ndarray,
+    series: Mapping[str, Sequence[float]],
+    n_updates: int,
+) -> np.ndarray | None:
+    """Per update: whether the rule's condition holds; None if a gate is unreported."""
+    with np.errstate(invalid="ignore"):
+        if "above" in rule:
+            cond = values > rule["above"]
+        elif "below" in rule:
+            cond = values < rule["below"]
+        else:
+            cond = values > rule["above_median"] * _running_median(values)
+        if "when" in rule:
+            gate = rule["when"]
+            other = np.asarray(series.get(gate["metric"], ()), float)
+            if len(other) != len(values):
+                return None
+            cond &= other > gate["above"] if "above" in gate else other < gate["below"]
+    share = np.arange(1, len(values) + 1) / n_updates
+    if "before" in rule:
+        cond &= share <= rule["before"]
+    if "after" in rule:
+        cond &= share >= rule["after"]
+    return np.asarray(cond)
+
+
 def flag_hits(
     rules: Sequence[Mapping[str, Any]],
     series: Mapping[str, Sequence[float]],
@@ -111,25 +158,24 @@ def flag_hits(
 ) -> dict[str, int]:
     """Flag name -> the update (1-based) at which its rule first held.
 
-    A rule is ``{name, metric, above | below, updates, span, before, after}``: the
-    metric is above (below) the threshold for ``updates`` updates in a row (default 1),
-    or for ``span`` of the budget in a row (a share of ``n_updates``; the longer of the
-    two counts); ``before`` and ``after`` are budget fractions, and only updates at or
-    before (at or after) that share of the ``n_updates`` count. NaN never satisfies a
-    threshold; a metric the trainer does not report is skipped.
+    A rule is ``{name, metric, above | below | above_median, updates, span, before,
+    after, when}``: the metric is above (below) the threshold, or above
+    ``above_median`` times the median of its earlier updates (once `MEDIAN_WARMUP`
+    are known), for ``updates`` updates in a row (default 1), or for ``span`` of the
+    budget in a row (a share of ``n_updates``; the longer of the two counts);
+    ``before`` and ``after`` are budget fractions, and only updates at or before (at
+    or after) that share of the ``n_updates`` count; ``when`` is ``{metric, above |
+    below}``, and only updates where that other metric is above (below) count. NaN
+    never satisfies a threshold; a metric the trainer does not report, in the rule or
+    its ``when``, skips the rule.
     """
     hits = {}
     for rule in rules:
         values = np.asarray(series.get(rule["metric"], ()), float)
         if not len(values):
             continue
-        with np.errstate(invalid="ignore"):
-            cond = values > rule["above"] if "above" in rule else values < rule["below"]
-        share = np.arange(1, len(values) + 1) / n_updates
-        if "before" in rule:
-            cond &= share <= rule["before"]
-        if "after" in rule:
-            cond &= share >= rule["after"]
+        if (cond := _rule_holds(rule, values, series, n_updates)) is None:
+            continue
         span = math.ceil(rule.get("span", 0) * n_updates - 1e-9)  # 0.05 * 20 is 1
         length = max(rule.get("updates", 1), span)
         if (update := _first_run(cond, length)) is not None:

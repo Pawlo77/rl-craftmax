@@ -287,6 +287,14 @@ def test_yaml_floats_without_a_dot_are_floats() -> None:
         {"abort": {"flags": [{"metric": "m", "above": 1}]}},
         {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1}] * 2}},
         {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "span": 0}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above_median": 0}]}},
+        {
+            "abort": {
+                "flags": [{"name": "a", "metric": "m", "above_median": 2, "above": 1}]
+            }
+        },
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "when": 3}]}},
+        {"abort": {"flags": [{"name": "a", "metric": "m", "above": 1, "when": {}}]}},
         {"abort": {"limits": {"metric": "m", "max": 1}}},
         {"abort": {"limits": [{"metric": "m"}]}},
         {"abort": {"limits": [{"metric": "m", "max": "1"}]}},

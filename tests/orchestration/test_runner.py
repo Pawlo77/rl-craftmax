@@ -961,6 +961,97 @@ def test_ppo_rnn_flags_tag_saturation_kl_and_early_entropy_collapse(
     }
 
 
+PQN_COLUMNS = ("value_loss", "grad_norm")
+"""The loss columns PQN-RNN fills; the others are NaN."""
+
+
+def pqn_report(**over: float) -> dict[str, float]:
+    """A healthy PQN-RNN update's metrics, with ``over`` replacing some of them."""
+    ok = {
+        "pqn/td_loss": 1.0,
+        "pqn/q_max_mean": 5.0,
+        "pqn/action_gap": 0.5,
+        "pqn/epsilon": 0.005,
+        "pqn/bn_var_min": 0.5,
+    }
+    return ok | over
+
+
+def pqn_trainer(extra: Callable[[int], dict[str, float]]) -> FakeTrainer:
+    return FakeTrainer(
+        steps_per_update=TEN_UPDATES, extra=extra, loss_columns=PQN_COLUMNS
+    )
+
+
+def test_q_values_above_300_end_a_pqn_run_for_good(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("pqn-rnn", spec)
+
+    def blown(u: int) -> dict[str, float]:
+        return pqn_report(**{"pqn/q_max_mean": 400.0 if u == 5 else 300.0})
+
+    first = pqn_trainer(blown)
+    store.run([spec], first)
+    assert first.updates == [1, 2, 3, 4, 5]  # 300 itself is allowed
+    assert store.runs()[spec.name].info.status == "FAILED"
+    assert tags_of(store, spec.name, "abort/") == {
+        "abort/guard": "pqn/q_max_mean",
+        "abort/metric": "pqn/q_max_mean",
+        "abort/update": "5",
+    }
+    again = pqn_trainer(blown)
+    store.run([spec], again)
+    assert again.updates == []  # a divergence repeats: no retry
+
+
+def test_a_nan_td_loss_is_retried_once_before_it_marks_a_pqn_bug(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("pqn-rnn", spec)
+
+    def nan(u: int) -> dict[str, float]:
+        return pqn_report(**{"pqn/td_loss": math.nan if u == 2 else 1.0})
+
+    store.run([spec], pqn_trainer(nan))
+    tags = tags_of(store, spec.name, "abort/")
+    assert tags["abort/count"] == "1"
+    assert "abort/guard" not in tags
+    store.run([spec], pqn_trainer(nan))
+    assert tags_of(store, spec.name, "abort/")["abort/bug"] == "true"
+
+
+def test_pqn_flags_tag_a_td_spike_a_flat_gap_at_the_floor_and_a_dead_input(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("pqn-rnn", spec)
+
+    def sick(u: int) -> dict[str, float]:
+        return pqn_report(**{
+            "pqn/td_loss": 20.0 if u >= 7 else 1.0,  # 10 x the median for 3 updates
+            "pqn/action_gap": 0.0,  # flat from the start, but epsilon is high
+            "pqn/epsilon": 1.0 if u <= 4 else 0.005,
+            "pqn/bn_var_min": 1e-7 if u >= 9 else 0.5,
+        })
+
+    store.run([spec], pqn_trainer(sick))
+    assert store.runs()[spec.name].info.status == "FINISHED"  # flags never stop a run
+    assert tags_of(store, spec.name, "flag/") == {
+        "flag/td_spike": "9",
+        "flag/action_gap_flat": "7",  # epsilon at its floor from update 5: 3 in a row
+        "flag/bn_var_low": "9",
+    }
+
+
+def test_a_healthy_pqn_run_raises_no_flag(store: Store) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("pqn-rnn", spec)
+    trainer = pqn_trainer(lambda u: pqn_report())
+    store.run([spec], trainer)
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert tags_of(store, spec.name, "flag/") == {}
+    assert tags_of(store, spec.name, "warn/") == {}  # the trainer reports every metric
+
+
 def test_method_metrics_are_logged_at_their_env_step_and_survive_a_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -129,6 +129,25 @@ def test_tuned_is_null_and_the_abort_block_is_valid() -> None:
     assert pqn().abort["finite"] == ["pqn/td_loss"]
 
 
+def test_abort_rules_bound_q_and_flag_td_spikes_flat_gaps_and_dead_inputs() -> None:
+    abort = pqn().abort
+    assert abort is not None
+    assert abort["limits"] == [{"metric": "pqn/q_max_mean", "max": 300}]
+    assert abort["flags"] == [
+        {"name": "td_spike", "metric": "pqn/td_loss", "above_median": 10, "updates": 3},
+        {
+            "name": "action_gap_flat",
+            "metric": "pqn/action_gap",
+            "below": 1.0e-3,
+            "updates": 3,
+            "when": {"metric": "pqn/epsilon", "below": 0.0051},
+        },
+        {"name": "bn_var_low", "metric": "pqn/bn_var_min", "below": 1.0e-6},
+    ]
+    assert "permanent" not in abort  # a NaN is retried once; only the limit is final
+    assert abort["limits"][0]["max"] > 226  # above every episode return
+
+
 def test_smoke_runs_base_and_lambda_0_on_classic_with_one_seed() -> None:
     specs = expand_phase(PHASES / "smoke.yaml", method="pqn-rnn", methods_dir=METHODS)
     assert [(s.config_slug, s.seed, s.budget) for s in specs] == [

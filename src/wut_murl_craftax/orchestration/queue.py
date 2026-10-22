@@ -69,7 +69,8 @@ _METHOD_KEYS = {"base", "budgets", "grid", "abort", "tuned"}
 _RESERVED_NAMES = {"base", "tuned", "coarse", "fine"}
 _KNOB_KEYS = {"key", "mul", "add", "top", "always", "zero", "clip", "integer"}
 _KNOB_AXES = ("mul", "add", "top")
-_FLAG_KEYS = {"name", "metric", "above", "below", "updates", "span", "before", "after"}
+_FLAG_KEYS = {"name", "metric", "above", "below", "above_median", "updates", "span"}
+_FLAG_KEYS |= {"before", "after", "when"}
 _LIMIT_KEYS = {"metric", "min", "max"}
 _BUDGET_UNITS = {"k": 1e3, "m": 1e6, "b": 1e9}
 _BUDGET_LABEL = re.compile(r"(\d+(?:\.\d+)?)([kmb])")
@@ -272,15 +273,26 @@ def _check_flag(flag: object, where: str) -> str:
         _fail(f"{where}: `name` is a lower-case word (tag flag/<name>), got {name!r}")
     if not isinstance(flag.get("metric"), str):
         _fail(f"{where} {name}: `metric` is a metric name")
-    limits = [k for k in ("above", "below") if k in flag]
+    limits = [k for k in ("above", "below", "above_median") if k in flag]
     if len(limits) != 1 or not _is_number(flag[limits[0]]):
-        _fail(f"{where} {name}: exactly one numeric `above` or `below`")
+        _fail(f"{where} {name}: exactly one numeric `above`, `below` or `above_median`")
+    if "above_median" in flag and flag["above_median"] <= 0:
+        _fail(f"{where} {name}: `above_median` is a factor > 0")
     updates = flag.get("updates", 1)
     if not isinstance(updates, int) or isinstance(updates, bool) or updates < 1:
         _fail(f"{where} {name}: `updates` is an int >= 1")
     for key in ("span", "before", "after"):
         if key in flag and not (_is_number(flag[key]) and 0 < flag[key] <= 1):
             _fail(f"{where} {name}: `{key}` is a budget share in (0, 1]")
+    if "when" in flag:
+        gate = _check_keys(
+            flag["when"], {"metric", "above", "below"}, f"{where} {name}"
+        )
+        bounds = [k for k in ("above", "below") if k in gate]
+        if not isinstance(gate.get("metric"), str) or len(bounds) != 1:
+            _fail(f"{where} {name}: `when` is a metric with one `above` or `below`")
+        if not _is_number(gate[bounds[0]]):
+            _fail(f"{where} {name}: `when` bound must be a number")
     return name
 
 

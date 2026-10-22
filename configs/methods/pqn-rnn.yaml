@@ -55,10 +55,22 @@ grid:
 
 # Runner rules (orchestration/abort.py). A non-finite loss column (the trainer reports
 # the TD loss as `value_loss` and `grad_norm`; both are checked) or a metric in `finite`
-# aborts the run. `pqn/td_loss` is the name the PQN-RNN plan's Task 9 makes the trainer
-# emit; until then it adds nothing. Flags come with Task 10.
+# aborts the run (one retry from state/, then a bug). `limits` end a run for good (tag
+# abort/guard): no Craftax episode returns more than the 226 achievement points plus a
+# small net health term, so a mean max-Q above 300 is a divergence, and a retry repeats
+# it. `flags` only tag a run: td_spike is a TD loss above 10 x the median of its earlier
+# updates for 3 updates in a row; action_gap_flat is a mean gap between the best and the
+# second-best Q below 1e-3 for 3 updates once epsilon is at its floor (eps_finish 0.005,
+# with a margin); bn_var_low is the input BatchRenorm's smallest running variance below
+# 1e-6. No rule reads the score.
 abort:
   finite: [pqn/td_loss]
+  limits:
+    - {metric: pqn/q_max_mean, max: 300}
+  flags:
+    - {name: td_spike, metric: pqn/td_loss, above_median: 10, updates: 3}
+    - {name: action_gap_flat, metric: pqn/action_gap, below: 1.0e-3, updates: 3, when: {metric: pqn/epsilon, below: 0.0051}}
+    - {name: bn_var_low, metric: pqn/bn_var_min, below: 1.0e-6}
 
 # written by `--mark-tuned pqn-rnn <hash8>`
 tuned: {}

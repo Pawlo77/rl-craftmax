@@ -88,7 +88,7 @@ def test_a_series_shorter_than_the_run_still_flags_by_its_own_updates(
     assert flag_hits([rule], {"m": [1.0] * length}, 100) == {"x": 1}
 
 
-# --- limits and spans -------------------------------------
+# --- limits, spans, running medians and gates -------------------------------------
 
 RATIO = {"metric": "ppo/ratio_first_mb", "min": 0.999, "max": 1.001}
 
@@ -133,7 +133,38 @@ def test_a_span_never_asks_for_fewer_than_updates() -> None:
     assert flag_hits([rule], {"m": [1.0, 1.0, 0.0, 1.0, 1.0, 1.0]}, 10) == {"x": 6}
 
 
-def test_unreported_names_limit_metrics_too() -> None:
-    rule = {"name": "g", "metric": "a", "below": 1}
+SPIKE = {"name": "td_spike", "metric": "pqn/td_loss", "above_median": 10, "updates": 3}
+
+
+def test_a_spike_is_a_multiple_of_the_median_of_the_earlier_updates() -> None:
+    calm = [1.0, 2.0, 1.0, 2.0, 1.0, 2.0]  # median 1.5: spikes above 15
+    up = {"pqn/td_loss": [*calm, 20.0, 30.0, 25.0, 1.0]}
+    assert flag_hits([SPIKE], up, 20) == {"td_spike": 9}
+    two = {"pqn/td_loss": [*calm, 20.0, 30.0, 1.0, 20.0]}
+    assert flag_hits([SPIKE], two, 20) == {}
+
+
+def test_the_median_waits_for_a_few_earlier_updates_and_skips_nan() -> None:
+    early = {"pqn/td_loss": [1.0, 100.0, 100.0, 100.0]}
+    assert flag_hits([SPIKE], early, 20) == {}  # no median yet
+    holes = [1.0, np.nan, 2.0, 1.0, np.nan, 2.0, 1.0, 50.0, 50.0, 50.0]
+    assert flag_hits([SPIKE], {"pqn/td_loss": holes}, 20) == {"td_spike": 10}
+
+
+def test_a_gate_counts_only_updates_where_the_other_metric_holds() -> None:
+    rule = {"name": "gap", "metric": "pqn/action_gap", "below": 1e-3, "updates": 2}
+    rule |= {"when": {"metric": "pqn/epsilon", "below": 0.01}}
+    gap = [0.0, 0.0, 0.0, 5.0, 0.0, 5.0]
+    eps = [1.0, 0.5, 0.005, 0.005, 0.005, 0.005]
+    assert flag_hits([rule], {"pqn/action_gap": gap, "pqn/epsilon": eps}, 6) == {}
+    gap = [0.0, 0.0, 0.0, 0.0, 5.0, 0.0]
+    assert flag_hits([rule], {"pqn/action_gap": gap, "pqn/epsilon": eps}, 6) == {
+        "gap": 4
+    }
+    assert flag_hits([rule], {"pqn/action_gap": gap}, 6) == {}  # gate unreported
+
+
+def test_unreported_names_limit_and_gate_metrics_too() -> None:
+    rule = {"name": "g", "metric": "a", "below": 1, "when": {"metric": "b", "below": 1}}
     names = unreported([rule], ["c"], ["c"], [{"metric": "d", "max": 1}])
-    assert names == ["a", "d"]
+    assert names == ["a", "b", "d"]

@@ -83,11 +83,15 @@ abort:
   permanent: [count/table_full]
   limits:
     - {metric: ppo/ratio_first_mb, min: 0.999, max: 1.001}
+    - {metric: pqn/q_max_mean, max: 300}
   flags:
     - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
     - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
     - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
     - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
+    - {name: td_spike, metric: pqn/td_loss, above_median: 10, updates: 3}
+    - {name: action_gap_flat, metric: pqn/action_gap, below: 1.0e-3, updates: 3, when: {metric: pqn/epsilon, below: 0.0051}}
+    - {name: bn_var_low, metric: pqn/bn_var_min, below: 1.0e-6}
 
 # written by `--mark-tuned count-bonus <hash8>`, one block per variant
 tuned: null
