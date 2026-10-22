@@ -340,7 +340,8 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
     ``base`` is one config block, or one block per variant (every value a mapping) for a
     slug with several registry entries (``<slug>-<variant>``); a block may say
     ``base_from: <slug>.tuned``. A ``grid.coarse`` entry is ``name`` plus the keys it
-    overrides (``seeds`` is its seed count); ``grid.fine`` is in ``expand_fine``.
+    overrides (``seeds`` is its seed count at the tuning budget, see `expand_phase`);
+    ``grid.fine`` is in ``expand_fine``.
     """
     path = methods_dir / f"{slug}.yaml"
     where = path.name
@@ -500,6 +501,8 @@ def _entry_specs(
     for ref, over, item_seeds, grid_seeds in _entry_items(
         entry, method, registry, kw["fine"]
     ):
+        if raw["budget"] != TUNE_BUDGET:  # review M13: tuning seed counts only
+            grid_seeds = None
         order = (item_seeds, entry.get("seeds"), grid_seeds, raw.get("seeds"))
         seeds = next((s for s in order if s is not None), None)
         cfg = resolve_config(
@@ -548,9 +551,12 @@ def expand_phase(
     configs: <list | coarse | fine>, seeds}``. A ``configs`` item is ``base``, ``tuned``
     (the default list) or a grid entry name, or ``{ref, set: {overrides}, seeds}``;
     ``fine`` takes the configs of ``expand_fine``. Seeds come from the item, the entry,
-    the grid entry, then the phase. ``method`` keeps the entries whose registry name or
-    config slug equals it. Without ``fine``, ``skip_fine`` leaves out the ``configs:
-    fine`` entries (`fine_registries`) instead of failing.
+    the grid entry, then the phase. A grid entry's ``seeds`` is its tuning seed count
+    and counts only at the tuning budget (`TUNE_BUDGET`): a ``final-1b`` phase of
+    ``published-1m`` (10 tuning seeds) runs the phase's ``seeds``. ``method`` keeps
+    the entries whose registry name or config slug equals it. Without ``fine``,
+    ``skip_fine`` leaves out the ``configs: fine`` entries (`fine_registries`) instead
+    of failing.
     """
     keys = {"budget", "eval", "env", "seeds", "runs"}
     raw = _check_keys(_load_yaml(path.read_text(encoding="utf-8")), keys, path.name)

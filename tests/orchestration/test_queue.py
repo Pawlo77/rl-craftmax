@@ -164,6 +164,31 @@ def test_grid_entry_seeds_beat_the_phase_default(tmp_path: Path) -> None:
     assert sorted(counts.values()) == [2, 3]  # published has seeds: 3 in toy.yaml
 
 
+def test_grid_entry_seeds_count_only_at_the_tuning_budget(tmp_path: Path) -> None:
+    """Review M13: a 1b phase of a grid entry runs the phase's seeds, not the grid's."""
+    body = {"budget": "1b", "eval": "final", "seeds": 2, "runs": {"toy": {}}}
+    body["runs"]["toy"] = {"configs": ["published", {"ref": "lam-lo", "seeds": 1}]}
+    seeds = [(s.config["gae_lambda"], s.seed) for s in phase_from(tmp_path, body)]
+    assert seeds == [(0.8, 0), (0.8, 1), (0.7, 0)]  # published has seeds: 3
+
+
+def test_a_final_1b_like_phase_runs_exactly_its_seed_count(tmp_path: Path) -> None:
+    """The published configs carry 10 tuning seeds; final-1b decides on 3."""
+    body = {"budget": "1b", "eval": "log_spaced", "seeds": 3}
+    body["runs"] = {
+        "ppo": {"configs": ["published-1m"]},
+        "ppo-rnn": {"configs": ["published-1m"]},
+    }
+    path = tmp_path / "final-1b.yaml"
+    path.write_text(yaml.safe_dump(body))
+    specs = expand_phase(path, methods_dir=REPO / "configs" / "methods")
+    per_config: dict[str, list[int]] = {}
+    for s in specs:
+        per_config.setdefault(s.config_hash, []).append(s.seed)
+    assert {s.registry_name for s in specs} == {"ppo", "ppo-rnn"}
+    assert list(per_config.values()) == [[0, 1, 2]] * 2
+
+
 @pytest.mark.parametrize(
     ("body", "message"),
     [
