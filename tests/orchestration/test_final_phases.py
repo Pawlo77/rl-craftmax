@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 import yaml
 
+from wut_murl_craftax.orchestration import queue
 from wut_murl_craftax.orchestration.queue import (
     QueueConfigError,
     RunSpec,
@@ -94,6 +95,16 @@ def test_final_1b_is_the_plans_24_runs(methods: Path) -> None:
         ("1b", "Craftax-Symbolic-v1", "log_spaced")
     }
     assert all(seeds == [0, 1, 2] for seeds in _by_config(specs).values())
+
+
+@pytest.mark.parametrize(("phase", "runs"), [("final-1m", 140), ("final-1b", 24)])
+def test_the_dry_run_lists_the_plans_runs(
+    methods: Path, capsys: pytest.CaptureFixture[str], phase: str, runs: int
+) -> None:
+    path = str(PHASES / f"{phase}.yaml")
+    queue.main(["--phase", path, "--methods-dir", str(methods), "--dry-run"])
+    names = capsys.readouterr().out.split()
+    assert len(names) == len(set(names)) == runs
 
 
 @pytest.mark.parametrize(
