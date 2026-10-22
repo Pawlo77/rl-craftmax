@@ -23,6 +23,7 @@ from wut_murl_craftax.orchestration.abort import (
     TAG_ABORT_GUARD,
     TAG_ABORT_METRIC,
     TAG_ABORT_UPDATE,
+    flag_hits,
 )
 from wut_murl_craftax.orchestration.queue import (
     _knob_values,
@@ -389,12 +390,14 @@ def test_the_model_graph_lists_every_visited_pair(entry: Any, tmp_path: Path) ->
 # --- through the runner ---------------------------------------------------------------
 
 
-def _phase(tmp_path: Path, methods_dir: Path, **over: Any) -> list[Any]:
+def _phase(
+    tmp_path: Path, methods_dir: Path, budget: str = "0.128k", **over: Any
+) -> list[Any]:
     """The specs of a 2-update Classic phase training the base on small tables."""
     phase = tmp_path / "dyna.yaml"
     item = {"ref": "base", "set": SMALL | MODEL | over}
     entry = {"config": NAME, "configs": [item], "seeds": 1}
-    raw = {"budget": "0.128k", "eval": "final", "env": CLASSIC, "runs": {NAME: entry}}
+    raw = {"budget": budget, "eval": "final", "env": CLASSIC, "runs": {NAME: entry}}
     phase.write_text(yaml.safe_dump(raw))
     return expand_phase(phase, methods_dir=methods_dir)
 
@@ -429,9 +432,30 @@ def test_the_abort_list_holds_only_the_guards_and_flags_slow_planning() -> None:
         "finite": SMDP_GUARDS + DYNA_GUARDS,
         "permanent": SMDP_GUARDS[1:] + DYNA_GUARDS[1:],
         "flags": [
-            {"name": "plan_slow", "metric": "dyna/plan_wall_share", "above": 0.3}
+            {
+                "name": "plan_slow",
+                "metric": "dyna/plan_wall_share",
+                "above": 0.3,
+                "updates": 3,
+            }
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("shares", "hit"),
+    [
+        ([0.9, 0.1, 0.1, 0.1], None),  # the planner's first-call compile
+        ([0.9, 0.9, 0.1, 0.1], None),  # and a second-update recompile
+        ([0.1, 0.9, 0.9, 0.9], 4),
+    ],
+)
+def test_slow_planning_needs_three_updates_in_a_row(
+    shares: list[float], hit: int | None
+) -> None:
+    rules = load_method(NAME).abort["flags"]  # type: ignore[index]
+    hits = flag_hits(rules, {"dyna/plan_wall_share": shares}, 100)
+    assert hits.get("plan_slow") == hit
 
 
 @pytest.mark.parametrize(
@@ -604,8 +628,8 @@ def test_slow_planning_is_flagged_without_stopping_the_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A planning step of over a second; ``entry`` compiled this config, so no
-    compile time dilutes the share."""
+    """A planning step of over a second in 5 updates: the last 3 are slow even
+    if compiles dilute the share of the first 2."""
     real = dyna_q._run_plan
 
     def slow(planner: Any, *args: Any) -> Any:
@@ -616,7 +640,7 @@ def test_slow_planning_is_flagged_without_stopping_the_run(
         return real(sleepy, *args)
 
     monkeypatch.setattr(dyna_q, "_run_plan", slow)
-    (spec,) = _phase(tmp_path, methods_dir)
+    (spec,) = _phase(tmp_path, methods_dir, budget="0.32k")
     run = run_store.run([spec])[spec.name]
     assert run.info.status == "FINISHED"
     assert "flag/plan_slow" in run.data.tags

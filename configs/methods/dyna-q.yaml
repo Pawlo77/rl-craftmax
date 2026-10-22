@@ -65,13 +65,14 @@ grid:
 # with the full Dyna-Q+ bonus settles near it, healthy optimism; kappa 0 keeps the
 # smdp-skills 300. Every other dyna/* metric is finite. The capacity and divergence guards
 # break again on any retry, so `permanent` ends those runs for good (tag abort/guard). The
-# flag plan_slow tags a run whose planning takes more than 30% of an update's
-# wall time; it never stops the run. The plan's detectors come with the analysis plan.
+# flag plan_slow tags a run whose planning takes more than 30% of an update's wall time
+# for 3 updates in a row (a process's first planning call compiles); it never stops the
+# run. The plan's detectors come with the analysis plan.
 abort:
   finite: [smdp/nan, smdp/table_full, smdp/divergence, dyna/nan, dyna/model_full, dyna/divergence]
   permanent: [smdp/table_full, smdp/divergence, dyna/model_full, dyna/divergence]
   flags:
-    - {name: plan_slow, metric: dyna/plan_wall_share, above: 0.3}
+    - {name: plan_slow, metric: dyna/plan_wall_share, above: 0.3, updates: 3}
 
 # written by `--mark-tuned dyna-q <hash8>`
 tuned: null
