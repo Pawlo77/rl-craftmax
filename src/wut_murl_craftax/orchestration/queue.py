@@ -878,7 +878,7 @@ def coarse_results(
     method: str | None = None,
     tracking_uri: str | None = None,
     methods_dir: Path = METHODS_DIR,
-    phases_dir: Path = PHASES_DIR,
+    phases_dir: Path | None = None,
     allow_partial: bool = False,
 ) -> dict[str, float]:
     """Mean final score per config hash over its ``tune-coarse`` seeds, complete only.
@@ -897,7 +897,7 @@ def coarse_results(
         if method in (None, slug, r)
     ]
     expected: dict[str, list[str]] = {}
-    path = phases_dir / f"{COARSE_PHASE}.yaml"
+    path = (phases_dir or PHASES_DIR) / f"{COARSE_PHASE}.yaml"
     for spec in expand_phase(path, method=slug, methods_dir=methods_dir):
         if spec.registry_name in names:
             expected.setdefault(spec.config_hash, []).append(spec.name)
@@ -1115,6 +1115,13 @@ def phase_specs(
     )
 
 
+def _sqlite_uri(store: str) -> str:
+    """A SQLite file given as a plain path, as an absolute ``sqlite:///`` URI."""
+    if "://" in store or store.startswith("sqlite:"):
+        return store
+    return f"sqlite:///{Path(store).resolve()}"
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Command-line entry point."""
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
@@ -1155,6 +1162,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.seed_from and not args.tracking_uri:
         parser.error("--seed-from needs --tracking-uri (the node store to seed)")
+    # review p2b I2: MLflow reads a plain path as a file-store directory
+    if args.seed_from:
+        args.seed_from = _sqlite_uri(args.seed_from)
+    if (args.tracking_uri or "").endswith(".db"):
+        args.tracking_uri = _sqlite_uri(args.tracking_uri)
     if args.mark_tuned:
         tuned = mark_tuned(
             *args.mark_tuned,

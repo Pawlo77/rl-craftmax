@@ -1025,7 +1025,8 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
         None,
         {"tracking_uri": None, "seed_from": None},
     ]
-    node = {"tracking_uri": "sqlite:///node.db", "seed_from": "main.db"}
+    main_uri = f"sqlite:///{Path('main.db').resolve()}"  # a plain path, made a URI
+    node = {"tracking_uri": "sqlite:///node.db", "seed_from": main_uri}
     assert given == [Path("p.yaml"), 1, 4, 3, node]
 
 
@@ -1040,7 +1041,7 @@ def test_cli_seed_from_needs_a_node_store() -> None:
     [
         ([], None),
         (["--tracking-uri", "sqlite:///node.db"], "sqlite:///node.db"),
-        (["--tracking-uri", "sqlite:///n.db", "--seed-from", "m.db"], "m.db"),
+        (["--tracking-uri", "n.db", "--seed-from", "sqlite:///m.db"], "sqlite:///m.db"),
     ],
 )
 def test_cli_expand_fine_reads_the_coarse_results_of_the_given_store(
@@ -1057,6 +1058,31 @@ def test_cli_expand_fine_reads_the_coarse_results_of_the_given_store(
     argv = ["--methods-dir", str(METHODS), "--expand-fine", "toy", "--dry-run"]
     queue.main([*argv, *flags])
     assert seen == [want]
+
+
+def test_cli_expand_fine_reads_a_seed_store_given_as_a_plain_path(
+    store: Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review p2b I2: ``--seed-from <copy>/mlruns.db`` as run_array.sh passes it."""
+    phases = tmp_path / "phases"
+    phases.mkdir()
+    configs = [{"ref": name, "seeds": 1} for name in STAGE1]
+    body = {"budget": "1m", "eval": "final", "runs": {"toy": {"configs": configs}}}
+    (phases / "tune-coarse.yaml").write_text(yaml.safe_dump(body))
+    monkeypatch.setattr(queue, "PHASES_DIR", phases)
+    for name, score in STAGE1.items():
+        store.add("toy", resolved("toy", name), score)
+    plain = store.tracking_uri.removeprefix("sqlite:///")
+    queue.main([
+        *("--methods-dir", str(METHODS), "--expand-fine", "toy", "--dry-run"),
+        *("--tracking-uri", str(tmp_path / "node.db"), "--seed-from", plain),
+    ])
+    configs_out = [ln for ln in capsys.readouterr().out.splitlines() if ln[0] == "#"]
+    assert len(configs_out) == 4
+    assert not (tmp_path / "node.db").exists()  # a dry run opens no node store
 
 
 def test_cli_mark_tuned_takes_the_tracking_uri(monkeypatch: pytest.MonkeyPatch) -> None:
