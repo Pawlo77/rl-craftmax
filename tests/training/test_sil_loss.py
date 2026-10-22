@@ -274,8 +274,14 @@ def test_updates_log_every_metric_and_slots_never_overfill() -> None:
     names = achievement_names(SMALL["env"])
     extra = {k for k in m if k not in {"losses", "done", "ach", "ret", "length"}}
     method = {k for k in extra if k.startswith("sil/")}
-    # besides its own, only the PPO-RNN control's metrics (they come with every update)
-    assert {k.split("/")[0] for k in extra - method} == {"ppo", "rnn", "reward"}
+    # besides its own, only the PPO-RNN control's and the online series (every update)
+    assert {k.split("/")[0] for k in extra - method} == {
+        "ppo",
+        "rnn",
+        "reward",
+        "first_unlock",
+        "online",
+    }
     assert method == {f"sil/{n}" for n in NAMES} | {
         f"sil/{group}/{a}" for group in ("slot_fill", "sample_share") for a in names
     }
