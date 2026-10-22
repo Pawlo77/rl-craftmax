@@ -299,7 +299,9 @@ def test_a_node_store_of_another_array_size_is_refused_until_merged(
 
     def run(workers: int, **kw: Any) -> FakeTrainer:
         trainer = FakeTrainer()
-        store.run(specs, trainer, num_workers=workers, tracking_uri=node_uri, **kw)
+        store.run(
+            specs, trainer, num_workers=workers, tracking_uri=node_uri, node=True, **kw
+        )
         return trainer
 
     run(2)
@@ -310,6 +312,19 @@ def test_a_node_store_of_another_array_size_is_refused_until_merged(
     run(3)
     with pytest.raises(ValueError, match="array of 3 workers"):
         run(2)  # the 3-worker array ran since the merge
+
+
+def test_the_main_store_takes_any_array_size_even_by_tracking_uri(
+    store: Store,
+) -> None:
+    """Fix round 2: only an array node's store records its size."""
+    specs = store.phase("tune-coarse", ["published", "lr-hi", "lr-lo"])
+    for workers in (2, 3):
+        store.run(
+            specs, FakeTrainer(), num_workers=workers, tracking_uri=store.tracking_uri
+        )
+    assert list(store.tmp.glob("*.array.json")) == []
+    assert len(store.runs()) == 2  # worker 0 of 2, then of 3: lr-lo is worker 1's
 
 
 def test_max_runs_counts_the_runs_it_trains(store: Store) -> None:
@@ -512,15 +527,26 @@ def test_an_unreadable_state_restarts_the_run_instead_of_failing_every_start(
     (spec,) = store.phase("tune-coarse", ["published"])
     with pytest.raises(SystemExit):
         store.run([spec], FakeTrainer((2, signal.SIGINT)))
-    state = store.run_dir(spec.name) / "state" / "state.npz"
+    out = store.run_dir(spec.name)
+    state = out / "state" / "state.npz"
     state.write_bytes(state.read_bytes()[:100])
+    (out / "eval").mkdir()
+    (out / "eval" / "old.npz").write_text("old lineage")
+    (out / "ckpt.unreadable").mkdir()  # an earlier restart's: names stay unique
     trainer = FakeTrainer()
     store.run([spec], trainer)
     assert trainer.updates == [1, 2, 3]  # from scratch: the progress was lost
     run = store.runs()[spec.name]
     assert run.info.status == "FINISHED"
     assert run.data.tags["warn/state_unreadable"] == "true"
-    assert (state.parent / "state.unreadable").is_file()
+    assert (state.parent / "state.npz.unreadable").is_file()
+    index = json.loads((out / "ckpt.unreadable.1" / "index.json").read_text())
+    old = [e["update"] for e in index]
+    assert old == [0, 1, 2]  # the cut lineage, kept apart
+    assert (out / "eval.unreadable" / "old.npz").is_file()
+    assert not (out / "eval" / "old.npz").exists()
+    new = [e["update"] for e in load_index(out)]
+    assert new == checkpoint_schedule(3, runner.N_CHECKPOINTS)
 
 
 def test_a_resume_into_another_state_layout_fails_the_run_clearly(store: Store) -> None:

@@ -1013,6 +1013,7 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
         "sqlite:///node.db",
         "--seed-from",
         "main.db",
+        "--node",
     ])
     (specs, *flags), (_, *given) = calls
     assert [s.name for s in specs] == [
@@ -1023,17 +1024,17 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
         0,
         1,
         None,
-        {"tracking_uri": None, "seed_from": None},
+        {"tracking_uri": None, "seed_from": None, "node": False},
     ]
     main_uri = f"sqlite:///{Path('main.db').resolve()}"  # a plain path, made a URI
-    node = {"tracking_uri": "sqlite:///node.db", "seed_from": main_uri}
+    node = {"tracking_uri": "sqlite:///node.db", "seed_from": main_uri, "node": True}
     assert given == [Path("p.yaml"), 1, 4, 3, node]
 
 
 def test_cli_seed_from_needs_a_node_store() -> None:
     out = run_cli("--phase", "configs/phases/smoke.yaml", "--seed-from", "main.db")
     assert out.returncode != 0
-    assert "--seed-from needs --tracking-uri" in out.stderr
+    assert "--seed-from and --node need --tracking-uri" in out.stderr
 
 
 @pytest.mark.parametrize(

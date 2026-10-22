@@ -45,5 +45,5 @@ fi
 exec uv run python -m wut_murl_craftax.orchestration.queue \
     --phase "configs/phases/$phase.yaml" \
     --profile "configs/profiles/${PROFILE:-cuda}.yaml" \
-    --worker-index "$index" --num-workers "$size" --tracking-uri "$store" \
+    --worker-index "$index" --num-workers "$size" --tracking-uri "$store" --node \
     ${seed[@]+"${seed[@]}"} "$@"

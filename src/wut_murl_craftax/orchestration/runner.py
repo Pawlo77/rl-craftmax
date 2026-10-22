@@ -668,8 +668,21 @@ def _checkpoint(
     _checkpoint_artifacts(trainer, state, out, update)
 
 
+def _move_aside(path: Path) -> None:
+    """Rename ``path`` (if any) to ``<name>.unreadable``, or ``.unreadable.<n>``."""
+    if not path.exists():
+        return
+    target, n = path.with_name(f"{path.name}.unreadable"), 1
+    while target.exists():
+        target, n = path.with_name(f"{path.name}.unreadable.{n}"), n + 1
+    path.replace(target)
+
+
 def _resume(out: Path, fresh: dict[str, Any], spu: int) -> dict[str, Any]:
-    """The saved state of ``out``, else ``fresh`` (also for an unreadable one).
+    """The saved state of ``out``, else ``fresh``.
+
+    An unreadable state (a cut copy) is moved aside with ``ckpt/`` and ``eval/``
+    (`_move_aside`), so the run restarts as one lineage; tag `TAG_STATE_UNREADABLE`.
 
     A state saved before the online families gets fresh accumulators that count
     env steps from its update on, and the run is tagged `TAG_ONLINE_FROM`.
@@ -677,7 +690,9 @@ def _resume(out: Path, fresh: dict[str, Any], spu: int) -> dict[str, Any]:
     if not (out / STATE_FILE).exists():
         return fresh
     if saved_update(out) < 0:  # a cut copy: its progress is lost, start afresh
-        (out / STATE_FILE).replace(out / STATE_FILE.with_suffix(".unreadable"))
+        # its checkpoints and evaluations go too: the restart is a new lineage
+        for path in (out / STATE_FILE, out / "ckpt", out / "eval"):
+            _move_aside(path)
         mlflow.set_tag(TAG_STATE_UNREADABLE, "true")
         return fresh
     saved, filled = load_state_filling(out, fresh, added_paths(fresh))
@@ -1194,17 +1209,19 @@ def _runs_in_children(
 
 
 def _check_node_store(
-    seed_from: str | None, tracking_uri: str | None, num_workers: int
+    seed_from: str | None, tracking_uri: str | None, num_workers: int, node: bool
 ) -> None:
-    """Refuse a seed without a node store, and a node store of another array size.
+    """Refuse a seed or node without a node store, and one of another array size.
 
-    Runs before the seed, so a refused store is not touched (`claim_node_store`).
+    Only an array node's store (``node`` or a seed) records its array size: the
+    main store, even reached by ``tracking_uri``, takes any ``num_workers``. Runs
+    before the seed, so a refused store is not touched (`claim_node_store`).
     """
-    if tracking_uri is None:
-        if seed_from is not None:
-            msg = "seed_from needs tracking_uri: a node store to seed"
-            raise ValueError(msg)
+    if not (node or seed_from is not None):
         return
+    if tracking_uri is None:
+        msg = "an array node (node, seed_from) needs tracking_uri: its own store"
+        raise ValueError(msg)
     claim_node_store(mlflow.get_tracking_uri(), num_workers)
 
 
@@ -1230,6 +1247,7 @@ def main(
     experiment_config: Path = EXPERIMENT_CONFIG,
     tracking_uri: str | None = None,
     seed_from: str | None = None,
+    node: bool = False,
     methods: Mapping[str, Trainer] | None = None,
     evaluate: Evaluate | str | None = None,
     registry: str = REGISTRY,
@@ -1247,6 +1265,8 @@ def main(
     ``seed_from``, a read-only copy of the main store, first merges this worker's runs
     into the node's (`merge_stores`): the node reuses and resumes them as the main
     store would, and the merge back returns their new evaluations (review I5).
+    ``node`` (or a seed) marks this worker as one node of an array: its store records
+    ``num_workers`` and refuses another array size until merged (`claim_node_store`).
 
     A run that fails is closed FAILED with its error tagged (`TAG_FAIL_ERROR`) and
     logged, and the next spec runs; runs marked a bug, or failed for lost
@@ -1255,8 +1275,8 @@ def main(
     Raises:
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
         RuntimeError: At the end, naming every run of this call that failed.
-        ValueError: ``seed_from`` without ``tracking_uri``, or a node store of
-            another array size that is not merged (`claim_node_store`).
+        ValueError: ``seed_from`` or ``node`` without ``tracking_uri``, or a node
+            store of another array size that is not merged (`claim_node_store`).
         BackendError: The profile's mode needs a GPU this machine lacks (at once).
     """
     machine = load_profile(profile)
@@ -1270,7 +1290,7 @@ def main(
             experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
         )
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
-    _check_node_store(seed_from, tracking_uri, num_workers)
+    _check_node_store(seed_from, tracking_uri, num_workers, node)
     run_one = (
         _runs_in_children(machine, experiment, registry, evaluate)
         if methods is None

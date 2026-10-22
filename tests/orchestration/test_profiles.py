@@ -396,6 +396,7 @@ def test_run_array_gives_each_task_a_worker_and_its_own_store(tmp_path: Path) ->
         "4",
         "--tracking-uri",
         f"sqlite:///{store}",
+        "--node",
         "--seed-from",
         "/main/mlruns.db",
         "--method",

@@ -1058,6 +1058,7 @@ def run_specs(specs: Sequence[RunSpec], args: argparse.Namespace) -> None:
         args.max_runs,
         tracking_uri=args.tracking_uri,
         seed_from=args.seed_from,
+        node=args.node,
     )
 
 
@@ -1159,9 +1160,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="read-only copy of the main store: this worker's runs in it are merged "
         "into --tracking-uri's store first, and --expand-fine ranks its coarse runs",
     )
+    parser.add_argument(
+        "--node",
+        action="store_true",
+        help="one node of an array (run_array.sh): its --tracking-uri store records "
+        "--num-workers and refuses another array size until merged",
+    )
     args = parser.parse_args(argv)
-    if args.seed_from and not args.tracking_uri:
-        parser.error("--seed-from needs --tracking-uri (the node store to seed)")
+    if (args.seed_from or args.node) and not args.tracking_uri:
+        parser.error("--seed-from and --node need --tracking-uri (the node's store)")
     # review p2b I2: MLflow reads a plain path as a file-store directory
     if args.seed_from:
         args.seed_from = _sqlite_uri(args.seed_from)
