@@ -868,7 +868,7 @@ def _make_collect(
         h0 = _fresh(carry.per_env.h, carry.per_env.last_done)
         c = carry.replace(shared=carry.shared.replace(variables=variables))
         (c, aux), out = jax.lax.scan(body, (c, aux), None, steps)
-        stats = _rollout_stats(carry.shared, c.shared, out, start)
+        stats = _rollout_stats(carry.shared, c.shared, out, start, cfg.top.q_init)
         hits = (out["episode_done"] & out["ach"][..., diamond]).sum(1)
         found = _diamonds(found, hits, carry.shared.t + envs * (jnp.arange(steps) + 1))
         c = c.replace(shared=c.shared.replace(variables=None))
@@ -889,9 +889,13 @@ def _diamonds(found: jax.Array, hits: jax.Array, at: jax.Array) -> jax.Array:
 
 
 def _rollout_stats(
-    before: Shared, after: Shared, out: dict[str, jax.Array], start: Any
+    before: Shared, after: Shared, out: dict[str, jax.Array], start: Any, q_init: float
 ) -> dict[str, jax.Array]:
-    """Counts and sums of one rollout that the update's metrics are made of."""
+    """Counts and sums of one rollout that the update's metrics are made of.
+
+    ``tried`` scans the whole table (2^20 x 25 entries: about 6 ms on one CPU core,
+    under 1% of a 256 x 16 rollout).
+    """
     done = out["done"]
     lm = out["loss_mask"]
     row = after.q[start[0]]
@@ -910,6 +914,7 @@ def _rollout_stats(
         "q_mean": jnp.sum(out["q_max"] * lm) / jnp.maximum(lm.sum(), 1),
         "episodes": out["episode_done"].sum(),
         "visited": jnp.sum(after.seen[:, 0] >= 0),
+        "tried": jnp.sum(after.q != jnp.float32(q_init), dtype=jnp.int32),
         "q_start": jnp.max(jnp.where(start[1], row, -jnp.inf)),
     }
 
@@ -1065,11 +1070,12 @@ def method_metrics(
     ``success_rate``, ``mean_len`` (steps), ``end/<reason>`` (`END_SHARES`; the
     success share is the success rate) and ``test_agreement`` (of the judged ends);
     a skill without ends has rates 0 and agreement 1, so every value is finite.
-    ``decisions_per_episode`` is the update's skill ends per episode it finished. The
-    guards ``smdp/nan`` (a non-finite table update, loss or parameter),
-    ``smdp/table_full`` (occupancy above `MAX_OCCUPANCY`) and ``smdp/divergence``
-    (an updated entry above ``max_q``, default `MAX_Q`; Dyna-Q+ raises it) are 0, or
-    NaN once broken, for ``abort.finite``.
+    ``decisions_per_episode`` is the update's skill ends per episode it finished;
+    ``pairs_tried`` counts the (key, skill) entries moved off ``q_init`` so far (Dyna-Q
+    sizes its pair capacity from it). The guards ``smdp/nan`` (a non-finite table
+    update, loss or parameter), ``smdp/table_full`` (occupancy above `MAX_OCCUPANCY`)
+    and ``smdp/divergence`` (an updated entry above ``max_q``, default `MAX_Q`;
+    Dyna-Q+ raises it) are 0, or NaN once broken, for ``abort.finite``.
     """
     ends, agree, chosen = r["ends"], r["agreement"], r["chosen"]
     n_ends = ends.sum(-1)
@@ -1099,6 +1105,7 @@ def method_metrics(
         "smdp/td_abs_mean": _share(r["td_abs"], r["td_n"]),
         "smdp/decisions_per_episode": _share(n_ends.sum(-1), r["episodes"]),
         "smdp/keys_visited": visited,
+        "smdp/pairs_tried": r["tried"],
         "smdp/occupancy": visited / rows,
         "smdp/collision_est": visited / (2 * rows),  # share of keys sharing a row
         "smdp/q_start": r["q_start"],

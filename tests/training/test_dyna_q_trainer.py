@@ -300,6 +300,8 @@ def test_one_update_logs_every_method_metric(entry: Any) -> None:
     n = int(model.n_pairs)
     assert (np.diff(pairs) >= 0).all()
     assert pairs[-1] == n > 0
+    # planning backs up only pairs with real outcomes: the table's tried pairs
+    np.testing.assert_array_equal(m["smdp/pairs_tried"], pairs)
     count, slots = model.count[:n], model.m_R.shape[1]
     assert m["dyna/pairs_full_share"][-1] == pytest.approx((count >= slots).mean())
     stale = 1000.0 - model.last_tried[:n] > 100  # time at the end: the whole budget
@@ -466,7 +468,8 @@ def _smdp_record(q_upd: float) -> dict[str, np.ndarray]:
         "ends": z((1, n, 7), int), "agreement": z((1, n, 2), int),
         "chosen": z((1, n), int), "length": z((1, n), int),
         "td_abs": [0.0], "td_n": [0], "q_upd": [q_upd], "q_bad": [False],
-        "q_mean": [0.0], "episodes": [0], "visited": [1], "q_start": [10.0],
+        "q_mean": [0.0], "episodes": [0], "visited": [1], "tried": [1],
+        "q_start": [10.0],
         "td_loss": [0.0], "grad_norm": [0.0], "finite": [True], "found": [[0, -1, -1]],
         "eps_top": [0.5], "eps": [0.5],
     }  # fmt: skip

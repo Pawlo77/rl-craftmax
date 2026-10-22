@@ -291,6 +291,7 @@ TOP_METRICS = {
     "smdp/td_abs_mean",
     "smdp/decisions_per_episode",
     "smdp/keys_visited",
+    "smdp/pairs_tried",
     "smdp/occupancy",
     "smdp/collision_est",
     "smdp/q_start",
@@ -333,6 +334,8 @@ def test_one_update_logs_every_method_metric(entry: Any) -> None:
     visited = int((np.asarray(state.carry.shared.seen)[:, 0] >= 0).sum())
     assert m["smdp/keys_visited"][-1] == visited > 0
     assert m["smdp/occupancy"][-1] == pytest.approx(visited / rows)
+    tried = int((np.asarray(state.carry.shared.q) != 10.0).sum())  # (key, skill)
+    assert m["smdp/pairs_tried"][-1] == tried > m["smdp/pairs_tried"][0]
     np.testing.assert_array_equal(m["smdp/diamond_first_step"], -1)
     for guard in ("smdp/nan", "smdp/table_full", "smdp/divergence"):
         np.testing.assert_array_equal(m[guard], 0.0)
@@ -353,7 +356,8 @@ def _record(**over: Any) -> dict[str, np.ndarray]:
         "td_abs": np.array([6.0]), "td_n": np.array([3]), "q_upd": np.array([12.5]),
         "q_bad": np.array([False]), "q_mean": np.array([0.5]),
         "episodes": np.array([2]), "visited": np.array([100]),
-        "q_start": np.array([10.0]), "td_loss": np.array([0.25]),
+        "tried": np.array([7]), "q_start": np.array([10.0]),
+        "td_loss": np.array([0.25]),
         "grad_norm": np.array([1.0]), "finite": np.array([True]),
         "found": np.array([[3, 50, -1]]), "eps_top": np.array([0.5]),
         "eps": np.array([0.2]),
