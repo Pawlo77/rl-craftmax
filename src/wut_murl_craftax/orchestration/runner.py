@@ -36,7 +36,7 @@ import numpy as np
 from ..config import ExperimentConfig, load_experiment_config
 from ..evaluation.episode_metrics import (
     added_paths,
-    chunk_series,
+    chunk_sums,
     new_first_unlocks,
     resume_from,
     score_pct,
@@ -129,7 +129,8 @@ sums start from zero there (the episodes running then are partly counted)."""
 TAG_FAIL_COUNT = "fail/count"
 """Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
-"""Per-update method metrics of a run, name -> floats, in the run directory."""
+"""Per-update method metrics and online-family sums (``online/<column>``) of a run,
+name -> floats, in the run directory."""
 OWNER_FILE = "owner.json"
 """Run-directory file of the process that trains the run (pid, host); gone once the
 run is closed, so a RUNNING run with a live owner is never trained twice."""
@@ -174,7 +175,7 @@ class ChunkMetrics(TypedDict):
     """(updates, steps, envs) episode length so far, incl. this step."""
     online: jax.Array | np.ndarray
     """(updates, columns) sums of the episodes finished in the update, by
-    ``episode_metrics.ONLINE_LAYOUT``; the runner logs them as `chunk_series`."""
+    ``episode_metrics.ONLINE_LAYOUT``; the runner keeps them as `chunk_sums`."""
     first_unlock: jax.Array | np.ndarray
     """(updates, achievements) ints: the run's first env step of each unlock, -1."""
 
@@ -619,11 +620,11 @@ def _record_chunk(
 ) -> None:
     """Add a chunk after update ``first`` to the run log and the per-update extras.
 
-    The extras get the method metrics and the online families (`chunk_series`); the
+    The extras get the method metrics and the online families' sums (`chunk_sums`); the
     first unlocks go to MLflow at once (`_log_first_unlocks`).
     """
     _add_updates(log, first, spu, walls, metrics)
-    families = chunk_series(metrics, game_of(log.env_name))
+    families = chunk_sums(metrics, game_of(log.env_name))
     extras.extend(first, _method_metrics(metrics) | families)
     stamps = np.asarray(metrics["first_unlock"])
     _log_first_unlocks(stamps, log.names, first, spu, walls)
@@ -747,6 +748,7 @@ def _train(
             max_reward,
             loss_columns=columns,
             extras=extras.series,
+            game=game_of(spec.env),
         )
         log_points(points)
         log_peak_memory(roles, update * spu)

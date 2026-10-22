@@ -9,10 +9,11 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         CAUSES,
         ONLINE_KEYS,
         ONLINE_LAYOUT,
+        ONLINE_PREFIX,
         EpisodeAcc,
         UpdateSummary,
         added_paths,
-        chunk_series,
+        chunk_sums,
         close_update,
         episode_step,
         events_of,
@@ -23,8 +24,11 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         resume_from,
         score_pct,
         stack_online,
+        sum_columns,
         update_metrics,
         update_summary,
+        update_sums,
+        window_metrics,
     )
     from .events import (
         DAMAGE_SOURCES,
@@ -68,6 +72,7 @@ _EXPORTS: dict[str, str] = {
     "NO_SOURCE": "events",
     "ONLINE_KEYS": "episode_metrics",
     "ONLINE_LAYOUT": "episode_metrics",
+    "ONLINE_PREFIX": "episode_metrics",
     "RADAR_AXES": "milestones",
     "Reproduction": "reproduction",
     "StepEvents": "events",
@@ -78,7 +83,7 @@ _EXPORTS: dict[str, str] = {
     "action_names": "milestones",
     "added_paths": "episode_metrics",
     "band": "reproduction",
-    "chunk_series": "episode_metrics",
+    "chunk_sums": "episode_metrics",
     "close_update": "episode_metrics",
     "episode_step": "episode_metrics",
     "events_of": "episode_metrics",
@@ -93,8 +98,11 @@ _EXPORTS: dict[str, str] = {
     "score_pct": "episode_metrics",
     "stack_online": "episode_metrics",
     "step_events": "events",
+    "sum_columns": "episode_metrics",
     "update_metrics": "episode_metrics",
     "update_summary": "episode_metrics",
+    "update_sums": "episode_metrics",
+    "window_metrics": "episode_metrics",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -113,6 +121,7 @@ __all__ = [
     "NO_SOURCE",
     "ONLINE_KEYS",
     "ONLINE_LAYOUT",
+    "ONLINE_PREFIX",
     "RADAR_AXES",
     "TECH_LADDER",
     "UNKNOWN",
@@ -125,7 +134,7 @@ __all__ = [
     "action_names",
     "added_paths",
     "band",
-    "chunk_series",
+    "chunk_sums",
     "close_update",
     "episode_step",
     "events_of",
@@ -140,8 +149,11 @@ __all__ = [
     "score_pct",
     "stack_online",
     "step_events",
+    "sum_columns",
     "update_metrics",
     "update_summary",
+    "update_sums",
+    "window_metrics",
 ]
 
 

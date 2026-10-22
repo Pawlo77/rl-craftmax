@@ -24,7 +24,13 @@ import mlflow
 import numpy as np
 from mlflow.entities import Metric
 
-from ..evaluation.episode_metrics import score_pct
+from ..evaluation.episode_metrics import (
+    ONLINE_PREFIX,
+    score_pct,
+    sum_columns,
+    window_metrics,
+)
+from ..evaluation.milestones import Game
 from ..training.records import BASE_COLUMNS, LOSS_COLUMNS
 from .runtime import DeviceRoles
 
@@ -70,6 +76,23 @@ def _window(
     return {k: float(v) for k, v in out.items()}
 
 
+def _families(
+    extras: Mapping[str, Sequence[float]], start: int, end: int, game: Game
+) -> dict[str, float]:
+    """The online families of updates ``start + 1 .. end``, their episodes pooled.
+
+    The ``online/*`` series are additive sums, so the window's metrics are those of
+    one update holding all its episodes; NaN updates (before a resume that added
+    them) count as none. Metrics that are NaN (no episodes, deaths) are left out.
+    """
+    names = [f"{ONLINE_PREFIX}{c}" for c in sum_columns(game)]
+    if names[0] not in extras:
+        return {}
+    total = [np.nansum(np.asarray(extras[n][start:end], float)) for n in names]
+    got = window_metrics(np.array(total), game)
+    return {k: v for k, v in got.items() if not math.isnan(v)}
+
+
 def metric_points(
     rows: Sequence[Sequence[float]],
     names: Sequence[str],
@@ -80,6 +103,7 @@ def metric_points(
     max_reward: float,
     loss_columns: Sequence[str] = LOSS_COLUMNS,
     extras: Mapping[str, Sequence[float]] | None = None,
+    game: Game | None = None,
 ) -> Points:
     """Windows ending in updates ``first + 1 .. last``, as ``(env step, metrics)``.
 
@@ -88,7 +112,8 @@ def metric_points(
     resumes cut the run. Windows without finished episodes carry no score. Only
     ``loss_columns`` of the loss layout are reported (a trainer may fill a subset);
     ``extras`` are method metrics by name, per update, averaged over the window under
-    their own names (NaN updates skipped).
+    their own names (NaN updates skipped). With ``game``, the online families come
+    from the window's summed ``online/*`` sums (`_families`).
     """
     cols = [*BASE_COLUMNS, *LOSS_COLUMNS, *(f"ach/{a}" for a in names)]
     ix = {c: i for i, c in enumerate(cols)}
@@ -103,8 +128,12 @@ def metric_points(
         metrics = _window(table[start - lo : end - lo], prev, ix, names, loss_columns)
         for name, series in (extras or {}).items():
             values = np.asarray(series[start:end], float)
+            if name.startswith(ONLINE_PREFIX):
+                continue
             if (values := values[~np.isnan(values)]).size:
                 metrics[name] = float(values.mean())
+        if game is not None:
+            metrics |= _families(extras or {}, start, end, game)
         if "train/return" in metrics:
             metrics["train/score_pct"] = float(
                 score_pct(metrics["train/return"], max_reward)

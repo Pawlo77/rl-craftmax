@@ -16,7 +16,12 @@ from flax import struct
 from test_runner import PROFILE, Store
 
 from wut_murl_craftax.config import MLflowTrackingConfig, load_experiment_config
-from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT, metric_keys
+from wut_murl_craftax.evaluation.episode_metrics import (
+    ONLINE_LAYOUT,
+    ONLINE_PREFIX,
+    metric_keys,
+    sum_columns,
+)
 from wut_murl_craftax.orchestration import queue, runner, train_metrics
 from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runner import final_score
@@ -127,6 +132,45 @@ def test_compile_time_is_the_first_chunk_beyond_the_steady_updates() -> None:
     assert train_metrics.compile_seconds([(1, 0.5), (1, 1.0)]) == 0.0
 
 
+def _sums(**per_update: list[float]) -> dict[str, list[float]]:
+    """``online/*`` series of Classic over 5 updates, zero but for ``per_update``."""
+    out = {f"{ONLINE_PREFIX}{c}": [0.0] * 5 for c in sum_columns("classic")}
+    out |= {f"{ONLINE_PREFIX}{c}": v for c, v in per_update.items()}
+    return out
+
+
+SUMS = _sums(episodes=[1, 3, 0, 0, 0], steps=[10, 30, 0, 0, 0], death=[1, 0, 0, 0, 0])
+"""Update 1: one episode, a death; update 2: three, all alive; then none."""
+
+
+def _families(every: int, game: str | None = "classic") -> dict[int, Any]:
+    got = train_metrics.metric_points(
+        ROWS, ["a", "b"], 0, 5, every, 5, 22.0, extras=SUMS, game=game
+    )
+    return dict(got)
+
+
+def test_family_windows_pool_the_episodes_of_their_updates() -> None:
+    """A 2-update window (as at 1B): 1 death in 4 episodes, not mean(100%, 0%)."""
+    window = _families(2)[200]
+    assert window["train/end/death"] == 25.0
+    assert window["train/end/timeout"] == 75.0
+    assert "train/end/death" not in _families(2)[400], "no episodes: no point"
+
+
+def test_one_update_windows_give_each_updates_own_values() -> None:
+    points = _families(1)
+    assert (points[100]["train/end/death"], points[200]["train/end/death"]) == (100, 0)
+    assert "train/death/zombie" not in points[200], "no deaths: no cause shares"
+
+
+def test_the_online_sums_are_kept_but_not_logged() -> None:
+    assert not any(
+        k.startswith(ONLINE_PREFIX) for m in _families(2).values() for k in m
+    )
+    assert "train/end/death" not in _families(2, None)[200]
+
+
 # --- a tiny Classic run through the runner and METHODS["ppo"] -----------------------
 
 
@@ -225,8 +269,10 @@ def test_the_online_families_reach_the_extras_and_mlflow_windows(
 ) -> None:
     store, spec, run = tiny
     with np.load(store.run_dir(spec.name) / runner.EXTRAS_FILE) as z:
-        assert set(metric_keys("classic")) <= set(z.files)
-        assert len(z["train/end/death"]) == 31
+        columns = {f"{ONLINE_PREFIX}{c}" for c in sum_columns("classic")}
+        assert columns <= set(z.files)
+        assert not set(metric_keys("classic")) & set(z.files), "kept as sums"
+        assert len(z[f"{ONLINE_PREFIX}episodes"]) == 31
     logged = run.data.metrics
     for key in ("train/funnel/floor_0", "train/action_entropy", "train/end/death"):
         assert key in logged
@@ -328,10 +374,10 @@ def test_a_state_saved_before_the_online_families_resumes_with_them(
     online[0, ONLINE_LAYOUT["episodes"]], online[0, ONLINE_LAYOUT["steps"]] = 1, 10
     chunk = {**m, "done": done, "online": online}
     runner._record_chunk(log, extras, 4, STEP, np.array([10.0]), chunk)
-    timeout = extras.series["train/end/timeout"]
-    assert len(timeout) == 5
-    assert np.isnan(timeout[:4]).all()
-    assert timeout[4] == 100.0
+    episodes = extras.series[f"{ONLINE_PREFIX}episodes"]
+    assert len(episodes) == 5
+    assert np.isnan(episodes[:4]).all()
+    assert episodes[4] == 1.0
 
 
 def test_a_state_missing_more_than_the_online_leaves_is_refused(

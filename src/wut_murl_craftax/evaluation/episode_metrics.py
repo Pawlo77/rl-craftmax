@@ -454,101 +454,137 @@ def metric_keys(game: Game) -> tuple[str, ...]:
     )
 
 
-def _col(online: np.ndarray, name: str) -> np.ndarray:
-    return online[ONLINE_LAYOUT[name]]
+ONLINE_PREFIX = "online/"
+"""Prefix of the `sum_columns` series in the runner's per-update extras."""
 
 
-def _per_episode(online: np.ndarray, s: UpdateSummary, game: Game) -> dict[str, Any]:
-    """Episode means and % of episodes; tech depth = the highest ladder rung reached."""
-    n, deaths = _col(online, "episodes")[0], _col(online, "death")[0]
+@functools.cache
+def sum_columns(game: Game) -> tuple[str, ...]:
+    """Names of `update_sums`, in order.
+
+    The ``online`` columns, then the finished episodes' achievement count, tier
+    reward, return, depth >= k counts and unlocks per achievement.
+    """
+    online = [
+        name if b.stop - b.start == 1 else f"{name}/{i}"
+        for name, b in ONLINE_LAYOUT.items()
+        for i in range(b.stop - b.start)
+    ]
+    depth = (f"depth/{k}" for k in range(1, len(ladder(game)) + 1))
+    names = (f"ach/{a}" for a in achievement_names(game))
+    return (*online, "ach_count", "ach_reward", "return", *depth, *names)
+
+
+def update_sums(online: np.ndarray, s: UpdateSummary, game: Game) -> np.ndarray:
+    """One update's `sum_columns`; additive over updates, so a window adds them up.
+
+    Tech depth is the highest ladder rung an episode reached.
+    """
     rungs = s.ach[:, list(ladder(game))]
     depth = np.where(rungs.any(1), rungs.shape[1] - rungs[:, ::-1].argmax(1), 0)
-    ret = s.ret * n
-    names, kills = achievement_names(game), _col(online, "kills")
+    ret = s.ret * s.n_episodes if s.n_episodes else 0.0
+    host = [s.ach.sum(), (s.ach @ reward_weights(game)).sum(), ret]
+    host += [(depth >= k).sum() for k in range(1, rungs.shape[1] + 1)]
+    return np.concatenate([np.asarray(online, np.float64), host, s.ach.sum(0)])
+
+
+def _at(game: Game) -> dict[str, int]:
+    return {c: i for i, c in enumerate(sum_columns(game))}
+
+
+def _per_episode(v: Any, game: Game) -> dict[str, Any]:
+    """Episode means and % of episodes (death causes: % of deaths)."""
+    n, deaths, ret = v("episodes"), v("death"), v("return")
     hostile = _creatures(game, ("melee", "ranged"))
-    per = {k: _col(online, k)[0] / n for k in ("damage_dealt", "damage_taken")}
+    floors = len(FLOORS) if game == "craftax" else 1
     return {
-        "train/ach_per_episode": s.ach.sum(1).mean(),
-        "train/ach_reward_share": (s.ach @ reward_weights(game)).sum() / ret
-        if ret > 0
-        else math.nan,
+        "train/ach_per_episode": v("ach_count") / n,
+        "train/ach_reward_share": v("ach_reward") / ret if ret > 0 else math.nan,
         **{
-            f"train/funnel/depth_{k}": (depth >= k).mean() * 100
-            for k in range(1, rungs.shape[1] + 1)
+            f"train/funnel/depth_{k}": v(f"depth/{k}") / n * 100
+            for k in range(1, len(ladder(game)) + 1)
         },
-        **{
-            f"train/funnel/floor_{f}": c / n * 100
-            for f, c in enumerate(_col(online, "floor"))
-        },
+        **{f"train/funnel/floor_{f}": v(f"floor/{f}") / n * 100 for f in range(floors)},
         "train/end/death": deaths / n * 100,
         "train/end/timeout": (n - deaths) / n * 100,
         **{
-            f"train/death/{c}": _col(online, "cause")[i] / deaths * 100
-            for i, c in _causes(game)
+            f"train/death/{c}": v(f"cause/{i}") / deaths * 100 for i, c in _causes(game)
         },
-        "train/stalls_per_episode": _col(online, "stalls")[0] / n,
-        "train/close_calls": _col(online, "close_calls")[0] / n,
-        **{f"train/kills/{name}": kills[i] / n for i, name in hostile},
-        "train/kills/passive": _col(online, "passive_kills")[0] / n,
-        **{f"train/{k}": v for k, v in per.items()},
+        "train/stalls_per_episode": v("stalls") / n,
+        "train/close_calls": v("close_calls") / n,
+        **{f"train/kills/{name}": v(f"kills/{i}") / n for i, name in hostile},
+        "train/kills/passive": v("passive_kills") / n,
+        "train/damage_dealt": v("damage_dealt") / n,
+        "train/damage_taken": v("damage_taken") / n,
         **{
-            f"train/adv/{a.lower()}": s.ach[:, names.index(a.lower())].mean() * 100
-            for a in ADVANCED_ACHIEVEMENTS
-            if a.lower() in names
+            f"train/adv/{a.lower()}": v(f"ach/{a.lower()}") / n * 100
+            for a in (ADVANCED_ACHIEVEMENTS if game == "craftax" else ())
         },
     }
 
 
-def _per_step(online: np.ndarray, game: Game) -> dict[str, Any]:
+def _per_step(v: Any, game: Game) -> dict[str, Any]:
     """Shares of the finished episodes' steps (actions: of the steps not forced)."""
-    steps = _col(online, "steps")[0]
-    actions = action_names(game)
-    hist = _col(online, "actions")[: len(actions)]
+    steps, actions = v("steps"), action_names(game)
+    hist = np.array([v(f"actions/{i}") for i in range(len(actions))])
     p = hist / hist.sum()
-    hostile = sum(
-        _col(online, "kills")[i] for i, _ in _creatures(game, ("melee", "ranged"))
-    )
-    low, zero = _col(online, "low") / steps, _col(online, "zero") / steps
+    hostile = sum(v(f"kills/{i}") for i, _ in _creatures(game, ("melee", "ranged")))
     return {
-        **{f"train/survival/{s}_low": low[i] for i, s in enumerate(STATS)},
-        **{f"train/survival/{s}_zero": zero[i] for i, s in enumerate(STATS)},
+        **{
+            f"train/survival/{s}_low": v(f"low/{i}") / steps
+            for i, s in enumerate(STATS)
+        },
+        **{
+            f"train/survival/{s}_zero": v(f"zero/{i}") / steps
+            for i, s in enumerate(STATS)
+        },
         "train/kills_per_1k": hostile * 1000 / steps,
         **{f"train/action/{a}": p[i] for i, a in enumerate(actions)},
         "train/action_entropy": -(p * np.log(np.where(p > 0, p, 1.0))).sum(),
-        "train/wasted_share": _col(online, "wasted")[0] / hist.sum(),
-        "train/forced_share": _col(online, "forced")[0] / steps,
+        "train/wasted_share": v("wasted") / hist.sum(),
+        "train/forced_share": v("forced") / steps,
     }
+
+
+def window_metrics(sums: np.ndarray, game: Game) -> dict[str, float]:
+    """The `metric_keys` of the episodes summed in ``sums`` (`sum_columns`).
+
+    One update's sums give its own values; a window's sums give the values of all
+    its episodes pooled. All NaN without episodes (death causes: without deaths),
+    so MLflow windows skip them as they skip the score.
+    """
+    keys, at = metric_keys(game), _at(game)
+    sums = np.asarray(sums, np.float64)
+
+    def v(name: str) -> Any:
+        return sums[at[name]]
+
+    if not v("episodes"):
+        return dict.fromkeys(keys, math.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        got = _per_episode(v, game) | _per_step(v, game)
+    return {k: float(got[k]) for k in keys}
 
 
 def update_metrics(
     online: np.ndarray, summary: UpdateSummary, game: Game
 ) -> dict[str, float]:
-    """The `metric_keys` of one update from its ``online`` sums and `update_summary`.
-
-    All NaN without finished episodes (and death causes without deaths), so MLflow
-    windows skip them as they skip the score.
-    """
-    keys = metric_keys(game)
-    online = np.asarray(online, np.float64)
-    if not _col(online, "episodes")[0]:
-        return dict.fromkeys(keys, math.nan)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        got = _per_episode(online, summary, game) | _per_step(online, game)
-    return {k: float(got[k]) for k in keys}
+    """The `metric_keys` of one update from its ``online`` sums and `update_summary`."""
+    return window_metrics(update_sums(online, summary, game), game)
 
 
-def chunk_series(metrics: Mapping[str, Any], game: Game) -> dict[str, np.ndarray]:
-    """`update_metrics` of every update of a chunk's `ChunkMetrics`, name -> values."""
+def chunk_sums(metrics: Mapping[str, Any], game: Game) -> dict[str, np.ndarray]:
+    """`update_sums` of a chunk's updates, column -> values, `ONLINE_PREFIX` names."""
     m = {k: np.asarray(metrics[k]) for k in ("online", "done", "ret", "length", "ach")}
-    rows = [
-        update_metrics(
+    rows = np.stack([
+        update_sums(
             m["online"][i],
             update_summary(m["done"][i], m["ret"][i], m["length"][i], m["ach"][i]),
             game,
         )
         for i in range(len(m["online"]))
-    ]
-    return {k: np.array([r[k] for r in rows]) for k in metric_keys(game)}
+    ])
+    return {f"{ONLINE_PREFIX}{c}": rows[:, j] for j, c in enumerate(sum_columns(game))}
 
 
 def new_first_unlocks(
