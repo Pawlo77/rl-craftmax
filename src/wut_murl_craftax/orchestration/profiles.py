@@ -26,6 +26,10 @@ class Profile:
     """Memory a method's buffers may take on this machine."""
     checkpoint_every: int
     """Most updates between full-state saves under ``state/``; results ignore it."""
+    unmeasured_limits: tuple[str, ...]
+    """``abort.limits`` metrics whose bound is not yet measured on this machine's
+    devices: a hit is retried like a non-finite loss instead of ending the run for
+    good (``scripts/cluster/check_recompute.py`` measures PPO-RNN's)."""
 
     def __post_init__(self) -> None:
         """Reject a value a machine cannot run with, naming the field."""
@@ -33,9 +37,16 @@ class Profile:
             modes = get_args(RoleMode)
             msg = f"device_roles is one of {modes}, got {self.device_roles!r}"
             raise ValueError(msg)
+        names = self.unmeasured_limits
+        if not isinstance(names, list | tuple) or not all(
+            isinstance(n, str) for n in names
+        ):
+            msg = f"unmeasured_limits is a list of metric names, got {names!r}"
+            raise ValueError(msg)
+        object.__setattr__(self, "unmeasured_limits", tuple(names))  # frozen, hashable
         for field in fields(self):
             value = getattr(self, field.name)
-            if field.name != "device_roles" and (
+            if field.name not in ("device_roles", "unmeasured_limits") and (
                 not isinstance(value, int) or isinstance(value, bool) or value < 1
             ):
                 msg = f"{field.name} is a positive integer, got {value!r}"

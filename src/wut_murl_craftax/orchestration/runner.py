@@ -69,6 +69,7 @@ from .abort import (
     TAG_ABORT_GUARD,
     TAG_ABORT_MEMORY,
     TAG_ABORT_METRIC,
+    TAG_ABORT_UNMEASURED,
     TAG_ABORT_UNREPORTED,
     TAG_ABORT_UPDATE,
     first_nonfinite,
@@ -781,15 +782,22 @@ def _log_final_score(log: RunLog, env: str) -> None:
 
 
 def _mark_abort(
-    previous: Mapping[str, str], abort: _Aborted, rules: Mapping[str, Any] | None
+    previous: Mapping[str, str],
+    abort: _Aborted,
+    rules: Mapping[str, Any] | None,
+    unmeasured: Sequence[str] = (),
 ) -> None:
     """Tag the active run with the abort; the `MAX_ABORTS`-th one marks it a bug.
 
     A guard metric in the method's ``abort.permanent`` (``rules``; a retry would
     break it again) or a metric out of its ``abort.limits`` bounds is tagged
-    `TAG_ABORT_GUARD` at once instead, and the queue skips the run from then on.
+    `TAG_ABORT_GUARD` at once instead, and the queue skips the run from then on;
+    unless the profile has not measured that bound on its devices (``unmeasured``,
+    `Profile.unmeasured_limits`): then it counts as a retried abort, tagged
+    `TAG_ABORT_UNMEASURED`.
     """
-    if abort.bound or abort.metric in (rules or {}).get("permanent", []):
+    soft = abort.bound and abort.metric in unmeasured
+    if not soft and (abort.bound or abort.metric in (rules or {}).get("permanent", [])):
         mlflow.set_tags({
             TAG_ABORT_GUARD: abort.metric,
             TAG_ABORT_METRIC: abort.metric,
@@ -803,6 +811,8 @@ def _mark_abort(
         TAG_ABORT_METRIC: abort.metric,
         TAG_ABORT_UPDATE: str(abort.update),
     }
+    if soft:
+        tags[TAG_ABORT_UNMEASURED] = abort.metric
     if count >= MAX_ABORTS:
         tags[TAG_ABORT_BUG] = "true"
     mlflow.set_tags(tags)
@@ -983,7 +993,8 @@ def _run_spec(
         _close(tracker, "KILLED", trains)
         raise
     except _Aborted as abort:
-        _mark_abort(found.data.tags if found else {}, abort, spec.abort)
+        previous = found.data.tags if found else {}
+        _mark_abort(previous, abort, spec.abort, profile.unmeasured_limits)
         tracker.close("FAILED")  # its last state/ stays for the one retry, if any
         return True
     except MemoryLimitError as error:  # no retry here can fit: skipped from now on

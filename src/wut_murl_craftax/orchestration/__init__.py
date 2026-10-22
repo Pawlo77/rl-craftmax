@@ -20,7 +20,9 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .reproducibility import ReproducibilityReport, collect_reproducibility_report
     from .runner import ChunkMetrics, Trainer, final_score, worker_specs
     from .runtime import (
+        BackendError,
         DeviceRoles,
+        check_backend,
         configure_runtime,
         device_roles,
         env_mesh,
@@ -34,6 +36,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .train_metrics import log_every, log_points, metric_points
 
 _EXPORTS: dict[str, str] = {
+    "BackendError": "runtime",
     "ChunkMetrics": "runner",
     "DeviceRoles": "runtime",
     "MlflowRunTracker": "tracking",
@@ -43,6 +46,7 @@ _EXPORTS: dict[str, str] = {
     "Trainer": "runner",
     "budget_steps": "queue",
     "build_mlflow_tracker": "tracking",
+    "check_backend": "runtime",
     "coarse_results": "queue",
     "collect_reproducibility_report": "reproducibility",
     "config_hash": "queue",
@@ -74,6 +78,7 @@ _EXPORTS: dict[str, str] = {
 submodule do not import it twice."""
 
 __all__ = [
+    "BackendError",
     "ChunkMetrics",
     "DeviceRoles",
     "MlflowRunTracker",
@@ -83,6 +88,7 @@ __all__ = [
     "Trainer",
     "budget_steps",
     "build_mlflow_tracker",
+    "check_backend",
     "coarse_results",
     "collect_reproducibility_report",
     "config_hash",

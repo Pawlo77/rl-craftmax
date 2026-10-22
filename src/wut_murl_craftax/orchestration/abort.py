@@ -3,12 +3,12 @@
 A NaN or inf in a logged loss (the trainer's ``loss_columns`` and the metrics the method
 YAML lists under ``abort.finite``) aborts the run: it ends FAILED with its last
 ``state/`` kept. The next queue call resumes it once; a second abort marks it a bug
-(tag ``abort/bug``). A metric under ``abort.permanent`` (a guard), one outside the
+(tag ``abort/bug``). A metric under ``abort.permanent`` (a guard) and one outside the
 bounds of an ``abort.limits`` rule (`first_out_of_bounds`: a recompute error, a diverged
-value) and a config over the machine's memory (tag ``abort/memory``) end the run for
-good (tag ``abort/guard``): a retry repeats them. Flags (``flag/<name>`` tags) come from
-``abort.flags`` rules, see `flag_hits`; they never stop a run, and nothing here looks at
-the score (no early stopping).
+value; retried if the profile lists it in ``unmeasured_limits``) end the run for good
+(tag ``abort/guard``), as a config over the machine's memory does (``abort/memory``).
+Flags (``flag/<name>`` tags) come from ``abort.flags`` rules, see `flag_hits`; they
+never stop a run, and nothing here looks at the score (no early stopping).
 """
 
 import bisect
@@ -33,6 +33,9 @@ TAG_ABORT_METRIC = "abort/metric"
 """Run tag: the metric that was non-finite at the last abort."""
 TAG_ABORT_UPDATE = "abort/update"
 """Run tag: the update (1-based) whose loss was non-finite at the last abort."""
+TAG_ABORT_UNMEASURED = "abort/unmeasured"
+"""Run tag: the ``abort.limits`` metric of the last abort, when the profile has not
+measured its bound (profile ``unmeasured_limits``), so the abort was retried."""
 TAG_ABORT_UNREPORTED = "warn/abort_unreported"
 """Run tag: comma-joined ``abort.finite`` and flag metrics the trainer never reports."""
 FLAG_PREFIX = "flag/"

@@ -3,3 +3,4 @@ host_devices: 2
 device_roles: cpu-actor
 memory_limit_bytes: 1000000000
 checkpoint_every: 2
+unmeasured_limits: []

@@ -99,10 +99,12 @@ class Store:
         files = sorted(p.name for p in run_dir.iterdir())
         self.evaluated.append((spec.name, spec.phase, status, files))
 
-    def run(self, specs: list[RunSpec], trainer: Any, **kw: Any) -> None:
+    def run(
+        self, specs: list[RunSpec], trainer: Any, profile: Path = PROFILE, **kw: Any
+    ) -> None:
         runner.main(
             specs,
-            PROFILE,
+            profile,
             experiment_config=self.config,
             methods={"toy": trainer},
             evaluate=self.evaluate,
@@ -187,6 +189,7 @@ def test_fixture_profile_loads() -> None:
         device_roles="cpu-actor",
         memory_limit_bytes=1_000_000_000,
         checkpoint_every=2,
+        unmeasured_limits=(),
     )
 
 
@@ -986,6 +989,35 @@ def test_a_recompute_error_in_the_first_minibatch_ends_the_run_for_good(
     again = FakeTrainer(steps_per_update=TEN_UPDATES, extra=off)
     store.run([spec], again)
     assert again.updates == []  # a recompute bug repeats: no retry
+
+
+def test_an_unmeasured_bound_is_retried_once_instead_of_ending_the_run(
+    store: Store, tmp_path: Path
+) -> None:
+    """ctrl-metrics review: the cuda profile has not measured the recompute bound
+    yet, and GPU reductions need not repeat bit for bit, so a hit there is retried."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    spec = under_shipped_rules("ppo-rnn", spec)
+    profile = tmp_path / "unmeasured.yaml"
+    text = PROFILE.read_text().replace("[]", "[ppo/ratio_first_mb]")
+    profile.write_text(text)
+
+    def off(u: int) -> dict[str, float]:
+        return ppo_rnn_report(**{"ppo/ratio_first_mb": 1.002 if u == 1 else 1.0})
+
+    first = FakeTrainer(steps_per_update=TEN_UPDATES, extra=off)
+    store.run([spec], first, profile=profile)
+    assert store.runs()[spec.name].info.status == "FAILED"
+    assert tags_of(store, spec.name, "abort/") == {
+        "abort/count": "1",
+        "abort/metric": "ppo/ratio_first_mb",
+        "abort/unmeasured": "ppo/ratio_first_mb",
+        "abort/update": "1",
+    }
+    again = FakeTrainer(steps_per_update=TEN_UPDATES, extra=lambda u: ppo_rnn_report())
+    store.run([spec], again, profile=profile)
+    assert again.updates == list(range(1, 11))
+    assert store.runs()[spec.name].info.status == "FINISHED"
 
 
 def test_a_ratio_within_the_bound_does_not_stop_the_run(store: Store) -> None:

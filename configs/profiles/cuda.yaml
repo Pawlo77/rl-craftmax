@@ -7,3 +7,6 @@ device_roles: gpu
 memory_limit_bytes: 68719476736
 checkpoint_every: 50  # a GPU run advances fast and is preempted rarely; state saves cost more per update
 # A stop waits for the chunk (<= 50 updates, about 40 s at 1B): run_array.sh asks for SIGTERM 600 s early.
+# Not yet measured on CUDA (TF32): a hit is retried, not final. Run scripts/cluster/check_recompute.py
+# on a node before final-1b, record it in PPO-RNN design (Device verification), then empty this list.
+unmeasured_limits: [ppo/ratio_first_mb]
