@@ -251,13 +251,14 @@ def test_two_updates_report_chunk_and_count_metrics(entry: Any) -> None:
     shapes = {k: np.asarray(v).shape for k, v in m.items()}
     count = {k for k in m if k.startswith("count/")}
     assert {"count/distinct_keys", "count/occupancy"} <= count
+    assert {"rnn/hidden_norm", "reward/extrinsic", "reward/intrinsic"} <= set(m)
     assert shapes == {
         "losses": (2, len(LOSS_COLUMNS)),
         "done": (2, 8, 8),
         "ach": (2, 8, 8, 22),
         "ret": (2, 8, 8),
         "length": (2, 8, 8),
-        **dict.fromkeys(count, (2,)),
+        **{k: (2,) for k in m if "/" in k},  # the control's own metrics come along
     }
     assert all(np.isfinite(np.asarray(m[k], float)).all() for k in count)
 

@@ -37,7 +37,7 @@ from jax.sharding import Mesh, NamedSharding
 
 from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
 from ..orchestration import shard_envs
-from .batch_renorm import BatchRenorm
+from .batch_renorm import WARM_UP, BatchRenorm
 from .hooks import (
     HOOK_NAMES,
     MEMORY_LIMIT_KEY,
@@ -70,6 +70,20 @@ LR_END = 1e-20
 """Learning rate at the end of the linear decay, as the original."""
 FILLED_LOSS_COLUMNS = ("value_loss", "grad_norm")
 """`LOSS_COLUMNS` an update fills: the TD loss and the gradient norm; others NaN."""
+ROLLOUT_STATS = (
+    "rnn/hidden_norm",
+    "rnn/reset_share",
+    "pqn/greedy_share",
+    "reward/extrinsic",
+    "reward/intrinsic",
+)
+"""Metrics of a rollout, in the order of the ``stats`` vector `_make_rollout` returns:
+means over its steps and envs (the LSTM norm is that of the output ``h``)."""
+Q_STATS = ("q_taken_mean", "q_max_mean", "target_mean", "action_gap")
+"""Per-minibatch Q statistics of the loss pass, averaged over epochs and minibatches:
+means over the steps that enter the loss (the loss mask applies)."""
+INPUT_NORM = "BatchRenorm_0"
+"""Flax name of the input BatchRenorm in ``batch_stats`` (created first, always)."""
 _LEARNER_HOOKS = {"observe", "extra_loss_fn"}
 """Hooks that read the method state on the learner, so it moves there each update;
 without them ``metrics_fn`` reads it on the actor, where the rollout keeps it."""
@@ -401,6 +415,11 @@ def _make_rollout(
         # the events come from the pre-reset state, so a done step keeps its unlocks
         acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
         rec |= {"ach": total.ach, "ret": total.ret, "len": total.length}
+        # the carry after the step: a done step keeps its own; the greedy share counts
+        # a random action that happens to be the greedy one as greedy
+        rec["hn"] = jnp.linalg.norm(h2[1], axis=-1).mean()
+        rec["greedy"] = (act == q[0].argmax(-1)).mean()
+        rec["reset"] = last_done.mean()
         if with_traj:
             rec |= {"h": jnp.concatenate(h, -1).astype(jnp.float16)}
             rec |= {"ev": info["events"]}
@@ -426,6 +445,8 @@ def _make_rollout(
             extra,
         )
         ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
+        mean = [tr[k].mean() for k in ("hn", "reset", "greedy", "r")]
+        ep["stats"] = jnp.stack([*mean, r_int.mean()])
         return carry[1:], traj, h0, ep
 
     return rollout
@@ -458,13 +479,23 @@ def _learn_batch(
     }
 
 
-def _make_learn(cfg: PQNRNNConfig, net: RNNQNetwork) -> Callable[..., Any]:
+def _make_learn(
+    cfg: PQNRNNConfig, net: RNNQNetwork, extra_steps: int = 0
+) -> Callable[..., Any]:
     """Jitted Q(lambda) update: epochs x minibatches of whole env sequences.
 
     Each minibatch reruns from its start carry in training mode (batch statistics,
     running ones updated); the loss is ``0.5 sum m (Q(s,a) - G)^2 / max(sum m, 1)``
-    over steps 0..T-2.
+    over steps 0..T-2. Besides ``td_loss`` and ``grad_norm`` the result holds the
+    `Q_STATS` of that pass, ``lr`` (of the update's first optimizer step) and the
+    input BatchRenorm's ``bn_warm`` (1 once past `WARM_UP`) and ``bn_var_min`` (smallest
+    running variance) after the update.
     """
+    lr_at = (
+        lr_schedule(cfg, extra_steps)
+        if cfg.lr_linear_decay
+        else lambda _: jnp.asarray(cfg.lr)
+    )
 
     def loss_fn(p: Any, bs: Any, mb: dict[str, Any]) -> tuple[jax.Array, Any]:
         (_, q), upd = net.apply(
@@ -481,14 +512,17 @@ def _make_learn(cfg: PQNRNNConfig, net: RNNQNetwork) -> Callable[..., Any]:
         taken = jnp.take_along_axis(q, mb["act"][..., None], -1)[:-1, :, 0]
         m = mb["mask"][:-1]
         loss = 0.5 * jnp.sum(m * (taken - g) ** 2) / jnp.maximum(m.sum(), 1.0)
-        return loss, upd["batch_stats"]
+        top = jax.lax.top_k(jax.lax.stop_gradient(q)[:-1], 2)[0]
+        stats = jnp.stack([taken, top[..., 0], g, top[..., 0] - top[..., 1]])
+        masked = (stats * m).sum((1, 2)) / jnp.maximum(m.sum(), 1.0)
+        return loss, (upd["batch_stats"], masked)
 
     grad = jax.value_and_grad(loss_fn, has_aux=True)
 
     def mb_step(ts: QTrainState, mb: dict[str, Any]) -> tuple[QTrainState, Any]:
-        (loss, bs), g = grad(ts.params, ts.batch_stats, mb)
+        (loss, (bs, stats)), g = grad(ts.params, ts.batch_stats, mb)
         ts = ts.apply_gradients(grads=g)  # type: ignore[no-untyped-call]  # flax API
-        return ts.replace(batch_stats=bs), (loss, optax.tree.norm(g))
+        return ts.replace(batch_stats=bs), (loss, optax.tree.norm(g), stats)
 
     def epoch(c: tuple[QTrainState, Any, jax.Array], _: None) -> Any:
         ts, b, key = c
@@ -505,8 +539,14 @@ def _make_learn(cfg: PQNRNNConfig, net: RNNQNetwork) -> Callable[..., Any]:
         h0: Carry | None,
     ) -> tuple[QTrainState, dict[str, jax.Array]]:
         b = _learn_batch(cfg, traj, loss_mask, h0)
-        (ts, _, _), (loss, gn) = jax.lax.scan(epoch, (ts, b, key), None, cfg.epochs)
-        return ts, {"td_loss": loss.mean(), "grad_norm": gn.mean()}
+        lr = lr_at(jnp.asarray(ts.step))
+        init = (ts, b, key)
+        (ts, _, _), (loss, gn, stats) = jax.lax.scan(epoch, init, None, cfg.epochs)
+        bn = ts.batch_stats[INPUT_NORM]
+        m = {"td_loss": loss.mean(), "grad_norm": gn.mean(), "lr": lr}
+        m |= dict(zip(Q_STATS, stats.mean((0, 1)), strict=True))
+        m |= {"bn_warm": (bn["steps"] >= WARM_UP).astype(jnp.float32)}
+        return ts, m | {"bn_var_min": bn["var"].min()}
 
     return learn
 
@@ -612,7 +652,7 @@ def _setup(cfg: PQNRNNConfig) -> _Setup:
         optimizer(cfg, hk.extra_steps),
         hk,
         _make_rollout(cfg, net, env, env_params, hk),
-        _make_learn(cfg, net),
+        _make_learn(cfg, net, hk.extra_steps),
         jax.jit(hk.observe),
         _make_finish(hk),
         jax.jit(hk.metrics_fn),
@@ -637,7 +677,8 @@ def learn(
     ``extra["episode_dones"]`` (LSTM resets; default ``dones``); ``loss_mask``
     ``(steps, envs)`` drops transitions from the loss. ``h0`` is the float32 start
     carry after step 0's reset (default: ``traj.hidden[0]``, rounded to float16).
-    Returns the train state and the mean ``td_loss`` and ``grad_norm`` of its steps.
+    Returns the train state and the mean ``td_loss`` and ``grad_norm`` of its steps,
+    with the `Q_STATS`, ``lr``, ``bn_warm`` and ``bn_var_min`` (`_make_learn`).
 
     Raises:
         ValueError: If the rollout, ``loss_mask`` or ``h0`` is not ``(num_steps,
@@ -831,12 +872,14 @@ def collect(
 
 def _update(
     state: PQNRNNState, s: _Setup, traj: Traj, h0: Carry
-) -> tuple[PQNRNNState, jax.Array, dict[str, jax.Array]]:
+) -> tuple[PQNRNNState, jax.Array, dict[str, jax.Array], dict[str, jax.Array]]:
     """Learner side of one update: ``observe``, `learn`, extra steps, method metrics.
 
     The losses come in ``records.LOSS_COLUMNS`` order: the TD loss as
     ``value_loss``, ``grad_norm`` (before clipping); the PPO-only columns are NaN,
     and `PQNRNNTrainer.loss_columns` keeps them out of logging and abort checks.
+    Then the control's ``pqn/*`` metrics (`learn`'s, and the epsilon the update's
+    rollout acted with) and the method's.
     """
     key, k_learn, k_extra = jax.random.split(state.key, 3)
     ms = state.method_state
@@ -845,6 +888,7 @@ def _update(
     if "observe" in s.hooks.active:
         ms = s.observe(ms, traj)
     ts, m = s.learn(state.train_state, traj, k_learn, None, h0)
+    control = {f"pqn/{k}": v for k, v in m.items()} | {"pqn/epsilon": state.eps}
     method: dict[str, jax.Array] = {}
     if s.finishes:
         ts, ms, method = s.finish(ts, ms, k_extra)
@@ -857,7 +901,7 @@ def _update(
     )
     cols = dict(zip(FILLED_LOSS_COLUMNS, (m["td_loss"], m["grad_norm"]), strict=True))
     nan = jnp.full((), jnp.nan, jnp.float32)
-    return state, jnp.stack([cols.get(c, nan) for c in LOSS_COLUMNS]), method
+    return state, jnp.stack([cols.get(c, nan) for c in LOSS_COLUMNS]), control, method
 
 
 def train_chunk(
@@ -865,17 +909,21 @@ def train_chunk(
 ) -> tuple[PQNRNNState, "ChunkMetrics"]:
     """Run ``n_updates`` rollout-and-update steps; metrics stacked per update.
 
-    Besides the shared metrics, every method metric name maps to its per-update
-    values.
+    Besides the shared metrics: ``pqn/*`` (`learn`'s names, ``pqn/epsilon``) and the
+    `ROLLOUT_STATS`, then every method metric name with its per-update values.
+
+    Raises:
+        ValueError: If a method reports the name of a control metric.
     """
     s = _setup(state.cfg)
     put = functools.partial(jax.device_put, device=s.learner)
-    losses, eps, method = [], [], []
+    losses, eps, controls, method = [], [], [], []
     for _ in range(n_updates):
         state, traj, h0, ep = collect(state, s.with_traj)
-        state, loss, m = _update(state, s, put(traj), put(h0))
+        state, loss, control, m = _update(state, s, put(traj), put(h0))
         losses.append(loss)
         eps.append(ep)
+        controls.append(control)
         method.append(m)
     metrics = {
         "losses": jnp.stack(losses),
@@ -884,8 +932,14 @@ def train_chunk(
         "ret": jnp.stack([e["ret"] for e in eps]),
         "length": jnp.stack([e["len"] for e in eps]),
     }
-    metrics |= {k: jnp.stack([m[k] for m in method]) for k in method[0]}
-    return state, cast("ChunkMetrics", metrics)
+    metrics |= {k: jnp.stack([c[k] for c in controls]) for k in controls[0]}
+    stats = jnp.stack([e["stats"] for e in eps]).T
+    metrics |= dict(zip(ROLLOUT_STATS, stats, strict=True))
+    own = {k: jnp.stack([m[k] for m in method]) for k in method[0]}
+    if clash := sorted(own.keys() & metrics.keys()):
+        msg = f"method metrics {clash} reuse the names of control metrics"
+        raise ValueError(msg)
+    return state, cast("ChunkMetrics", metrics | own)
 
 
 PolicyCarry = tuple[Carry, jax.Array]

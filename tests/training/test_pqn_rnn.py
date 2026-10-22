@@ -46,6 +46,23 @@ from wut_murl_craftax.training.pqn_rnn import (
 from wut_murl_craftax.training.records import LOSS_COLUMNS, achievement_names
 
 T, B, H = 8, 8, 512
+PQN_METRICS = (
+    "pqn/td_loss",
+    "pqn/q_taken_mean",
+    "pqn/q_max_mean",
+    "pqn/target_mean",
+    "pqn/action_gap",
+    "pqn/epsilon",
+    "pqn/greedy_share",
+    "pqn/lr",
+    "pqn/grad_norm",
+    "pqn/bn_warm",
+    "pqn/bn_var_min",
+    "rnn/hidden_norm",
+    "rnn/reset_share",
+    "reward/extrinsic",
+    "reward/intrinsic",
+)
 SYMBOLIC_OBS = 8268
 """Craftax-Symbolic observation width."""
 REPO_1B = {
@@ -554,6 +571,7 @@ def test_registry_entry_trains_with_the_chunk_metric_shapes(cfg: PQNRNNConfig) -
         "ach": (2, T, B, n_ach),
         "ret": (2, T, B),
         "length": (2, T, B),
+        **dict.fromkeys(PQN_METRICS, (2,)),
     }
     losses = dict(zip(LOSS_COLUMNS, np.asarray(m["losses"]).T, strict=True))
     assert np.isfinite(losses.pop("value_loss")).all()
@@ -575,3 +593,147 @@ def test_done_step_unlocks_reach_the_episode_metrics(
     config |= {"envs": 16, "num_steps": 32, "hidden": 19, "minibatches": 2}
     config |= {"epochs": 1, "eps_decay": 1.0, "steps": 100 * 16 * 32}
     assert_done_step_unlock_counted(METHODS["pqn-rnn"], config, monkeypatch)
+
+
+# --- metrics logged per update --------------------------------------------------
+
+
+def _metrics(m: Any) -> dict[str, np.ndarray]:
+    return {k: np.asarray(m[k]) for k in PQN_METRICS}
+
+
+def test_a_chunk_returns_the_pqn_metrics_per_update(cfg: PQNRNNConfig) -> None:
+    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+    got = _metrics(m)
+    for name, values in got.items():
+        assert values.shape == (3,), name
+        assert np.isfinite(values).all(), name
+    losses = dict(zip(LOSS_COLUMNS, np.asarray(m["losses"]).T, strict=True))
+    np.testing.assert_array_equal(got["pqn/td_loss"], losses["value_loss"])
+    np.testing.assert_array_equal(got["pqn/grad_norm"], losses["grad_norm"])
+    assert (got["pqn/action_gap"] >= 0).all()
+    assert (got["pqn/q_max_mean"] >= got["pqn/q_taken_mean"] - 1e-6).all()
+    assert ((got["pqn/greedy_share"] >= 0) & (got["pqn/greedy_share"] <= 1)).all()
+    assert (got["rnn/hidden_norm"] > 0).all()
+    assert (got["reward/intrinsic"] == 0).all()  # the control has no hooks
+    assert ((got["rnn/reset_share"] >= 0) & (got["rnn/reset_share"] <= 1)).all()
+
+
+def test_epsilon_and_the_learning_rate_are_those_of_each_update(
+    pqn_cfg: Callable[..., PQNRNNConfig],
+) -> None:
+    cfg = pqn_cfg(steps=10 * B * T)  # 10 updates, epsilon falls over the first one
+    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+    want = [float(epsilon(cfg, jnp.int32(u))) for u in range(3)]
+    np.testing.assert_allclose(m["pqn/epsilon"], want, rtol=1e-6)  # type: ignore[typeddict-item]
+    q_steps = cfg.minibatches * cfg.epochs  # the schedule decays per Q step
+    lr = [cfg.lr * (1 - u * q_steps / (cfg.n_updates * q_steps)) for u in range(3)]
+    np.testing.assert_allclose(m["pqn/lr"], lr, rtol=1e-5)  # type: ignore[typeddict-item]
+    flat = pqn_cfg(steps=10 * B * T, lr_linear_decay=False)
+    _, m = train_chunk(init_state(flat, jax.random.key(0)), 2)
+    np.testing.assert_allclose(m["pqn/lr"], [cfg.lr] * 2, rtol=1e-6)  # type: ignore[typeddict-item]
+
+
+def test_a_greedy_behaviour_takes_the_greedy_action_every_step(
+    pqn_cfg: Callable[..., PQNRNNConfig],
+) -> None:
+    cfg = pqn_cfg(eps_start=0.0, eps_finish=0.0)
+    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 2)
+    assert np.asarray(m["pqn/greedy_share"]).tolist() == [1.0, 1.0]  # type: ignore[typeddict-item]
+    assert np.asarray(m["pqn/epsilon"]).tolist() == [0.0, 0.0]  # type: ignore[typeddict-item]
+    random = dataclasses.replace(cfg, eps_start=1.0)
+    _, m = train_chunk(init_state(random, jax.random.key(0)), 1)
+    assert float(m["pqn/greedy_share"][0]) < 0.5  # type: ignore[typeddict-item]
+
+
+def test_the_q_statistics_are_means_over_the_steps_that_enter_the_loss(
+    one_step: tuple[Any, ...],
+) -> None:
+    cfg, ts, traj, h0 = one_step
+    _, m = learn(ts, traj, jax.random.key(5), h0=h0)
+    (_, q), _ = ts.apply_fn(
+        variables_of(ts),
+        h0,
+        traj.obs,
+        _resets(traj.dones),
+        traj.extra["last_actions"],
+        train=True,
+        mutable=["batch_stats"],
+    )
+    r = traj.rewards + traj.extra["r_int"]
+    d = traj.dones.astype(jnp.float32)
+    g = q_lambda_targets(q[1:].max(-1), r[:-1], d[:-1], cfg.gamma, cfg.lam)
+    taken = jnp.take_along_axis(q, traj.actions[..., None], -1)[:-1, :, 0]
+    top = jnp.sort(q[:-1], -1)
+    want = {
+        "q_taken_mean": taken.mean(),
+        "q_max_mean": top[..., -1].mean(),
+        "target_mean": g.mean(),
+        "action_gap": (top[..., -1] - top[..., -2]).mean(),
+    }
+    for name, value in want.items():
+        np.testing.assert_allclose(m[name], value, rtol=1e-5, atol=1e-7, err_msg=name)
+
+
+def test_the_batch_renorm_metrics_follow_the_input_statistics(
+    cfg: PQNRNNConfig,
+) -> None:
+    from wut_murl_craftax.training.batch_renorm import WARM_UP
+
+    state = init_state(cfg, jax.random.key(0))
+    _, m = train_chunk(state, 1)
+    assert float(m["pqn/bn_warm"][0]) == 0.0  # type: ignore[typeddict-item]
+    assert 0 < float(m["pqn/bn_var_min"][0]) <= 1.0  # type: ignore[typeddict-item]
+    stats = state.train_state.batch_stats
+    steps = stats["BatchRenorm_0"]["steps"]
+    near = {
+        **stats,
+        "BatchRenorm_0": {**stats["BatchRenorm_0"], "steps": steps + WARM_UP - 1},
+    }
+    warm = state.replace(train_state=state.train_state.replace(batch_stats=near))
+    _, m = train_chunk(warm, 1)  # the update's own Q steps take it past the warm-up
+    assert float(m["pqn/bn_warm"][0]) == 1.0  # type: ignore[typeddict-item]
+    var = stats["BatchRenorm_0"]["var"]
+    small = {
+        **stats,
+        "BatchRenorm_0": {**stats["BatchRenorm_0"], "var": jnp.full_like(var, 1e-9)},
+    }
+    low = state.replace(train_state=state.train_state.replace(batch_stats=small))
+    _, m = train_chunk(low, 1)
+    assert float(m["pqn/bn_var_min"][0]) < 1e-6  # type: ignore[typeddict-item]
+
+
+def test_the_rollout_stats_are_means_over_steps_and_envs(
+    start: PQNRNNState,
+) -> None:
+    _, traj, _, _ = collect(start, with_traj=True)
+    _, m = train_chunk(start, 1)
+    dones = np.asarray(traj.dones)
+    resets = np.concatenate([np.asarray(start.last_done)[None], dones[:-1]])
+    np.testing.assert_allclose(m["rnn/reset_share"], [resets.mean()], rtol=1e-6)  # type: ignore[typeddict-item]
+    np.testing.assert_allclose(  # type: ignore[call-overload]
+        m["reward/extrinsic"], [np.asarray(traj.rewards).mean()], rtol=1e-6
+    )
+
+
+def test_a_hooked_reward_is_logged_apart_from_the_extrinsic_one(
+    pqn_cfg: Callable[..., PQNRNNConfig],
+) -> None:
+    def reward(s: Any, e: Any, e2: Any, o: Any, d: jax.Array, t: Any) -> Any:
+        return jnp.full(d.shape, 0.25, jnp.float32), s
+
+    plain, hooked = (
+        train_chunk(init_state(pqn_cfg(**extra), jax.random.key(0)), 1)[1]
+        for extra in ({}, {"intrinsic_reward_fn": reward})
+    )
+    assert float(hooked["reward/intrinsic"][0]) == 0.25  # type: ignore[typeddict-item]
+    assert float(hooked["reward/extrinsic"][0]) == float(plain["reward/extrinsic"][0])  # type: ignore[typeddict-item]
+
+
+@pytest.mark.parametrize("name", ["pqn/td_loss", "rnn/hidden_norm", "reward/extrinsic"])
+def test_a_method_cannot_reuse_a_control_metric_name(
+    pqn_cfg: Callable[..., PQNRNNConfig], name: str
+) -> None:
+    state = init_state(pqn_cfg(metrics_fn=lambda s: {name: 1.0}), jax.random.key(0))
+    with pytest.raises(ValueError, match="control metric"):
+        train_chunk(state, 1)
