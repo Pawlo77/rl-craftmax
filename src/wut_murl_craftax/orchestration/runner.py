@@ -102,7 +102,12 @@ from .runtime import (
     import_craftax,
     select_platforms,
 )
-from .store import TAG_STATE_UNREADABLE, is_partial, merge_stores
+from .store import (
+    TAG_STATE_UNREADABLE,
+    claim_node_store,
+    is_partial,
+    merge_stores,
+)
 from .tracking import _resolve_tracking_uri, artifact_path, build_mlflow_tracker
 from .train_metrics import (
     compile_seconds,
@@ -1188,6 +1193,21 @@ def _runs_in_children(
     return run
 
 
+def _check_node_store(
+    seed_from: str | None, tracking_uri: str | None, num_workers: int
+) -> None:
+    """Refuse a seed without a node store, and a node store of another array size.
+
+    Runs before the seed, so a refused store is not touched (`claim_node_store`).
+    """
+    if tracking_uri is None:
+        if seed_from is not None:
+            msg = "seed_from needs tracking_uri: a node store to seed"
+            raise ValueError(msg)
+        return
+    claim_node_store(mlflow.get_tracking_uri(), num_workers)
+
+
 def _seed(seed_from: str, node: str, specs: Sequence[RunSpec], stop: _Stop) -> None:
     """Merge the specs' runs of ``seed_from`` into ``node``; a stop then ends `main`.
 
@@ -1235,7 +1255,8 @@ def main(
     Raises:
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
         RuntimeError: At the end, naming every run of this call that failed.
-        ValueError: ``seed_from`` without ``tracking_uri``.
+        ValueError: ``seed_from`` without ``tracking_uri``, or a node store of
+            another array size that is not merged (`claim_node_store`).
         BackendError: The profile's mode needs a GPU this machine lacks (at once).
     """
     machine = load_profile(profile)
@@ -1249,9 +1270,7 @@ def main(
             experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
         )
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
-    if seed_from is not None and tracking_uri is None:
-        msg = "seed_from needs tracking_uri: a node store to seed"
-        raise ValueError(msg)
+    _check_node_store(seed_from, tracking_uri, num_workers)
     run_one = (
         _runs_in_children(machine, experiment, registry, evaluate)
         if methods is None

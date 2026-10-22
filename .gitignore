@@ -116,6 +116,7 @@ mlflow.db
 mlflow.db-*
 mlruns*.db
 mlruns*.db-*
+mlruns*.db.array.json
 mlruns/
 runs/
 outputs/

@@ -5,7 +5,9 @@
 # Slurm:  sbatch --array=0-3 --gres=gpu:1 scripts/cluster/run_array.sh tune-coarse
 # Other schedulers: set ARRAY_INDEX (0-based) and ARRAY_SIZE yourself, or export the
 # scheduler's variables as SLURM_ARRAY_TASK_ID and SLURM_ARRAY_TASK_COUNT.
-# Preempted or killed jobs resume: rerun the same command with the same store.
+# Preempted or killed jobs resume: rerun the same command with the same store. A node
+# store records the array size (<db>.array.json); another size is refused until the
+# store is merged, as its runs move to other workers.
 #
 # Environment: PROFILE (default cuda), STORE_DIR (default node-stores), SEED_FROM (a
 # read-only copy of the main mlruns.db with its mlruns/ beside it: the node first takes

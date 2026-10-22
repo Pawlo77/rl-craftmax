@@ -12,6 +12,7 @@ runner seeds a node's store the same way from the main one (``names``). CLI: ``s
 """
 
 import argparse
+import json
 import shutil
 from collections.abc import Collection, Sequence
 from pathlib import Path
@@ -48,6 +49,9 @@ STATES = (
 tag ``eval/pending`` (its evaluation was cut short, results readers skip it), and
 ``eval-incomplete`` FINISHED in a log-spaced phase without every eval file."""
 _HIDDEN_AT_ZERO = ("failed", "eval-pending", "eval-incomplete")
+ARRAY_SUFFIX = ".array.json"
+"""Beside a node store's database: the array size (``num_workers``) its runs were
+shared out by, and whether it was merged since its last run (`claim_node_store`)."""
 EVAL_MODES = ("stochastic", "greedy")
 """``visualisation.eval_rollouts.MODES``, repeated: that module imports Craftax."""
 _BATCH = 1000
@@ -320,6 +324,49 @@ def _join_evaluation(
                 target.delete_tag(run_id, key)
 
 
+def _array_file(db: Path) -> Path:
+    return db.with_name(db.name + ARRAY_SUFFIX)
+
+
+def _write_array_file(db: Path, num_workers: int, merged: bool) -> None:
+    path, tmp = _array_file(db), _array_file(db).with_suffix(".tmp")
+    tmp.write_text(json.dumps({"num_workers": num_workers, "merged": merged}))
+    tmp.replace(path)
+
+
+def _mark_merged(db: Path) -> None:
+    """Mark a node store merged: its runs are in the destination store now."""
+    if _array_file(db).is_file():
+        workers = json.loads(_array_file(db).read_text())["num_workers"]
+        _write_array_file(db, workers, merged=True)
+
+
+def claim_node_store(tracking_uri: str, num_workers: int) -> None:
+    """Record that a node store serves an array of ``num_workers`` (review p2b M2).
+
+    Another array size shares the runs out differently: this worker would retrain
+    runs another worker started. So a store whose recorded size differs is refused
+    unless it was merged since its last run (`merge_stores` marks it). Not a SQLite
+    store: nothing to record.
+
+    Raises:
+        ValueError: The store serves another array size and is not merged.
+    """
+    if not tracking_uri.startswith("sqlite:///"):
+        return
+    db = Path(tracking_uri.removeprefix("sqlite:///"))
+    if _array_file(db).is_file():
+        info = json.loads(_array_file(db).read_text())
+        if info["num_workers"] != num_workers and not info["merged"]:
+            msg = (
+                f"{db} serves an array of {info['num_workers']} workers and was not "
+                f"merged since: `make merge-mlflow SRC={db}` before an array of "
+                f"{num_workers}"
+            )
+            raise ValueError(msg)
+    _write_array_file(db, num_workers, merged=False)
+
+
 def merge_stores(
     src: Path | str, dst: str | None = None, *, names: Collection[str] | None = None
 ) -> dict[str, int]:
@@ -376,6 +423,7 @@ def merge_stores(
         _copy_run(target, source, run, experiment_id, artifacts, phases)
         if here is not None:
             target.delete_run(here.info.run_id)  # soft: the old artifacts stay on disk
+    _mark_merged(db)
     return {"copied": len(copies), "joined": len(joins)}
 
 

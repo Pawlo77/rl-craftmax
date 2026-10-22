@@ -289,6 +289,29 @@ def test_a_stop_during_the_seed_lands_after_it_and_opens_no_run(
     assert run.data.tags[queue.TAG_PHASES] == "tune-coarse"  # it never joined
 
 
+def test_a_node_store_of_another_array_size_is_refused_until_merged(
+    store: Store, tmp_path: Path
+) -> None:
+    """Review p2b M2: a resized array shares the runs out anew; an unmerged node
+    store would retrain runs another worker started."""
+    specs = store.phase("tune-coarse", ["published", "lr-hi", "lr-lo"])
+    node_uri = f"sqlite:///{tmp_path / 'node' / 'mlruns-node-0.db'}"
+
+    def run(workers: int, **kw: Any) -> FakeTrainer:
+        trainer = FakeTrainer()
+        store.run(specs, trainer, num_workers=workers, tracking_uri=node_uri, **kw)
+        return trainer
+
+    run(2)
+    with pytest.raises(ValueError, match="array of 2 workers"):
+        run(3, seed_from=store.tracking_uri)  # refused before the seed
+    assert store.runs() == {}
+    merge_stores(node_uri, store.tracking_uri)
+    run(3)
+    with pytest.raises(ValueError, match="array of 3 workers"):
+        run(2)  # the 3-worker array ran since the merge
+
+
 def test_max_runs_counts_the_runs_it_trains(store: Store) -> None:
     specs = store.phase("tune-coarse", ["published", "lr-hi", "lr-lo"])
     store.run(specs[:1], FakeTrainer())
