@@ -126,6 +126,9 @@ TAG_CODE_CHANGED = "code/changed"
 TAG_ONLINE_FROM = "metrics/online_from_update"
 """Run tag: the update a state saved before the online families resumed at; their
 sums start from zero there (the episodes running then are partly counted)."""
+TAG_EVAL_PENDING = "eval/pending"
+"""Run tag: ``true`` while a reused FINISHED run's evaluation is incomplete; a signal,
+error or crash in it keeps the run FINISHED, and the next call only evaluates."""
 TAG_FAIL_COUNT = "fail/count"
 """Run tag: how many calls failed on the run (errors and crashes, not aborts)."""
 EXTRAS_FILE = "extras.npz"
@@ -870,6 +873,21 @@ def _code_tags(name: str, previous: Mapping[str, str]) -> dict[str, str]:
     return tags
 
 
+def _close(tracker: Any, status: str, trained: bool) -> None:
+    """Close the active run ``status``; one that did not train this call stays FINISHED.
+
+    Phase 0 review I6: a cut evaluation of a reused FINISHED run must not send it
+    back through `_train`; it keeps `TAG_EVAL_PENDING`, which a FINISHED close clears.
+    """
+    if status == "FINISHED":
+        run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]  # the runner's run
+        if TAG_EVAL_PENDING in mlflow.get_run(run_id).data.tags:
+            mlflow.delete_tag(TAG_EVAL_PENDING)
+    elif not trained:
+        status = "FINISHED"
+    tracker.close(status)
+
+
 def _train_to_score(
     trainer: Trainer,
     spec: RunSpec,
@@ -939,7 +957,7 @@ def _run_spec(
     # a FINISHED run with a lost checkpoint file goes through `_train` to repair it
     trains = (
         found is None
-        or found.info.status != "FINISHED"
+        or (found.info.status != "FINISHED" and TAG_EVAL_PENDING not in found.data.tags)
         or bool(missing_checkpoints(out))
     )
     try:
@@ -947,9 +965,11 @@ def _run_spec(
             tracker.close("KILLED")  # the next call logs the score and evaluates
             return True
         (out / "eval").mkdir(exist_ok=True)
+        if not trains:  # cleared by a complete evaluation (`_close`)
+            mlflow.set_tag(TAG_EVAL_PENDING, "true")
         evaluate(out, spec, lambda: stop.signum is not None)
     except KeyboardInterrupt:
-        tracker.close("KILLED")
+        _close(tracker, "KILLED", trains)
         raise
     except _Aborted as abort:
         _mark_abort(found.data.tags if found else {}, abort, spec.abort)
@@ -961,11 +981,11 @@ def _run_spec(
         return True
     except Exception as error:
         mlflow.set_tags(_fail_tags(found.data.tags if found else {}, error))
-        tracker.close("FAILED")
+        _close(tracker, "FAILED", trains)
         raise
     else:
         # evaluation may have stopped early
-        tracker.close("KILLED" if stop.signum is not None else "FINISHED")
+        _close(tracker, "KILLED" if stop.signum is not None else "FINISHED", trains)
         return trains
     finally:
         (out / OWNER_FILE).unlink(missing_ok=True)
@@ -1017,7 +1037,10 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any, done: Any) 
 
 
 def _close_orphan(name: str, status: str, error: str) -> str:
-    """Close a run its dead child left RUNNING; return the run's error text."""
+    """Close a run its dead child left RUNNING; return the run's error text.
+
+    A reused run cut in its evaluation (`TAG_EVAL_PENDING`) is closed FINISHED.
+    """
     found = find_run(name)
     if found is None or found.info.status != "RUNNING":
         return str(found.data.tags.get(TAG_FAIL_ERROR, error)) if found else error
@@ -1025,6 +1048,8 @@ def _close_orphan(name: str, status: str, error: str) -> str:
     if status == "FAILED":
         for key, value in _fail_tags(found.data.tags, error).items():
             client.set_tag(found.info.run_id, key, value)
+    if found.data.tags.get(TAG_EVAL_PENDING) == "true":
+        status = "FINISHED"
     client.set_terminated(found.info.run_id, status)
     (artifact_path(found.info.artifact_uri) / OWNER_FILE).unlink(missing_ok=True)
     return error

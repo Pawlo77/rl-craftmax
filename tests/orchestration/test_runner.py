@@ -21,7 +21,7 @@ import mlflow
 import numpy as np
 import pytest
 import yaml
-from _fake_registry import NO_EVAL, REGISTRY
+from _fake_registry import CRASH_EVAL, NO_EVAL, REGISTRY
 from _fake_trainer import STEPS_PER_UPDATE, FakeTrainer
 from _toy_method import TINY, TOY
 
@@ -309,6 +309,45 @@ def test_a_finished_run_is_skipped_but_evaluated(store: Store) -> None:
     assert len(store.runs()) == 2
     assert all(r.info.status == "FINISHED" for r in store.runs().values())
     assert [e[0] for e in store.evaluated] == [s.name for s in specs] * 2
+
+
+@pytest.mark.parametrize("cut", ["signal", "interrupt", "error"])
+def test_a_cut_evaluation_of_a_reused_run_keeps_it_finished(
+    store: Store, cut: str
+) -> None:
+    """Phase 0 review I6: the next call only evaluates, it never retrains."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    (final,) = store.phase("final-1m", ["published"], eval_mode="log_spaced")
+    calls: list[bool] = []
+
+    def evaluate(run_dir: Path, s: RunSpec, should_stop: Callable[[], bool]) -> None:
+        calls.append(True)
+        if len(calls) > 1:
+            return
+        if cut == "signal":
+            os.kill(os.getpid(), signal.SIGTERM)
+            assert should_stop()
+        elif cut == "interrupt":
+            raise KeyboardInterrupt
+        else:
+            msg = "disk full"
+            raise OSError(msg)
+
+    store.evaluate = evaluate  # type: ignore[method-assign]
+    raises = {"signal": SystemExit, "interrupt": KeyboardInterrupt}
+    with pytest.raises(raises.get(cut, RuntimeError)):
+        store.run([final], FakeTrainer())
+    run = store.runs()[final.name]
+    assert run.info.status == "FINISHED"
+    assert run.data.tags[runner.TAG_EVAL_PENDING] == "true"
+    assert ("fail/error" in run.data.tags) == (cut == "error")
+    trainer = FakeTrainer()
+    store.run([final], trainer)
+    assert (trainer.updates, len(calls)) == ([], 2)
+    run = store.runs()[final.name]
+    assert run.info.status == "FINISHED"
+    assert runner.TAG_EVAL_PENDING not in run.data.tags
 
 
 def test_a_run_of_another_phase_is_found_not_duplicated(store: Store) -> None:
@@ -1375,6 +1414,34 @@ def test_a_signal_before_the_child_starts_spawns_none(
         _in_children(store, [spec])
     assert exit_info.value.code == 128 + signal.SIGTERM
     assert store.runs() == {}
+
+
+def test_a_crash_in_the_evaluation_of_a_reused_run_keeps_it_finished(
+    store: Store,
+) -> None:
+    """The child dies (an OOM kill) evaluating a FINISHED run another phase reuses."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    toy = _as(spec, "toy")
+    _in_children(store, [toy])
+    pid = store.runs()[toy.name].data.tags["pid"]
+    final = dataclasses.replace(toy, phase="final-1m")
+    with pytest.raises(RuntimeError, match="exited with -9"):
+        runner.main(
+            [final],
+            PROFILE,
+            experiment_config=store.config,
+            registry=REGISTRY,
+            evaluate=CRASH_EVAL,
+        )
+    run = store.runs()[toy.name]
+    assert (run.info.status, run.data.tags[runner.TAG_EVAL_PENDING]) == (
+        "FINISHED",
+        "true",
+    )
+    _in_children(store, [final])
+    run = store.runs()[toy.name]
+    assert (run.info.status, run.data.tags["pid"]) == ("FINISHED", pid)  # no training
+    assert runner.TAG_EVAL_PENDING not in run.data.tags
 
 
 def test_a_crash_at_exit_after_the_run_finished_is_only_a_warning(

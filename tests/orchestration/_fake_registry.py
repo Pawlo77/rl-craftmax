@@ -18,6 +18,8 @@ REGISTRY = "_fake_registry:METHODS"
 """The ``registry`` argument of ``runner.main`` for these trainers."""
 NO_EVAL = "_fake_registry:no_eval"
 """The ``evaluate`` argument: skip the evaluation."""
+CRASH_EVAL = "_fake_registry:crash_eval"
+"""The ``evaluate`` argument: the child dies in the evaluation (SIGKILL)."""
 
 
 class PidTrainer(FakeTrainer):
@@ -56,6 +58,11 @@ class ExitCrashTrainer(FakeTrainer):
 
 def no_eval(run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]) -> None:
     """An `Evaluate` that writes nothing."""
+
+
+def crash_eval(run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]) -> None:
+    """An `Evaluate` killed as the OOM killer would kill it."""
+    os.kill(os.getpid(), signal.SIGKILL)
 
 
 METHODS = {
