@@ -19,7 +19,11 @@ import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
-from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
+from wut_murl_craftax.orchestration.abort import (
+    TAG_ABORT_GUARD,
+    TAG_ABORT_METRIC,
+    TAG_ABORT_UPDATE,
+)
 from wut_murl_craftax.orchestration.queue import (
     _knob_values,
     expand_phase,
@@ -423,6 +427,7 @@ def test_the_abort_list_holds_only_the_guards_and_flags_slow_planning() -> None:
     """The guards are 0 until broken (`test_one_update_logs_every_method_metric`)."""
     assert load_method(NAME).abort == {
         "finite": SMDP_GUARDS + DYNA_GUARDS,
+        "permanent": SMDP_GUARDS[1:] + DYNA_GUARDS[1:],
         "flags": [
             {"name": "plan_slow", "metric": "dyna/plan_wall_share", "above": 0.3}
         ],
@@ -531,12 +536,11 @@ def test_every_configured_kappa_keeps_healthy_runs_below_the_bound() -> None:
             assert loop < dyna_q.max_q(kappa, gamma), (kappa, h)
 
 
-def _aborted(run: Any) -> tuple[str, str, str]:
-    return (
-        run.info.status,
-        run.data.tags[TAG_ABORT_METRIC],
-        run.data.tags[TAG_ABORT_UPDATE],
-    )
+def _aborted(run: Any) -> tuple[str, str, str, str | None]:
+    """Status, metric, update and the permanent guard (None: retried once)."""
+    tags = run.data.tags
+    guard = tags.get(TAG_ABORT_GUARD)
+    return run.info.status, tags[TAG_ABORT_METRIC], tags[TAG_ABORT_UPDATE], guard
 
 
 def test_a_nan_after_planning_aborts_the_run(
@@ -552,7 +556,7 @@ def test_a_nan_after_planning_aborts_the_run(
         run = run_store.run([spec])[spec.name]
     finally:
         dyna_q._planner.cache_clear()
-    assert _aborted(run) == ("FAILED", "dyna/nan", "1")
+    assert _aborted(run) == ("FAILED", "dyna/nan", "1", None)
 
 
 def test_a_full_model_aborts_the_run(
@@ -560,7 +564,7 @@ def test_a_full_model_aborts_the_run(
 ) -> None:
     (spec,) = _phase(tmp_path, methods_dir, model_pairs=2)
     run = run_store.run([spec])[spec.name]
-    assert _aborted(run) == ("FAILED", "dyna/model_full", "1")
+    assert _aborted(run) == ("FAILED", "dyna/model_full", "1", "dyna/model_full")
 
 
 def test_a_planned_value_above_the_return_bound_aborts_the_run(
@@ -578,7 +582,7 @@ def test_a_planned_value_above_the_return_bound_aborts_the_run(
         run = run_store.run([spec])[spec.name]
     finally:
         dyna_q._planner.cache_clear()
-    assert _aborted(run) == ("FAILED", "dyna/divergence", "1")
+    assert _aborted(run) == ("FAILED", "dyna/divergence", "1", "dyna/divergence")
 
 
 def test_table_values_between_300_and_the_bound_do_not_abort(

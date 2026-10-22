@@ -18,7 +18,11 @@ import pytest
 import yaml
 from _contract import assert_done_step_unlock_counted
 
-from wut_murl_craftax.orchestration.abort import TAG_ABORT_METRIC, TAG_ABORT_UPDATE
+from wut_murl_craftax.orchestration.abort import (
+    TAG_ABORT_GUARD,
+    TAG_ABORT_METRIC,
+    TAG_ABORT_UPDATE,
+)
 from wut_murl_craftax.orchestration.queue import (
     expand_phase,
     load_method,
@@ -680,8 +684,9 @@ GUARDS = ["smdp/nan", "smdp/table_full", "smdp/divergence"]
 
 
 def test_the_abort_list_holds_only_the_guards() -> None:
-    """The guards are 0 until broken (`test_one_update_logs_every_method_metric`)."""
-    assert load_method(NAME).abort == {"finite": GUARDS}
+    """The guards are 0 until broken (`test_one_update_logs_every_method_metric`);
+    a full table or a diverged entry stays so on a retry: those aborts are final."""
+    assert load_method(NAME).abort == {"finite": GUARDS, "permanent": GUARDS[1:]}
 
 
 @pytest.mark.parametrize(
@@ -704,12 +709,11 @@ def test_each_guard_turns_nan_on_its_rule(over: dict[str, Any], guard: str) -> N
     assert not any(np.isnan(fine[g][0]) for g in GUARDS)
 
 
-def _aborted(run: Any) -> tuple[str, str, str]:
-    return (
-        run.info.status,
-        run.data.tags[TAG_ABORT_METRIC],
-        run.data.tags[TAG_ABORT_UPDATE],
-    )
+def _aborted(run: Any) -> tuple[str, str, str, str | None]:
+    """Status, metric, update and the permanent guard (None: retried once)."""
+    tags = run.data.tags
+    guard = tags.get(TAG_ABORT_GUARD)
+    return run.info.status, tags[TAG_ABORT_METRIC], tags[TAG_ABORT_UPDATE], guard
 
 
 def test_a_nan_in_the_table_aborts_the_run(
@@ -720,7 +724,7 @@ def test_a_nan_in_the_table_aborts_the_run(
     # a width no other test compiles, so the patch is traced; 1-step skills end at once
     (spec,) = _phase(tmp_path, methods_dir, hidden=18, timeout_mult=0.001)
     run = run_store.run([spec])[spec.name]
-    assert _aborted(run) == ("FAILED", "smdp/nan", "1")
+    assert _aborted(run) == ("FAILED", "smdp/nan", "1", None)
 
 
 def test_a_nan_skill_loss_aborts_the_run(
@@ -731,7 +735,7 @@ def test_a_nan_skill_loss_aborts_the_run(
     monkeypatch.setattr(pqn_rnn, "q_lambda_targets", lambda *a: real(*a) * jnp.nan)
     (spec,) = _phase(tmp_path, methods_dir, hidden=19)
     run = run_store.run([spec])[spec.name]
-    assert _aborted(run) == ("FAILED", "value_loss", "1")
+    assert _aborted(run) == ("FAILED", "value_loss", "1", None)
 
 
 def test_a_full_table_aborts_the_run(
@@ -740,7 +744,7 @@ def test_a_full_table_aborts_the_run(
     monkeypatch.setattr(smdp, "MAX_OCCUPANCY", 0.0)
     (spec,) = _phase(tmp_path, methods_dir)
     run = run_store.run([spec])[spec.name]
-    assert _aborted(run) == ("FAILED", "smdp/table_full", "1")
+    assert _aborted(run) == ("FAILED", "smdp/table_full", "1", "smdp/table_full")
 
 
 def test_a_table_value_above_the_return_bound_aborts_the_run(
@@ -749,4 +753,4 @@ def test_a_table_value_above_the_return_bound_aborts_the_run(
     """Optimistic entries of 400: the first updated one is above `smdp.MAX_Q`."""
     (spec,) = _phase(tmp_path, methods_dir, q_init=400.0, timeout_mult=0.001)
     run = run_store.run([spec])[spec.name]
-    assert _aborted(run) == ("FAILED", "smdp/divergence", "1")
+    assert _aborted(run) == ("FAILED", "smdp/divergence", "1", "smdp/divergence")

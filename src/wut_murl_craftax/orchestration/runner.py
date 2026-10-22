@@ -58,6 +58,7 @@ from .abort import (
     MAX_ABORTS,
     TAG_ABORT_BUG,
     TAG_ABORT_COUNT,
+    TAG_ABORT_GUARD,
     TAG_ABORT_MEMORY,
     TAG_ABORT_METRIC,
     TAG_ABORT_UNREPORTED,
@@ -657,8 +658,23 @@ def _log_final_score(log: RunLog, env: str) -> None:
     mlflow.log_metric(SCORE_METRIC, score)
 
 
-def _mark_abort(previous: Mapping[str, str], abort: _Aborted) -> None:
-    """Tag the active run with the abort; the `MAX_ABORTS`-th one marks it a bug."""
+def _mark_abort(
+    previous: Mapping[str, str], abort: _Aborted, rules: Mapping[str, Any] | None
+) -> None:
+    """Tag the active run with the abort; the `MAX_ABORTS`-th one marks it a bug.
+
+    A guard metric in the method's ``abort.permanent`` (``rules``; a retry would
+    break it again) is tagged `TAG_ABORT_GUARD` at once instead, and the queue
+    skips the run from then on.
+    """
+    if abort.metric in (rules or {}).get("permanent", []):
+        mlflow.set_tags({
+            TAG_ABORT_GUARD: abort.metric,
+            TAG_ABORT_METRIC: abort.metric,
+            TAG_ABORT_UPDATE: str(abort.update),
+        })
+        logger.warning("run aborted for good (%s): %s", TAG_ABORT_GUARD, abort)
+        return
     count = int(previous.get(TAG_ABORT_COUNT, 0)) + 1
     tags = {
         TAG_ABORT_COUNT: str(count),
@@ -699,12 +715,14 @@ def _live_owner(found: Any) -> int | None:
 
 
 def _skip_reason(found: Any) -> str | None:
-    """Why the queue skips a run: live owner, bug, memory abort, lost checkpoints."""
+    """Why the queue skips a run: live owner, bug, guard or memory abort, lost files."""
     if (pid := _live_owner(found)) is not None:
         return f"is trained by live process {pid} on this host"
     tags = found.data.tags if found else {}
     if tags.get(TAG_ABORT_BUG) == "true":
         return f"is marked a bug ({TAG_ABORT_BUG})"
+    if guard := tags.get(TAG_ABORT_GUARD):
+        return f"aborted for good on guard {guard} ({TAG_ABORT_GUARD})"
     if tags.get(TAG_ABORT_MEMORY) == "true":
         return f"is over the machine's memory limit ({TAG_ABORT_MEMORY})"
     if found and found.info.status == "FAILED" and tags.get(TAG_CKPT_MISSING):
@@ -805,8 +823,8 @@ def _run_spec(
         tracker.close("KILLED")
         raise
     except _Aborted as abort:
-        _mark_abort(found.data.tags if found else {}, abort)
-        tracker.close("FAILED")  # its last state/ stays for the one retry
+        _mark_abort(found.data.tags if found else {}, abort, spec.abort)
+        tracker.close("FAILED")  # its last state/ stays for the one retry, if any
         return True
     except MemoryLimitError as error:  # no retry here can fit: skipped from now on
         _mark_memory(found.data.tags if found else {}, error)

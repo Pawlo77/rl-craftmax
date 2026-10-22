@@ -1,14 +1,14 @@
 """Abort rules of the runner: non-finite losses end a run, flags only tag it.
 
-A NaN or inf in a logged loss (the trainer's ``loss_columns`` and the method metrics the
-method YAML lists under ``abort.finite``, none by default) aborts the run: it ends
-FAILED with its last ``state/`` kept. The next queue call resumes it from there once;
-a second abort of the same run marks it a bug (tag ``abort/bug``) and the queue skips
-it from then on. A method that refuses its config at init for the machine's memory
-(``MemoryLimitError``) ends the run FAILED with ``abort/memory``, skipped from then on
-too. Flags
-(``flag/<name>`` tags) come from a method's ``abort.flags`` rules, see `flag_hits`;
-they never stop a run, and nothing here looks at the score (no early stopping).
+A NaN or inf in a logged loss (the trainer's ``loss_columns`` and the metrics the method
+YAML lists under ``abort.finite``) aborts the run: it ends FAILED with its last
+``state/`` kept. The next queue call resumes it once; a second abort marks it a bug
+(tag ``abort/bug``), skipped from then on. A metric also under ``abort.permanent`` (a
+capacity or divergence guard, broken again by any retry) ends the run FAILED with
+``abort/guard``, skipped from then on, as does a config over the machine's memory
+(``MemoryLimitError``, tag ``abort/memory``). Flags (``flag/<name>`` tags) come from a
+method's ``abort.flags`` rules, see `flag_hits`; they never stop a run, and nothing
+here looks at the score (no early stopping).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -21,6 +21,9 @@ from .queue import TAG_ABORT_BUG as TAG_ABORT_BUG  # queue reads it without this
 
 TAG_ABORT_COUNT = "abort/count"
 """Run tag: how often the run was aborted on a non-finite loss."""
+TAG_ABORT_GUARD = "abort/guard"
+"""Run tag: the ``abort.permanent`` guard metric that aborted the run; the queue skips
+the run for good (change the config)."""
 TAG_ABORT_MEMORY = "abort/memory"
 """Run tag: ``true`` when the method's buffers exceed the profile's memory limit; the
 queue skips the run for good (change the config or the profile)."""

@@ -73,9 +73,11 @@ grid:
 # run, and so does a metric in `finite`. A NaN or inf bonus makes count/r_int_mean
 # non-finite; the two guards of training/count_bonus.py turn NaN when the table is fuller
 # than `max_occupancy` or a count is below 0. Every count/* metric is finite otherwise.
-# No flags: the plan's detectors come with the analysis plan.
+# A full table fills again on any retry, so `permanent` ends that run for good (tag
+# abort/guard). No flags: the plan's detectors come with the analysis plan.
 abort:
   finite: [count/r_int_mean, count/table_full, count/negative_counts]
+  permanent: [count/table_full]
 
 # written by `--mark-tuned count-bonus <hash8>`, one block per variant
 tuned: null

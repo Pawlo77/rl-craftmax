@@ -731,6 +731,33 @@ def test_the_next_call_resumes_it_once_and_a_second_nan_marks_a_bug(
     assert store.evaluated == []
 
 
+def test_a_guard_abort_is_permanent_and_skipped_by_later_calls(
+    store: Store, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A capacity or divergence guard breaks the same way on a retry: no resume."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    abort = {"finite": ["ppo/value_loss", "toy/table_full"]}
+    spec = dataclasses.replace(spec, abort=abort | {"permanent": ["toy/table_full"]})
+
+    def full(u: int) -> dict[str, float]:
+        return {"ppo/value_loss": 0.5, "toy/table_full": math.nan if u == 2 else 0}
+
+    store.run([spec], FakeTrainer(extra=full))
+    assert store.runs()[spec.name].info.status == "FAILED"
+    assert tags_of(store, spec.name, "abort/") == {
+        "abort/guard": "toy/table_full",
+        "abort/metric": "toy/table_full",
+        "abort/update": "2",
+    }
+    again = FakeTrainer(extra=full)
+    with caplog.at_level("WARNING"):
+        store.run([spec], again)
+    assert again.updates == []
+    assert f"{spec.name} aborted for good on guard toy/table_full" in caplog.text
+    assert store.runs()[spec.name].info.status == "FAILED"
+    assert store.evaluated == []
+
+
 def test_a_rerun_that_stays_finite_equals_the_uninterrupted_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

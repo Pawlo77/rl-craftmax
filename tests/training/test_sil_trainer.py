@@ -436,9 +436,14 @@ def test_the_runner_trains_and_evaluation_opens_the_run(
 def test_the_abort_list_holds_only_always_finite_metrics() -> None:
     """The loss parts are 0, not NaN, on an empty buffer (`test_sil_loss`), and NaN
     once the loss or the params are."""
-    assert load_method("sil").abort == {
-        "finite": ["sil/policy_loss", "sil/value_loss", "sil/dominates"]
-    }
+    abort = load_method("sil").abort
+    assert abort is not None
+    assert abort["finite"][-3:] == [
+        "sil/policy_loss",
+        "sil/value_loss",
+        "sil/dominates",
+    ]
+    assert abort["permanent"] == ["sil/dominates"]  # the KL streak recurs on a retry
 
 
 def test_trainer_configs_take_the_memory_limit_as_a_runtime_key(

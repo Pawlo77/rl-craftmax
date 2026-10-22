@@ -412,7 +412,10 @@ def test_the_guards_stay_zero_until_the_table_breaks(start: Any) -> None:
 
 def test_the_method_file_aborts_on_the_bonus_and_the_guards() -> None:
     finite = ["count/r_int_mean", "count/table_full", "count/negative_counts"]
-    assert load_method("count-bonus").abort == {"finite": finite}
+    abort = load_method("count-bonus").abort
+    assert abort is not None
+    assert abort["finite"][-3:] == finite
+    assert abort["permanent"] == ["count/table_full"]  # a retry fills it again
 
 
 def _spec(**over: Any) -> RunSpec:
@@ -449,6 +452,7 @@ def test_a_full_table_fails_the_run(run_store: Any) -> None:
     assert run.info.status == "FAILED"
     tags = run.data.tags
     assert (tags["abort/metric"], tags["abort/update"]) == ("count/table_full", "1")
+    assert tags["abort/guard"] == "count/table_full"  # skipped, not retried
 
 
 def test_a_nan_bonus_fails_the_run(

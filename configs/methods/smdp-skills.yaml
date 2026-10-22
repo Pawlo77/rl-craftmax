@@ -94,9 +94,12 @@ grid:
 # network's parameters (smdp/nan), more than a quarter of the table rows decided at
 # (smdp/table_full), or an updated entry above 300, more than any discounted return of the
 # 226 achievement reward plus the bounded health term (smdp/divergence). Every smdp/* metric
-# is finite otherwise. No flags: the plan's detectors come with the analysis plan.
+# is finite otherwise. A full table or a diverged entry breaks again on any retry, so
+# `permanent` ends those runs for good (tag abort/guard); a NaN is retried once. No flags:
+# the plan's detectors come with the analysis plan.
 abort:
   finite: [smdp/nan, smdp/table_full, smdp/divergence]
+  permanent: [smdp/table_full, smdp/divergence]
 
 # written by `--mark-tuned smdp-skills <hash8>`
 tuned: null

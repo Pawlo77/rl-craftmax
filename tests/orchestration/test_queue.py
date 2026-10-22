@@ -294,6 +294,24 @@ def test_method_yaml_fails_loudly(tmp_path: Path, edit: dict[str, Any]) -> None:
         load_method("bad", tmp_path)
 
 
+@pytest.mark.parametrize("permanent", ["m", ["n"], [1]])
+def test_permanent_guards_are_a_list_of_finite_metrics(
+    tmp_path: Path, permanent: object
+) -> None:
+    """A guard aborts through ``finite``; ``permanent`` only stops its retry."""
+    abort = {"finite": ["m"], "permanent": permanent}
+    (tmp_path / "bad.yaml").write_text(
+        yaml.safe_dump({"base": {"env": "X"}, "abort": abort})
+    )
+    with pytest.raises(ValueError, match=r"bad.yaml abort.permanent"):
+        load_method("bad", tmp_path)
+    abort["permanent"] = ["m"]
+    (tmp_path / "ok.yaml").write_text(
+        yaml.safe_dump({"base": {"env": "X"}, "abort": abort})
+    )
+    assert load_method("ok", tmp_path).abort == abort
+
+
 def test_the_abort_block_reaches_every_spec_of_the_method() -> None:
     flags = load_method("toy", METHODS).abort["flags"]  # type: ignore[index]
     assert [f["name"] for f in flags] == [
