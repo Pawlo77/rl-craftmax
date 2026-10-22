@@ -218,7 +218,7 @@ Contract with `pqn_rnn.learn` (checked 2026-10-21 against `training/pqn_rnn.py`)
 
 - [x] **Step 1: Run** `make queue PHASE=smoke METHOD=smdp-skills`; expected: 2 runs finish, `smdp/skill/collect_wood/success_rate` and `smdp/skill/place_table/success_rate` above 0, `smdp/skill/fight/test_agreement` above 0.8, no NaN. (done 2026-10-22; 2 runs finished without NaN, `fight` test agreement 1.0; at 200k Classic the final score is below zero and `place_table` never succeeded in 2 to 5 attempts, so that check is inconclusive; 1M Classic learns)
 - [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same `Q_top` (equal `smdp/keys_visited` at the saved state). (not run in the 2026-10-22 smoke step)
-- [x] **Step 3: Record** measured steps/s and the per-skill test agreements in [[2026-10-20-craftax-compute-budget]]. (done 2026-10-22; steps/s and RSS are recorded, the per-skill test agreements are not)
+- [x] **Step 3: Record** measured steps/s and the per-skill test agreements in [[2026-10-20-craftax-compute-budget]]. (done 2026-10-22; steps/s, RSS and the per-skill test agreements are recorded)
 
 ### Task 7: Coarse tuning
 

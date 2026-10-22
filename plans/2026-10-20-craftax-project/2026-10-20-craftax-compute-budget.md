@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, compute, estimates]
 ---
 # Craftax compute budget
@@ -42,6 +42,7 @@ Status: ready
 | SMDP skills on Craftax-Symbolic, `base`, 1M steps | 4,913 steps/s, peak RSS 3,078 MB, against 3,959 steps/s and 3,479 MB for the PQN-RNN control `base` run alone the same way (SMDP is not slower on Craftax; cause not investigated, possibly the short episodes of its early policy); Classic 1M: 9,210 steps/s, 1,899 MB | measured 2026-10-22, laptop, one seed, idle machine |
 | Dyna-Q planning share of an update (`dyna/plan_wall_share`), Classic 200k | uniform n 5: 0.0005 (0.2 ms of planning per update); prioritized n 5, kappa 0.003: 0.0046; value iteration: 0.020 with 7 to 9 sweeps (`dyna/vi_sweeps`) per update | measured 2026-10-22, Classic, laptop |
 | `smdp/pairs_tried` at the end of the smdp-skills `base` config (sizes Dyna's `model_pairs` 2^16 = 65,536) | 157 (200k Classic, base), 134 (200k Classic, random top level), 1,852 (1M Classic), 253 (1M Craftax) | measured 2026-10-22, one seed each |
+| SMDP per-skill test agreement (`smdp/skill/<name>/test_agreement`), the 2 Classic 200k `smoke` runs | 1.0 for all 25 skills at the last update of both runs; the mean over updates is 1.0 except `sleep` 0.94 in one run (most tests are near-vacuous this early) | measured 2026-10-22, read from MLflow |
 | PPO-RNN and PQN-RNN planning value | 2,400 steps/s (0.8 x PPO) | estimate |
 | CPU rollouts with metal updates | +4-5% end to end for a 256-wide MLP | measured |
 | Authors' RTX 4090, PPO 1B | about 1 hour (266,961 steps/s end to end) | [[Craftax performance]] |
@@ -59,6 +60,7 @@ Evaluation follows [[2026-10-20-craftax-infrastructure]] Task 5 and the "Evaluat
 | Longest eval episode L, rounded up to the chunk | 1,000 steps at 1M and on Classic; 8,000 steps averaged over the 13 checkpoints of a 1B run | estimate |
 | Eval steps per run | tuning and smoke: 128 x 1,000 = 128,000; `final-1m`, `combo-1m`: 13 x 128,000 = 1,664,000; `final-1b`, `combo-1b`: 13 x 128 x 8,000 = 13,312,000 | |
 | Measured, Classic, laptop (2026-10-21) | 128 episodes (64 seeds x 2 modes) = 128,000 steps per checkpoint, as above: the 1,000-step chunk is never exceeded (longest eval episode 393 steps; about 18,900 steps actually played per checkpoint); steady state 0.9 s per mode, about 70,000 steps/s of the 64,000 padded (about 11,000 on the steps actually played, greedy), plus 2.6 s once per run (the `EvalRun` jit load); eval runs as 2 batches of 64 seeds on 8 CPU shards, not one 128-env batch | measured |
+| Measured, Craftax-Symbolic 1M, final checkpoints of the control `tune-coarse` and `tune-fine` runs (2026-10-22) | eval steps per checkpoint: median 128,000 for PPO (37 runs), PPO-RNN (43) and PQN-RNN (42); maximum 256,000, 256,000 and 192,000; above 128,000 in 14%, 16% and 2% of runs (median longest stochastic episode 630, 604 and 440 steps) | measured, read from the eval files |
 | Eval throughput | the method's training planning throughput on the laptop (both modes as one 128-env batch); cluster runs are costed at the same laptop rate, because the GPU eval rate of a 128-env batch is not measured | estimate, conservative on the cluster |
 
 ## Runs per phase

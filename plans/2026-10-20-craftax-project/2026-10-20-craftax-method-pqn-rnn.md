@@ -188,7 +188,7 @@ flowchart TD
 
 - [x] **Step 1: Run** `make queue PHASE=tune-coarse METHOD=pqn-rnn`; 30 finished.
 - [x] **Step 2: Run** the original in a throwaway environment outside this repo: a checkout of `mttga/purejaxql` at 47af6d7 and a short driver that replaces `wandb.log` with a JSONL writer, sets `WANDB_MODE` to a value other than `disabled`, and calls `make_train` with `TOTAL_TIMESTEPS=1e6 TOTAL_TIMESTEPS_DECAY=1e6 NUM_ENVS=256 NUM_STEPS=16`, seeds 0-2: `uv run --isolated --no-project --python 3.12 --with craftax==1.6.1 --with "jax==0.11.*" --with flax --with optax --with chex --with hydra-core --with wandb --with safetensors python driver.py`.
-- [x] **Step 3: Compare** the final scores (last 2% of the budget, `returned_episode_returns` / 226) with ours; on a fail, work the diagram, 3 seeds per diagnostic run, results noted in [[PQN-RNN design]].
+- [x] **Step 3: Compare** the final scores (last 2% of the budget, `returned_episode_returns` / 226) with ours; on a fail, work the diagram, 3 seeds per diagnostic run, results noted in [[PQN-RNN design]]. (done 2026-10-22: original 1.509, sd 0.193, against ours 1.270, sd 0.849; difference 0.239 within 1.005: pass)
 
 ### Task 7: Stage 2 and the tuned config
 

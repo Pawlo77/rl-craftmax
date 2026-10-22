@@ -248,7 +248,7 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - [x] **Step 3: Implement** first unlocks as metrics `first_unlock/<name>` (step = env steps) and `first_unlock_wall/<name>` (value = `wall_s`), logged once per achievement.
 - [x] **Step 4: Measure** steady SPS with and without the accumulators on Craftax-Symbolic, 1024 envs, 20 updates, laptop profile; log `metrics_overhead_pct`; write the measured number under this task.
   Measured 2026-10-22 on Craftax-Classic (laptop, beside the live 2-worker queue, so the full update is noise-bound): PPO rollout 0.7% slower at 512 envs x 64 steps (median of 3 interleaved pairs, 29,340 against 29,141 steps/s), 2.3% at 1024 envs in the one clean pair; whole-update SPS pairs ranged from -15% to +4% (load noise; four of five within -1.5% to +4.2%). No `metrics_overhead_pct` metric: a one-off benchmark, not a per-run number.
-- [ ] **Step 5: Run** `uv run pytest tests/evaluation/test_episode_metrics.py -q`, then `make tests`.
+- [ ] **Step 5: Run** `uv run pytest tests/evaluation/test_episode_metrics.py -q`, then `make tests`. (open 2026-10-22: the focused file and the affected trainer, runner and checkpoint tests passed before the merge into main at 06470be; `make tests` on main waits for a gap with no tuning queue)
 
 ### Task 4: Episode records from an event stream
 

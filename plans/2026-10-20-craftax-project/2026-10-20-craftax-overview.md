@@ -75,7 +75,7 @@ flowchart LR
 
 ## Progress
 
-- Phase 0 done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10.
+- Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10; online metric families merged 12:06, their full-suite run on main pending.
 - Phase 1 stage-1 tuning running since 06:02; checklist and status in [[2026-10-20-craftax-project]].
 
 ## How to run it

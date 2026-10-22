@@ -5,7 +5,7 @@ domain: visualisation
 parent: "[[Visualisation]]"
 tags: [handbook, visualisation, training, logging, ppo, determinism]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 related-code:
   - "[[src/wut_murl_craftax/training/ppo.py]]"
   - "[[src/wut_murl_craftax/training/checkpoints.py]]"
@@ -36,7 +36,7 @@ What a training run saves so that [[Checkpoint comparison grid]], [[Animated tra
    | `config.json` | run: the method's config, `n_updates`, `batch`, achievement names, `ckpt_updates`, actor and learner devices | all |
    | `metrics.npz` | one row per update: `update, env_steps, wall_s, n_episodes, return, length`, 5 losses, `ach/<name>` (% of episodes finished in the update) | curves, timeline |
    | `episodes.npz` | one row per finished episode: `update, ret, length`, achievements bit-packed (`np.packbits`) | timeline (first unlock) |
-   | `extras.npz` | one series per method metric, one value per update, NaN where absent (runner only) | method analysis |
+   | `extras.npz` | one series per method metric, one value per update, NaN where absent, plus the online-family sums `online/<column>` (additive, so MLflow windows pool them episode-weighted) (runner only) | method analysis, online families |
    | `ckpt/<update>.msgpack`, `ckpt/index.json` | log-spaced params only (`flax.serialization`), with `env_steps` and `wall_s` | grid, overlay, eval |
    | `state/state.npz` | full resume state of the last save (trainer state, update, run log), replaced atomically | resuming |
    | `eval/<mode>/<update>.npz` | step 5 | grid, overlay, analysis |
