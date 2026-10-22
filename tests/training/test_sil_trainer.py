@@ -317,13 +317,20 @@ def test_two_updates_report_chunk_and_sil_metrics(entry: Any) -> None:
     shapes = {k: np.asarray(v).shape for k, v in m.items()}
     names = {k for k in m if k.startswith("sil/")}
     assert {"sil/active", "sil/policy_loss", "sil/inserted", "sil/overflow"} <= names
+    control = {
+        "ppo/entropy",
+        "ppo/ratio_first_mb",
+        "rnn/hidden_norm",
+        "reward/intrinsic",
+    }
+    assert control <= set(m)  # the PPO-RNN control's own metrics come with the method's
     assert shapes == {
         "losses": (2, len(LOSS_COLUMNS)),
         "done": (2, 8, 8),
         "ach": (2, 8, 8, 22),
         "ret": (2, 8, 8),
         "length": (2, 8, 8),
-        **dict.fromkeys(names, (2,)),
+        **{k: (2,) for k in m if "/" in k},
     }
     assert all(np.isfinite(np.asarray(m[k], float)).all() for k in names)
 

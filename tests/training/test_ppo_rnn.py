@@ -34,6 +34,27 @@ from wut_murl_craftax.training.records import LOSS_COLUMNS, achievement_names
 
 REPO = Path(__file__).resolve().parents[2]
 T, B, H = 8, 8, 512
+PPO_NAMES = (
+    "policy_loss",
+    "value_loss",
+    "entropy",
+    "approx_kl",
+    "clip_frac",
+    "explained_variance",
+    "grad_norm",
+    "adv_mean",
+    "adv_std",
+    "lr",
+)
+CONTROL_NAMES = (
+    "rnn/hidden_norm",
+    "rnn/hidden_saturation",
+    "rnn/reset_share",
+    "ppo/ratio_first_mb",
+    "reward/extrinsic",
+    "reward/intrinsic",
+)
+METRIC_NAMES = (*(f"ppo/{n}" for n in PPO_NAMES), *CONTROL_NAMES)
 
 
 @pytest.fixture(scope="module")
@@ -249,6 +270,7 @@ def test_registry_entry_trains_with_the_ppo_metric_shapes(cfg: PPORNNConfig) -> 
         "ach": (2, T, B, n_ach),
         "ret": (2, T, B),
         "length": (2, T, B),
+        **dict.fromkeys(METRIC_NAMES, (2,)),
     }
     with pytest.raises(ValueError, match="steps"):
         trainer.init(
@@ -265,3 +287,70 @@ def test_done_step_unlocks_reach_the_episode_metrics(
     config |= {"envs": 16, "num_steps": 32, "width": 19, "rnn_width": 19}
     config |= {"minibatches": 2, "update_epochs": 1, "steps": 100 * 16 * 32}
     assert_done_step_unlock_counted(METHODS["ppo-rnn"], config, monkeypatch)
+
+
+def test_a_chunk_returns_the_ppo_and_recurrent_metrics_per_update(
+    cfg: PPORNNConfig,
+) -> None:
+    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+    got = {k: np.asarray(m[k]) for k in METRIC_NAMES}  # type: ignore[literal-required]
+    for name, values in got.items():
+        assert values.shape == (3,), name
+        assert np.isfinite(values).all(), name
+    losses = dict(zip(LOSS_COLUMNS, np.asarray(m["losses"]).T, strict=True))
+    for name in set(LOSS_COLUMNS) - {"explained_var"}:
+        np.testing.assert_array_equal(got[f"ppo/{name}"], losses[name])
+    np.testing.assert_array_equal(
+        got["ppo/explained_variance"], losses["explained_var"]
+    )
+    assert (got["rnn/hidden_norm"] > 0).all()
+    assert (
+        (got["rnn/hidden_saturation"] >= 0) & (got["rnn/hidden_saturation"] <= 1)
+    ).all()
+    assert ((got["rnn/reset_share"] >= 0) & (got["rnn/reset_share"] <= 1)).all()
+    assert (got["reward/intrinsic"] == 0).all()  # the control has no hooks
+    assert (got["ppo/adv_std"] > 0).all()
+
+
+def test_the_first_minibatch_ratio_is_one_before_any_gradient_step(
+    cfg: PPORNNConfig,
+) -> None:
+    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+    np.testing.assert_allclose(m["ppo/ratio_first_mb"], 1.0, atol=1e-3)  # type: ignore[typeddict-item]
+
+
+def test_the_rollout_stats_are_means_over_steps_and_envs(
+    start: PPORNNState, cfg: PPORNNConfig
+) -> None:
+    """Hand check on a rollout from a known start: resets and rewards."""
+    _, _, traj, _ = collect(start, with_traj=True)
+    _, m = train_chunk(start, 1)
+    resets = np.concatenate([start.last_done[None], np.asarray(traj.dones)[:-1]])
+    np.testing.assert_allclose(m["rnn/reset_share"], [resets.mean()], rtol=1e-6)  # type: ignore[typeddict-item]
+    np.testing.assert_allclose(  # type: ignore[call-overload]
+        m["reward/extrinsic"], [np.asarray(traj.rewards).mean()], rtol=1e-6
+    )
+
+
+def test_a_hooked_reward_is_logged_apart_from_the_extrinsic_one(
+    rnn_cfg: Callable[..., PPORNNConfig],
+) -> None:
+    def reward(s: Any, e: Any, e2: Any, o: Any, d: jax.Array, t: Any) -> Any:
+        return jnp.full(d.shape, 0.25, jnp.float32), s
+
+    plain, hooked = (
+        train_chunk(init_state(rnn_cfg(**extra), jax.random.key(0)), 2)[1]
+        for extra in ({}, {"intrinsic_reward_fn": reward})
+    )
+    assert np.asarray(hooked["reward/intrinsic"]).tolist() == [0.25, 0.25]  # type: ignore[typeddict-item]
+    # the first rollout acts from the same params, so its extrinsic reward is the same
+    assert hooked["reward/extrinsic"][0] == plain["reward/extrinsic"][0]  # type: ignore[typeddict-item]
+
+
+@pytest.mark.parametrize("name", ["ppo/entropy", "rnn/hidden_norm", "reward/intrinsic"])
+def test_a_method_cannot_reuse_a_control_metric_name(
+    rnn_cfg: Callable[..., PPORNNConfig], name: str
+) -> None:
+    state = init_state(rnn_cfg(metrics_fn=lambda s: {name: 1.0}), jax.random.key(0))
+    with pytest.raises(ValueError, match="control metric"):
+        train_chunk(state, 1)

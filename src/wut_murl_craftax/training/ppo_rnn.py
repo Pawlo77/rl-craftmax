@@ -58,9 +58,11 @@ from .ppo import (
     PPOConfig,
     env_placement,
     gae,
+    lr_schedule,
     make_train_env,
     optimizer,
     place_on_actor,
+    ppo_metrics,
     ppo_terms,
 )
 from .records import achievement_names
@@ -73,6 +75,19 @@ ACTIVATIONS: dict[str, Callable[[jax.Array], jax.Array]] = {
     "tanh": nn.tanh,
 }
 """``activation`` values: ReLU as the original code, tanh as the paper's text."""
+ROLLOUT_STATS = (
+    "rnn/hidden_norm",
+    "rnn/hidden_saturation",
+    "rnn/reset_share",
+    "reward/extrinsic",
+    "reward/intrinsic",
+)
+"""Metrics of a rollout, in the order of the ``stats`` vector `_make_rollout` returns:
+means over its steps and envs (the saturation also over the units)."""
+SATURATED = 0.95
+"""A hidden unit counts as saturated above this absolute value (``tanh``-like gate)."""
+_RATIO = 5
+"""Index of the mean ratio in the per-minibatch aux of `_make_learn`."""
 _LEARNER_HOOKS = {"observe", "extra_loss_fn"}
 """Hooks that read the method state on the learner. With ``intrinsic_reward_fn`` too
 the state moves between actor and learner each update; without it the state lives on
@@ -238,6 +253,9 @@ def _make_rollout(
         acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
         rec |= {"reset": last_done, "ach": total.ach, "ret": total.ret}
         rec["len"] = total.length
+        # the carry after the step is what the heads read; a done step keeps its own
+        rec["hn"] = jnp.linalg.norm(h2, axis=-1).mean()
+        rec["sat"] = (jnp.abs(h2) > SATURATED).mean()
         if with_traj:
             rec |= {"h": h.astype(jnp.float16), "ev": info["events"]}
         return (params, h2, obs2, d, st2, ms, t + cfg.envs, acc2, key), rec
@@ -261,6 +279,9 @@ def _make_rollout(
                 tr["obs"], tr["act"], tr["r"], tr["d"], tr["h"], tr["ev"], extra
             )
         ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
+        r_int = tr["r_int"].mean() if rewarded else jnp.zeros((), r.dtype)
+        mean = [tr["hn"].mean(), tr["sat"].mean(), tr["reset"].mean(), tr["r"].mean()]
+        ep["stats"] = jnp.stack([*mean, r_int])
         return carry[1:], batch, traj, ep
 
     return rollout
@@ -269,10 +290,17 @@ def _make_rollout(
 def _seq_loss(
     cfg: PPORNNConfig, net: ActorCriticRNN, p: Any, mb: Batch
 ) -> tuple[jax.Array, tuple[jax.Array, ...]]:
-    """`ppo_terms` of a minibatch of sequences rerun from their start hidden."""
+    """`ppo_terms` of a minibatch of sequences rerun from their start hidden.
+
+    The aux is that of `ppo_terms` plus the mean ratio, which is 1 before the first
+    gradient step if the rerun reproduces the rollout.
+    """
     _, logits, v = apply_network(net, p, mb["h0"], mb["obs"], mb["reset"])
     flat = {k: mb[k].reshape(-1) for k in ("act", "logp", "v", "adv", "tgt")}
-    return ppo_terms(logits.reshape(-1, logits.shape[-1]), v.reshape(-1), flat, cfg)
+    logits = logits.reshape(-1, logits.shape[-1])
+    loss, aux = ppo_terms(logits, v.reshape(-1), flat, cfg)
+    lp = jnp.take_along_axis(jax.nn.log_softmax(logits), flat["act"][:, None], 1)[:, 0]
+    return loss, (*aux, jnp.exp(lp - flat["logp"]).mean())
 
 
 def _skip_if_zero(old: TrainState, new: TrainState, norm: jax.Array) -> TrainState:
@@ -327,12 +355,20 @@ def _make_learn(
 ) -> Callable[..., Any]:
     """Jitted update: ``observe``, PPO epochs, extra-loss steps, method metrics.
 
-    Returns the losses in ``records.LOSS_COLUMNS`` order and the method's metrics
-    (extra-loss metrics averaged over the extra steps, then ``metrics_fn`` if the
-    state is on the learner). The method state argument is donated: the caller
-    passes a copy it no longer needs (`train_chunk`).
+    Returns the losses in ``records.LOSS_COLUMNS`` order, ``(adv_mean, adv_std, lr,
+    ratio_first_mb)`` (the rollout's advantage statistics before the per-minibatch
+    normalisation, the learning rate of this update's first optimizer step, the mean
+    ratio of epoch 1's first minibatch) and the method's metrics (extra-loss metrics
+    averaged over the extra steps, then ``metrics_fn`` if the state is on the
+    learner). The method state argument is donated: the caller passes a copy it no
+    longer needs (`train_chunk`).
     """
     on_learner = bool(_LEARNER_HOOKS & set(hk.active))
+    lr_at = (
+        lr_schedule(cfg, hk.extra_steps)
+        if cfg.anneal_lr
+        else lambda _: jnp.asarray(cfg.lr)
+    )
     grad = jax.value_and_grad(lambda p, mb: _seq_loss(cfg, net, p, mb), has_aux=True)
     extra_grad = jax.value_and_grad(hk.extra_loss_fn, has_aux=True)
 
@@ -361,9 +397,12 @@ def _make_learn(
     ) -> Any:
         if "observe" in hk.active:
             ms = hk.observe(ms, cast(Traj, traj))  # built whenever observe is set
+        lr = lr_at(jnp.asarray(ts.step))
         (ts, _, key), aux = jax.lax.scan(epoch, (ts, b, key), None, cfg.update_epochs)
         ev = 1 - jnp.var(b["tgt"] - b["v"]) / (jnp.var(b["tgt"]) + 1e-8)
-        m = [x.mean() for x in aux]
+        # aux: the five ppo_terms, the ratio, the gradient norm; (epochs, minibatches)
+        m = [x.mean() for i, x in enumerate(aux) if i != _RATIO]
+        stats = jnp.array([b["adv"].mean(), b["adv"].std(), lr, aux[_RATIO][0, 0]])
         method: dict[str, jax.Array] = {}
         if "extra_loss_fn" in hk.active:
             before = ts.params
@@ -385,7 +424,7 @@ def _make_learn(
                 ms = hk.after_extra_fn(ms, method)
         if on_learner:
             method |= hk.metrics_fn(ms)
-        return ts, ms, key, jnp.array([*m[:4], ev, *m[4:]]), method
+        return ts, ms, key, jnp.array([*m[:4], ev, *m[4:]]), stats, method
 
     return learn
 
@@ -549,7 +588,8 @@ def collect(
     """One rollout on the actor: next state, PPO batch, `Traj` if asked, episodes.
 
     Batch: ``(steps, envs)`` obs, act, logp, v, adv, tgt, reset, and ``h0``, the
-    float32 start hidden. Episodes: d, ach, ret, len, as ``training.ppo``.
+    float32 start hidden. Episodes: d, ach, ret, len, as ``training.ppo``, and
+    ``stats``, the `ROLLOUT_STATS` of the rollout.
     """
     s = _setup(state.cfg)
     params = jax.device_put(state.train_state.params, s.shared_at)
@@ -585,17 +625,22 @@ def train_chunk(
 ) -> tuple[PPORNNState, "ChunkMetrics"]:
     """Run ``n_updates`` rollout-and-update steps; metrics stacked per update.
 
-    Besides the PPO metrics, every method metric name maps to its per-update values.
+    Besides the `ChunkMetrics` arrays: the ``ppo/*`` metrics of `ppo_metrics`,
+    ``ppo/ratio_first_mb`` and the `ROLLOUT_STATS`, then every method metric name with
+    its per-update values.
+
+    Raises:
+        ValueError: If a method reports the name of a control metric.
     """
     s = _setup(state.cfg)
-    losses, eps, method = [], [], []
+    losses, advs, stats, eps, method = [], [], [], [], []
     if s.resident:  # `learn` donates it: the caller's state stays valid
         state = state.replace(method_state=jax.tree.map(jnp.copy, state.method_state))
     for _ in range(n_updates):
         state, batch, traj, ep = collect(state, s.with_traj)
         put = functools.partial(jax.device_put, device=s.learner)
         ms = put(state.method_state) if s.learner_state else None
-        ts, ms, key, loss, m = s.learn(
+        ts, ms, key, loss, adv, m = s.learn(
             state.train_state, put(batch), put(traj), ms, state.key
         )
         if s.learner_state:
@@ -604,17 +649,25 @@ def train_chunk(
             m |= s.metrics(state.method_state)
         state = state.replace(train_state=ts, key=key)
         losses.append(loss)
+        advs.append(adv)
+        stats.append(ep["stats"])
         eps.append(ep)
         method.append(m)
+    stacked, adv = jnp.stack(losses), jnp.stack(advs)
     metrics = {
-        "losses": jnp.stack(losses),
+        "losses": stacked,
         "done": jnp.stack([e["d"] for e in eps]).astype(bool),
         "ach": jnp.stack([e["ach"] for e in eps]),
         "ret": jnp.stack([e["ret"] for e in eps]),
         "length": jnp.stack([e["len"] for e in eps]),
     }
-    metrics |= {k: jnp.stack([m[k] for m in method]) for k in method[0]}
-    return state, cast("ChunkMetrics", metrics)
+    metrics |= ppo_metrics(stacked, adv[:, :3]) | {"ppo/ratio_first_mb": adv[:, 3]}
+    metrics |= dict(zip(ROLLOUT_STATS, jnp.stack(stats).T, strict=True))
+    own = {k: jnp.stack([m[k] for m in method]) for k in method[0]}
+    if clash := sorted(own.keys() & metrics.keys()):
+        msg = f"method metrics {clash} reuse the names of control metrics"
+        raise ValueError(msg)
+    return state, cast("ChunkMetrics", metrics | own)
 
 
 @dataclass(frozen=True, slots=True)
