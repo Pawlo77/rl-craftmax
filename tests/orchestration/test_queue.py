@@ -867,10 +867,13 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
 ) -> None:
     calls: list[tuple[Any, ...]] = []
     monkeypatch.setattr(runner, "main", lambda *a, **kw: calls.append((*a, kw)))
-    queue.main(["--phase", "configs/phases/smoke.yaml"])
+    # dyna-q expands only once smdp-skills has a tuned block, so select a method
+    queue.main(["--phase", "configs/phases/smoke.yaml", "--method", "ppo"])
     queue.main([
         "--phase",
         "configs/phases/smoke.yaml",
+        "--method",
+        "ppo",
         "--profile",
         "p.yaml",
         "--max-runs",
@@ -884,7 +887,7 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
     ])
     (specs, *flags), (_, *given) = calls
     assert [s.name for s in specs] == [
-        s.name for s in expand_phase(REPO / "configs/phases/smoke.yaml")
+        s.name for s in expand_phase(REPO / "configs/phases/smoke.yaml", method="ppo")
     ]
     assert flags == [
         REPO / "configs/profiles/laptop.yaml",
@@ -1019,13 +1022,22 @@ def test_shipped_count_bonus_fine_rule_expands_on_a_fixture_store(
 # --- shipped configs -----------------------------------------------------------
 
 
-def test_shipped_smoke_phase_expands_to_two_classic_runs_per_control() -> None:
-    specs = expand_phase(REPO / "configs/phases/smoke.yaml")
+def test_shipped_smoke_phase_expands_to_two_classic_runs_per_entry(
+    tmp_path: Path,
+) -> None:
+    # dyna-q reads smdp-skills.tuned: give the copy of the methods an empty tuned block
+    shutil.copytree(REPO / "configs/methods", tmp_path, dirs_exist_ok=True)
+    smdp = tmp_path / "smdp-skills.yaml"
+    smdp.write_text(smdp.read_text().replace("\ntuned: null", "\ntuned: {}"))
+    specs = expand_phase(REPO / "configs/phases/smoke.yaml", methods_dir=tmp_path)
+    entries = ("ppo", "ppo-rnn", "pqn-rnn", "count-bonus-ppo-rnn")
+    entries += ("count-bonus-pqn-rnn", "sil", "smdp-skills", "dyna-q")
     assert [(s.registry_name, s.budget, s.env, s.seed, s.eval_mode) for s in specs] == [
         (m, "200k", "Craftax-Classic-Symbolic-v1", 0, "final")
-        for m in ("ppo", "ppo-rnn", "pqn-rnn")
+        for m in entries
         for _ in range(2)
     ]
+    assert len({s.name for s in specs}) == 16
     assert [s.config["lr"] for s in specs[:2]] == [3.0e-4, 4.0e-4]
     assert specs[0].steps == 200_000
     ppo = load_method("ppo", REPO / "configs/methods")
@@ -1033,6 +1045,25 @@ def test_shipped_smoke_phase_expands_to_two_classic_runs_per_control() -> None:
     assert resolve_config(ppo, "ppo", "1m", ref="tuned") == resolve_config(
         ppo, "ppo", "1m"
     )
+
+
+def test_shipped_tune_coarse_phase_counts_the_phase_1_stage_1_runs(
+    tmp_path: Path,
+) -> None:
+    shutil.copytree(REPO / "configs/methods", tmp_path, dirs_exist_ok=True)
+    smdp = tmp_path / "smdp-skills.yaml"
+    smdp.write_text(smdp.read_text().replace("\ntuned: null", "\ntuned: {}"))
+    phase = REPO / "configs/phases/tune-coarse.yaml"
+
+    def count(method: str) -> int:
+        return len(expand_phase(phase, method=method, methods_dir=tmp_path))
+
+    assert [count(m) for m in ("count-bonus", "sil", "smdp-skills", "dyna-q")] == [
+        144,
+        54,
+        144,
+        63,
+    ]
 
 
 def test_shipped_ppo_base_is_the_craftax_1m_table_11() -> None:

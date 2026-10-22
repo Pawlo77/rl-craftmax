@@ -8,3 +8,9 @@ runs:
   ppo: {configs: coarse}
   ppo-rnn: {configs: coarse}
   pqn-rnn: {configs: coarse}
+  # Phase 1 methods; dyna-q resolves smdp-skills.tuned (mark it before queueing dyna-q).
+  count-bonus-ppo-rnn: {config: count-bonus, configs: coarse}
+  count-bonus-pqn-rnn: {config: count-bonus, configs: coarse}
+  sil: {configs: coarse}
+  smdp-skills: {configs: coarse}
+  dyna-q: {configs: coarse}

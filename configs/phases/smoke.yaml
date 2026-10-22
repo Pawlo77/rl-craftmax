@@ -6,3 +6,22 @@ runs:
   ppo: {configs: [published-1m, lr-4e-4], seeds: 1}
   ppo-rnn: {configs: [published-1m, activation-tanh], seeds: 1}
   pqn-rnn: {configs: [base, lambda-0], seeds: 1}
+  # Phase 1 methods: config A is the design default, config B a different corner of the grid.
+  # dyna-q resolves smdp-skills.tuned, so it expands only once smdp-skills has a tuned block.
+  count-bonus-ppo-rnn:
+    config: count-bonus
+    configs: [b0.1-recipe-constant, b0.03-log2-linear]
+    seeds: 1
+  count-bonus-pqn-rnn:
+    config: count-bonus
+    configs: [b0.1-recipe-constant, b0.03-log2-linear]
+    seeds: 1
+  sil:
+    configs: [l0.3-s2-k1, {ref: l1-s2-k2, set: {layout: single}}]
+    seeds: 1
+  smdp-skills:
+    configs: [base, {ref: base, set: {eps_top_end: 1.0}}]
+    seeds: 1
+  dyna-q:
+    configs: [uniform-n5-k0, prioritized-n5-k0.003]
+    seeds: 1

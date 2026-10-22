@@ -72,7 +72,8 @@ def test_profiles_hold_runtime_settings_only() -> None:
 
 def test_both_profiles_resolve_the_same_run_names() -> None:
     def names(profile: str) -> str:
-        args = ["--phase", "configs/phases/smoke.yaml", "--dry-run"]
+        # dyna-q expands only once smdp-skills has a tuned block
+        args = ["--phase", "configs/phases/smoke.yaml", "--method", "sil", "--dry-run"]
         args += ["--profile", str(PROFILES / f"{profile}.yaml")]
         cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.queue", *args]
         return subprocess.run(
