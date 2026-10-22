@@ -288,3 +288,34 @@ def test_the_combo_entry_passes_the_interface_test(
     assert trainer.env_wrapper(state) is None
     trainer.checkpoint_artifacts(state, tmp_path, 2)  # the count part's top keys
     assert (tmp_path / "eval" / count_bonus.TOP_KEYS_FILE).is_file()
+
+
+_BROKEN_COMBO = """
+import sys
+from pathlib import Path
+from wut_murl_craftax.orchestration import queue
+queue.METHODS_DIR = Path(sys.argv[1])  # holds only a combo.yaml naming a skill method
+from wut_murl_craftax.training.interface import METHODS
+
+assert list(METHODS)[-1] == "combo" and "combo" in METHODS and len(METHODS) == 9
+cfg = METHODS["ppo-rnn"].config({"env": "Craftax-Classic-Symbolic-v1", "envs": 8})
+assert cfg.envs == 8
+try:
+    METHODS["combo"]
+except TypeError as e:
+    assert "hook methods only" in str(e), e
+else:
+    raise AssertionError("a skill-method pair built a combo entry")
+print("ok")
+"""
+
+
+def test_a_broken_combo_yaml_breaks_only_the_combo_entry(
+    start_on_cpus: Callable[[str, int, Path], Any], tmp_path: Path
+) -> None:
+    """The registry imports and builds the other entries; only ``combo`` fails."""
+    _write_combo(tmp_path, "pqn-rnn", ["smdp-skills", "count-bonus-pqn-rnn"])
+    proc = start_on_cpus(_BROKEN_COMBO, 1, tmp_path)
+    out, err = proc.communicate(timeout=900)
+    assert proc.returncode == 0, err[-3000:]
+    assert out.strip().splitlines()[-1] == "ok"

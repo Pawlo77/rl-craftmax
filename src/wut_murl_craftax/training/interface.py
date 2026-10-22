@@ -3,15 +3,15 @@
 A hook method registers its base's trainer with a `HookMethod`, for example
 ``make_ppo_rnn_trainer(PPORNNConfig(), method=HookMethod(CountBonusConfig, hooks))``:
 each run config's method keys build its hooks, the other keys configure the base.
-`combine` composes two hook methods on one control; the ``combo`` entry is the pair
-that ``configs/methods/combo.yaml`` names. The runner imports this module after
-``configure_runtime``, so it and the trainers may import Craftax (which starts the JAX
-backends) at module top.
+`combine` composes two hook methods on one control; the ``combo`` entry, the pair that
+``configs/methods/combo.yaml`` names, is built on first use. The runner imports this
+module after ``configure_runtime``, so it and the trainers may import Craftax (which
+starts the JAX backends) at module top.
 """
 
 import dataclasses
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -243,6 +243,32 @@ _ENTRIES: dict[str, Trainer] = {
     "smdp-skills": SMDPTrainer(),
     "dyna-q": DynaTrainer(),
 }
-METHODS: Mapping[str, Trainer] = _ENTRIES | {"combo": combo_trainer(_ENTRIES)}
+
+
+class _Registry(Mapping[str, Trainer]):
+    """The entries plus ``combo``, built on its first lookup.
+
+    A combo.yaml that cannot build fails the combo runs only, never this import.
+    """
+
+    def __getitem__(self, name: str) -> Trainer:
+        return _combo() if name == "combo" else _ENTRIES[name]
+
+    def __contains__(self, name: object) -> bool:
+        return name == "combo" or name in _ENTRIES
+
+    def __iter__(self) -> Iterator[str]:
+        return iter([*_ENTRIES, "combo"])
+
+    def __len__(self) -> int:
+        return len(_ENTRIES) + 1
+
+
+@functools.cache
+def _combo() -> Trainer:
+    return combo_trainer(_ENTRIES)
+
+
+METHODS: Mapping[str, Trainer] = _Registry()
 """Registry name (`RunSpec.registry_name`, ``config["method"]``) -> trainer; each
 method plan adds its entry."""
