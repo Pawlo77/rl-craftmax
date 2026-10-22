@@ -1,7 +1,7 @@
 """MLflow store tools: the status of a phase's runs and the merge of node stores.
 
-``status`` lists each run of a phase file as pending, running, finished, killed or
-failed, counting only runs whose tag ``phases`` contains the phase; without
+``status`` lists each run of a phase file by its `STATES` name, counting only runs
+whose tag ``phases`` contains the phase; without
 ``--expand-fine`` a ``configs: fine`` entry lists its runs in the store. ``merge``
 copies the runs and artifact directories of another SQLite store (a cluster node's)
 into the main one, keyed by run name: a run already there gets the ``phases`` merged
@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any
 
 import mlflow
+import yaml
 from mlflow.entities import Metric, Param
 
 from ..config import load_experiment_config
-from ..training.checkpoints import saved_update
+from ..training.checkpoints import load_index, saved_update
 from .queue import (
     EXPERIMENT_CONFIG,
     METHODS_DIR,
@@ -34,9 +35,21 @@ from .queue import (
 )
 from .tracking import _artifact_location, _resolve_tracking_uri, artifact_path
 
-STATES = ("pending", "running", "eval-pending", "finished", "killed", "failed")
+STATES = (
+    "pending",
+    "running",
+    "eval-pending",
+    "eval-incomplete",
+    "finished",
+    "killed",
+    "failed",
+)
 """Run states `phase_status` reports, in print order; ``eval-pending`` is FINISHED with
-tag ``eval/pending`` (its evaluation was cut short, results readers skip it)."""
+tag ``eval/pending`` (its evaluation was cut short, results readers skip it), and
+``eval-incomplete`` FINISHED in a log-spaced phase without every eval file."""
+_HIDDEN_AT_ZERO = ("failed", "eval-pending", "eval-incomplete")
+EVAL_MODES = ("stochastic", "greedy")
+"""``visualisation.eval_rollouts.MODES``, repeated: that module imports Craftax."""
 _BATCH = 1000
 """Most metrics MLflow accepts in one ``log_batch`` call."""
 EVAL = "eval"
@@ -99,11 +112,25 @@ def _phases(run: Any | None) -> list[str]:
     return [p for p in tag.split(",") if p]
 
 
-def _state(run: Any) -> str:
-    """A run's `STATES` name."""
-    if run.data.tags.get(TAG_EVAL_PENDING) == "true" and run.info.status == "FINISHED":
+def _evaluated(run: Any) -> bool:
+    """Whether the run has ``eval/<mode>/<update>.npz`` for every checkpoint and mode.
+
+    I5 ruling: this also catches a hard kill between the start of a reused run's
+    evaluation and its ``eval/pending`` tag.
+    """
+    out = _dir(run)
+    updates = [e["update"] for e in load_index(out)]
+    files = [out / EVAL / m / f"{u:05d}.npz" for u in updates for m in EVAL_MODES]
+    return bool(files) and all(f.is_file() for f in files)
+
+
+def _state(run: Any, log_spaced: bool) -> str:
+    """A run's `STATES` name; ``log_spaced``: the phase evaluates every checkpoint."""
+    if run.info.status != "FINISHED":
+        return str(run.info.status).lower()
+    if _pending(run):
         return "eval-pending"
-    return str(run.info.status).lower()
+    return "eval-incomplete" if log_spaced and not _evaluated(run) else "finished"
 
 
 def phase_status(
@@ -120,6 +147,7 @@ def phase_status(
     of that name outside the phase, such as one yet to join it, is pending. Without
     ``expand_fine``, the runs of a ``configs: fine`` entry are the phase's runs with
     its registry name (tag ``method``), by name after the listed ones; none is pending.
+    In a ``log_spaced`` phase a FINISHED run lacking eval files is ``eval-incomplete``.
     """
     args = argparse.Namespace(
         phase=phase,
@@ -132,12 +160,15 @@ def phase_status(
     fine = [] if expand_fine else fine_registries(phase, method)
     client = mlflow.MlflowClient(tracking_uri=_main_uri(tracking_uri))
     found = _by_name([r for r in _active_runs(client) if phase.stem in _phases(r)])
+    mode = yaml.safe_load(phase.read_text(encoding="utf-8"))["eval"]
+    log_spaced = mode == "log_spaced"
     states = {
-        s.name: _state(found[s.name]) if s.name in found else "pending" for s in specs
+        s.name: _state(found[s.name], log_spaced) if s.name in found else "pending"
+        for s in specs
     }
     for name in sorted(found):
         if found[name].data.tags.get(TAG_METHOD) in fine and name not in states:
-            states[name] = _state(found[name])
+            states[name] = _state(found[name], log_spaced)
     return states
 
 
@@ -376,11 +407,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     for name, state in states.items():
         print(f"{state:<8} {name}")
     totals = {s: list(states.values()).count(s) for s in STATES}
-    shown = [
-        f"{s} {n}"
-        for s, n in totals.items()
-        if n or s not in ("failed", "eval-pending")
-    ]
+    shown = [f"{s} {n}" for s, n in totals.items() if n or s not in _HIDDEN_AT_ZERO]
     print(", ".join(shown))
 
 

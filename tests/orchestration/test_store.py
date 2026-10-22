@@ -1,5 +1,6 @@
 """Tests for the run status of a phase and the merge of node MLflow stores."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -11,7 +12,11 @@ import numpy as np
 import pytest
 
 from wut_murl_craftax.orchestration import queue, store
-from wut_murl_craftax.orchestration.store import merge_stores, phase_status
+from wut_murl_craftax.orchestration.store import (
+    EVAL_MODES,
+    merge_stores,
+    phase_status,
+)
 from wut_murl_craftax.orchestration.tracking import _artifact_location, artifact_path
 from wut_murl_craftax.training.checkpoints import save_state, saved_update
 
@@ -19,6 +24,17 @@ CONFIGS = Path(__file__).parent / "fixtures" / "configs"
 METHODS = CONFIGS / "methods"
 ENTRIES = CONFIGS / "phases" / "entries.yaml"
 REPO = Path(__file__).resolve().parents[2]
+
+
+def evaluated(*updates: int) -> dict[str, str]:
+    """Run files of checkpoints ``updates`` with both modes' eval files."""
+    files = {
+        "config.json": "{}",
+        "ckpt/index.json": json.dumps([{"update": u} for u in updates]),
+    }
+    return files | {
+        f"eval/{mode}/{u:05d}.npz": "e" for u in updates for mode in EVAL_MODES
+    }
 
 
 class Node:
@@ -57,7 +73,7 @@ class Node:
             for step, value in enumerate(values):
                 self.client.log_metric(run_id, key, value, step=step)
         out = artifact_path(run.info.artifact_uri)
-        for rel, text in (files or {"config.json": "{}"}).items():
+        for rel, text in (evaluated(3) if files is None else files).items():
             (out / rel).parent.mkdir(parents=True, exist_ok=True)
             (out / rel).write_text(text)
         self.client.set_terminated(run_id, status)
@@ -450,6 +466,41 @@ def test_status_shows_a_finished_run_with_a_pending_evaluation_apart(
     out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, check=True)
     last = out.stdout.strip().splitlines()[-1]
     assert last == "pending 3, running 0, eval-pending 1, finished 1, killed 0"
+
+
+def test_status_shows_a_finished_run_without_every_log_spaced_eval_apart(
+    main_store: Node, tmp_path: Path
+) -> None:
+    """I5 ruling: a final phase's run needs both modes of every checkpoint."""
+    ppo, pqn, toy, *_ = _names()
+    main_store.add(ppo, "entries", files=evaluated(1, 3))
+    partial = evaluated(1, 3)
+    del partial["eval/greedy/00001.npz"]
+    main_store.add(pqn, "entries", files=partial)
+    main_store.add(toy, "entries", files={"config.json": "{}"})  # no checkpoints
+    status = phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)
+    assert [status[n] for n in (ppo, pqn, toy)] == [
+        "finished",
+        "eval-incomplete",
+        "eval-incomplete",
+    ]
+    final = tmp_path / "entries.yaml"  # same stem; a final-only phase
+    final.write_text(ENTRIES.read_text().replace("log_spaced", "final"))
+    status = phase_status(final, main_store.uri, methods_dir=METHODS)
+    assert {status[n] for n in (ppo, pqn, toy)} == {"finished"}
+    cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.store", "status"]
+    cmd += ["--phase", str(ENTRIES), "--methods-dir", str(METHODS)]
+    cmd += ["--tracking-uri", main_store.uri]
+    out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, check=True)
+    last = out.stdout.strip().splitlines()[-1]
+    want = "pending 2, running 0, eval-incomplete 2, finished 1, killed 0"
+    assert last == want
+
+
+def test_status_eval_modes_are_the_evaluations() -> None:
+    from wut_murl_craftax.visualisation.eval_rollouts import MODES
+
+    assert set(EVAL_MODES) == set(MODES)
 
 
 def test_status_prefers_a_finished_run_among_same_named_ones(
