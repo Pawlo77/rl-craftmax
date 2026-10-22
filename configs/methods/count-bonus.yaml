@@ -74,10 +74,16 @@ grid:
 # non-finite; the two guards of training/count_bonus.py turn NaN when the table is fuller
 # than `max_occupancy` or a count is below 0. Every count/* metric is finite otherwise.
 # A full table fills again on any retry, so `permanent` ends that run for good (tag
-# abort/guard). No flags: the plan's detectors come with the analysis plan.
+# abort/guard). The controls' rules come first, copied from ppo-rnn.yaml and pqn-rnn.yaml
+# (one block serves both variants: each reports only its base's names, the runner skips
+# the others): the method only adds a reward, so the base's checks still hold.
 abort:
-  finite: [count/r_int_mean, count/table_full, count/negative_counts]
+  finite: [ppo/policy_loss, ppo/value_loss, pqn/td_loss, count/r_int_mean, count/table_full, count/negative_counts]
   permanent: [count/table_full]
+  flags:
+    - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
+    - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
+    - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
 
 # written by `--mark-tuned count-bonus <hash8>`, one block per variant
 tuned: null

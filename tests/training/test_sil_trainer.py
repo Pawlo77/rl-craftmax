@@ -435,15 +435,14 @@ def test_the_runner_trains_and_evaluation_opens_the_run(
 
 def test_the_abort_list_holds_only_always_finite_metrics() -> None:
     """The loss parts are 0, not NaN, on an empty buffer (`test_sil_loss`), and NaN
-    once the loss or the params are."""
-    abort = load_method("sil").abort
-    assert abort is not None
-    assert abort["finite"][-3:] == [
-        "sil/policy_loss",
-        "sil/value_loss",
-        "sil/dominates",
-    ]
-    assert abort["permanent"] == ["sil/dominates"]  # the KL streak recurs on a retry
+    once the loss or the params are; the PPO-RNN control's rules come first."""
+    control = load_method("ppo-rnn").abort or {}
+    own = ["sil/policy_loss", "sil/value_loss", "sil/dominates"]
+    assert load_method("sil").abort == {
+        "finite": control["finite"] + own,
+        "permanent": ["sil/dominates"],  # the KL streak recurs on a retry
+        "flags": control["flags"],  # kl_high watches the off-policy SIL steps
+    }
 
 
 def test_trainer_configs_take_the_memory_limit_as_a_runtime_key(

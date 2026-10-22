@@ -411,11 +411,14 @@ def test_the_guards_stay_zero_until_the_table_breaks(start: Any) -> None:
 
 
 def test_the_method_file_aborts_on_the_bonus_and_the_guards() -> None:
+    """Plus both controls' rules: each variant still reports its base's metrics."""
     finite = ["count/r_int_mean", "count/table_full", "count/negative_counts"]
-    abort = load_method("count-bonus").abort
-    assert abort is not None
-    assert abort["finite"][-3:] == finite
-    assert abort["permanent"] == ["count/table_full"]  # a retry fills it again
+    ppo, pqn = (load_method(m).abort or {} for m in ("ppo-rnn", "pqn-rnn"))
+    assert load_method("count-bonus").abort == {
+        "finite": ppo["finite"] + pqn["finite"] + finite,
+        "permanent": ["count/table_full"],  # a retry fills it again
+        "flags": ppo["flags"],
+    }
 
 
 def _spec(**over: Any) -> RunSpec:
