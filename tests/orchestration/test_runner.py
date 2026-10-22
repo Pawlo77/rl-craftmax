@@ -1254,32 +1254,37 @@ _QUEUE = """
 import json, sys
 from wut_murl_craftax.orchestration import runner
 from wut_murl_craftax.orchestration.queue import RunSpec
-spec = RunSpec(**json.loads(sys.argv[1]))
-runner.main([spec], sys.argv[2], experiment_config=sys.argv[3],
+specs = [RunSpec(**s) for s in json.loads(sys.argv[1])]
+runner.main(specs, sys.argv[2], experiment_config=sys.argv[3],
             registry="_fake_registry:METHODS", evaluate="_fake_registry:no_eval")
 """
-"""A queue process of one spec, as ``python -m ...queue`` would run it."""
+"""A queue process of the specs, as ``python -m ...queue`` would run it."""
 
 
 def _start_queue(
     store: Store,
-    spec: RunSpec,
+    spec: RunSpec | list[RunSpec],
     launcher: tuple[str, ...] = (sys.executable,),
     *,
     nohup: bool = False,
+    ignored: tuple[int, ...] = (),
 ) -> subprocess.Popen[str]:
     """The queue in its own session, as a terminal's foreground job (under ``nohup``:
-    SIGHUP ignored, as the queue inherits it)."""
+    SIGHUP ignored, as the queue inherits it; ``ignored``: signals it inherits ignored,
+    as a script's ``&`` job inherits SIGINT and SIGQUIT)."""
+    ignored = (*ignored, signal.SIGHUP) if nohup else ignored
     path = os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")])
-    argv = [json.dumps(dataclasses.asdict(spec)), str(PROFILE), str(store.config)]
+    specs = [spec] if isinstance(spec, RunSpec) else spec
+    argv = [json.dumps([dataclasses.asdict(s) for s in specs])]
+    argv += [str(PROFILE), str(store.config)]
     return subprocess.Popen(
         [*launcher, "-c", _QUEUE, *argv],
         env={**os.environ, "PYTHONPATH": path},
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
-        preexec_fn=(lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
-        if nohup
+        preexec_fn=(lambda: [signal.signal(i, signal.SIG_IGN) for i in ignored])
+        if ignored
         else None,
     )
 
@@ -1300,6 +1305,11 @@ def _training_pid(store: Store, name: str) -> int:
         return int(run.data.tags["pid"]) if run and "pid" in run.data.tags else None
 
     return int(_until(pid, f"{name} to start training"))
+
+
+def _saved_once(store: Store, name: str) -> None:
+    """Wait for the run's first state save: a stop before it has nothing to save."""
+    _until(lambda: (store.run_dir(name) / "state" / "state.npz").is_file(), "a save")
 
 
 def _alive(pid: int) -> bool:
@@ -1388,9 +1398,26 @@ def test_a_repeated_signal_within_a_second_is_one_signal(
     now[0] += 0.5
     stop(signal.SIGINT, None)  # the echo: ignored
     assert stop.signum == signal.SIGINT
+    stop(signal.SIGTERM, None)  # ``kill <uv>`` beside ``kill -INT <python>``
+    assert stop.signum == signal.SIGINT
     now[0] += 1.0
     with pytest.raises(KeyboardInterrupt):  # a deliberate second Ctrl-C
         stop(signal.SIGINT, None)
+
+
+def test_a_stop_before_the_run_is_opened_leaves_the_store_untouched(
+    store: Store,
+) -> None:
+    """A stop that reached the child while it set up starts no run."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    stop = runner._Stop(signum=signal.SIGINT)
+    experiment = runner.load_experiment_config(store.config)
+    mlflow.set_tracking_uri(store.tracking_uri)
+    trained = runner._run_spec(
+        spec, FakeTrainer(), experiment, load_profile(PROFILE), store.evaluate, stop
+    )
+    assert not trained
+    assert store.runs() == {}
 
 
 def test_one_ctrl_c_under_uv_run_stops_the_child_cleanly(store: Store) -> None:
@@ -1402,6 +1429,7 @@ def test_one_ctrl_c_under_uv_run_stops_the_child_cleanly(store: Store) -> None:
         pytest.skip("uv is not installed")
     queue_process = _start_queue(store, slow, (uv, "run", "--no-sync", "python"))
     _training_pid(store, slow.name)
+    _saved_once(store, slow.name)
     os.killpg(queue_process.pid, signal.SIGINT)  # the whole foreground job
     _, stderr = queue_process.communicate(timeout=120)
     assert queue_process.returncode == 128 + signal.SIGINT, stderr[-2000:]
@@ -1410,6 +1438,51 @@ def test_one_ctrl_c_under_uv_run_stops_the_child_cleanly(store: Store) -> None:
     run = store.runs()[slow.name]
     assert run.info.status == "KILLED"
     assert (store.run_dir(slow.name) / "state" / "state.npz").is_file()
+
+
+def _uv_queue(
+    store: Store, specs: list[RunSpec], ignored: tuple[int, ...] = ()
+) -> tuple[Any, int]:
+    """The queue under ``uv run`` and the PID of its python process."""
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed")
+    launcher = (uv, "run", "--no-sync", "python")
+    queue_process = _start_queue(store, specs, launcher, ignored=ignored)
+    _training_pid(store, specs[0].name)
+    _saved_once(store, specs[0].name)
+    found = subprocess.run(
+        ["pgrep", "-P", str(queue_process.pid)], capture_output=True, text=True
+    )
+    return queue_process, int(found.stdout.split()[0])
+
+
+@pytest.mark.parametrize("background", [False, True])
+@pytest.mark.parametrize(
+    ("to_uv", "to_python"),
+    [
+        (signal.SIGINT, signal.SIGINT),
+        (signal.SIGTERM, signal.SIGTERM),
+        (signal.SIGTERM, signal.SIGINT),  # ``kill <uv>`` beside ``kill -INT <python>``
+    ],
+)
+def test_one_stop_to_uv_and_python_stops_the_queue_after_the_chunk(
+    store: Store, to_uv: int, to_python: int, background: bool
+) -> None:
+    """``kill -INT <uv> <python>``: python gets it from both (2-3 copies within 1 s);
+    ``background``: a script's ``&`` job (SIGINT inherited ignored)."""
+    specs = [_as(s, "slow") for s in store.phase("tune-coarse", ["published", "lr-hi"])]
+    ignored = (signal.SIGINT, signal.SIGQUIT) if background else ()
+    queue_process, python = _uv_queue(store, specs, ignored)
+    os.kill(queue_process.pid, to_uv)
+    os.kill(python, to_python)
+    _, stderr = queue_process.communicate(timeout=120)
+    assert queue_process.returncode in (128 + to_uv, 128 + to_python), stderr[-2000:]
+    assert "KeyboardInterrupt" not in stderr
+    assert stderr.count(": stopping after the current chunk") == 1
+    runs = store.runs()
+    assert runs[specs[0].name].info.status == "KILLED"
+    assert specs[1].name not in runs  # no next spec
 
 
 def test_a_queue_under_nohup_keeps_ignoring_hangups(store: Store) -> None:
