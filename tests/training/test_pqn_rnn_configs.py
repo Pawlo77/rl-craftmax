@@ -123,8 +123,11 @@ def test_fine_rule_yields_four_configs_from_two_knobs() -> None:
     }
 
 
-def test_tuned_is_null_and_the_abort_block_is_valid() -> None:
-    assert pqn().tuned is None
+def test_tuned_is_the_base_and_the_abort_block_is_valid() -> None:
+    assert pqn().tuned == {}  # tuning kept the base config
+    for budget in ("1m", "1b"):
+        tuned = resolve_config(pqn(), "pqn-rnn", budget, ref="tuned")
+        assert tuned == resolve_config(pqn(), "pqn-rnn", budget)
     assert pqn().abort is not None
     assert pqn().abort["finite"] == ["pqn/td_loss"]
 

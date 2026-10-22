@@ -101,8 +101,11 @@ def test_fine_holds_the_rule_and_knobs_and_no_entries() -> None:
     assert (knobs["ent"]["mul"], knobs["ent"]["zero"]) == ([0.5, 2.0], [0.001, 0.003])
 
 
-def test_tuned_is_null_and_the_abort_block_is_valid() -> None:
-    assert ppo_rnn().tuned is None
+def test_tuned_is_the_base_and_the_abort_block_is_valid() -> None:
+    assert ppo_rnn().tuned == {}  # tuning kept the published config
+    for budget in ("1m", "1b"):
+        tuned = resolve_config(ppo_rnn(), "ppo-rnn", budget, ref="tuned")
+        assert tuned == resolve_config(ppo_rnn(), "ppo-rnn", budget)
     assert ppo_rnn().abort is not None
     assert ppo_rnn().abort["finite"]
 

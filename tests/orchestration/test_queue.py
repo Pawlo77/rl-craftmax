@@ -1019,14 +1019,20 @@ def test_shipped_count_bonus_fine_rule_expands_on_a_fixture_store(
 # --- shipped configs -----------------------------------------------------------
 
 
-def test_shipped_smoke_phase_expands_to_two_classic_ppo_runs() -> None:
-    specs = expand_phase(REPO / "configs/phases/smoke.yaml", method="ppo")
+def test_shipped_smoke_phase_expands_to_two_classic_runs_per_control() -> None:
+    specs = expand_phase(REPO / "configs/phases/smoke.yaml")
     assert [(s.registry_name, s.budget, s.env, s.seed, s.eval_mode) for s in specs] == [
-        ("ppo", "200k", "Craftax-Classic-Symbolic-v1", 0, "final")
-    ] * 2
-    assert [s.config["lr"] for s in specs] == [3.0e-4, 4.0e-4]
+        (m, "200k", "Craftax-Classic-Symbolic-v1", 0, "final")
+        for m in ("ppo", "ppo-rnn", "pqn-rnn")
+        for _ in range(2)
+    ]
+    assert [s.config["lr"] for s in specs[:2]] == [3.0e-4, 4.0e-4]
     assert specs[0].steps == 200_000
-    assert load_method("ppo", REPO / "configs/methods").tuned is None
+    ppo = load_method("ppo", REPO / "configs/methods")
+    assert ppo.tuned == {}  # tuning kept the published config
+    assert resolve_config(ppo, "ppo", "1m", ref="tuned") == resolve_config(
+        ppo, "ppo", "1m"
+    )
 
 
 def test_shipped_ppo_base_is_the_craftax_1m_table_11() -> None:

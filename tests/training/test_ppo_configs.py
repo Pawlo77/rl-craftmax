@@ -149,6 +149,13 @@ def test_base_from_ppo_tuned_resolves_to_tuned_plus_extra_key(tmp_path: Path) ->
     assert (cfg_1b["envs"], cfg_1b["lr"]) == (1024, 2.0e-4)
 
 
+def test_base_from_an_empty_ppo_tuned_resolves_to_the_base(tmp_path: Path) -> None:
+    methods = copy_ppo(tmp_path, {})  # marked tuned, and the base won
+    child = load_method("child", methods)
+    cfg = resolve_config(child, "child", "1m", methods_dir=methods)
+    assert cfg == TABLE_11 | {"extra_key": 1, "method": "child"}
+
+
 def test_base_from_ppo_tuned_fails_loudly_while_tuned_is_null(tmp_path: Path) -> None:
     methods = copy_ppo(tmp_path, None)
     child = load_method("child", methods)
