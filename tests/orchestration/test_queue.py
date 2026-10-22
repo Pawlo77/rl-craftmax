@@ -486,6 +486,31 @@ def test_the_stage_1_best_config_is_among_the_top_categorical_crosses() -> None:
     assert config_hash(cfg) == config_hash(resolved("catfine", "b0.3-recipe-constant"))
 
 
+def test_the_best_configs_categorical_value_is_kept_even_below_the_top_means() -> None:
+    """b0.3-tiers-constant is best alone, its tiers mean the lowest: tiers comes first,
+    the rest is filled by mean (recipe), so the fine grid reuses the best config."""
+    gran = {"tiers": -20.0, "recipe": 5.0, "log2": 3.0}
+    names = {
+        f"b{b}-{g}-{d}": gv + (0.5 if d == "constant" else 0.0) + (b == 0.3)
+        for b in (0.1, 0.3)
+        for g, gv in gran.items()
+        for d in ("constant", "linear")
+    }
+    names["b0.3-tiers-constant"] = 10.0
+    fine = expand_fine("catfine", stage1("catfine", names), methods_dir=METHODS)
+    assert list(fine["catfine"].values()) == [
+        {"beta": b, "granularity": g, "decay": "constant"}
+        for b in (0.15, 0.3, 0.6)
+        for g in ("tiers", "recipe")
+    ]
+    best = config_hash(resolved("catfine", "b0.3-tiers-constant"))
+    hashes = {
+        config_hash(resolved("catfine", "base", overrides=over))
+        for over in fine["catfine"].values()
+    }
+    assert best in hashes
+
+
 def test_expand_fine_per_registry_entry_and_method_filter() -> None:
     ppo, pqn = "multi-ppo-rnn", "multi-pqn-rnn"
     scores = {

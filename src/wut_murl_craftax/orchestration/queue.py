@@ -594,10 +594,13 @@ def _top_values(
     scores: Mapping[str, float],
     key: str,
     top: int,
+    best: Any,
 ) -> list[Any]:
-    """The ``top`` values of a categorical knob by mean stage-1 score along its axis.
+    """The stage-1 best config's value, then the knob's next values by mean score.
 
-    Ties keep the order of first appearance in ``grid.coarse``.
+    ``best`` comes first, so the best config stays in the fine grid even when its
+    value's mean ranks low; the other ``top - 1`` values rank by mean stage-1 score
+    along the knob's axis, ties in the order of first appearance in ``grid.coarse``.
     """
     groups: dict[str, list[float]] = {}
     values: dict[str, Any] = {}
@@ -607,8 +610,9 @@ def _top_values(
         label = json.dumps(cfgs[name][key])
         values.setdefault(label, cfgs[name][key])
         groups.setdefault(label, []).append(scores[name])
+    first = json.dumps(best)
     ranked = sorted(groups, key=lambda g: -sum(groups[g]) / len(groups[g]))
-    return [values[g] for g in ranked[:top]]
+    return [best, *[values[g] for g in ranked if g != first][: top - 1]]
 
 
 def _fine_for(
@@ -645,7 +649,7 @@ def _fine_for(
     chosen = always + ranked
     values = {
         key: (
-            _top_values(method, cfgs, scores, key, knobs[key]["top"])
+            _top_values(method, cfgs, scores, key, knobs[key]["top"], cfgs[best][key])
             if "top" in knobs[key]
             else _knob_values(knobs[key], cfgs[best][key])
         )
@@ -690,12 +694,13 @@ def expand_fine(
     (the entries varying only that knob plus the unmodified one; all entries if none
     vary only it); each knob's ``mul`` factors or ``add`` offsets around the best value
     (``zero`` replaces them when it is 0; ``clip`` [low, high]; ``integer``) or, for a
-    categorical knob, its ``top`` values by mean stage-1 score along its axis, one knob
-    at a time (``combine: each``) or all combined (``cross``). A knob with ``always:
-    true`` is always chosen and ``select`` ranks the others only. A config equal to the
-    best coarse one hashes like it, so its stage-1 run is reused. ``method`` restricts
-    the registry entries (a registry name, or the slug for all). A coarse config
-    without a result fails, unless ``allow_partial`` ranks the others only.
+    categorical knob, the best config's value and its ``top - 1`` next values by mean
+    stage-1 score along its axis, one knob at a time (``combine: each``) or all combined
+    (``cross``). A knob with ``always: true`` is always chosen and ``select`` ranks the
+    others only. A config equal to the best coarse one hashes like it, so its stage-1
+    run is reused. ``method`` restricts the registry entries (a registry name, or the
+    slug for all). A coarse config without a result fails, unless ``allow_partial``
+    ranks the others only.
     """
     loaded = load_method(slug, methods_dir)
     if loaded.fine is None:
