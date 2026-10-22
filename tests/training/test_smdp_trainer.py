@@ -256,6 +256,20 @@ def test_chunks_of_one_equal_one_chunk_of_two(
     assert same(joined, {k: np.asarray(v) for k, v in m.items()})
 
 
+def test_updates_after_the_first_reuse_its_executables(
+    methods_dir: Path, lowerings: Callable[[], int]
+) -> None:
+    """The initial state is typed and placed as a stepped one, so the second update
+    does not recompile the rollout and the learner (R56)."""
+    trainer = METHODS[NAME]
+    cfg = _config(methods_dir, hidden=21)  # a config no other test compiles
+    state, _ = trainer.train_chunk(trainer.init(cfg, jax.random.key(0)), 1)
+    before = lowerings()
+    for _ in range(3):
+        state, _ = trainer.train_chunk(state, 1)
+    assert lowerings() == before
+
+
 def test_the_table_and_skill_state_are_saved_and_a_resume_continues(
     entry: Any, same: Callable[[Any, Any], bool], tmp_path: Path
 ) -> None:

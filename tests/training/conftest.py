@@ -4,7 +4,7 @@ import importlib
 import os
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -112,6 +112,23 @@ def start_on_cpus() -> Callable[[str, int, Path], subprocess.Popen[str]]:
     """Start ``python -c script out`` on ``devices`` host CPUs (JAX fixes the count
     when it starts, hence a subprocess)."""
     return _start_on_cpus
+
+
+LOWERING = "/jax/core/compile/jaxpr_to_mlir_module_duration"
+"""JAX event of every jit cache miss, also when the persistent cache has the binary."""
+
+
+@pytest.fixture
+def lowerings() -> Iterator[Callable[[], int]]:
+    """The number of jit lowerings (compiles) since the test started."""
+    seen = [0]
+
+    def listen(event: str, secs: float, **kw: Any) -> None:
+        seen[0] += event == LOWERING
+
+    jax.monitoring.register_event_duration_secs_listener(listen)
+    yield lambda: seen[0]
+    jax.monitoring.unregister_event_duration_listener(listen)
 
 
 class RunStore:

@@ -277,6 +277,19 @@ def test_the_policy_and_checkpoint_are_those_of_smdp_skills(entry: Any) -> None:
         np.testing.assert_array_equal(params[k], want[k])
 
 
+def test_updates_after_the_first_reuse_its_executables(
+    methods_dir: Path, lowerings: Callable[[], int]
+) -> None:
+    """Rollout, planner and learner compile once (R56)."""
+    trainer = METHODS[NAME]
+    cfg = _config(methods_dir, hidden=21)  # a config no other test compiles
+    state, _ = trainer.train_chunk(trainer.init(cfg, jax.random.key(0)), 1)
+    before = lowerings()
+    for _ in range(3):
+        state, _ = trainer.train_chunk(state, 1)
+    assert lowerings() == before
+
+
 def test_a_done_step_unlock_reaches_the_chunk_metrics(
     methods_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

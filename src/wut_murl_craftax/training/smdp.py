@@ -919,8 +919,20 @@ def _rollout_stats(
     }
 
 
+def _strong(tree: Any) -> Any:
+    """``tree`` with its weak-typed leaves (Craftax's reset, flax init) made strong."""
+    return jax.tree.map(
+        lambda x: x.astype(x.dtype) if getattr(x, "weak_type", False) else x, tree
+    )
+
+
 def init_state(cfg: SMDPTrainConfig, key: jax.Array) -> SMDPState:
-    """Fresh network on the learner; envs, first skills and table on the actor."""
+    """Fresh network on the learner; envs, first skills and table on the actor.
+
+    Every leaf is strongly typed and committed to its device, as after an update (the
+    rollout scan returns weak leaves strong) and after a resume: the second update
+    reuses the first one's rollout and learner executables.
+    """
     s = _setup(cfg)
     key, k_init, k_roll = jax.random.split(key, 3)
     with jax.default_device(s.learner):
@@ -945,8 +957,8 @@ def init_state(cfg: SMDPTrainConfig, key: jax.Array) -> SMDPState:
         found = jnp.array([0, -1, -1], jnp.int32)
     at = s.shared_at
     return SMDPState(
-        train_state=cast(QTrainState, ts),
-        carry=_place(carry, s),
+        train_state=cast(QTrainState, jax.device_put(_strong(ts), s.learner)),
+        carry=_place(_strong(carry), s),
         updates=jax.device_put(jnp.zeros((), jnp.int32), at),
         diamond=jax.device_put(found, at),
         start_key=jax.device_put(carry.per_env.skill.k_start[0], at),
