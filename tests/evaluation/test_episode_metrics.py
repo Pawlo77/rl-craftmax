@@ -299,6 +299,8 @@ def test_the_done_step_kill_unlock_and_damage_count_in_the_ended_episode() -> No
     assert online[lay["cause"]][ARROW] == 1, "the arrow took more in the last 20 steps"
     m = _metrics(out, totals, done, "classic")
     assert m["train/kills/zombie"] == 0.5
+    assert m["train/kills_per_1k/zombie"] == pytest.approx(1000 / 9)
+    assert m["train/kills_per_1k/skeleton"] == 0.0
     assert m["train/damage_taken"] == 4.5
     assert (m["train/end/death"], m["train/end/timeout"]) == (50.0, 50.0)
     assert (m["train/death/arrow"], m["train/death/zombie"]) == (100.0, 0.0)
@@ -437,6 +439,7 @@ def test_craftax_keys_add_floors_creatures_and_advanced_mechanics() -> None:
     assert not any(k.startswith("train/adv/") for k in classic)
     assert {"train/kills/zombie", "train/kills/skeleton"} <= classic
     assert "train/kills/troll" in craftax
+    assert {"train/kills_per_1k/troll", "train/kills_per_1k/passive"} <= craftax
     assert "train/kills/troll" not in classic
     assert sum(k.startswith("train/action/") for k in craftax) == 43
     assert sum(k.startswith("train/action/") for k in classic) == 17

@@ -444,6 +444,8 @@ def metric_keys(game: Game) -> tuple[str, ...]:
         *(f"train/kills/{n}" for _, n in _creatures(game, ("melee", "ranged"))),
         "train/kills/passive",
         "train/kills_per_1k",
+        *(f"train/kills_per_1k/{n}" for _, n in _creatures(game, ("melee", "ranged"))),
+        "train/kills_per_1k/passive",
         "train/damage_dealt",
         "train/damage_taken",
         *(f"train/action/{a}" for a in action_names(game)),
@@ -539,6 +541,11 @@ def _per_step(v: Any, game: Game) -> dict[str, Any]:
             for i, s in enumerate(STATS)
         },
         "train/kills_per_1k": hostile * 1000 / steps,
+        **{
+            f"train/kills_per_1k/{name}": v(f"kills/{i}") * 1000 / steps
+            for i, name in _creatures(game, ("melee", "ranged"))
+        },
+        "train/kills_per_1k/passive": v("passive_kills") * 1000 / steps,
         **{f"train/action/{a}": p[i] for i, a in enumerate(actions)},
         "train/action_entropy": -(p * np.log(np.where(p > 0, p, 1.0))).sum(),
         "train/wasted_share": v("wasted") / hist.sum(),

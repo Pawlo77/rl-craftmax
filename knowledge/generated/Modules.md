@@ -15,7 +15,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. | 3 |  |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 149 |  |
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, per-step events and the reproduction check. | 166 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. | 604 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. | 611 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. | 394 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. | 173 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? | 220 | [[evaluation]] |
