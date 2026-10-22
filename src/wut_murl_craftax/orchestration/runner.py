@@ -443,10 +443,10 @@ class _Extras:
             values += [math.nan] * (n - len(values))
 
     def extend(self, first: int, new: Mapping[str, np.ndarray]) -> None:
-        """Append a chunk that starts after update ``first``."""
+        """Append a chunk after update ``first``; a new name is NaN before it."""
         self.pad(first)
         for name, values in new.items():
-            self.series.setdefault(name, []).extend(values.tolist())
+            self.series.setdefault(name, [math.nan] * first).extend(values.tolist())
         self.pad(first + max((len(v) for v in new.values()), default=0))
 
     def save(self) -> None:

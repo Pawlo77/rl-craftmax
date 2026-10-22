@@ -16,7 +16,7 @@ from flax import struct
 from test_runner import PROFILE, Store
 
 from wut_murl_craftax.config import MLflowTrackingConfig, load_experiment_config
-from wut_murl_craftax.evaluation.episode_metrics import metric_keys
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT, metric_keys
 from wut_murl_craftax.orchestration import queue, runner, train_metrics
 from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runner import final_score
@@ -24,6 +24,7 @@ from wut_murl_craftax.training.checkpoints import save_state
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.records import (
     LOSS_COLUMNS,
+    RunLog,
     achievement_names,
     load_episodes,
     load_metrics,
@@ -318,6 +319,19 @@ def test_a_state_saved_before_the_online_families_resumes_with_them(
     stamps = np.asarray(m["first_unlock"])
     assert ((stamps == -1) | (stamps > 4 * STEP)).all()
     assert int(state.episode.t[0]) * envs == 5 * STEP
+    # the run's extras end at update 4 without the families: they start at update 5
+    np.savez(tmp_path / runner.EXTRAS_FILE, **{"ppo/lr": np.full(4, 0.1)})
+    extras = runner._Extras.load(tmp_path, 4)
+    log = RunLog(tmp_path, CLASSIC, NAMES)
+    done, online = np.zeros_like(m["done"]), np.zeros_like(m["online"])
+    done[0, -1, 0] = True  # one episode of 10 steps ends, alive, in the chunk
+    online[0, ONLINE_LAYOUT["episodes"]], online[0, ONLINE_LAYOUT["steps"]] = 1, 10
+    chunk = {**m, "done": done, "online": online}
+    runner._record_chunk(log, extras, 4, STEP, np.array([10.0]), chunk)
+    timeout = extras.series["train/end/timeout"]
+    assert len(timeout) == 5
+    assert np.isnan(timeout[:4]).all()
+    assert timeout[4] == 100.0
 
 
 def test_a_state_missing_more_than_the_online_leaves_is_refused(
