@@ -3,14 +3,14 @@ title: "Craftax evaluation and metrics implementation plan"
 type: plan
 domain: evaluation
 parent: "[[2026-10-20-craftax-project]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, evaluation, metrics, statistics]
 ---
 # Craftax evaluation and metrics implementation plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -204,9 +204,9 @@ Order with the other plans: Tasks 1-2 right after infrastructure Tasks 1-3 (the 
 - Create: `src/wut_murl_craftax/evaluation/milestones.py`
 - Test: `tests/evaluation/test_milestones.py`
 
-- [ ] **Step 1: Write the failing tests**: the Craftax tech ladder has 10 entries and the Classic ladder 9; every ladder name exists in that game's `Achievement` enum (index by `.value`, [[Rendering Craftax frames]] pitfall); tier rewards sum to 226; 9 floor names with their `ENTER_*` achievements; creature names per (class, `type_id`) match [[Craftax observations and actions]]; the radar axis list has 8 names.
-- [ ] **Step 2: Implement** `TECH_LADDER`, `FLOORS`, `CREATURES`, `HOSTILE_CLASSES`, `ADVANCED_ACTIONS`, `RADAR_AXES` and `ladder(game)`.
-- [ ] **Step 3: Run** `uv run pytest tests/evaluation/test_milestones.py -q`; expected: pass.
+- [x] **Step 1: Write the failing tests**: the Craftax tech ladder has 10 entries and the Classic ladder 9; every ladder name exists in that game's `Achievement` enum (index by `.value`, [[Rendering Craftax frames]] pitfall); tier rewards sum to 226; 9 floor names with their `ENTER_*` achievements; creature names per (class, `type_id`) match [[Craftax observations and actions]]; the radar axis list has 8 names.
+- [x] **Step 2: Implement** `TECH_LADDER`, `FLOORS`, `CREATURES`, `HOSTILE_CLASSES`, `ADVANCED_ACTIONS`, `RADAR_AXES` and `ladder(game)`.
+- [x] **Step 3: Run** `uv run pytest tests/evaluation/test_milestones.py -q`; expected: pass.
 
 ### Task 2: Per-step events for both games
 
@@ -214,9 +214,9 @@ Order with the other plans: Tasks 1-2 right after infrastructure Tasks 1-3 (the 
 - Create: `src/wut_murl_craftax/evaluation/events.py`
 - Test: `tests/evaluation/test_events.py`
 
-- [ ] **Step 1: Write the failing tests** on hand-edited states (pattern of the runtime checks in [[Game]]): one unlock bit after `PLACE_TABLE` with 2 wood; the same unlock on a step that also ends the episode (timestep at the cap) is still reported, because `step_events` only sees `s` and the terminal `s2`; floor 0 -> 1 after `DESCEND` on an open ladder; a starvation health loss counted as needs drain, not combat; a zombie hit counted as melee damage from type zombie; a skeleton killed by an arrow counted as a kill of type skeleton with projectile damage; eat, drink and sleep-start flags; walking into stone while already facing it is wasted, turning towards it is effective; any action while sleeping is a forced `NOOP`; Classic lava under the player is the damage source.
-- [ ] **Step 2: Write the failing test**: `jax.vmap(step_events)` over 8 envs equals a Python loop over the same 8 envs.
-- [ ] **Step 3: Implement** `StepEvents` (a `flax.struct` dataclass of fixed-size arrays, the one definition every user reads; the wrapper of [[2026-10-20-craftax-method-ppo]] Task 2 fills it) and `step_events(game, s, action, s2)` with one adapter per game. Fields (per env step):
+- [x] **Step 1: Write the failing tests** on hand-edited states (pattern of the runtime checks in [[Game]]): one unlock bit after `PLACE_TABLE` with 2 wood; the same unlock on a step that also ends the episode (timestep at the cap) is still reported, because `step_events` only sees `s` and the terminal `s2`; floor 0 -> 1 after `DESCEND` on an open ladder; a starvation health loss counted as needs drain, not combat; a zombie hit counted as melee damage from type zombie; a skeleton killed by an arrow counted as a kill of type skeleton with projectile damage; eat, drink and sleep-start flags; walking into stone while already facing it is wasted, turning towards it is effective; any action while sleeping is a forced `NOOP`; Classic lava under the player is the damage source.
+- [x] **Step 2: Write the failing test**: `jax.vmap(step_events)` over 8 envs equals a Python loop over the same 8 envs.
+- [x] **Step 3: Implement** `StepEvents` (a `flax.struct` dataclass of fixed-size arrays, the one definition every user reads; the wrapper of [[2026-10-20-craftax-method-ppo]] Task 2 fills it) and `step_events(game, s, action, s2)` with one adapter per game. Fields (per env step):
 
 | Field | Type | Meaning (table "Shared step events") |
 |---|---|---|
@@ -233,7 +233,7 @@ Order with the other plans: Tasks 1-2 right after infrastructure Tasks 1-3 (the 
 | `hostiles_on_screen`, `hostiles_close` | int8 | counts in the view, within 2 tiles |
 
 Coverage needs `light_map` and positions, so it is computed in replay (Task 5), not stored in `StepEvents`.
-- [ ] **Step 4: Run** `uv run pytest tests/evaluation/test_events.py -q`.
+- [x] **Step 4: Run** `uv run pytest tests/evaluation/test_events.py -q`.
 
 ### Task 3: Online accumulation per update
 

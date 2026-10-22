@@ -3,14 +3,14 @@ title: "Craftax PPO-RNN control implementation plan"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, method, control, ppo, recurrent]
 ---
 # Craftax PPO-RNN control implementation plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -107,8 +107,8 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 - Create: `src/wut_murl_craftax/training/hooks.py`
 - Test: `tests/training/test_hooks.py`
 
-- [ ] **Step 1: Write the failing tests**: `HookFields()` has every hook `None` and `extra_steps = 0`, and `extra_steps` is declared in `HookFields` only; callables are excluded from the YAML round trip and from the config hash of run names (the method name carries them); `resolve(hooks)` fills no-op defaults (zero reward, empty state, identity `observe` and wrapper, no extra steps, no metrics) and reports `active` names; `init_state_fn` receives `HookSpec(n_envs, obs_dim, n_actions, n_achievements, total_steps)` (a fake init records it: 8, 1345, 17, 22 and the budget on Craftax-Classic with 8 envs); `metrics_fn` names reach the update metrics unchanged, and a name without a `/` prefix (for example `x`) or with the old `hook/` prefix raises at the first update; `Traj` holds `obs`, `actions`, `rewards`, `dones`, `hidden` (float16), `events` (a `StepEvents` per step) and `extra` (a dict for each base's own arrays), and casts a float32 `hidden` to float16; a method state pytree survives `save_state` / `load_state` (`training/checkpoints.py`, infrastructure Task 2).
-- [ ] **Step 2: Implement** `HookSpec`, the frozen `HookFields` dataclass (the base class of `PPORNNConfig` and `PQNRNNConfig`, which do not redeclare its fields), `Traj` (a `flax.struct` dataclass) and `resolve`, with this contract:
+- [x] **Step 1: Write the failing tests**: `HookFields()` has every hook `None` and `extra_steps = 0`, and `extra_steps` is declared in `HookFields` only; callables are excluded from the YAML round trip and from the config hash of run names (the method name carries them); `resolve(hooks)` fills no-op defaults (zero reward, empty state, identity `observe` and wrapper, no extra steps, no metrics) and reports `active` names; `init_state_fn` receives `HookSpec(n_envs, obs_dim, n_actions, n_achievements, total_steps)` (a fake init records it: 8, 1345, 17, 22 and the budget on Craftax-Classic with 8 envs); `metrics_fn` names reach the update metrics unchanged, and a name without a `/` prefix (for example `x`) or with the old `hook/` prefix raises at the first update; `Traj` holds `obs`, `actions`, `rewards`, `dones`, `hidden` (float16), `events` (a `StepEvents` per step) and `extra` (a dict for each base's own arrays), and casts a float32 `hidden` to float16; a method state pytree survives `save_state` / `load_state` (`training/checkpoints.py`, infrastructure Task 2).
+- [x] **Step 2: Implement** `HookSpec`, the frozen `HookFields` dataclass (the base class of `PPORNNConfig` and `PQNRNNConfig`, which do not redeclare its fields), `Traj` (a `flax.struct` dataclass) and `resolve`, with this contract:
 
 | Hook | Called | Signature | Example user |
 |---|---|---|---|
@@ -125,8 +125,8 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 - On a done step `next_env_state` is already the start state of the next episode (optimistic reset, [[2026-10-20-craftax-method-ppo]] Task 2); a hook never compares `env_state` with `next_env_state` across a done; what happened on the step is in `traj.events`.
 - `extra_steps` (default 0) lives in `HookFields` only; the extra steps use the same Adam state; the learning-rate schedule is indexed by update, not by optimizer count, so K does not shift it.
 
-- [ ] **Step 3: Document** in the module docstring: env states give `achievements` and inventory ([[Craftax scoring and evaluation]]), but step outcomes come from `StepEvents`; `r_int` is added to the reward before GAE and the extrinsic reward is kept for the score; hook callables close over the method's own config (and the network via `build_network(cfg, n_actions, obs_dim)`, exposed by `ppo_rnn` and `pqn_rnn`); `None` hooks are skipped at trace time, so the control graph is unchanged; `env_wrapper_fn` wraps the no-auto-reset env inside `LogWrapper` and `OptimisticResetVecEnvWrapper`, so a wrapper that changes reward or `done` acts before the reset ([[Craftax API and wrappers]]); the same contract serves `training/pqn_rnn.py` (`r_int` enters the Q(lambda) targets).
-- [ ] **Step 4: Run** `uv run pytest tests/training/test_hooks.py -q`; expected: pass.
+- [x] **Step 3: Document** in the module docstring: env states give `achievements` and inventory ([[Craftax scoring and evaluation]]), but step outcomes come from `StepEvents`; `r_int` is added to the reward before GAE and the extrinsic reward is kept for the score; hook callables close over the method's own config (and the network via `build_network(cfg, n_actions, obs_dim)`, exposed by `ppo_rnn` and `pqn_rnn`); `None` hooks are skipped at trace time, so the control graph is unchanged; `env_wrapper_fn` wraps the no-auto-reset env inside `LogWrapper` and `OptimisticResetVecEnvWrapper`, so a wrapper that changes reward or `done` acts before the reset ([[Craftax API and wrappers]]); the same contract serves `training/pqn_rnn.py` (`r_int` enters the Q(lambda) targets).
+- [x] **Step 4: Run** `uv run pytest tests/training/test_hooks.py -q`; expected: pass.
 
 ### Task 2: Recurrent network and trainer
 
@@ -137,24 +137,24 @@ Depends on Task 1, [[2026-10-20-craftax-method-ppo]] Task 2 (wrappers, `ppo_term
 - Modify: `src/wut_murl_craftax/training/__init__.py`, `src/wut_murl_craftax/training/interface.py` (registry entry `ppo-rnn`)
 - Test: `tests/training/test_ppo_rnn.py`, `tests/training/test_ppo_rnn_hooks.py`, `tests/training/test_ppo_rnn_sharding.py`
 
-- [ ] **Step 1: Write the failing tests** in `test_ppo_rnn.py` (Craftax-Classic unless the environment variable `CRAFTAX_TEST_ENV` names another env, so Task 3 can rerun them on Craftax-Symbolic): (a) GRU reset: the output at a step after `done` equals the output of a fresh zero hidden on the same input; (b) recompute check: in epoch 1, before the first gradient step, recomputed log-probs and values equal the rollout's to 1e-5, so the stored start hidden and the sequence rerun are right; (c) minibatches hold whole env sequences (env ids per minibatch disjoint, all `num_steps` present); (d) advantages equal `training.ppo` GAE on the same arrays; (e) determinism: same seed, identical params after 2 updates with 8 envs x 8 steps; (f) `PPORNNConfig` 1B resolves to Table 7 and ReLU; (g) `PPORNNConfig` inherits `extra_steps` from `HookFields` and declares no field of that name itself; (h) `traj.hidden` is float16 of shape (8, 8, 512) and equals, to float16 precision, the hidden each action was chosen from; `traj.events` is the wrapper's `info["events"]` of each step, leaf by leaf (the done-step unlock itself is tested in [[2026-10-20-craftax-method-ppo]] Task 2); (i) `policy(state)` gives a `Policy` whose `init_carry(8)` is zeros (8, 512) and whose `step(params, carry, obs, key, greedy=False)`, run from `init_carry` over the first episode of each env with the rollout's action keys, reproduces the rollout's actions (eval episodes end at their done, so `step` needs no done input).
-- [ ] **Step 2: Write the failing hook tests** in `test_ppo_rnn_hooks.py`: zero hooks (`r_int = 0`, identity `observe`, `extra_steps = 0`) give bit-identical params to no hooks after 2 updates (CPU); a constant `r_int = c` shifts every one-step TD error by `c` (hand check on a 3-step example); an `intrinsic_reward_fn` that counts calls in `state` sees `envs x num_steps` calls per update and the count survives `save_state`, `load_state` and a resumed update; `extra_loss_fn = 1e-3 * sum(p**2)` with `extra_steps = 2` lowers the param norm against the control and leaves the learning rate of the next update unchanged; `observe` sees the rollout's extrinsic `rewards`, `dones`, `hidden` and `events`; `metrics_fn` returning `{"count/x": 1.0}` appears as `count/x` in the update metrics; an `env_wrapper_fn` that appends 3 features makes the first Dense take 8268 + 3 inputs.
-- [ ] **Step 3: Write the failing sharding test** `test_ppo_rnn_sharding.py`, as [[2026-10-20-craftax-method-ppo]] Task 2 Step 6: subprocesses with and without `XLA_FLAGS=--xla_force_host_platform_device_count=4`, 2 updates on Craftax-Classic with 32 envs x 8 steps; env states, GRU carry and the per-env leaves of a counting method state are sharded over 4 CPU devices; params agree with the 1-device run to 1e-5; 3 devices with 32 envs raise a `ValueError`.
-- [ ] **Step 4: Implement** `PPORNNConfig` (the `PPOConfig` fields plus `rnn_width: int = 512`, `activation: Literal["relu", "tanh"] = "relu"`, with `HookFields` as base class; `envs % minibatches == 0` checked), `ScannedGRU` (reset to zeros where `last_done`), `ActorCriticRNN`.
-- [ ] **Step 5: Implement** the rollout on the PPO env setup (`auto_reset=False`, `LogWrapper`, `OptimisticResetVecEnvWrapper` from `training/wrappers.py`): carry `(hidden, obs, last_done, env_state, method_state, key)`; keep the float32 `hidden` at the rollout start; per step record the acting hidden (float16) and `info["events"]` into `Traj`; call `intrinsic_reward_fn` per step; `observe` once on the finished `Traj`; GAE via the shared function from `training/ppo.py`.
-- [ ] **Step 6: Implement** the update: permute envs (axis 1) once per epoch, split into `minibatches` groups of whole sequences, rerun the GRU from the stored start hidden, loss = `ppo_terms(...)`; then `extra_steps` Adam steps on `extra_loss_fn`.
-- [ ] **Step 7: Implement** `build_network(cfg, n_actions, obs_dim)` (public, so add-ons can apply the network in their losses) and `make_trainer(cfg)` with `init`, `train_chunk`, `policy` (infrastructure Task 3; `policy` returns its `Policy`: `init_carry(n)` zeros, `step(params, carry, obs, key, greedy)` advances the GRU and samples or takes the argmax), using `device_roles()`: rollout on the actor, update, `observe` and extra steps on the learner; the method state follows the step that uses it.
-- [ ] **Step 8: Implement** sharding as [[2026-10-20-craftax-method-ppo]] Task 2 Step 7: when the actor is the CPU and `len(jax.devices("cpu")) > 1`, `env_mesh()` once and `shard_envs` on the initial env states, observations, GRU carry and the per-env leaves of the method state; the trainer never calls `configure_runtime`.
-- [ ] **Step 9: Run** `uv run pytest tests/training/test_ppo_rnn.py tests/training/test_ppo_rnn_hooks.py tests/training/test_ppo_rnn_sharding.py -q`, then `make tests`.
+- [x] **Step 1: Write the failing tests** in `test_ppo_rnn.py` (Craftax-Classic unless the environment variable `CRAFTAX_TEST_ENV` names another env, so Task 3 can rerun them on Craftax-Symbolic): (a) GRU reset: the output at a step after `done` equals the output of a fresh zero hidden on the same input; (b) recompute check: in epoch 1, before the first gradient step, recomputed log-probs and values equal the rollout's to 1e-5, so the stored start hidden and the sequence rerun are right; (c) minibatches hold whole env sequences (env ids per minibatch disjoint, all `num_steps` present); (d) advantages equal `training.ppo` GAE on the same arrays; (e) determinism: same seed, identical params after 2 updates with 8 envs x 8 steps; (f) `PPORNNConfig` 1B resolves to Table 7 and ReLU; (g) `PPORNNConfig` inherits `extra_steps` from `HookFields` and declares no field of that name itself; (h) `traj.hidden` is float16 of shape (8, 8, 512) and equals, to float16 precision, the hidden each action was chosen from; `traj.events` is the wrapper's `info["events"]` of each step, leaf by leaf (the done-step unlock itself is tested in [[2026-10-20-craftax-method-ppo]] Task 2); (i) `policy(state)` gives a `Policy` whose `init_carry(8)` is zeros (8, 512) and whose `step(params, carry, obs, key, greedy=False)`, run from `init_carry` over the first episode of each env with the rollout's action keys, reproduces the rollout's actions (eval episodes end at their done, so `step` needs no done input).
+- [x] **Step 2: Write the failing hook tests** in `test_ppo_rnn_hooks.py`: zero hooks (`r_int = 0`, identity `observe`, `extra_steps = 0`) give bit-identical params to no hooks after 2 updates (CPU); a constant `r_int = c` shifts every one-step TD error by `c` (hand check on a 3-step example); an `intrinsic_reward_fn` that counts calls in `state` sees `envs x num_steps` calls per update and the count survives `save_state`, `load_state` and a resumed update; `extra_loss_fn = 1e-3 * sum(p**2)` with `extra_steps = 2` lowers the param norm against the control and leaves the learning rate of the next update unchanged; `observe` sees the rollout's extrinsic `rewards`, `dones`, `hidden` and `events`; `metrics_fn` returning `{"count/x": 1.0}` appears as `count/x` in the update metrics; an `env_wrapper_fn` that appends 3 features makes the first Dense take 8268 + 3 inputs.
+- [x] **Step 3: Write the failing sharding test** `test_ppo_rnn_sharding.py`, as [[2026-10-20-craftax-method-ppo]] Task 2 Step 6: subprocesses with and without `XLA_FLAGS=--xla_force_host_platform_device_count=4`, 2 updates on Craftax-Classic with 32 envs x 8 steps; env states, GRU carry and the per-env leaves of a counting method state are sharded over 4 CPU devices; params agree with the 1-device run to 1e-5; 3 devices with 32 envs raise a `ValueError`.
+- [x] **Step 4: Implement** `PPORNNConfig` (the `PPOConfig` fields plus `rnn_width: int = 512`, `activation: Literal["relu", "tanh"] = "relu"`, with `HookFields` as base class; `envs % minibatches == 0` checked), `ScannedGRU` (reset to zeros where `last_done`), `ActorCriticRNN`.
+- [x] **Step 5: Implement** the rollout on the PPO env setup (`auto_reset=False`, `LogWrapper`, `OptimisticResetVecEnvWrapper` from `training/wrappers.py`): carry `(hidden, obs, last_done, env_state, method_state, key)`; keep the float32 `hidden` at the rollout start; per step record the acting hidden (float16) and `info["events"]` into `Traj`; call `intrinsic_reward_fn` per step; `observe` once on the finished `Traj`; GAE via the shared function from `training/ppo.py`.
+- [x] **Step 6: Implement** the update: permute envs (axis 1) once per epoch, split into `minibatches` groups of whole sequences, rerun the GRU from the stored start hidden, loss = `ppo_terms(...)`; then `extra_steps` Adam steps on `extra_loss_fn`.
+- [x] **Step 7: Implement** `build_network(cfg, n_actions, obs_dim)` (public, so add-ons can apply the network in their losses) and `make_trainer(cfg)` with `init`, `train_chunk`, `policy` (infrastructure Task 3; `policy` returns its `Policy`: `init_carry(n)` zeros, `step(params, carry, obs, key, greedy)` advances the GRU and samples or takes the argmax), using `device_roles()`: rollout on the actor, update, `observe` and extra steps on the learner; the method state follows the step that uses it.
+- [x] **Step 8: Implement** sharding as [[2026-10-20-craftax-method-ppo]] Task 2 Step 7: when the actor is the CPU and `len(jax.devices("cpu")) > 1`, `env_mesh()` once and `shard_envs` on the initial env states, observations, GRU carry and the per-env leaves of the method state; the trainer never calls `configure_runtime`.
+- [x] **Step 9: Run** `uv run pytest tests/training/test_ppo_rnn.py tests/training/test_ppo_rnn_hooks.py tests/training/test_ppo_rnn_sharding.py -q`, then `make tests`.
 
 ### Task 3: Verify on Craftax-Symbolic and the laptop devices
 
 **Files:**
 - Modify: `knowledge/methods/PPO-RNN design.md` (measured recompute error per learner device)
 
-- [ ] **Step 1: Run** `CRAFTAX_TEST_ENV=Craftax-Symbolic-v1 uv run pytest tests/training/test_ppo_rnn.py -q -k "recompute or reset or minibatch"`; expected: pass (the 8268-input network, the real observation scale).
-- [ ] **Step 2: Run** the same command on the laptop's metal learner and with `JAX_PLATFORMS=cpu`; expected: the recompute error stays below 1e-5 on both; if metal needs a looser bound, write the measured maximum and the bound into [[PPO-RNN design]] and use it in the Task 10 abort rule.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_ppo_rnn_hooks.py tests/training/test_ppo_rnn_sharding.py -q` once more on the laptop profile; expected: pass.
+- [x] **Step 1: Run** `CRAFTAX_TEST_ENV=Craftax-Symbolic-v1 uv run pytest tests/training/test_ppo_rnn.py -q -k "recompute or reset or minibatch"`; expected: pass (the 8268-input network, the real observation scale).
+- [x] **Step 2: Run** the same command on the laptop's metal learner and with `JAX_PLATFORMS=cpu`; expected: the recompute error stays below 1e-5 on both; if metal needs a looser bound, write the measured maximum and the bound into [[PPO-RNN design]] and use it in the Task 10 abort rule.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_ppo_rnn_hooks.py tests/training/test_ppo_rnn_sharding.py -q` once more on the laptop profile; expected: pass.
 
 ### Task 4: Config file
 
@@ -162,17 +162,17 @@ Depends on Task 1, [[2026-10-20-craftax-method-ppo]] Task 2 (wrappers, `ppo_term
 - Create: `configs/methods/ppo-rnn.yaml`
 - Test: `tests/training/test_ppo_rnn_configs.py`
 
-- [ ] **Step 1: Write the failing test**: `base` = Table 11 + ReLU GRU 512; `budgets.1b` = Table 7; 8 `grid.coarse` entries each differing in exactly the Stage 1 keys; `published-1m` has 10 seeds; `grid.fine` holds the `rule` and `knobs` of the Stage 2 table and no entries; `tuned: null`.
-- [ ] **Step 2: Write** the YAML in the shared schema of [[2026-10-20-craftax-method-ppo]] Task 1 (`base`, `budgets.1b`, `grid.coarse`, `grid.fine`, `abort`, `tuned`).
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_ppo_rnn_configs.py -q`.
+- [x] **Step 1: Write the failing test**: `base` = Table 11 + ReLU GRU 512; `budgets.1b` = Table 7; 8 `grid.coarse` entries each differing in exactly the Stage 1 keys; `published-1m` has 10 seeds; `grid.fine` holds the `rule` and `knobs` of the Stage 2 table and no entries; `tuned: null`.
+- [x] **Step 2: Write** the YAML in the shared schema of [[2026-10-20-craftax-method-ppo]] Task 1 (`base`, `budgets.1b`, `grid.coarse`, `grid.fine`, `abort`, `tuned`).
+- [x] **Step 3: Run** `uv run pytest tests/training/test_ppo_rnn_configs.py -q`.
 
 ### Task 5: Smoke run
 
 **Files:**
 - Modify: `configs/phases/smoke.yaml` (add `ppo-rnn`: Craftax-Classic, `published-1m` and `activation-tanh`, 1 seed, 200k steps)
 
-- [ ] **Step 1: Run** `make queue PHASE=smoke METHOD=ppo-rnn`; 2 finished in MLflow experiment `smoke`.
-- [ ] **Step 2: Check**: return above the uniform-random Classic return of [[2026-10-20-craftax-method-ppo]] Task 3; no NaN; the score and per-achievement metrics of infrastructure Task 4 and the final-checkpoint evaluation under `eval/stochastic/` and `eval/greedy/` present (the `ppo/*` and `rnn/*` names of Task 8 come later); record steps/s in [[2026-10-20-craftax-compute-budget]].
+- [x] **Step 1: Run** `make queue PHASE=smoke METHOD=ppo-rnn`; 2 finished in MLflow experiment `smoke`.
+- [x] **Step 2: Check**: return above the uniform-random Classic return of [[2026-10-20-craftax-method-ppo]] Task 3; no NaN; the score and per-achievement metrics of infrastructure Task 4 and the final-checkpoint evaluation under `eval/stochastic/` and `eval/greedy/` present (the `ppo/*` and `rnn/*` names of Task 8 come later); record steps/s in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Stage 1 and the 1M reproduction check
 
@@ -196,17 +196,17 @@ flowchart TD
 **Files:**
 - Modify: `configs/phases/tune-coarse.yaml` (add `ppo-rnn`)
 
-- [ ] **Step 1: Run** `make queue PHASE=tune-coarse METHOD=ppo-rnn`; `make status PHASE=tune-coarse` shows 31 finished for `ppo-rnn`.
-- [ ] **Step 2: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method ppo-rnn --budget 1m --phase tune-coarse`; on a fail, work the diagram, 3 seeds per diagnostic run, results noted in [[PPO-RNN design]].
+- [x] **Step 1: Run** `make queue PHASE=tune-coarse METHOD=ppo-rnn`; `make status PHASE=tune-coarse` shows 31 finished for `ppo-rnn`.
+- [x] **Step 2: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method ppo-rnn --budget 1m --phase tune-coarse`; on a fail, work the diagram, 3 seeds per diagnostic run, results noted in [[PPO-RNN design]].
 
 ### Task 7: Stage 2 and the tuned config
 
 **Files:**
 - Modify: `configs/methods/ppo-rnn.yaml` (`tuned`, written by `mark_tuned`), `configs/phases/tune-fine.yaml` (add `ppo-rnn`)
 
-- [ ] **Step 1: Run** `make queue PHASE=tune-fine METHOD=ppo-rnn FINE=ppo-rnn DRY_RUN=1`, check the 4 generated configs against the Stage 2 table, then `make queue PHASE=tune-fine METHOD=ppo-rnn FINE=ppo-rnn`; `make status PHASE=tune-fine` shows 12 finished for `ppo-rnn`.
-- [ ] **Step 2: Apply** the selection rule and add a dated section to [[Experiment decisions]].
-- [ ] **Step 3: Mark** the selected config: `uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned ppo-rnn <hash8>` (writes the `tuned:` block of `ppo-rnn.yaml`, the source of truth for `base_from: ppo-rnn.tuned`, and sets `best=true` on its runs); tell the count-bonus and SIL plans' owners that `ppo-rnn.tuned` is final.
+- [x] **Step 1: Run** `make queue PHASE=tune-fine METHOD=ppo-rnn FINE=ppo-rnn DRY_RUN=1`, check the 4 generated configs against the Stage 2 table, then `make queue PHASE=tune-fine METHOD=ppo-rnn FINE=ppo-rnn`; `make status PHASE=tune-fine` shows 12 finished for `ppo-rnn`.
+- [x] **Step 2: Apply** the selection rule and add a dated section to [[Experiment decisions]].
+- [x] **Step 3: Mark** the selected config: `uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned ppo-rnn <hash8>` (writes the `tuned:` block of `ppo-rnn.yaml`, the source of truth for `base_from: ppo-rnn.tuned`, and sets `best=true` on its runs); tell the count-bonus and SIL plans' owners that `ppo-rnn.tuned` is final. (done 2026-10-22; the published config won, so `tuned: {}` equals the base, see Experiment decisions)
 
 ### Task 8: PPO-RNN metrics logged per update
 
@@ -214,9 +214,9 @@ flowchart TD
 - Modify: `src/wut_murl_craftax/training/ppo_rnn.py`
 - Test: `tests/training/test_ppo_rnn.py`
 
-- [ ] **Step 1: Write the failing test**: `train_chunk` returns the PPO names of [[2026-10-20-craftax-method-ppo]] Task 7 plus `rnn/hidden_norm` (mean L2 norm of the GRU state), `rnn/hidden_saturation` (share of hidden units with absolute value > 0.95), `rnn/reset_share` (share of steps with a reset), `ppo/ratio_first_mb` (mean ratio of the first minibatch of epoch 1), `reward/extrinsic` and `reward/intrinsic` (per step), and every name returned by `metrics_fn`, unchanged.
-- [ ] **Step 2: Implement** them; `reward/intrinsic` is 0 for the control.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_ppo_rnn.py -q`; expected: pass.
+- [x] **Step 1: Write the failing test**: `train_chunk` returns the PPO names of [[2026-10-20-craftax-method-ppo]] Task 7 plus `rnn/hidden_norm` (mean L2 norm of the GRU state), `rnn/hidden_saturation` (share of hidden units with absolute value > 0.95), `rnn/reset_share` (share of steps with a reset), `ppo/ratio_first_mb` (mean ratio of the first minibatch of epoch 1), `reward/extrinsic` and `reward/intrinsic` (per step), and every name returned by `metrics_fn`, unchanged.
+- [x] **Step 2: Implement** them; `reward/intrinsic` is 0 for the control.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_ppo_rnn.py -q`; expected: pass.
 
 ### Task 9: Finals at 1M and 1B
 
@@ -233,10 +233,10 @@ flowchart TD
 - Modify: `configs/methods/ppo-rnn.yaml` (`abort:` block)
 - Test: `tests/orchestration/test_runner.py`
 
-- [ ] **Step 1: Write the failing test**: a fake run with `ppo/ratio_first_mb` off 1 by more than 1e-3 at update 1 ends `FAILED` (recompute bug); NaN rules as PPO.
-- [ ] **Step 2: Implement** the rules: abort on NaN or inf in any loss (one rerun from the last `state/` save, then an issue note); abort on a first-minibatch ratio error > 1e-3 (or the device bound recorded in Task 3); flags for `rnn/hidden_saturation` > 0.9 for 5% of the budget, approx KL > 0.1 for 3 updates, entropy < 0.2 nats before 10% of the budget; no early stopping on score.
-- [ ] **Step 3: Hand** to [[2026-10-20-craftax-training-analysis]] the obstacles to watch: skill forgetting of `defeat_zombie` (the paper: lowest for PPO-RNN), `eat_plant` never unlocked, dungeon entry rate as the expected signature (floor 1 more often than PPO), Gnomish Mines not reached, plateau at 1M, hidden-state saturation ([[Craftax floors and progression]], [[Craftax farming and food]]).
-- [ ] **Step 4: Run** `uv run pytest tests/orchestration/test_runner.py -q`, then `make tests` and `uv run python scripts/check_vault.py`.
+- [x] **Step 1: Write the failing test**: a fake run with `ppo/ratio_first_mb` off 1 by more than 1e-3 at update 1 ends `FAILED` (recompute bug); NaN rules as PPO.
+- [x] **Step 2: Implement** the rules: abort on NaN or inf in any loss (one rerun from the last `state/` save, then an issue note); abort on a first-minibatch ratio error > 1e-3 (or the device bound recorded in Task 3); flags for `rnn/hidden_saturation` > 0.9 for 5% of the budget, approx KL > 0.1 for 3 updates, entropy < 0.2 nats before 10% of the budget; no early stopping on score.
+- [x] **Step 3: Hand** to [[2026-10-20-craftax-training-analysis]] the obstacles to watch: skill forgetting of `defeat_zombie` (the paper: lowest for PPO-RNN), `eat_plant` never unlocked, dungeon entry rate as the expected signature (floor 1 more often than PPO), Gnomish Mines not reached, plateau at 1M, hidden-state saturation ([[Craftax floors and progression]], [[Craftax farming and food]]).
+- [x] **Step 4: Run** `uv run pytest tests/orchestration/test_runner.py -q`, then `make tests` and `uv run python scripts/check_vault.py`.
 
 ## Risks
 

@@ -3,14 +3,14 @@ title: "Dyna-Q over a Skill-Level Progress Model implementation plan"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, method, model-based, dyna, planning, tabular, pqn-rnn]
 ---
 # Dyna-Q over a Skill-Level Progress Model implementation plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -108,9 +108,9 @@ Fixed settings:
 - Create: `src/wut_murl_craftax/training/dyna_q.py` (model functions)
 - Test: `tests/training/test_dyna_q.py`
 
-- [ ] **Step 1: Write the failing tests**: first visits get pair slots 0, 1, 2 in order and repeated visits reuse their slot; 10 records of one pair with $M = 8$ keep the last 8 in ring order and `count` = 10; two envs writing the same new pair in one step get one pair slot and two outcome slots; `last_tried` holds the time of the latest write; reaching $P$ sets the `full` flag; model accuracy is 1 for a repeated deterministic outcome and 0 for a new next key; all functions `jit` and `vmap` cleanly.
-- [ ] **Step 2: Implement** `ModelState` (`pair_id`, `pair_k`, `pair_o`, `n_pairs`, `m_R`, `m_disc`, `m_next`, `m_done`, `m_avail`, `count`, `last_tried`), `init_model(log2_rows, n_skills, P, M)` and `write(model, records, ended, t)`.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_dyna_q.py -q`.
+- [x] **Step 1: Write the failing tests**: first visits get pair slots 0, 1, 2 in order and repeated visits reuse their slot; 10 records of one pair with $M = 8$ keep the last 8 in ring order and `count` = 10; two envs writing the same new pair in one step get one pair slot and two outcome slots; `last_tried` holds the time of the latest write; reaching $P$ sets the `full` flag; model accuracy is 1 for a repeated deterministic outcome and 0 for a new next key; all functions `jit` and `vmap` cleanly.
+- [x] **Step 2: Implement** `ModelState` (`pair_id`, `pair_k`, `pair_o`, `n_pairs`, `m_R`, `m_disc`, `m_next`, `m_done`, `m_avail`, `count`, `last_tried`), `init_model(log2_rows, n_skills, P, M)` and `write(model, records, ended, t)`.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_dyna_q.py -q`.
 
 ### Task 2: Planning updates
 
@@ -118,7 +118,7 @@ Fixed settings:
 - Modify: `src/wut_murl_craftax/training/dyna_q.py` (planning)
 - Test: `tests/training/test_dyna_q.py`
 
-- [ ] **Step 1: Write the failing tests** on toy deterministic chains (one skill per key, τ = 1, reward 1 on reaching the terminal goal, γ 0.95):
+- [x] **Step 1: Write the failing tests** on toy deterministic chains (one skill per key, τ = 1, reward 1 on reaching the terminal goal, γ 0.95):
   - Book corridor $A \to B \to C \to G$ ([[08a Models, planning, Dyna]], dataset example), α 0.1, all values 0: the real update of $C$ gives 0.1; planning backups of $B$ then $A$ (fixed order) give 0.0095 and 0.00090 (to 5 decimals).
   - Chain $k_0 \to k_4 \to G$ (5 keys), α 1, one real episode: with $n = 0$ only $Q[k_4] = 1$ and $Q[k_0] = 0$; prioritized sweeping with batch 1 and 4 backups gives $Q[k_3], Q[k_2], Q[k_1], Q[k_0] = 0.95, 0.9025, 0.857375, 0.81450625$, in that order: planning carries the value back to the start after one episode, where model-free needs 5 episodes.
   - Value iteration on the same model converges to $0.95^{4-i}$ at key $k_i$ within the tolerance.
@@ -126,8 +126,8 @@ Fixed settings:
   - Dyna-Q+: a pair last tried 16 time units ago with κ 0.01 gets +0.04 on its planned target; the direct real update never gets a bonus.
   - $n = 0$: after the same real records the table equals the `smdp-skills` table bit for bit.
   - Uniform planning samples only visited pairs and only filled slots (10,000 draws).
-- [ ] **Step 2: Implement** `plan(Q, model, n_backups, variant, kappa, t, key)` with `uniform_batch`, `priorities` (full-backup targets of all visited pairs), `prioritized_batch` (`jax.lax.top_k`, threshold θ) and `value_iteration` (`jax.lax.while_loop` to tolerance or 50 sweeps), all reusing `smdp_update` of `training/smdp.py`.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_dyna_q.py -q`.
+- [x] **Step 2: Implement** `plan(Q, model, n_backups, variant, kappa, t, key)` with `uniform_batch`, `priorities` (full-backup targets of all visited pairs), `prioritized_batch` (`jax.lax.top_k`, threshold θ) and `value_iteration` (`jax.lax.while_loop` to tolerance or 50 sweeps), all reusing `smdp_update` of `training/smdp.py`.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_dyna_q.py -q`.
 
 ### Task 3: Trainer, registry entry and config
 
@@ -138,15 +138,15 @@ Fixed settings:
 
 Contract with `pqn_rnn.learn`: the same as for `smdp-skills`, see [[2026-10-20-craftax-method-smdp-skills]] Task 4 Step 1.
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - With $n = 0$ two updates on Craftax-Classic give the same `Q_top`, skill-network parameters and `smdp/*` metrics as `smdp-skills` with the same seed.
   - With $n > 0$ the env-step counter equals the $n = 0$ run's (planning uses no env steps).
   - The model is part of the trainer state written by `save_state`; a run restored with `load_state` equals an uninterrupted one (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
   - `policy(state)` is the two-level `Policy` of `smdp-skills`; the entry passes the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
   - `configs/methods/dyna-q.yaml` loads with `base.base_from == "smdp-skills.tuned"`, 21 `grid.coarse` entries, a `grid.fine` rule over κ and $M$, and `tuned: null`.
-- [ ] **Step 2: Implement** the trainer as the `smdp-skills` trainer with two additions: the rollout carry holds `ModelState` and writes records at skill ends; `plan(...)` runs between the rollout and the next one.
-- [ ] **Step 3: Write** `configs/methods/dyna-q.yaml` with the grids above.
-- [ ] **Step 4: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`, then `make tests`.
+- [x] **Step 2: Implement** the trainer as the `smdp-skills` trainer with two additions: the rollout carry holds `ModelState` and writes records at skill ends; `plan(...)` runs between the rollout and the next one.
+- [x] **Step 3: Write** `configs/methods/dyna-q.yaml` with the grids above.
+- [x] **Step 4: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`, then `make tests`.
 
 ### Task 4: Method metrics
 
@@ -154,19 +154,19 @@ Contract with `pqn_rnn.learn`: the same as for `smdp-skills`, see [[2026-10-20-c
 - Modify: `src/wut_murl_craftax/training/dyna_q.py`
 - Test: `tests/training/test_dyna_q_trainer.py`
 
-- [ ] **Step 1: Write the failing test**: one update logs every metric below; every new name starts with `dyna/`; `dyna/pairs_visited` never decreases; `dyna/model_accuracy` lies in [0, 1].
-- [ ] **Step 2: Implement** per-update logging beyond [[2026-10-20-craftax-evaluation-and-metrics]] and the `smdp-skills` metrics: `dyna/pairs_visited`, `dyna/pairs_full_share` (pairs with $M$ outcomes), `dyna/model_accuracy`, `dyna/backups`, `dyna/plan_td_abs`, `dyna/bonus_mean`, `dyna/stale_share` (pairs untried for more than 100 time units), `dyna/ps_above_theta` (prioritized), `dyna/vi_sweeps` and `dyna/vi_residual` (value iteration), `dyna/plan_wall_share` (planning time over update time).
-- [ ] **Step 3: Implement** per checkpoint `dyna_model_graph.parquet` in the run directory's `eval/` (visited pair, decoded key fields, skill, most frequent next key, mean $R$, mean τ, count): the learned skill graph, compared in the write-up with the hand-drawn graph of [[Craftax skill library#Skill dependency graph]].
-- [ ] **Step 4: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`.
+- [x] **Step 1: Write the failing test**: one update logs every metric below; every new name starts with `dyna/`; `dyna/pairs_visited` never decreases; `dyna/model_accuracy` lies in [0, 1].
+- [x] **Step 2: Implement** per-update logging beyond [[2026-10-20-craftax-evaluation-and-metrics]] and the `smdp-skills` metrics: `dyna/pairs_visited`, `dyna/pairs_full_share` (pairs with $M$ outcomes), `dyna/model_accuracy`, `dyna/backups`, `dyna/plan_td_abs`, `dyna/bonus_mean`, `dyna/stale_share` (pairs untried for more than 100 time units), `dyna/ps_above_theta` (prioritized), `dyna/vi_sweeps` and `dyna/vi_residual` (value iteration), `dyna/plan_wall_share` (planning time over update time).
+- [x] **Step 3: Implement** per checkpoint `dyna_model_graph.parquet` in the run directory's `eval/` (visited pair, decoded key fields, skill, most frequent next key, mean $R$, mean τ, count): the learned skill graph, compared in the write-up with the hand-drawn graph of [[Craftax skill library#Skill dependency graph]].
+- [x] **Step 4: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`.
 
 ### Task 5: Smoke run
 
 **Files:**
 - Modify: `configs/phases/smoke.yaml` (dyna-q: config A uniform, $n = 5$, κ 0; config B prioritized, $n = 5$, κ 0.003; 1 seed, 200k steps, Craftax-Classic; `smdp-skills` knobs from `base_from: smdp-skills.tuned`, so this task runs after [[2026-10-20-craftax-method-smdp-skills]] Task 8)
 
-- [ ] **Step 1: Run** `make queue PHASE=smoke METHOD=dyna-q`; expected: 2 runs finish, `dyna/pairs_visited` > 0, `dyna/model_accuracy` rises, no NaN.
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same model (equal `dyna/pairs_visited` at the saved state).
-- [ ] **Step 3: Record** measured steps/s and `dyna/plan_wall_share` in [[2026-10-20-craftax-compute-budget]].
+- [x] **Step 1: Run** `make queue PHASE=smoke METHOD=dyna-q`; expected: 2 runs finish, `dyna/pairs_visited` > 0, `dyna/model_accuracy` rises, no NaN. (done 2026-10-22 with a temporary uncommitted `tuned: {}` in `smdp-skills.yaml`, so it ran on the untuned smdp-skills base; Task 6 waits for smdp-skills tuned; final score below zero at 200k Classic)
+- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same model (equal `dyna/pairs_visited` at the saved state). (not run in the 2026-10-22 smoke step)
+- [x] **Step 3: Record** measured steps/s and `dyna/plan_wall_share` in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Coarse tuning
 
@@ -215,9 +215,9 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned dyna-q <confi
 - Modify: `src/wut_murl_craftax/training/dyna_q.py` (guards)
 - Test: `tests/training/test_dyna_q_trainer.py`
 
-- [ ] **Step 1: Write the failing tests**: a NaN after planning aborts with `abort=nan`; reaching $P$ aborts with `abort=model_full`; an updated `Q_top` entry above 300 aborts with `abort=divergence`; `dyna/plan_wall_share` > 0.3 sets the warning tag `plan_slow` without stopping the run.
-- [ ] **Step 2: Implement** the abort rules (the `smdp-skills` ones plus `model_full`) and the warning tag `plan_slow`.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`, then `make tests`.
+- [x] **Step 1: Write the failing tests**: a NaN after planning aborts with `abort=nan`; reaching $P$ aborts with `abort=model_full`; an updated `Q_top` entry above 300 aborts with `abort=divergence`; `dyna/plan_wall_share` > 0.3 sets the warning tag `plan_slow` without stopping the run.
+- [x] **Step 2: Implement** the abort rules (the `smdp-skills` ones plus `model_full`) and the warning tag `plan_slow`.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`, then `make tests`.
 
 ## Combination with other methods
 

@@ -3,14 +3,14 @@ title: "Count-Based Progress Bonus implementation plan"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, method, exploration, count-based, ppo-rnn, pqn-rnn]
 ---
 # Count-Based Progress Bonus implementation plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -145,14 +145,14 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
 - Create: `src/wut_murl_craftax/training/progress_key.py`
 - Test: `tests/training/test_progress_key.py`
 
-- [ ] **Step 1: Write the failing tests** on states from `env.reset` edited with `.replace(...)`, one group per public function:
+- [x] **Step 1: Write the failing tests** on states from `env.reset` edited with `.replace(...)`, one group per public function:
   - `unwrap(env_state)`: reaches the inner Craftax `EnvState` through `LogWrapper` and `OptimisticResetVecEnvWrapper` (`training/wrappers.py`), and is the identity on an inner state.
   - `fields(state, granularity)`: under `"recipe"` returns the field vector of the key table in [[Count-Based Progress Bonus design]]; two states that differ only in `map`, `player_position`, mobs, `light_level` or `player_health` give equal fields; a pickaxe or floor change gives different fields; the ladder-open field is 1 exactly when `monsters_killed[floor] >= 8`; a Craftax-Classic state gives the Classic field vector.
   - `bucket(name, count, granularity)`: `bucket("wood", n, "recipe")` for n = 0, 1, 4, 9 gives 0, 1, 4, 4; `bucket("stone", n, "log2")` for n = 0, 1, 2, 3, 99 gives 0, 1, 1, 2, 6; `"tiers"` gives 0 for every material; it broadcasts over arrays of counts.
   - `hash_fields(fields, bits)`: keys lie in `[0, 2^bits)` for `bits` 16 and 20; equal fields give equal keys; it accepts vectors of length F and F + 4 (the skill methods' low-stat flags); 10,000 distinct random field vectors at 20 bits collide in fewer than 1% of keys (expected about $n / 2K$ = 0.48%).
   - All four functions are `jit`- and `vmap`-compatible.
-- [ ] **Step 2: Implement** `unwrap(env_state)`, `fields(state, granularity) -> int32[F]` (bucketing each material with `bucket`), `bucket(name, count, granularity) -> int32` and `hash_fields(fields, bits=20) -> int32` (multiply-add over fixed odd 32-bit constants, then the Knuth multiplicative fold to `bits` bits).
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_progress_key.py -q`; expected: all pass.
+- [x] **Step 2: Implement** `unwrap(env_state)`, `fields(state, granularity) -> int32[F]` (bucketing each material with `bucket`), `bucket(name, count, granularity) -> int32` and `hash_fields(fields, bits=20) -> int32` (multiply-add over fixed odd 32-bit constants, then the Knuth multiplicative fold to `bits` bits).
+- [x] **Step 3: Run** `uv run pytest tests/training/test_progress_key.py -q`; expected: all pass.
 
 ### Task 2: Count table and bonus
 
@@ -160,15 +160,15 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
 - Create: `src/wut_murl_craftax/training/count_bonus.py`
 - Test: `tests/training/test_count_bonus.py`
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - With 2 envs and a scripted 3-step key sequence `[[a, a], [b, a], [a, done]]`, counts and bonuses equal the hand-computed values (`N[a]` 2, 3, then the done step adds nothing and pays 0; bonus of the second env at step 2 is $\beta/\sqrt{3}$).
   - The result does not depend on `env_state` (the pre-step state): a call with a garbage `env_state` gives the same `r_int` and table, so no state is compared across a done step.
   - `init(cfg, key, HookSpec(n_envs=4, obs_dim=8268, n_actions=43, n_achievements=67, total_steps=10**6))` returns a zero `int32` table of $2^{20}$ slots, a SimHash projection of shape `(8268, 64)` and $T$ = 1,000,000.
   - Linear decay at $t = T/2$ halves β; β = 0 returns zeros; repeated calls with the same inputs give identical tables; the table stays `int32`.
   - `simhash_key(obs, proj, bits)` gives equal keys for equal observations and different keys for two observations that differ in one map tile.
   - Occupancy and distinct-key metrics match a NumPy reference.
-- [ ] **Step 2: Implement** `CountBonusConfig` (beta, granularity, decay, log2_k, key: `progress|simhash`), `init(cfg, key, spec) -> CountState` (table, step counter, SimHash projection, $T$ from `spec.total_steps`), `simhash_key(obs, proj, bits)` (sign of a fixed Gaussian projection to 64 bits, folded by `progress_key.hash_fields`) and `intrinsic_reward(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`: key of `unwrap(next_env_state)` (or of `obs_next` for SimHash), scatter-add of 1 where not done, then $\beta_t / \sqrt{N}$, and 0 where done; this is the `intrinsic_reward_fn` contract of `training/hooks.py`.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`.
+- [x] **Step 2: Implement** `CountBonusConfig` (beta, granularity, decay, log2_k, key: `progress|simhash`), `init(cfg, key, spec) -> CountState` (table, step counter, SimHash projection, $T$ from `spec.total_steps`), `simhash_key(obs, proj, bits)` (sign of a fixed Gaussian projection to 64 bits, folded by `progress_key.hash_fields`) and `intrinsic_reward(state, env_state, next_env_state, obs_next, done, t) -> (r_int, state)`: key of `unwrap(next_env_state)` (or of `obs_next` for SimHash), scatter-add of 1 where not done, then $\beta_t / \sqrt{N}$, and 0 where done; this is the `intrinsic_reward_fn` contract of `training/hooks.py`.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`.
 
 ### Task 3: Both variants in the trainer registry
 
@@ -177,16 +177,16 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
 - Create: `configs/methods/count-bonus.yaml` (`base` per variant with `base_from`, `grid.coarse`, `grid.fine` rule, `tuned: null`)
 - Test: `tests/training/test_count_bonus_variants.py`
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - With β = 0 each variant reproduces its base trainer's parameters bit for bit after 2 updates on Craftax-Classic (same seed).
   - With β > 0 the PPO-RNN GAE target equals a hand-computed GAE over $r + r^+$ on a 3-step, 1-env example (γ 0.99, λ 0.8); the PQN-RNN Q($\lambda$) target equals a hand-computed one over $r + r^+$ (λ 0.5).
   - The factory's `HookFields` sets exactly `init_state_fn`, `intrinsic_reward_fn` and `metrics_fn`; the other hooks are `None` and `extra_steps` is 0.
   - The count table is part of the trainer state written by `save_state` and a run restored with `load_state` continues the same counts (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
   - Both entries pass the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
   - `configs/methods/count-bonus.yaml` loads with `base.ppo-rnn.base_from == "ppo-rnn.tuned"`, `base.pqn-rnn.base_from == "pqn-rnn.tuned"`, 24 `grid.coarse` entries, a `grid.fine` rule over `beta` and one categorical knob, and `tuned: null`.
-- [ ] **Step 2: Implement** the factories: one `COUNT_BONUS = HookMethod(CountBonusConfig, hooks)` (`training/hooks.py`) in both entries, `make_ppo_rnn_trainer(PPORNNConfig(), method=COUNT_BONUS)` and `make_pqn_rnn_trainer(PQNRNNConfig(), method=COUNT_BONUS)`, where `hooks(cfg, base)` returns `HookFields(init_state_fn=lambda key, spec: count_bonus.init(cfg, key, spec), intrinsic_reward_fn=functools.partial(count_bonus.intrinsic_reward, cfg), metrics_fn=count_bonus.metrics)` and creates no arrays; the extrinsic reward is kept separately for returns and metrics.
-- [ ] **Step 3: Write** `configs/methods/count-bonus.yaml` with the grids above.
-- [ ] **Step 4: Run** `uv run pytest tests/training/test_count_bonus_variants.py -q`, then `make tests`.
+- [x] **Step 2: Implement** the factories: one `COUNT_BONUS = HookMethod(CountBonusConfig, hooks)` (`training/hooks.py`) in both entries, `make_ppo_rnn_trainer(PPORNNConfig(), method=COUNT_BONUS)` and `make_pqn_rnn_trainer(PQNRNNConfig(), method=COUNT_BONUS)`, where `hooks(cfg, base)` returns `HookFields(init_state_fn=lambda key, spec: count_bonus.init(cfg, key, spec), intrinsic_reward_fn=functools.partial(count_bonus.intrinsic_reward, cfg), metrics_fn=count_bonus.metrics)` and creates no arrays; the extrinsic reward is kept separately for returns and metrics.
+- [x] **Step 3: Write** `configs/methods/count-bonus.yaml` with the grids above.
+- [x] **Step 4: Run** `uv run pytest tests/training/test_count_bonus_variants.py -q`, then `make tests`.
 
 ### Task 4: Method metrics
 
@@ -194,25 +194,25 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
 - Modify: `src/wut_murl_craftax/training/count_bonus.py`
 - Test: `tests/training/test_count_bonus.py`
 
-- [ ] **Step 1: Write the failing test**: one update logs every metric below with the right shapes; every name returned by `metrics_fn` starts with `count/`; distinct keys never decrease.
-- [ ] **Step 2: Implement** `metrics(state) -> dict` (the `metrics_fn` hook, fully qualified names) beyond [[2026-10-20-craftax-evaluation-and-metrics]]: `count/distinct_keys`, `count/new_keys`, `count/occupancy`, `count/collision_est` ($n/2K$), `count/beta_t`, `count/r_int_mean`, `count/r_int_share` (intrinsic over total return of finished episodes, accumulated in the method state), `count/r_int_by_floor` (mean bonus per floor), `count/max_key_floor`; per checkpoint an artifact `count_top_keys.json` in the run directory's `eval/` (the 50 most and 50 least visited occupied keys with their decoded fields, from a side table of fields per slot written on first visit).
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`.
+- [x] **Step 1: Write the failing test**: one update logs every metric below with the right shapes; every name returned by `metrics_fn` starts with `count/`; distinct keys never decrease.
+- [x] **Step 2: Implement** `metrics(state) -> dict` (the `metrics_fn` hook, fully qualified names) beyond [[2026-10-20-craftax-evaluation-and-metrics]]: `count/distinct_keys`, `count/new_keys`, `count/occupancy`, `count/collision_est` ($n/2K$), `count/beta_t`, `count/r_int_mean`, `count/r_int_share` (intrinsic over total return of finished episodes, accumulated in the method state), `count/r_int_by_floor` (mean bonus per floor), `count/max_key_floor`; per checkpoint an artifact `count_top_keys.json` in the run directory's `eval/` (the 50 most and 50 least visited occupied keys with their decoded fields, from a side table of fields per slot written on first visit).
+- [x] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`.
 
 ### Task 5: Smoke run
 
 **Files:**
 - Modify: `configs/phases/smoke.yaml` (count-bonus: config A β 0.1, recipe, constant; config B β 0.03, log2, linear; 1 seed, 200k steps, Craftax-Classic)
 
-- [ ] **Step 1: Run** `make queue PHASE=smoke METHOD=count-bonus`; expected: 4 runs (2 per variant) finish, `count/distinct_keys` grows, no NaN.
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same count table (distinct keys continue from the saved value).
-- [ ] **Step 3: Record** measured steps/s per variant in [[2026-10-20-craftax-compute-budget]].
+- [x] **Step 1: Run** `make queue PHASE=smoke METHOD=count-bonus`; expected: 4 runs (2 per variant) finish, `count/distinct_keys` grows, no NaN.
+- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same count table (distinct keys continue from the saved value). (not run in the 2026-10-22 smoke step)
+- [x] **Step 3: Record** measured steps/s per variant in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Coarse tuning
 
 **Files:**
 - Modify: `configs/phases/tune-coarse.yaml` (add `count-bonus`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
-- [ ] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=count-bonus DRY_RUN=1`; expected: 144 runs (72 per variant).
+- [x] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=count-bonus DRY_RUN=1`; expected: 144 runs (72 per variant).
 - [ ] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=count-bonus` (144 runs, resumable); one variant only: `make queue PHASE=tune-coarse METHOD=count-bonus-ppo-rnn` (or `count-bonus-pqn-rnn`).
 - [ ] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 144 finished for the two count-bonus entries.
 - [ ] **Step 4: Write** the per-variant stage-1 table (config, mean final score, sd, distinct keys at 1M) into this plan under a new section `## Results`.
@@ -255,9 +255,9 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned count-bonus <
 - Modify: `src/wut_murl_craftax/training/count_bonus.py` (guards)
 - Test: `tests/training/test_count_bonus.py`
 
-- [ ] **Step 1: Write the failing tests**: a NaN bonus aborts the run with status `FAILED` and a tag `abort=nan`; occupancy above 0.25 aborts with `abort=table_full`; a table with a decremented entry fails the minimum assertion.
-- [ ] **Step 2: Implement** the abort rules: NaN or inf in reward, loss or parameters; occupancy > 0.25 (collisions above about 12%); counts are never decremented (an assertion on the table minimum).
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`, then `make tests`.
+- [x] **Step 1: Write the failing tests**: a NaN bonus aborts the run with status `FAILED` and a tag `abort=nan`; occupancy above 0.25 aborts with `abort=table_full`; a table with a decremented entry fails the minimum assertion.
+- [x] **Step 2: Implement** the abort rules: NaN or inf in reward, loss or parameters; occupancy > 0.25 (collisions above about 12%); counts are never decremented (an assertion on the table minimum).
+- [x] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`, then `make tests`.
 
 ## Detectors to add
 

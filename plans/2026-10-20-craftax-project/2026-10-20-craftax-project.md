@@ -3,14 +3,14 @@ title: "Craftax project execution plan"
 type: plan
 domain: training
 parent: "[[wut_murl_craftax]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, project, index]
 ---
 # Craftax project execution plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -58,12 +58,14 @@ Status: ready
 
 Each phase ends with `make check` green and its results visible in MLflow; later phases only read earlier results.
 
+Phase 0 done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10, stage-1 tuning running since 06:02.
+
 ### Phase 0: Infrastructure and controls
 
-- [ ] [[2026-10-20-craftax-infrastructure]] Tasks 1-3, then [[2026-10-20-craftax-evaluation-and-metrics]] Tasks 1-2 (`evaluation/events.py`), then [[2026-10-20-craftax-method-ppo]] Task 2 (`training/wrappers.py`, which returns the step events), then infrastructure Tasks 4-7 (metrics, eval, profiles, smoke).
-- [ ] [[2026-10-20-craftax-evaluation-and-metrics]]: online metrics needed during training (offline ones can follow in Phase 4).
-- [ ] Controls implemented, tuned and reproduced at 1M: [[2026-10-20-craftax-method-ppo]], [[2026-10-20-craftax-method-ppo-rnn]], [[2026-10-20-craftax-method-pqn-rnn]]; each reproduction gate reports the gap to the published 1M number and the work continues with our control.
-- [ ] Measure real steps/s and eval steps per checkpoint per method family and update [[2026-10-20-craftax-compute-budget]].
+- [x] [[2026-10-20-craftax-infrastructure]] Tasks 1-3, then [[2026-10-20-craftax-evaluation-and-metrics]] Tasks 1-2 (`evaluation/events.py`), then [[2026-10-20-craftax-method-ppo]] Task 2 (`training/wrappers.py`, which returns the step events), then infrastructure Tasks 4-7 (metrics, eval, profiles, smoke).
+- [ ] [[2026-10-20-craftax-evaluation-and-metrics]]: online metrics needed during training (offline ones can follow in Phase 4). (open: infrastructure Task 4 logs the score and achievements per update; evaluation Task 3 and later are not done)
+- [x] Controls implemented, tuned and reproduced at 1M: [[2026-10-20-craftax-method-ppo]], [[2026-10-20-craftax-method-ppo-rnn]], [[2026-10-20-craftax-method-pqn-rnn]]; each reproduction gate reports the gap to the published 1M number and the work continues with our control.
+- [x] Measure real steps/s and eval steps per checkpoint per method family and update [[2026-10-20-craftax-compute-budget]].
 
 ### Phase 1: Methods, implemented and tuned at 1M
 

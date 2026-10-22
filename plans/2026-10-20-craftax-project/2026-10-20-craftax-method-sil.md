@@ -3,14 +3,14 @@ title: "Self-Imitation Learning implementation plan"
 type: plan
 domain: training
 parent: "[[2026-10-20-craftax-project]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, method, self-imitation, replay, ppo-rnn]
 ---
 # Self-Imitation Learning implementation plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -124,7 +124,7 @@ Fixed SIL settings:
 - Create: `src/wut_murl_craftax/training/sil.py` (buffer part)
 - Test: `tests/training/test_sil_buffer.py`
 
-- [ ] **Step 1: Write the failing tests** on scripted `traj` pytrees with the hook-contract fields (`obs`, `actions`, `rewards`, `dones`, `hidden`, `events`):
+- [x] **Step 1: Write the failing tests** on scripted `traj` pytrees with the hook-contract fields (`obs`, `actions`, `rewards`, `dones`, `hidden`, `events`):
   - `compress_obs` / `decompress_obs` round-trip a real Craftax and a real Craftax-Classic observation exactly.
   - `init(cfg, n_envs=4, n_ach=67, obs_dim=8268)` returns empty slots, an empty staging ring and `buffer_bytes(cfg)` equal to the memory table of [[Self-Imitation Learning design]] for 256 and 1024 envs.
   - `events.unlocked[t, 1, a]` true at global step 130 of env 1 copies steps 3-130 of that env (rows from the staging ring and the current rollout) into slot `a`, with `traj.hidden` of step 3 as the window's start state.
@@ -132,8 +132,8 @@ Fixed SIL settings:
   - Returns of a window with rewards `[0, 0, 1]` and γ 0.9 are `[0.81, 0.9, 1.0]`.
   - A slot with `S` = 2 keeps the two newest windows (FIFO); 70 unlocks in one update insert 64 and report 6 overflowed.
   - `observe` never reads an `EnvState` (it takes only `state` and `traj`).
-- [ ] **Step 2: Implement** `SILConfig` (lambda_sil, slots_windows `S`, sil_steps `K`, window 128, beta_v, batch 32, alpha 0.6, insert_cap 64, layout `slots|single`), `init(cfg, n_envs, n_ach, obs_dim) -> SILState`, `buffer_bytes(cfg, n_envs, n_ach)` and `observe(state, traj) -> state` (staging write once per rollout, unlock detection from `traj.events.unlocked`, window copy, returns), all `jit`-compatible with static shapes.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_sil_buffer.py -q`.
+- [x] **Step 2: Implement** `SILConfig` (lambda_sil, slots_windows `S`, sil_steps `K`, window 128, beta_v, batch 32, alpha 0.6, insert_cap 64, layout `slots|single`), `init(cfg, n_envs, n_ach, obs_dim) -> SILState`, `buffer_bytes(cfg, n_envs, n_ach)` and `observe(state, traj) -> state` (staging write once per rollout, unlock detection from `traj.events.unlocked`, window copy, returns), all `jit`-compatible with static shapes.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_sil_buffer.py -q`.
 
 ### Task 2: Sampling and loss
 
@@ -141,9 +141,9 @@ Fixed SIL settings:
 - Modify: `src/wut_murl_craftax/training/sil.py` (sampling and loss)
 - Test: `tests/training/test_sil_loss.py`
 
-- [ ] **Step 1: Write the failing tests**: with slots holding 1 and 3 windows, slot frequencies over 10,000 draws are 0.5 / 0.5 within 0.02 (slots layout) and 0.25 / 0.75 at equal priority (single layout); window frequencies inside a slot follow priority^0.6 within 0.02; where $V > R$ on every step the loss and its gradient are 0; on a 2-step example (log-probs, values, returns given) the loss equals the hand-computed value; replaying a window from its stored GRU state gives the same logits as the original rollout when the parameters are unchanged (tolerance from the `float16` state); sampled priorities are rewritten after a step.
-- [ ] **Step 2: Implement** `sample(state, key) -> windows`, `sil_loss(params, windows) -> (loss, aux)` and `extra_loss(params, state, key) -> (loss, (state, metrics))` matching the `extra_loss_fn` contract of `training/hooks.py`; the network comes from `ppo_rnn.build_network(cfg, n_actions, obs_dim)`.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_sil_loss.py -q`.
+- [x] **Step 1: Write the failing tests**: with slots holding 1 and 3 windows, slot frequencies over 10,000 draws are 0.5 / 0.5 within 0.02 (slots layout) and 0.25 / 0.75 at equal priority (single layout); window frequencies inside a slot follow priority^0.6 within 0.02; where $V > R$ on every step the loss and its gradient are 0; on a 2-step example (log-probs, values, returns given) the loss equals the hand-computed value; replaying a window from its stored GRU state gives the same logits as the original rollout when the parameters are unchanged (tolerance from the `float16` state); sampled priorities are rewritten after a step.
+- [x] **Step 2: Implement** `sample(state, key) -> windows`, `sil_loss(params, windows) -> (loss, aux)` and `extra_loss(params, state, key) -> (loss, (state, metrics))` matching the `extra_loss_fn` contract of `training/hooks.py`; the network comes from `ppo_rnn.build_network(cfg, n_actions, obs_dim)`.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_sil_loss.py -q`.
 
 ### Task 3: Trainer registry and config
 
@@ -152,16 +152,16 @@ Fixed SIL settings:
 - Create: `configs/methods/sil.yaml` (`base` with `base_from: ppo-rnn.tuned`, `grid.coarse`, `grid.fine` rule, `tuned: null`)
 - Test: `tests/training/test_sil_trainer.py`
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - The factory's `HookFields` sets exactly `init_state_fn`, `observe`, `extra_loss_fn`, `extra_steps = K` and `metrics_fn`; `intrinsic_reward_fn` and `env_wrapper_fn` stay `None`.
   - With `K` = 0 (no SIL step) the parameters after 2 updates on Craftax-Classic equal the PPO-RNN control's bit for bit (same seed) while `observe` still fills the buffer.
   - With an empty buffer the SIL step is skipped (no optimizer step, so the Adam moments are untouched) and logs `sil/active = 0`.
   - The buffer and the staging ring are part of the trainer state written by `save_state`; a run restored with `load_state` continues with the same buffer contents (`training/checkpoints.py`, [[2026-10-20-craftax-infrastructure]] Task 2).
   - The entry passes the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
   - `configs/methods/sil.yaml` loads with `base.base_from == "ppo-rnn.tuned"`, 18 `grid.coarse` entries, a `grid.fine` rule over two of `lambda_sil`, `S`, `K`, and `tuned: null`.
-- [ ] **Step 2: Implement** the factory: entry `make_ppo_rnn_trainer(PPORNNConfig(), method=HookMethod(SILConfig, hooks))` (`training/hooks.py`), where `hooks(cfg, base)` gets the SIL keys and the resolved PPO-RNN config and returns `HookFields(init_state_fn=lambda key, spec: sil.init(cfg, spec.n_envs, spec.n_achievements, spec.obs_dim), observe=functools.partial(sil.observe, base.gamma), extra_loss_fn=functools.partial(sil.extra_loss, net), extra_steps=cfg.sil_steps, metrics_fn=sil.metrics)` with `net = ppo_rnn.build_network(base, n_actions, obs_dim)` (dims from `ppo.make_env(base.env)`); the builder creates no arrays (it may run inside `jax.eval_shape`); the SIL state lives in the method state.
-- [ ] **Step 3: Write** `configs/methods/sil.yaml` with the grids above.
-- [ ] **Step 4: Run** `uv run pytest tests/training/test_sil_trainer.py -q`, then `make tests`.
+- [x] **Step 2: Implement** the factory: entry `make_ppo_rnn_trainer(PPORNNConfig(), method=HookMethod(SILConfig, hooks))` (`training/hooks.py`), where `hooks(cfg, base)` gets the SIL keys and the resolved PPO-RNN config and returns `HookFields(init_state_fn=lambda key, spec: sil.init(cfg, spec.n_envs, spec.n_achievements, spec.obs_dim), observe=functools.partial(sil.observe, base.gamma), extra_loss_fn=functools.partial(sil.extra_loss, net), extra_steps=cfg.sil_steps, metrics_fn=sil.metrics)` with `net = ppo_rnn.build_network(base, n_actions, obs_dim)` (dims from `ppo.make_env(base.env)`); the builder creates no arrays (it may run inside `jax.eval_shape`); the SIL state lives in the method state.
+- [x] **Step 3: Write** `configs/methods/sil.yaml` with the grids above.
+- [x] **Step 4: Run** `uv run pytest tests/training/test_sil_trainer.py -q`, then `make tests`.
 
 ### Task 4: Method metrics
 
@@ -169,25 +169,25 @@ Fixed SIL settings:
 - Modify: `src/wut_murl_craftax/training/sil.py`
 - Test: `tests/training/test_sil_loss.py`
 
-- [ ] **Step 1: Write the failing test**: one update logs every metric below; every name returned by `metrics_fn` starts with `sil/`; slot fill never exceeds `S`.
-- [ ] **Step 2: Implement** `metrics(state) -> dict` (the `metrics_fn` hook, fully qualified names) beyond [[2026-10-20-craftax-evaluation-and-metrics]]: `sil/slot_fill/<achievement>`, `sil/nonempty_slots`, `sil/inserted`, `sil/insert_overflow`, `sil/active` (share of sampled steps with $R > V$), `sil/adv_pos_mean`, `sil/policy_loss`, `sil/value_loss`, `sil/grad_norm`, `sil/kl_after` (KL between the policy before and after the SIL steps on the latest PPO batch), `sil/sample_age` (updates since insertion, mean and max), `sil/sample_share/<achievement>`, `sil/value_bias` (mean $V - R$ on sampled steps); per run `sil/buffer_bytes` and `sil/staging_bytes`.
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_sil_loss.py -q`.
+- [x] **Step 1: Write the failing test**: one update logs every metric below; every name returned by `metrics_fn` starts with `sil/`; slot fill never exceeds `S`.
+- [x] **Step 2: Implement** `metrics(state) -> dict` (the `metrics_fn` hook, fully qualified names) beyond [[2026-10-20-craftax-evaluation-and-metrics]]: `sil/slot_fill/<achievement>`, `sil/nonempty_slots`, `sil/inserted`, `sil/insert_overflow`, `sil/active` (share of sampled steps with $R > V$), `sil/adv_pos_mean`, `sil/policy_loss`, `sil/value_loss`, `sil/grad_norm`, `sil/kl_after` (KL between the policy before and after the SIL steps on the latest PPO batch), `sil/sample_age` (updates since insertion, mean and max), `sil/sample_share/<achievement>`, `sil/value_bias` (mean $V - R$ on sampled steps); per run `sil/buffer_bytes` and `sil/staging_bytes`.
+- [x] **Step 3: Run** `uv run pytest tests/training/test_sil_loss.py -q`.
 
 ### Task 5: Smoke run
 
 **Files:**
 - Modify: `configs/phases/smoke.yaml` (sil: config A slots, `S` 2, `K` 1, $\lambda$ 0.3; config B single, `S` 2, `K` 2, $\lambda$ 1.0; 1 seed, 200k steps, Craftax-Classic)
 
-- [ ] **Step 1: Run** `make queue PHASE=smoke METHOD=sil`; expected: 2 runs finish, `sil/nonempty_slots` > 5, `sil/active` > 0 early, no NaN.
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same `sil/slot_fill` values.
-- [ ] **Step 3: Record** measured steps/s and peak memory in [[2026-10-20-craftax-compute-budget]].
+- [x] **Step 1: Run** `make queue PHASE=smoke METHOD=sil`; expected: 2 runs finish, `sil/nonempty_slots` > 5, `sil/active` > 0 early, no NaN.
+- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same `sil/slot_fill` values. (not run in the 2026-10-22 smoke step)
+- [x] **Step 3: Record** measured steps/s and peak memory in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Coarse tuning
 
 **Files:**
 - Modify: `configs/phases/tune-coarse.yaml` (add `sil`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
-- [ ] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=sil DRY_RUN=1`; expected: 54 runs.
+- [x] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=sil DRY_RUN=1`; expected: 54 runs.
 - [ ] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=sil` (54 runs, resumable).
 - [ ] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 54 finished for `sil`.
 - [ ] **Step 4: Write** the stage-1 table (config, mean final score, sd, `sil/active` at 1M, non-empty slots) into this plan under a new section `## Results`.
@@ -229,9 +229,9 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned sil <configha
 - Modify: `src/wut_murl_craftax/training/sil.py` (guards)
 - Test: `tests/training/test_sil_trainer.py`
 
-- [ ] **Step 1: Write the failing tests**: a NaN SIL loss aborts the run with status `FAILED` and `abort=nan`; with a `Profile` whose `memory_limit_bytes` is 100 MB (`orchestration/profiles.py`), `sil.check_memory(cfg, spec, profile)` refuses a config with `S` = 2 before compiling and the run ends `FAILED` with `abort=memory`; `sil/kl_after` > 0.5 for 20 consecutive updates aborts with `abort=sil_dominates`.
-- [ ] **Step 2: Implement** the abort rules: NaN or inf in loss or parameters; `buffer_bytes + staging_bytes` above `memory_limit_bytes` of the machine profile the runner loaded with `load_profile` of `orchestration/profiles.py` (`configs/profiles/laptop.yaml` or `configs/profiles/cuda.yaml`, field tested in [[2026-10-20-craftax-infrastructure]] Task 6), checked at init; `sil/kl_after` > 0.5 for 20 consecutive updates (the SIL step dominates the policy).
-- [ ] **Step 3: Run** `uv run pytest tests/training/test_sil_trainer.py -q`, then `make tests`.
+- [x] **Step 1: Write the failing tests**: a NaN SIL loss aborts the run with status `FAILED` and `abort=nan`; with a `Profile` whose `memory_limit_bytes` is 100 MB (`orchestration/profiles.py`), `sil.check_memory(cfg, spec, profile)` refuses a config with `S` = 2 before compiling and the run ends `FAILED` with `abort=memory`; `sil/kl_after` > 0.5 for 20 consecutive updates aborts with `abort=sil_dominates`.
+- [x] **Step 2: Implement** the abort rules: NaN or inf in loss or parameters; `buffer_bytes + staging_bytes` above `memory_limit_bytes` of the machine profile the runner loaded with `load_profile` of `orchestration/profiles.py` (`configs/profiles/laptop.yaml` or `configs/profiles/cuda.yaml`, field tested in [[2026-10-20-craftax-infrastructure]] Task 6), checked at init; `sil/kl_after` > 0.5 for 20 consecutive updates (the SIL step dominates the policy).
+- [x] **Step 3: Run** `uv run pytest tests/training/test_sil_trainer.py -q`, then `make tests`.
 
 ## Detectors to add
 

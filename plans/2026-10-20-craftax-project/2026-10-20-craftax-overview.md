@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 tags: [plan, overview, summary]
 ---
 # Craftax project plan overview
@@ -72,6 +72,11 @@ flowchart LR
 - Totals: 825 runs; everything at 1M about 154.5 laptop hours (112.4 training + 42.1 evaluation); everything at 1B about 83 GPU hours (38.0 training + 45.1 evaluation, the evaluation counted at the laptop rate).
 - 1B results rest on 3 seeds and are indicative; significance claims are made at 1M (10 seeds) ([[Experiment decisions]]).
 - Full numbers: [[2026-10-20-craftax-compute-budget]].
+
+## Progress
+
+- Phase 0 done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10.
+- Phase 1 stage-1 tuning running since 06:02; checklist and status in [[2026-10-20-craftax-project]].
 
 ## How to run it
 
