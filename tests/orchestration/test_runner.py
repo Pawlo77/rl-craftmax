@@ -1296,6 +1296,31 @@ def test_a_failing_checkpoint_artifact_warns_and_the_run_finishes(
     assert math.isfinite(run.data.metrics["final_score"])
 
 
+def test_a_replayed_checkpoint_chunk_writes_its_artifacts_again(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash after checkpoint 2 but before its state save: the resume replays
+    update 2, whose checkpoint is on disk, and its artifacts are written again."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    real, crashed = runner.save_state, []
+
+    def crash_once_at_2(out: Path, payload: dict[str, Any]) -> None:
+        if payload["update"] == 2 and not crashed:
+            crashed.append(2)
+            msg = "killed"
+            raise OSError(msg)
+        real(out, payload)
+
+    monkeypatch.setattr(runner, "save_state", crash_once_at_2)
+    with pytest.raises(RuntimeError, match="1 of 1 runs failed"):
+        store.run([spec], ArtifactTrainer())
+    assert 2 in {e["update"] for e in load_index(store.run_dir(spec.name))}
+    resumed = ArtifactTrainer()
+    store.run([spec], resumed)
+    assert [u for u, _, _ in resumed.artifact_calls] == [2, 3]
+    assert store.runs()[spec.name].info.status == "FINISHED"
+
+
 def test_a_trainer_without_checkpoint_artifacts_is_unaffected(store: Store) -> None:
     (spec,) = store.phase("tune-coarse", ["published"])
     store.run([spec], FakeTrainer())

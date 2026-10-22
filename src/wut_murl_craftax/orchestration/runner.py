@@ -179,9 +179,9 @@ class Trainer(Protocol):
     the live state, the run directory and the checkpoint's update (also for the final
     one), and the method writes its per-checkpoint files there (by convention under
     ``eval/``; writers replace the rows of an update, so a repeated call is safe). It
-    is not called for the initial checkpoint, for a checkpoint rebuilt from ``state/``
-    nor for one that exists already. It never fails a run: an exception is logged and
-    tagged `TAG_WARN_ARTIFACTS`.
+    is not called for the initial checkpoint nor for one rebuilt from ``state/``; a
+    chunk replayed after a crash calls it again for its checkpoint. It never fails a
+    run: an exception is logged and tagged `TAG_WARN_ARTIFACTS`.
     """
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
@@ -560,6 +560,25 @@ def _checkpoint_artifacts(trainer: Trainer, state: Any, out: Path, update: int) 
         mlflow.set_tag(TAG_WARN_ARTIFACTS, text[:500])
 
 
+def _checkpoint(
+    trainer: Trainer,
+    state: Any,
+    out: Path,
+    update: int,
+    spu: int,
+    wall: float,
+    written: set[int],
+) -> None:
+    """Save checkpoint ``update`` unless ``written``, then its artifacts.
+
+    A chunk replayed after a crash finds its checkpoint written and only rewrites
+    the artifacts (`_checkpoint_artifacts`), so none is lost.
+    """
+    if update not in written:
+        save_checkpoint(out, update, update * spu, wall, trainer.params(state))
+    _checkpoint_artifacts(trainer, state, out, update)
+
+
 def _train(
     trainer: Trainer,
     spec: RunSpec,
@@ -622,9 +641,8 @@ def _train(
             _tag_unreported(unreported(rules, finite, extras.series))
         update += n
         _tag_flags(flag_hits(rules, extras.series, n_updates), flagged)
-        if update in ckpts and update not in written:
-            save_checkpoint(out, update, update * spu, wall, trainer.params(state))
-            _checkpoint_artifacts(trainer, state, out, update)
+        if update in ckpts:
+            _checkpoint(trainer, state, out, update, spu, wall, written)
         extras.save()
         save_state(out, _snapshot(fresh, state, update, wall, log))
         log.flush()
