@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from craftax.craftax_classic.constants import Achievement
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.training import wrappers
 
 MARKER = Achievement.PLACE_TABLE.value
@@ -18,7 +19,7 @@ def assert_done_step_unlock_counted(
     monkeypatch: pytest.MonkeyPatch,
     tries: int = 40,
 ) -> None:
-    """Fail unless finished episodes carry an unlock made on their done step.
+    """Fail unless finished episodes carry the unlock and death of their done step.
 
     The wrapper's step events are patched to unlock ``PLACE_TABLE`` exactly on the
     step the player dies (health <= 0, which ends a Classic episode), so only a
@@ -46,3 +47,9 @@ def assert_done_step_unlock_counted(
     assert done.any(), f"no episode finished in {tries} updates; use a longer rollout"
     ach = np.asarray(metrics["ach"])[done]
     assert ach[:, MARKER].all(), "a done-step unlock is missing from a finished episode"
+    online = np.asarray(metrics["online"])[0]
+    episodes = online[ONLINE_LAYOUT["episodes"]][0]
+    assert episodes == done.sum(), "the online sums count other episodes"
+    # no Classic episode times out this early: each one ended in the death step
+    assert online[ONLINE_LAYOUT["death"]][0] == episodes, "a done-step death is lost"
+    assert np.asarray(metrics["first_unlock"])[0, MARKER] >= 0

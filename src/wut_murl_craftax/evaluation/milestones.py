@@ -9,6 +9,8 @@ import importlib
 from types import ModuleType
 from typing import Literal
 
+import numpy as np
+
 type Game = Literal["craftax", "classic"]
 
 TECH_LADDER: tuple[str, ...] = (
@@ -103,6 +105,18 @@ ADVANCED_ACTIONS: tuple[str, ...] = (
 )
 """Craftax actions counted by the advanced-mechanics family ([[Craftax magic potions
 and enchanting]])."""
+ADVANCED_ACHIEVEMENTS: tuple[str, ...] = (
+    "CAST_FIREBALL",
+    "CAST_ICEBALL",
+    "LEARN_FIREBALL",
+    "LEARN_ICEBALL",
+    "DRINK_POTION",
+    "ENCHANT_SWORD",
+    "ENCHANT_ARMOUR",
+    "MAKE_ARROW",
+    "FIRE_BOW",
+)
+"""Craftax achievements that track the advanced mechanics over training."""
 RADAR_AXES: tuple[str, ...] = (
     "explorer",
     "survivor",
@@ -136,6 +150,20 @@ def achievement_names(game: Game) -> tuple[str, ...]:
     """
     enum = constants(game).Achievement
     return tuple(a.name.lower() for a in sorted(enum, key=lambda a: a.value))
+
+
+def action_names(game: Game) -> tuple[str, ...]:
+    """Lower-case action names in ``.value`` order (17 Classic, 43 Craftax)."""
+    enum = constants(game).Action
+    return tuple(a.name.lower() for a in sorted(enum, key=lambda a: a.value))
+
+
+def reward_weights(game: Game) -> np.ndarray:
+    """Reward per achievement by ``.value``: 1 Classic, tiers (sum 226) Craftax."""
+    consts = constants(game)
+    if game == "classic":
+        return np.ones(len(consts.Achievement))
+    return np.asarray(consts.ACHIEVEMENT_REWARD_MAP, float)
 
 
 def ladder(game: Game) -> tuple[int, ...]:

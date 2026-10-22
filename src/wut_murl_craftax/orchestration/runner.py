@@ -34,7 +34,8 @@ import mlflow
 import numpy as np
 
 from ..config import ExperimentConfig, load_experiment_config
-from ..evaluation.episode_metrics import score_pct
+from ..evaluation.episode_metrics import chunk_series, new_first_unlocks, score_pct
+from ..evaluation.milestones import game_of
 from ..training.checkpoints import (
     STATE_FILE,
     checkpoint_schedule,
@@ -146,8 +147,9 @@ class ChunkMetrics(TypedDict):
     its unlocks, taken from ``StepEvents.unlocked`` (``info["events"]``, the
     pre-reset state). Never rebuild them from env-state comparisons or Craftax's
     ``Achievements/*`` info. Every trainer accumulates them with
-    ``evaluation.episode_metrics.episode_step`` and ``events_of``, and its test
-    calls ``tests/training/_contract.assert_done_step_unlock_counted``.
+    ``evaluation.episode_metrics.episode_step`` and ``events_of``, closes each
+    update with ``close_update`` (``online``, ``first_unlock``), and its test calls
+    ``tests/training/_contract.assert_done_step_unlock_counted``.
     """
 
     losses: jax.Array | np.ndarray
@@ -161,6 +163,11 @@ class ChunkMetrics(TypedDict):
     """(updates, steps, envs) episode return so far, incl. this step."""
     length: jax.Array | np.ndarray
     """(updates, steps, envs) episode length so far, incl. this step."""
+    online: jax.Array | np.ndarray
+    """(updates, columns) sums of the episodes finished in the update, by
+    ``episode_metrics.ONLINE_LAYOUT``; the runner logs them as `chunk_series`."""
+    first_unlock: jax.Array | np.ndarray
+    """(updates, achievements) ints: the run's first env step of each unlock, -1."""
 
 
 class Trainer(Protocol):
@@ -570,6 +577,49 @@ def _checkpoint_artifacts(trainer: Trainer, state: Any, out: Path, update: int) 
         mlflow.set_tag(TAG_WARN_ARTIFACTS, text[:500])
 
 
+def _log_first_unlocks(
+    stamps: np.ndarray, names: Sequence[str], first: int, spu: int, walls: np.ndarray
+) -> None:
+    """Log ``first_unlock/<name>`` (env step) and ``first_unlock_wall/<name>`` once.
+
+    Both at the unlock's env step; the wall time is that of the update's end. A chunk
+    replayed after a crash finds the point logged and skips it.
+    """
+    found = new_first_unlocks(stamps, first, spu)
+    if not found:
+        return
+    run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]  # the runner's run
+    client = mlflow.MlflowClient()
+    for a, step, i in found:
+        key = f"first_unlock/{names[a]}"
+        if any(m.step == step for m in client.get_metric_history(run_id, key)):
+            continue
+        wall = float(walls[i])
+        mlflow.log_metrics(
+            {key: step, f"first_unlock_wall/{names[a]}": wall}, step=step
+        )
+
+
+def _record_chunk(
+    log: RunLog,
+    extras: "_Extras",
+    first: int,
+    spu: int,
+    walls: np.ndarray,
+    metrics: ChunkMetrics,
+) -> None:
+    """Add a chunk after update ``first`` to the run log and the per-update extras.
+
+    The extras get the method metrics and the online families (`chunk_series`); the
+    first unlocks go to MLflow at once (`_log_first_unlocks`).
+    """
+    _add_updates(log, first, spu, walls, metrics)
+    families = chunk_series(metrics, game_of(log.env_name))
+    extras.extend(first, _method_metrics(metrics) | families)
+    stamps = np.asarray(metrics["first_unlock"])
+    _log_first_unlocks(stamps, log.names, first, spu, walls)
+
+
 def _checkpoint(
     trainer: Trainer,
     state: Any,
@@ -644,8 +694,9 @@ def _train(
         wall = time.monotonic() - t0
         _check_aborts(metrics, columns, abort, update)
         chunks.append((n, wall - start))
-        _add_updates(log, update, spu, np.linspace(start, wall, n + 1)[1:], metrics)
-        extras.extend(update, _method_metrics(metrics))
+        _record_chunk(
+            log, extras, update, spu, np.linspace(start, wall, n + 1)[1:], metrics
+        )
         if not chunks[
             1:
         ]:  # the first chunk of this call shows what the trainer reports

@@ -15,6 +15,7 @@ from _fake_trainer import STEPS_PER_UPDATE, FakeTrainer
 from test_runner import PROFILE, Store
 
 from wut_murl_craftax.config import MLflowTrackingConfig, load_experiment_config
+from wut_murl_craftax.evaluation.episode_metrics import metric_keys
 from wut_murl_craftax.orchestration import queue, runner, train_metrics
 from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runner import final_score
@@ -214,6 +215,57 @@ def test_score_and_success_rates_follow_the_records(
     assert got == set(NAMES)
     rates = [run.data.metrics[f"train/ach/{n}"] for n in NAMES]
     assert all(0 <= r <= 100 for r in rates)
+
+
+def test_the_online_families_reach_the_extras_and_mlflow_windows(
+    tiny: tuple[Store, RunSpec, Any],
+) -> None:
+    store, spec, run = tiny
+    with np.load(store.run_dir(spec.name) / runner.EXTRAS_FILE) as z:
+        assert set(metric_keys("classic")) <= set(z.files)
+        assert len(z["train/end/death"]) == 31
+    logged = run.data.metrics
+    for key in ("train/funnel/floor_0", "train/action_entropy", "train/end/death"):
+        assert key in logged
+    assert all(math.isfinite(v) for k, v in logged.items() if k.startswith("train/"))
+    score = [m.step for m in _history(store, run, "train/score_pct")]
+    assert [m.step for m in _history(store, run, "train/funnel/floor_0")] == score
+
+
+def test_first_unlocks_are_logged_once_at_their_env_step(
+    tiny: tuple[Store, RunSpec, Any],
+) -> None:
+    store, _, run = tiny
+    keys = [k for k in run.data.metrics if k.startswith("first_unlock/")]
+    assert keys, "a random policy collects something in 31 updates"
+    for key in keys:
+        (point,) = _history(store, run, key)
+        assert 0 < point.value == point.step <= 31 * STEP
+        name = key.removeprefix("first_unlock/")
+        (wall,) = _history(store, run, f"first_unlock_wall/{name}")
+        assert wall.step == point.step
+        assert wall.value > 0
+
+
+def test_a_replayed_chunk_logs_a_first_unlock_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path, monkeypatch)
+    mlflow, previous = runner.mlflow, runner.mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(store.tracking_uri)
+    stamps = np.array([[-1, 150], [250, 150]])
+    try:
+        exp = store.client.create_experiment("replay")
+        with mlflow.start_run(experiment_id=exp) as active:
+            for _ in range(2):  # a chunk replayed after a crash before its state save
+                walls = np.array([5.0, 6.0])
+                runner._log_first_unlocks(stamps, ["a", "b"], 1, 100, walls)
+    finally:
+        mlflow.set_tracking_uri(previous)
+    history = store.client.get_metric_history(active.info.run_id, "first_unlock/b")
+    assert [(m.step, m.value) for m in history] == [(150, 150.0)]
+    wall = store.client.get_metric_history(active.info.run_id, "first_unlock_wall/a")
+    assert [(m.step, m.value) for m in wall] == [(250, 6.0)]
 
 
 def test_hardware_facts_are_logged_per_run(tiny: tuple[Store, RunSpec, Any]) -> None:

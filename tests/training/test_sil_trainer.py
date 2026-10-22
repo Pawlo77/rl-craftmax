@@ -16,6 +16,7 @@ import yaml
 from _contract import assert_done_step_unlock_counted
 from _methods import copy_methods
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration.abort import (
     TAG_ABORT_MEMORY,
     TAG_ABORT_METRIC,
@@ -324,6 +325,8 @@ def test_two_updates_report_chunk_and_sil_metrics(entry: Any) -> None:
         "ach": (2, 8, 8, 22),
         "ret": (2, 8, 8),
         "length": (2, 8, 8),
+        "online": (2, ONLINE_LAYOUT["cause"].stop),
+        "first_unlock": (2, 22),
         **{k: (2,) for k in m if "/" in k},
     }
     assert all(np.isfinite(np.asarray(m[k], float)).all() for k in names)

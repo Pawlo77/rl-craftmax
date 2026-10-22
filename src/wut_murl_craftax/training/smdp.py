@@ -27,7 +27,14 @@ import pyarrow.parquet as pq
 from flax import struct
 from jax.sharding import Mesh, NamedSharding
 
-from ..evaluation.episode_metrics import EpisodeAcc, episode_step, init_acc
+from ..evaluation.episode_metrics import (
+    ONLINE_KEYS,
+    EpisodeAcc,
+    close_update,
+    episode_step,
+    init_acc,
+    stack_online,
+)
 from ..orchestration import shard_envs
 from .hooks import Traj
 from .ppo import env_placement, make_train_env
@@ -671,7 +678,7 @@ def _rollout_step(
     events = info["events"]
     checked, agree = jax.vmap(test_agreement)(sk.skill, success, events)
     judged = checked & ended & ~done  # a done step's events may unlock, never succeed
-    episode, total = episode_step(pe.episode, r, done, events.unlocked)
+    episode, total = episode_step(pe.episode, r, done, events, act)
     shared = sh.replace(
         q=q,
         seen=_visit(sh.seen, k2, f2, ended),
@@ -868,6 +875,9 @@ def _make_collect(
         h0 = _fresh(carry.per_env.h, carry.per_env.last_done)
         c = carry.replace(shared=carry.shared.replace(variables=variables))
         (c, aux), out = jax.lax.scan(body, (c, aux), None, steps)
+        episode, online = close_update(c.per_env.episode)
+        c = c.replace(per_env=c.per_env.replace(episode=episode))
+        out |= online
         stats = _rollout_stats(carry.shared, c.shared, out, start, cfg.top.q_init)
         hits = (out["episode_done"] & out["ach"][..., diamond]).sum(1)
         found = _diamonds(found, hits, carry.shared.t + envs * (jnp.arange(steps) + 1))
@@ -1013,7 +1023,7 @@ def _learn_after_rollout(
     eps, top = jax.device_put(nxt, s.shared_at)
     carry = carry.replace(shared=sh.replace(eps=eps, eps_top=top))
     state = state.replace(train_state=ts, updates=updates, diamond=found, key=key)
-    chunk = {k: out[k] for k in ("episode_done", "ach", "ret", "length")}
+    chunk = {k: out[k] for k in ("episode_done", "ach", "ret", "length", *ONLINE_KEYS)}
     return state, carry, record, chunk
 
 
@@ -1053,6 +1063,7 @@ def _chunk_metrics(
         "ach": jnp.stack([c["ach"] for c in chunks]),
         "ret": jnp.stack([c["ret"] for c in chunks]),
         "length": jnp.stack([c["length"] for c in chunks]),
+        **stack_online(chunks),
     }
     metrics |= method_metrics(stacked, rows, max_q)
     return cast("ChunkMetrics", metrics)

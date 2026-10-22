@@ -6,9 +6,9 @@ log every update, a 1B run of 15k updates every 8th. A window averages its updat
 (returns, lengths and success rates weighted by finished episodes) and is logged at
 the env step of its last update. Names: ``train/{env_steps, wall_s, n_episodes,
 return, score_pct, length, sps, <loss>, ach/<achievement>}`` (``<loss>``: the loss
-columns the trainer reports) and the trainer's method metrics under their own names
-(``ppo/entropy``), run-level ``compile_s``, ``peak_rss_mb``, ``peak_device_mb`` and tags
-``actor_device``, ``learner_device``, ``device_kind``, ``host_name``.
+columns the trainer reports), method metrics and online families by name
+(``ppo/entropy``, ``episode_metrics.metric_keys``), run-level ``compile_s``,
+``peak_*_mb``, tags ``{actor,learner}_device``, ``device_kind``, ``host_name``.
 """
 
 import math

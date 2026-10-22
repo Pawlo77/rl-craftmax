@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training import ppo_rnn, pqn_rnn
 from wut_murl_craftax.training.checkpoints import load_state, save_state
@@ -122,6 +123,8 @@ def test_two_updates_report_chunk_metrics(two_updates: tuple[Any, Any]) -> None:
         "ach": (2, NUM_STEPS, ENVS, N_ACH),
         "ret": (2, NUM_STEPS, ENVS),
         "length": (2, NUM_STEPS, ENVS),
+        "online": (2, ONLINE_LAYOUT["cause"].stop),
+        "first_unlock": (2, N_ACH),
         **{k: (2,) for k in m if k.startswith("ppo/")},
     }
     assert len([k for k in m if k.startswith("ppo/")]) == 10

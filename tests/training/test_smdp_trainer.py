@@ -19,6 +19,7 @@ import yaml
 from _contract import assert_done_step_unlock_counted
 from _methods import copy_methods
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration.abort import (
     TAG_ABORT_GUARD,
     TAG_ABORT_METRIC,
@@ -29,6 +30,7 @@ from wut_murl_craftax.orchestration.queue import (
     load_method,
     resolve_config,
 )
+from wut_murl_craftax.orchestration.runner import ChunkMetrics
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import pqn_rnn, smdp
 from wut_murl_craftax.training.checkpoints import (
@@ -220,6 +222,8 @@ def test_two_updates_report_the_chunk_metrics(entry: Any) -> None:
         "ach": (2, NUM_STEPS, ENVS, N_ACH),
         "ret": (2, NUM_STEPS, ENVS),
         "length": (2, NUM_STEPS, ENVS),
+        "online": (2, ONLINE_LAYOUT["cause"].stop),
+        "first_unlock": (2, N_ACH),
     }
     losses = np.asarray(m["losses"])
     for c in ("value_loss", "grad_norm"):
@@ -323,7 +327,7 @@ RATES = ("chosen_share", "success_rate", "test_agreement")
 
 def test_one_update_logs_every_method_metric(entry: Any) -> None:
     _, _, _, (state, m) = entry
-    names = {k for k in m if k not in ("losses", "done", "ach", "ret", "length")}
+    names = {k for k in m if k not in ChunkMetrics.__annotations__}
     skills = {f"smdp/skill/{s.name}/{x}" for s in SKILLS for x in PER_SKILL}
     assert names == TOP_METRICS | skills
     for k in names:

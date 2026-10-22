@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration import device_roles
 from wut_murl_craftax.training.checkpoints import (
     load_params,
@@ -571,6 +572,8 @@ def test_registry_entry_trains_with_the_chunk_metric_shapes(cfg: PQNRNNConfig) -
         "ach": (2, T, B, n_ach),
         "ret": (2, T, B),
         "length": (2, T, B),
+        "online": (2, ONLINE_LAYOUT["cause"].stop),
+        "first_unlock": (2, n_ach),
         **dict.fromkeys(PQN_METRICS, (2,)),
     }
     losses = dict(zip(LOSS_COLUMNS, np.asarray(m["losses"]).T, strict=True))

@@ -39,7 +39,14 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jax.sharding import Mesh, NamedSharding
 
-from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
+from ..evaluation.episode_metrics import (
+    EpisodeAcc,
+    close_update,
+    episode_step,
+    events_of,
+    init_acc,
+    stack_online,
+)
 from ..orchestration import shard_envs
 from .hooks import (
     MEMORY_LIMIT_KEY,
@@ -250,7 +257,7 @@ def _make_rollout(
         if rewarded:
             rec["r_int"], ms = hk.intrinsic_reward_fn(ms, st, st2, obs2, d, t)
         # the events come from the pre-reset state, so a done step keeps its unlocks
-        acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
+        acc2, total = episode_step(acc, r, d, events_of(info), act)
         rec |= {"reset": last_done, "ach": total.ach, "ret": total.ret}
         rec["len"] = total.length
         # the carry after the step is what the heads read; a done step keeps its own
@@ -265,6 +272,8 @@ def _make_rollout(
         h0 = carry[0]
         body = functools.partial(step, with_traj)
         carry, tr = jax.lax.scan(body, (params, *carry), None, cfg.num_steps)
+        acc, online = close_update(carry[7])
+        carry = (*carry[:7], acc, carry[8])
         h, obs, last_done = carry[1:4]
         _, _, last_v = apply_network(net, params, h, obs[None], last_done[None])
         r = tr["r"] + tr["r_int"] if rewarded else tr["r"]
@@ -278,7 +287,7 @@ def _make_rollout(
             traj = Traj(
                 tr["obs"], tr["act"], tr["r"], tr["d"], tr["h"], tr["ev"], extra
             )
-        ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
+        ep = {k: tr[k] for k in ("d", "ach", "ret", "len")} | online
         r_int = tr["r_int"].mean() if rewarded else jnp.zeros((), r.dtype)
         mean = [tr["hn"].mean(), tr["sat"].mean(), tr["reset"].mean(), tr["r"].mean()]
         ep["stats"] = jnp.stack([*mean, r_int])
@@ -660,6 +669,7 @@ def train_chunk(
         "ach": jnp.stack([e["ach"] for e in eps]),
         "ret": jnp.stack([e["ret"] for e in eps]),
         "length": jnp.stack([e["len"] for e in eps]),
+        **stack_online(eps),
     }
     metrics |= ppo_metrics(stacked, adv[:, :3]) | {"ppo/ratio_first_mb": adv[:, 3]}
     metrics |= dict(zip(ROLLOUT_STATS, jnp.stack(stats).T, strict=True))

@@ -32,6 +32,7 @@ from wut_murl_craftax.orchestration.queue import (
     load_method,
     resolve_config,
 )
+from wut_murl_craftax.orchestration.runner import ChunkMetrics
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import dyna_q, smdp
 from wut_murl_craftax.training.checkpoints import load_state, save_state
@@ -296,8 +297,9 @@ def test_a_done_step_unlock_reaches_the_chunk_metrics(
 
 def test_one_update_logs_every_method_metric(entry: Any) -> None:
     _, _, _, (state, m) = entry
-    episode = {"losses", "done", "ach", "ret", "length"}
-    new = {k for k in m if not k.startswith("smdp/")} - episode
+    new = {
+        k for k in m if not k.startswith("smdp/")
+    } - ChunkMetrics.__annotations__.keys()
     assert new >= DYNA_METRICS
     assert all(k.startswith("dyna/") for k in new)
     for k in new:

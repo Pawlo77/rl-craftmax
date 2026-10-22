@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.training.records import LOSS_COLUMNS
 
 STEPS, ENVS, N_ACH = 4, 2, 22
@@ -110,6 +111,9 @@ class FakeTrainer:
             "ach": jax.random.bernoulli(k_a, 0.3, (STEPS, ENVS, N_ACH)),
             "ret": jax.random.uniform(k_r, (STEPS, ENVS)) * N_ACH,
             "length": jnp.broadcast_to(t, (STEPS, ENVS)),
+            # no online families: their per-update values stay NaN, never logged
+            "online": jnp.zeros(max(s.stop for s in ONLINE_LAYOUT.values())),
+            "first_unlock": jnp.full(N_ACH, -1, jnp.int32),
         }
         return new, metrics
 

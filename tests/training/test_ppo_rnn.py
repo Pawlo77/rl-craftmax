@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from _contract import assert_done_step_unlock_counted
 
+from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration import device_roles
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training.hooks import HookFields
@@ -270,6 +271,8 @@ def test_registry_entry_trains_with_the_ppo_metric_shapes(cfg: PPORNNConfig) -> 
         "ach": (2, T, B, n_ach),
         "ret": (2, T, B),
         "length": (2, T, B),
+        "online": (2, ONLINE_LAYOUT["cause"].stop),
+        "first_unlock": (2, n_ach),
         **dict.fromkeys(METRIC_NAMES, (2,)),
     }
     with pytest.raises(ValueError, match="steps"):

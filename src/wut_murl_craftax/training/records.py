@@ -13,7 +13,7 @@ import numpy as np
 
 from ..evaluation.episode_metrics import update_summary
 from ..evaluation.milestones import achievement_names as _names
-from ..evaluation.milestones import constants, game_of
+from ..evaluation.milestones import game_of, reward_weights
 
 BASE_COLUMNS = ("update", "env_steps", "wall_s", "n_episodes", "return", "length")
 """Leading columns of ``metrics.npz``; the losses and ``ach/<name>`` columns follow."""
@@ -45,10 +45,7 @@ def achievement_weights(env_name: str) -> np.ndarray:
     The constants are imported on first use: they build JAX arrays, which starts the
     backends; deferring it keeps ``configure_runtime`` able to split the CPU.
     """
-    consts = constants(game_of(env_name))
-    if is_classic(env_name):
-        return np.ones(len(consts.Achievement))
-    return np.asarray(consts.ACHIEVEMENT_REWARD_MAP, float)
+    return reward_weights(game_of(env_name))
 
 
 class RunLog:

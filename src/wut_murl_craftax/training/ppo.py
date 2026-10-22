@@ -48,7 +48,14 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
-from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
+from ..evaluation.episode_metrics import (
+    EpisodeAcc,
+    close_update,
+    episode_step,
+    events_of,
+    init_acc,
+    stack_online,
+)
 from ..orchestration import (
     DeviceRoles,
     configure_runtime,
@@ -306,7 +313,7 @@ def _make_rollout(
         logp = jax.nn.log_softmax(logits)[jnp.arange(cfg.envs), act]
         obs2, st2, r, d, info = env.step(k_s, st, act, env_params)
         # the events come from the pre-reset state, so a done step keeps its unlocks
-        acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
+        acc2, total = episode_step(acc, r, d, events_of(info), act)
         rec = {"obs": obs, "act": act, "logp": logp, "v": v, "r": r, "d": d}
         rec |= {"ach": total.ach, "ret": total.ret, "len": total.length}
         return (params, st2, obs2, acc2, key), rec
@@ -326,7 +333,8 @@ def _make_rollout(
         adv = gae(tr["r"], tr["v"], tr["d"], last_v, cfg.gamma, cfg.gae_lambda)
         batch = {k: tr[k] for k in ("obs", "act", "logp", "v")}
         batch |= {"adv": adv, "tgt": adv + tr["v"]}
-        ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
+        acc, online = close_update(acc)
+        ep = {k: tr[k] for k in ("d", "ach", "ret", "len")} | online
         return st, obs, acc, key, batch, ep
 
     return rollout
@@ -591,6 +599,7 @@ def train_chunk(state: PPOState, n_updates: int) -> tuple[PPOState, "ChunkMetric
         "ach": jnp.stack([e["ach"] for e in eps]),
         "ret": jnp.stack([e["ret"] for e in eps]),
         "length": jnp.stack([e["len"] for e in eps]),
+        **stack_online(eps),
     }
     metrics |= ppo_metrics(stacked, jnp.stack(advs))
     return new, cast("ChunkMetrics", metrics)

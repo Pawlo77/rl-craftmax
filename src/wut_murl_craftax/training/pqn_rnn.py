@@ -35,7 +35,14 @@ from flax import struct
 from flax.training.train_state import TrainState
 from jax.sharding import Mesh, NamedSharding
 
-from ..evaluation.episode_metrics import EpisodeAcc, episode_step, events_of, init_acc
+from ..evaluation.episode_metrics import (
+    EpisodeAcc,
+    close_update,
+    episode_step,
+    events_of,
+    init_acc,
+    stack_online,
+)
 from ..orchestration import shard_envs
 from .batch_renorm import WARM_UP, BatchRenorm
 from .hooks import (
@@ -413,7 +420,7 @@ def _make_rollout(
         if rewarded:
             rec["r_int"], ms = hk.intrinsic_reward_fn(ms, st, st2, obs2, d, t)
         # the events come from the pre-reset state, so a done step keeps its unlocks
-        acc2, total = episode_step(acc, r, d, events_of(info).unlocked)
+        acc2, total = episode_step(acc, r, d, events_of(info), act)
         rec |= {"ach": total.ach, "ret": total.ret, "len": total.length}
         # the carry after the step: a done step keeps its own; the greedy share counts
         # a random action that happens to be the greedy one as greedy
@@ -432,6 +439,8 @@ def _make_rollout(
         h0 = _reset(carry[0], carry[2])
         body = functools.partial(step, with_traj, eps)
         carry, tr = jax.lax.scan(body, (variables, *carry), None, cfg.num_steps)
+        acc, online = close_update(carry[8])
+        carry = (*carry[:8], acc, carry[9])
         r_int = tr["r_int"] if rewarded else jnp.zeros_like(tr["r"])
         extra = {"r_int": r_int, "q_vals": tr["q"], "last_actions": tr["la"]}
         hidden, events = (tr["h"], tr["ev"]) if with_traj else (None, None)
@@ -444,7 +453,7 @@ def _make_rollout(
             cast(Any, events),
             extra,
         )
-        ep = {k: tr[k] for k in ("d", "ach", "ret", "len")}
+        ep = {k: tr[k] for k in ("d", "ach", "ret", "len")} | online
         mean = [tr[k].mean() for k in ("hn", "reset", "greedy", "r")]
         ep["stats"] = jnp.stack([*mean, r_int.mean()])
         return carry[1:], traj, h0, ep
@@ -931,6 +940,7 @@ def train_chunk(
         "ach": jnp.stack([e["ach"] for e in eps]),
         "ret": jnp.stack([e["ret"] for e in eps]),
         "length": jnp.stack([e["len"] for e in eps]),
+        **stack_online(eps),
     }
     metrics |= {k: jnp.stack([c[k] for c in controls]) for k in controls[0]}
     stats = jnp.stack([e["stats"] for e in eps]).T
