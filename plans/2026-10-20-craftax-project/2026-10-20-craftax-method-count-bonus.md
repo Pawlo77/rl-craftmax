@@ -204,7 +204,7 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
 - Modify: `configs/phases/smoke.yaml` (count-bonus: config A β 0.1, recipe, constant; config B β 0.03, log2, linear; 1 seed, 200k steps, Craftax-Classic)
 
 - [x] **Step 1: Run** `make queue PHASE=smoke METHOD=count-bonus`; expected: 4 runs (2 per variant) finish, `count/distinct_keys` grows, no NaN.
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same count table (distinct keys continue from the saved value). (not run in the 2026-10-22 smoke step)
+- [x] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same count table (distinct keys continue from the saved value). (done 2026-10-22 on `outputs/stores/resume-checks.db`, one `kill -INT` of the python queue pid after the first state save: interrupted at update 2, resumed at 2, FINISHED at 48; `count/distinct_keys` 4, 5 kept, then 5, 7, 7 .. 39 (no new keys at update 3, so the table was not reset))
 - [x] **Step 3: Record** measured steps/s per variant in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Coarse tuning

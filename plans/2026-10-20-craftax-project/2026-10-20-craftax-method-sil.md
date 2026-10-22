@@ -179,7 +179,7 @@ Fixed SIL settings:
 - Modify: `configs/phases/smoke.yaml` (sil: config A slots, `S` 2, `K` 1, $\lambda$ 0.3; config B single, `S` 2, `K` 2, $\lambda$ 1.0; 1 seed, 200k steps, Craftax-Classic)
 
 - [x] **Step 1: Run** `make queue PHASE=smoke METHOD=sil`; expected: 2 runs finish, `sil/nonempty_slots` > 5, `sil/active` > 0 early, no NaN.
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same `sil/slot_fill` values. (not run in the 2026-10-22 smoke step)
+- [x] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same `sil/slot_fill` values. (done 2026-10-22 on `outputs/stores/resume-checks.db`, one `kill -INT` of the python queue pid after the first state save: interrupted at update 2, resumed at 2, FINISHED at 48; the first two `sil/slot_fill` rows identical, `sil/nonempty_slots` 3, 4 then 5, 6, 7 (continues, not from zero))
 - [x] **Step 3: Record** measured steps/s and peak memory in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Coarse tuning

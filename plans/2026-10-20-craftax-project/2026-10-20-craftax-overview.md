@@ -10,7 +10,7 @@ tags: [plan, overview, summary]
 ---
 # Craftax project plan overview
 
-Status: ready
+Status: Phase 0 complete 2026-10-22 14:10 (full suite on main 0c73a58 plus the SIL metric-key test fix: 966 passed and the fixed test; Phase 1 resume checks 4/4 passed); Phase 1 waits for tuning compute
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -75,7 +75,7 @@ flowchart LR
 
 ## Progress
 
-- Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10; online metric families merged 12:06, their full-suite run on main pending.
+- Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10; online metric families merged 12:06; Phase 0 complete 14:10 (full suite on main green).
 - Phase 1 stage-1 tuning running since 06:02; checklist and status in [[2026-10-20-craftax-project]].
 
 ## How to run it

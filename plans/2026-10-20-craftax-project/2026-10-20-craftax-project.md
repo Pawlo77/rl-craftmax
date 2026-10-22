@@ -10,7 +10,7 @@ tags: [plan, project, index]
 ---
 # Craftax project execution plan
 
-Status: in progress
+Status: Phase 0 complete 2026-10-22 14:10 (full suite on main 0c73a58 plus the SIL metric-key test fix: 966 passed and the fixed test; Phase 1 resume checks 4/4 passed); Phase 1 waits for tuning compute
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -58,18 +58,18 @@ Status: in progress
 
 Each phase ends with `make check` green and its results visible in MLflow; later phases only read earlier results.
 
-Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06, Phase 0 closes when its full test suite passes on main. Phase 1 code merged 2026-10-22 05:10, stage-1 tuning running since 06:02.
+Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06; Phase 0 complete 14:10 (full suite on main 0c73a58: 966 passed plus the fixed SIL metric-key test). Phase 1 code merged 2026-10-22 05:10, stage-1 tuning running since 06:02.
 
 ### Phase 0: Infrastructure and controls
 
 - [x] [[2026-10-20-craftax-infrastructure]] Tasks 1-3, then [[2026-10-20-craftax-evaluation-and-metrics]] Tasks 1-2 (`evaluation/events.py`), then [[2026-10-20-craftax-method-ppo]] Task 2 (`training/wrappers.py`, which returns the step events), then infrastructure Tasks 4-7 (metrics, eval, profiles, smoke).
-- [ ] [[2026-10-20-craftax-evaluation-and-metrics]]: online metrics needed during training (offline ones can follow in Phase 4). (open: evaluation Task 3 is implemented and merged, 06470be; its Step 5 full-suite run on main is pending; Tasks 4 and later are Phase 4)
+- [x] [[2026-10-20-craftax-evaluation-and-metrics]]: online metrics needed during training (offline ones can follow in Phase 4). (done 2026-10-22: evaluation Task 3 merged at 06470be, full suite on main green at 0c73a58 plus the SIL test fix; Tasks 4 and later are Phase 4)
 - [x] Controls implemented, tuned and reproduced at 1M: [[2026-10-20-craftax-method-ppo]], [[2026-10-20-craftax-method-ppo-rnn]], [[2026-10-20-craftax-method-pqn-rnn]]; each reproduction gate reports the gap to the published 1M number and the work continues with our control.
 - [x] Measure real steps/s and eval steps per checkpoint per method family and update [[2026-10-20-craftax-compute-budget]].
 
 ### Phase 1: Methods, implemented and tuned at 1M
 
-- [ ] For each method file: implementation and tests, `smoke`, `tune-coarse`, `tune-fine` (3 seeds, Craftax-1M). (2026-10-22: implementation, tests and smoke runs done for all four; the smoke Ctrl-C/resume checks and the tuning remain)
+- [ ] For each method file: implementation and tests, `smoke`, `tune-coarse`, `tune-fine` (3 seeds, Craftax-1M). (2026-10-22: implementation, tests and smoke runs done for all four; the smoke Ctrl-C/resume checks passed 2026-10-22, the tuning remains)
 - [ ] Order (shared code first): progress key and count bonus -> SIL -> skill library and SMDP -> Dyna-Q. (implementation followed it; tuning follows it too, Dyna-Q after smdp-skills is tuned)
 - [ ] The last tuning step of each control and method writes its `tuned:` block in `configs/methods/<slug>.yaml` (the source of `base_from`) and tags those runs `best=true` in MLflow, both through `mark_tuned` ([[2026-10-20-craftax-infrastructure]] Task 1). (controls done 2026-10-22 04:22; the four methods wait for their `tune-fine`)
 

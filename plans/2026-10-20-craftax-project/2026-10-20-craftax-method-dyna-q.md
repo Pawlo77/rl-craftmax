@@ -165,7 +165,7 @@ Contract with `pqn_rnn.learn`: the same as for `smdp-skills`, see [[2026-10-20-c
 - Modify: `configs/phases/smoke.yaml` (dyna-q: config A uniform, $n = 5$, κ 0; config B prioritized, $n = 5$, κ 0.003; 1 seed, 200k steps, Craftax-Classic; `smdp-skills` knobs from `base_from: smdp-skills.tuned`, so this task runs after [[2026-10-20-craftax-method-smdp-skills]] Task 8)
 
 - [x] **Step 1: Run** `make queue PHASE=smoke METHOD=dyna-q`; expected: 2 runs finish, `dyna/pairs_visited` > 0, `dyna/model_accuracy` rises, no NaN. (done 2026-10-22 with a temporary uncommitted `tuned: {}` in `smdp-skills.yaml`, so it ran on the untuned smdp-skills base; Task 6 waits for smdp-skills tuned; final score below zero at 200k Classic)
-- [ ] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same model (equal `dyna/pairs_visited` at the saved state). (not run in the 2026-10-22 smoke step)
+- [x] **Step 2: Interrupt** one run with Ctrl-C and rerun the command; expected: it resumes from the run directory's `state/` with the same model (equal `dyna/pairs_visited` at the saved state). (done 2026-10-22 on `outputs/stores/resume-checks.db`, one `kill -INT` of the python queue pid after the first state save: interrupted at update 4, resumed at 4, FINISHED at 48 (run on a temporary methods dir with smdp-skills `tuned: {}`, nothing committed); `dyna/pairs_visited` 2, 8, 14, 22 kept, then 26, 33 .. 158)
 - [x] **Step 3: Record** measured steps/s and `dyna/plan_wall_share` in [[2026-10-20-craftax-compute-budget]].
 
 ### Task 6: Coarse tuning
