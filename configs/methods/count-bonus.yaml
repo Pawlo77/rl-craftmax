@@ -31,6 +31,14 @@ base:
     key: progress
     max_occupancy: 0.25
 
+# At 1B only the PQN-RNN variant's dead-input flag changes, as in pqn-rnn.yaml.
+budgets:
+  1b:
+    abort:
+      pqn-rnn:
+        flags:
+          - {name: bn_var_low, metric: pqn/bn_dead_share, above: 0.9}
+
 grid:
   # Stage 1: beta x granularity x decay, 4 x 3 x 2 = 24 configs for each variant, 3 seeds.
   # Stage 2 (fine): beta x {0.5, 1, 2} crossed with 2 values of the categorical knob,

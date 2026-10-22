@@ -401,6 +401,47 @@ def test_a_bad_variant_abort_block_fails_loudly(tmp_path: Path, abort: object) -
         load_method("multi", _variant_abort(tmp_path, abort))
 
 
+def _budget_abort(tmp_path: Path, block: object) -> Path:
+    """A copy of the fixture methods whose ``toy`` has ``budgets.1b.abort``."""
+    methods = tmp_path / "methods"
+    shutil.copytree(METHODS, methods)
+    raw = yaml.safe_load((methods / "toy.yaml").read_text())
+    raw["budgets"]["1b"]["abort"] = block
+    (methods / "toy.yaml").write_text(yaml.safe_dump(raw))
+    return methods
+
+
+def test_a_budget_replaces_flags_by_name_and_adds_new_ones(tmp_path: Path) -> None:
+    kl = {"name": "kl_high", "metric": "ppo/approx_kl", "above": 0.5}
+    new = {"name": "slow", "metric": "ppo/sps", "below": 10}
+    methods = _budget_abort(tmp_path, {"flags": [kl, new]})
+    method = load_method("toy", methods)
+    at_1m, at_1b = (method.abort_rules("toy", b) or {} for b in ("1m", "1b"))
+    assert at_1m == load_method("toy", METHODS).abort
+    assert at_1b == {**at_1m, "flags": [kl, *at_1m["flags"][1:], new]}
+    assert "abort" not in resolve_config(method, "toy", "1b", methods_dir=methods)
+    assert resolve_config(method, "toy", "1b", methods_dir=methods) == resolved(
+        "toy", "base", "1b"
+    )  # the run identity of a 1b config does not change
+    body = {"budget": "1b", "eval": "final", "seeds": 1, "runs": {"toy": {}}}
+    body["runs"]["toy"] = {"configs": ["published"]}
+    (tmp_path / "p.yaml").write_text(yaml.safe_dump(body))
+    (spec,) = expand_phase(tmp_path / "p.yaml", methods_dir=methods)
+    assert spec.abort == at_1b
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"finite": ["x"]},  # only flags change with the budget
+        {"flags": [{"name": "a", "metric": "m"}]},  # a flag is checked
+    ],
+)
+def test_a_bad_budget_abort_block_fails_loudly(tmp_path: Path, block: object) -> None:
+    with pytest.raises(queue.QueueConfigError, match=r"toy\.yaml budgets\.1b"):
+        load_method("toy", _budget_abort(tmp_path, block))
+
+
 def test_base_from_resolves_the_donor_tuned_block_plus_own_keys() -> None:
     assert resolved("child", "b") == {
         "env": "Toy-v1",

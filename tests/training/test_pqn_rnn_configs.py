@@ -5,6 +5,7 @@ from typing import Any
 
 from test_pqn_rnn import FIELDS, REPO_1B
 
+from wut_murl_craftax.orchestration.abort import flag_hits
 from wut_murl_craftax.orchestration.queue import (
     config_hash,
     expand_fine,
@@ -74,8 +75,9 @@ def test_base_sets_every_trainer_field_but_the_runner_hook_and_caller_ones() -> 
 
 
 def test_1b_budget_is_the_repo_yaml_field_by_field() -> None:
-    assert pqn().budgets == {"1b": {"envs": 1024, "num_steps": 128}}
     cfg = resolve_config(pqn(), "pqn-rnn", "1b", methods_dir=METHODS)
+    assert {k for k in BASE if cfg[k] != BASE[k]} == {"envs", "num_steps"}
+    assert (cfg["envs"], cfg["num_steps"]) == (1024, 128)
     built = PQNRNNConfig.from_config(cfg | {"steps": 10**9})
     for key, value in REPO_1B.items():
         assert getattr(built, FIELDS[key]) == value, key
@@ -149,6 +151,28 @@ def test_abort_rules_bound_q_and_flag_td_spikes_flat_gaps_and_dead_inputs() -> N
     ]
     assert "permanent" not in abort  # a NaN is retried once; only the limit is final
     assert abort["limits"][0]["max"] > 226  # above every episode return
+
+
+def test_at_1b_the_dead_input_flag_reads_the_share_of_dead_inputs() -> None:
+    """Every 1B run would flag a minimum variance below 1e-6 (review ctrl-metrics M1).
+
+    Measured at 1M (39 finished tune-coarse runs): 76.5-79.5% of the 8268 inputs never
+    vary in a whole run (block types of unreached floors), so one of them decays below
+    1e-6 after about 13.8k Q steps of 122k at 1B. A share above 0.9 is a collapse.
+    """
+    at_1m, at_1b = (pqn().abort_rules("pqn-rnn", b) or {} for b in ("1m", "1b"))
+    rule = {"name": "bn_var_low", "metric": "pqn/bn_dead_share", "above": 0.9}
+    assert at_1b["flags"] == [*at_1m["flags"][:2], rule]
+    assert {k: v for k, v in at_1b.items() if k != "flags"} == {
+        k: v for k, v in at_1m.items() if k != "flags"
+    }
+    assert "abort" not in resolve_config(pqn(), "pqn-rnn", "1b")
+    n = 7629  # updates of a 1B run
+    healthy = {"pqn/bn_var_min": [0.0] * n, "pqn/bn_dead_share": [0.79] * n}
+    assert flag_hits(at_1b["flags"], healthy, n) == {}
+    assert "bn_var_low" in flag_hits(at_1m["flags"], healthy, n)  # the old rule fires
+    collapsed = {**healthy, "pqn/bn_dead_share": [0.79] * 100 + [0.97] * (n - 100)}
+    assert flag_hits(at_1b["flags"], collapsed, n) == {"bn_var_low": 101}
 
 
 def test_smoke_runs_base_and_lambda_0_on_classic_with_one_seed() -> None:

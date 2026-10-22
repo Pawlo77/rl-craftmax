@@ -59,6 +59,7 @@ PQN_METRICS = (
     "pqn/grad_norm",
     "pqn/bn_warm",
     "pqn/bn_var_min",
+    "pqn/bn_dead_share",
     "rnn/hidden_norm",
     "rnn/reset_share",
     "reward/extrinsic",
@@ -687,6 +688,7 @@ def test_the_batch_renorm_metrics_follow_the_input_statistics(
     _, m = train_chunk(state, 1)
     assert float(m["pqn/bn_warm"][0]) == 0.0  # type: ignore[typeddict-item]
     assert 0 < float(m["pqn/bn_var_min"][0]) <= 1.0  # type: ignore[typeddict-item]
+    assert float(m["pqn/bn_dead_share"][0]) == 0.0  # type: ignore[typeddict-item]
     stats = state.train_state.batch_stats
     steps = stats["BatchRenorm_0"]["steps"]
     near = {
@@ -704,6 +706,10 @@ def test_the_batch_renorm_metrics_follow_the_input_statistics(
     low = state.replace(train_state=state.train_state.replace(batch_stats=small))
     _, m = train_chunk(low, 1)
     assert float(m["pqn/bn_var_min"][0]) < 1e-6  # type: ignore[typeddict-item]
+    # one update's 16 Q steps add (1 - 0.999) x the batch variance: only the inputs
+    # that never vary in it stay dead
+    share = float(m["pqn/bn_dead_share"][0])  # type: ignore[typeddict-item]
+    assert 0.0 < share < 1.0
 
 
 def test_the_rollout_stats_are_means_over_steps_and_envs(

@@ -418,14 +418,15 @@ def test_each_variant_aborts_on_the_bonus_the_guards_and_its_controls_rules(
     """Only its own control's rules: no run lists the other variant's metrics as
     unreported (`warn/abort_unreported`)."""
     finite = ["count/r_int_mean", "count/table_full", "count/negative_counts"]
-    control = load_method(variant).abort or {}
-    got = load_method("count-bonus").abort_rules(f"count-bonus-{variant}") or {}
-    assert got == {
-        "finite": control["finite"] + finite,
-        "permanent": ["count/table_full"],  # a retry fills it again
-        "limits": control["limits"],
-        "flags": control["flags"],
-    }
+    for budget in ("1m", "1b"):
+        control = load_method(variant).abort_rules(variant, budget) or {}
+        got = load_method("count-bonus").abort_rules(f"count-bonus-{variant}", budget)
+        assert got == {
+            "finite": control["finite"] + finite,
+            "permanent": ["count/table_full"],  # a retry fills it again
+            "limits": control["limits"],
+            "flags": control["flags"],
+        }
     other = "pqn/" if variant == "ppo-rnn" else "ppo/"
     names = unreported(got["flags"], got["finite"], (), got["limits"])
     assert not [n for n in names if n.startswith(other)]

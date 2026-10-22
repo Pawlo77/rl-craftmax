@@ -91,6 +91,9 @@ Q_STATS = ("q_taken_mean", "q_max_mean", "target_mean", "action_gap")
 means over the steps that enter the loss (the loss mask applies)."""
 INPUT_NORM = "BatchRenorm_0"
 """Flax name of the input BatchRenorm in ``batch_stats`` (created first, always)."""
+DEAD_VAR = 1e-6
+"""Running variance below which an input counts as dead (``bn_dead_share``): with
+momentum 0.999 it has not varied for about 13.8k Q steps."""
 _LEARNER_HOOKS = {"observe", "extra_loss_fn"}
 """Hooks that read the method state on the learner, so it moves there each update;
 without them ``metrics_fn`` reads it on the actor, where the rollout keeps it."""
@@ -497,8 +500,9 @@ def _make_learn(
     running ones updated); the loss is ``0.5 sum m (Q(s,a) - G)^2 / max(sum m, 1)``
     over steps 0..T-2. Besides ``td_loss`` and ``grad_norm`` the result holds the
     `Q_STATS` of that pass, ``lr`` (of the update's first optimizer step) and the
-    input BatchRenorm's ``bn_warm`` (1 once past `WARM_UP`) and ``bn_var_min`` (smallest
-    running variance) after the update.
+    input BatchRenorm's ``bn_warm`` (1 once past `WARM_UP`), ``bn_var_min`` (smallest
+    running variance) and ``bn_dead_share`` (share of inputs below `DEAD_VAR`) after
+    the update.
     """
     lr_at = (
         lr_schedule(cfg, extra_steps)
@@ -555,7 +559,8 @@ def _make_learn(
         m = {"td_loss": loss.mean(), "grad_norm": gn.mean(), "lr": lr}
         m |= dict(zip(Q_STATS, stats.mean((0, 1)), strict=True))
         m |= {"bn_warm": (bn["steps"] >= WARM_UP).astype(jnp.float32)}
-        return ts, m | {"bn_var_min": bn["var"].min()}
+        dead = (bn["var"] < DEAD_VAR).mean()
+        return ts, m | {"bn_var_min": bn["var"].min(), "bn_dead_share": dead}
 
     return learn
 
@@ -687,7 +692,7 @@ def learn(
     ``(steps, envs)`` drops transitions from the loss. ``h0`` is the float32 start
     carry after step 0's reset (default: ``traj.hidden[0]``, rounded to float16).
     Returns the train state and the mean ``td_loss`` and ``grad_norm`` of its steps,
-    with the `Q_STATS`, ``lr``, ``bn_warm`` and ``bn_var_min`` (`_make_learn`).
+    with the `Q_STATS`, ``lr`` and the input BatchRenorm's ``bn_*`` (`_make_learn`).
 
     Raises:
         ValueError: If the rollout, ``loss_mask`` or ``h0`` is not ``(num_steps,

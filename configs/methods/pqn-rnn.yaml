@@ -24,9 +24,15 @@ base:
   rew_scale: 1.0
   reset_ratio: 16
 
-# Craftax-1B is the repo config: only the rollout shape differs from the 1M base.
+# Craftax-1B is the repo config: only the rollout shape differs from the 1M base. A budget's
+# `abort` (not part of the config) replaces flag rules by name: see the abort block below.
 budgets:
-  1b: {envs: 1024, num_steps: 128}
+  1b:
+    envs: 1024
+    num_steps: 128
+    abort:
+      flags:
+        - {name: bn_var_low, metric: pqn/bn_dead_share, above: 0.9}
 
 grid:
   # Stage 1: one knob away from `base` per entry, 3 seeds each (the phase's count). There
@@ -62,7 +68,13 @@ grid:
 # updates for 3 updates in a row; action_gap_flat is a mean gap between the best and the
 # second-best Q below 1e-3 for 3 updates once epsilon is at its floor (eps_finish 0.005,
 # with a margin); bn_var_low is the input BatchRenorm's smallest running variance below
-# 1e-6. No rule reads the score.
+# 1e-6. That cannot happen at 1M (3.9k Q steps leave at least 0.999^3.9k = 0.02), but at 1B
+# (122k Q steps) every run would flag it: at 1M, 76.5-79.5% of the 8268 inputs never vary
+# in a whole run (39 finished tune-coarse runs; block types of floors not reached), and such
+# an input decays below 1e-6 after 13.8k Q steps. The variance epsilon (1e-3) bounds the
+# normalised value of any of them alike, so one dead input is no hazard; many are. At 1B
+# the flag is a share of inputs below 1e-6 (`pqn/bn_dead_share`) above 0.9: an agent whose
+# observations stopped varying. No rule reads the score.
 abort:
   finite: [pqn/td_loss]
   limits:

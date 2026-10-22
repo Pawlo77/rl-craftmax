@@ -197,12 +197,30 @@ class Method:
             else [f"{self.slug}-{v}" for v in self.variants]
         )
 
-    def abort_rules(self, registry: str) -> dict[str, Any] | None:
-        """The ``abort`` block of a registry entry (its variant's, if keyed by one)."""
+    def abort_rules(
+        self, registry: str, budget: str | None = None
+    ) -> dict[str, Any] | None:
+        """The ``abort`` block of a registry entry at ``budget``.
+
+        Its variant's block, if keyed by one; ``budgets.<budget>.abort`` (same shape,
+        ``flags`` only) replaces the flags of the same name and adds the others.
+        """
+        rules = self._for(registry, self.abort)
+        extra = self._for(registry, self.budgets.get(budget or "", {}).get("abort"))
+        if not extra:
+            return rules
+        flags = {f["name"]: f for f in (rules or {}).get("flags", [])}
+        flags |= {f["name"]: f for f in extra.get("flags", [])}
+        return {**(rules or {}), "flags": list(flags.values())}
+
+    def _for(
+        self, registry: str, block: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """An abort block, or its variant's part when it is keyed by variant."""
         variant = self.variant(registry)
-        if variant is None or not _by_variant(self.abort, self.variants):
-            return self.abort
-        return (self.abort or {}).get(variant)
+        if variant is None or block is None or not _by_variant(block, self.variants):
+            return block
+        return cast(dict[str, Any] | None, block.get(variant))
 
     def variant(self, registry: str) -> str | None:
         """The variant block a registry entry uses; None for a single-block method."""
@@ -363,9 +381,10 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
     ``base`` is one config block, or one block per variant (every value a mapping) for a
     slug with several registry entries (``<slug>-<variant>``); a block may say
     ``base_from: <slug>.tuned``. ``abort`` of such a slug may also be keyed by
-    variant (`Method.abort_rules`). A ``grid.coarse`` entry is ``name`` plus the keys it
-    overrides (``seeds`` is its seed count at the tuning budget, see `expand_phase`);
-    ``grid.fine`` is in ``expand_fine``.
+    variant, and ``budgets.<label>.abort`` changes flag rules at that budget, outside
+    the hashed config (`Method.abort_rules`). A ``grid.coarse`` entry is ``name``
+    plus the keys it overrides (``seeds`` is its seed count at the tuning budget, see
+    `expand_phase`); ``grid.fine`` is in ``expand_fine``.
     """
     path = methods_dir / f"{slug}.yaml"
     where = path.name
@@ -391,6 +410,12 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
         tuned=raw.get("tuned"),
     )
     _check_abort(method.abort, where, method.variants)
+    for label, block in budgets.items():  # flags change with the budget, nothing else
+        extra = block.get("abort")
+        parts = extra.values() if _by_variant(extra, method.variants) else [extra]
+        for part in filter(None, parts):
+            _check_keys(part, {"flags"}, f"{where} budgets.{label}.abort")
+        _check_abort(extra, f"{where} budgets.{label}", method.variants)
     if method.tuned is not None and method.variants is not None:
         _check_keys(method.tuned, set(method.variants), f"{where} tuned")
     return method
@@ -460,7 +485,7 @@ def resolve_config(
                 f"{method.path.name}: unknown config {ref!r}; use base, tuned, {names}"
             )
         cfg |= _overrides(entry)
-    cfg |= method.budgets.get(budget, {})
+    cfg |= {k: v for k, v in method.budgets.get(budget, {}).items() if k != "abort"}
     cfg |= overrides or {}
     cfg["method"] = registry
     return copy.deepcopy(cfg)
@@ -553,7 +578,7 @@ def _entry_specs(
                 config_hash(cfg),
                 path.stem,
                 raw["eval"],
-                method.abort_rules(registry),
+                method.abort_rules(registry, raw["budget"]),
             )
             for seed in _seed_list(seeds, f"{where} config {ref}")
         ]

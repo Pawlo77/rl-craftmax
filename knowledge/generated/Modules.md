@@ -22,7 +22,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 121 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. | 183 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 52 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 1106 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 1131 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 240 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 1217 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 163 | [[orchestration]] |
@@ -38,7 +38,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 68 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 735 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 785 | [[training]] |
-| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 1070 | [[training]] |
+| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 1075 | [[training]] |
 | [[src/wut_murl_craftax/training/progress_key.py]] | Progress key of a Craftax state: bucketed integer fields and their hash. | 138 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. | 183 | [[training]] |
 | [[src/wut_murl_craftax/training/sil.py]] | Self-Imitation Learning: a per-env staging ring and a buffer of unlock windows. | 631 |  |
