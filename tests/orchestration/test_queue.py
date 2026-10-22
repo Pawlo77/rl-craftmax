@@ -335,6 +335,33 @@ def test_method_yaml_fails_loudly(tmp_path: Path, edit: dict[str, Any]) -> None:
         load_method("bad", tmp_path)
 
 
+@pytest.mark.parametrize(
+    "combine",
+    [
+        "ppo-rnn",
+        {"base": "ppo-rnn"},
+        {"base": "ppo-rnn", "methods": ["sil"]},
+        {"base": "ppo-rnn", "methods": ["sil", "sil"]},
+        {"base": "ppo-rnn", "methods": ["a", 1]},
+        {"base": "ppo-rnn", "methods": ["a", "b"], "x": 1},
+        {"base": "pqn-rnn", "methods": ["a", "b"]},  # base_from is ppo-rnn.tuned
+    ],
+)
+def test_a_bad_combine_block_fails_loudly(tmp_path: Path, combine: object) -> None:
+    body = {"base": {"base_from": "ppo-rnn.tuned"}, "combine": combine}
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump(body))
+    with pytest.raises(ValueError, match=r"bad\.yaml combine"):
+        load_method("bad", tmp_path)
+
+
+def test_combine_names_the_pair_and_their_base(tmp_path: Path) -> None:
+    combine = {"base": "ppo-rnn", "methods": ["count-bonus-ppo-rnn", "sil"]}
+    body = {"base": {"base_from": "ppo-rnn.tuned", "beta": 0.1}, "combine": combine}
+    (tmp_path / "pair.yaml").write_text(yaml.safe_dump(body))
+    assert load_method("pair", tmp_path).combine == combine
+    assert load_method("toy", METHODS).combine is None
+
+
 @pytest.mark.parametrize("permanent", ["m", ["n"], [1]])
 def test_permanent_guards_are_a_list_of_finite_metrics(
     tmp_path: Path, permanent: object

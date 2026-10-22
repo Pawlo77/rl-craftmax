@@ -68,7 +68,7 @@ TUNING_PHASES = (COARSE_PHASE, "tune-fine")
 
 EvalMode = Literal["final", "log_spaced"]
 _EVAL_MODES = ("final", "log_spaced")
-_METHOD_KEYS = {"base", "budgets", "grid", "abort", "tuned"}
+_METHOD_KEYS = {"base", "budgets", "grid", "abort", "tuned", "combine"}
 _RESERVED_NAMES = {"base", "tuned", "coarse", "fine"}
 _KNOB_KEYS = {"key", "mul", "add", "top", "always", "zero", "clip", "integer"}
 _KNOB_AXES = ("mul", "add", "top")
@@ -181,6 +181,9 @@ class Method:
     fine: dict[str, Any] | None
     abort: dict[str, Any] | None
     tuned: dict[str, Any] | None
+    combine: dict[str, Any] | None = None
+    """``{base, methods}`` of a combination: the control and the two registry entries
+    whose hook methods its trainer composes (``training.interface.combo_trainer``)."""
 
     @property
     def variants(self) -> list[str] | None:
@@ -336,6 +339,27 @@ def _check_limit(limit: object, where: str) -> str:
     return metric
 
 
+def _check_combine(
+    block: object, base: Mapping[str, Any], where: str
+) -> dict[str, Any] | None:
+    """Validate a ``combine`` block: a base control and two distinct registry names."""
+    if block is None:
+        return None
+    block = _check_keys(block, {"base", "methods"}, f"{where} combine")
+    methods = block.get("methods")
+    if (
+        not isinstance(block.get("base"), str)
+        or not isinstance(methods, list)
+        or len(methods) != 2
+        or not all(isinstance(m, str) for m in methods)
+        or methods[0] == methods[1]
+    ):
+        _fail(f"{where} combine: `base` a control and `methods` two registry names")
+    if base.get("base_from") != f"{block['base']}.tuned":
+        _fail(f"{where} combine: `base` needs `base_from: {block['base']}.tuned`")
+    return block
+
+
 def _by_variant(block: object, variants: Sequence[str] | None) -> bool:
     """Whether an ``abort`` block is keyed by variant (one block per variant)."""
     return (
@@ -387,7 +411,8 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
     variant, and ``budgets.<label>.abort`` changes flag rules at that budget, outside
     the hashed config (`Method.abort_rules`). A ``grid.coarse`` entry is ``name``
     plus the keys it overrides (``seeds`` is its seed count at the tuning budget, see
-    `expand_phase`); ``grid.fine`` is in ``expand_fine``.
+    `expand_phase`); ``grid.fine`` is in ``expand_fine``. ``combine`` (`Method.combine`)
+    names the two methods a combination composes; it is not part of the config.
     """
     path = methods_dir / f"{slug}.yaml"
     where = path.name
@@ -411,6 +436,7 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
         fine=None if fine is None else _check_fine(fine, where),
         abort=raw.get("abort"),
         tuned=raw.get("tuned"),
+        combine=_check_combine(raw.get("combine"), base, where),
     )
     _check_abort(method.abort, where, method.variants)
     for label, block in budgets.items():  # flags change with the budget, nothing else
