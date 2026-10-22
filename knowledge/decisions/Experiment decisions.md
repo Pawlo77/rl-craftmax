@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 ---
 # Experiment decisions
 
@@ -198,3 +198,41 @@ Why: each came up while implementing [[2026-10-20-craftax-infrastructure]] and t
 - Craftax is imported eagerly after `configure_runtime` (`import_craftax`): a first import inside a trace leaks tracers.
 - The laptop profile sets `JAX_PLATFORMS=metal,cpu` (`select_platforms`) so a metal learner is found, unless the variable is already set.
 - Tuning never overlaps heavy test runs on the laptop: the memory ceiling is shared.
+
+## 2026-10-22 - Control tuning results
+
+Decision: all three controls keep their published or base 1M config as `tuned`; no stage-1 or stage-2 config beat it by more than h.
+
+Why: PPO and PPO-RNN: `tuned` = the best config only if its 3-seed mean beats the published config's 10-seed mean by more than h = 0.05 + 2 sqrt(SE^2 + (s_pub / sqrt(10))^2) (s_pub 0.083 for both); PQN-RNN: ties within h of the base keep the base, with h = 2 sqrt(SE_base^2 + SE_best^2) over 3 seeds each (no 1M published score). Means are of `final_score`; sd is the sample sd over seeds. For PPO, `fine-lr=0.0003` is the published config, so its stage-2 runs are seeds 0 to 2 of the 10.
+
+Consequences: `tuned: {}` in `configs/methods/{ppo,ppo-rnn,pqn-rnn}.yaml` (equal to the base), `best=true` on the 10, 10 and 3 base runs. Methods with `base_from: <control>.tuned` start from the published or base settings. Stage 2 showed small gains only. Rejected: taking the best stage-2 config of PPO-RNN (+0.12) or PQN-RNN (+0.45, base sd 0.85 over 3 seeds).
+
+PPO (s_pub 0.083, h 0.1280 with the 10-seed SE; 0.1351 with the best config's SE):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| e06ac6db published-1m (tuned) | none | 10 | 2.17342 | 0.09122 |
+| 845b73b4 lr-2e-4 (best stage 1) | lr 2e-4 | 3 | 2.26138 | 0.05806 |
+| c043716c fine-gae_lambda=0.75 (best stage 2) | lr 2e-4, gae_lambda 0.75 | 3 | 2.22396 | 0.01782 |
+
+Best minus published: 0.0880 < h, so tuned = published (e06ac6db).
+
+PPO-RNN (s_pub 0.083, h 0.1354 with the 10-seed SE; 0.1264 with the best config's SE):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| b3ce95c4 published-1m (tuned) | none (ReLU) | 10 | 2.18755 | 0.10654 |
+| 04e6b687 shape-64x64 (best stage 1) | envs 64, num_steps 64 | 3 | 2.26074 | 0.07585 |
+| efda7c6f fine-ent=0.005 (best stage 2) | envs 64, num_steps 64, ent 0.005 | 3 | 2.30750 | 0.04803 |
+
+Best minus published: 0.1200 < h, so tuned = published (b3ce95c4); the margin to h is small.
+
+PQN-RNN (no 1M published score, h 0.9884 over 3 seeds each):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| 10cbfc16 base-1m (tuned) | none | 3 | 1.27030 | 0.84897 |
+| 606530ad lambda-0.8 (best stage 1) | lam 0.8 | 3 | 1.71833 | 0.10930 |
+| dcb8a7ef fine-lr=0.000225 (best stage 2) | lam 0.8, lr 2.25e-4 | 3 | 1.66113 | 0.11714 |
+
+Best minus base: 0.4480 < h, so a tie and tuned = base (10cbfc16). At 1M the batch-renorm hidden normalisation (1.44072, sd 0.30554) beat the base (layer-norm hidden, 1.27030), and layer-norm input (0.84326) lost; both within h of the base. The base spread (sd 0.85) is the reason h is wide.
