@@ -49,7 +49,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         resolve,
         with_method,
     )
-    from .interface import METHODS, Policy
+    from .interface import METHODS, Policy, combine, combo_trainer
     from .ppo import (
         ActorCritic,
         PPOConfig,
@@ -183,6 +183,8 @@ _EXPORTS: dict[str, str] = {
     "available": "skills",
     "check_metric_names": "hooks",
     "checkpoint_schedule": "checkpoints",
+    "combine": "interface",
+    "combo_trainer": "interface",
     "config_dict": "hooks",
     "decode_obs": "skills",
     "first_unlocks": "records",
@@ -296,6 +298,8 @@ __all__ = [
     "available",
     "check_metric_names",
     "checkpoint_schedule",
+    "combine",
+    "combo_trainer",
     "config_dict",
     "decode_obs",
     "first_unlocks",

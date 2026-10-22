@@ -1,0 +1,9 @@
+# Combination of the two best methods (Phase 3 Task 1, configs/methods/combo.yaml) at
+# Craftax-1B, 3 seeds, every log-spaced checkpoint evaluated; at 1B the combined
+# method knobs run on the control's 1B settings (`base_from` resolves the donor at 1b).
+budget: 1b
+eval: log_spaced
+env: Craftax-Symbolic-v1
+seeds: 3
+runs:
+  combo: {configs: [combined]}

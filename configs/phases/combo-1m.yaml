@@ -1,0 +1,8 @@
+# Combination of the two best methods (Phase 3 Task 1, configs/methods/combo.yaml) at
+# Craftax-1M, 10 seeds (0-9, as the final-1m runs), every log-spaced checkpoint evaluated.
+budget: 1m
+eval: log_spaced
+env: Craftax-Symbolic-v1
+seeds: 10
+runs:
+  combo: {configs: [combined]}

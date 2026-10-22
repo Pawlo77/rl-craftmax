@@ -1,0 +1,53 @@
+# Combination of the two best compatible methods (Phase 3 Task 1); the schema is documented
+# in orchestration/queue.py, the composition in training/interface.py (`combine`).
+#
+# TEMPLATE: the pair below is a placeholder, count-bonus-ppo-rnn and sil on PPO-RNN (the
+# only hook-method pair on one control) with their design defaults. Step 1 chooses the
+# pair from final-1m and final-1b and rewrites `combine`, `base` (`base_from` the pair's
+# control, then each method's tuned config: its `base` keys with its `tuned` block applied,
+# unchanged) and `abort` (both methods' rules). No retuning: one config, `combined`.
+# `combine` composes hook methods only; a pair with a skill method (smdp-skills, dyna-q)
+# needs its own path, decided at Step 1.
+combine:
+  base: ppo-rnn
+  methods: [count-bonus-ppo-rnn, sil]
+
+base:
+  base_from: ppo-rnn.tuned
+  # count-bonus-ppo-rnn
+  beta: 0.1
+  granularity: recipe
+  decay: constant
+  log2_k: 20
+  key: progress
+  max_occupancy: 0.25
+  # sil
+  lambda_sil: 1.0
+  slots_windows: 2
+  sil_steps: 1
+  window: 128
+  beta_v: 0.01
+  batch: 32
+  alpha: 0.6
+  insert_cap: 64
+  layout: slots
+
+grid:
+  coarse:
+    - {name: combined}
+  fine: null
+
+# Both methods' runner rules on PPO-RNN (count-bonus.yaml's ppo-rnn block and sil.yaml).
+abort:
+  finite: [ppo/policy_loss, ppo/value_loss, count/r_int_mean, count/table_full, count/negative_counts, sil/policy_loss, sil/value_loss, sil/dominates]
+  permanent: [count/table_full, sil/dominates]
+  limits:
+    - {metric: ppo/ratio_first_mb, min: 0.999, max: 1.001}
+  flags:
+    - {name: kl_high, metric: ppo/approx_kl, above: 0.1, updates: 3}
+    - {name: entropy_collapse, metric: ppo/entropy, below: 0.2, before: 0.1}
+    - {name: value_failure, metric: ppo/explained_variance, below: 0.0, after: 0.2, updates: 5}
+    - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
+
+# never tuned: the phases run `combined`
+tuned: null
