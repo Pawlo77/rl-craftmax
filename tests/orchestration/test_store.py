@@ -201,6 +201,86 @@ def test_merge_ignores_deleted_runs(main_store: Node, node: Node) -> None:
     assert merge_stores(node.uri, main_store.uri)["copied"] == 0
 
 
+def _history(store: Node, name: str, key: str) -> list[tuple[int, float]]:
+    run_id = store.runs()[name].info.run_id
+    return sorted(
+        (m.step, m.value) for m in store.client.get_metric_history(run_id, key)
+    )
+
+
+def test_a_join_copies_the_eval_files_and_metrics_the_main_copy_lacks(
+    main_store: Node, node: Node
+) -> None:
+    """Phase 0 review I5: a node's log-spaced evaluation of a reused run survives."""
+    name = "a-1m-aaaaaaaa-s0"
+    main_store.add(
+        name,
+        "tune-coarse",
+        files={"config.json": "{}", "eval/final/3.npz": "main"},
+        metrics={"eval/final/return": [1.0]},
+    )
+    node.add(
+        name,
+        "tune-coarse,final-1m",
+        experiment="final-1m",
+        files={"eval/final/3.npz": "node", "eval/final/1.npz": "n1"},
+        metrics={"eval/final/return": [9.0, 2.0], "train/return": [5.0]},
+    )
+    assert merge_stores(node.uri, main_store.uri) == {"copied": 0, "joined": 1}
+    out = artifact_path(main_store.runs()[name].info.artifact_uri)
+    assert (out / "eval/final/3.npz").read_text() == "main"  # main's file stays
+    assert (out / "eval/final/1.npz").read_text() == "n1"
+    # step 0 is main's; only evaluation series are copied on a join
+    assert _history(main_store, name, "eval/final/return") == [(0, 1.0), (1, 2.0)]
+    assert _history(main_store, name, "train/return") == []
+    assert merge_stores(node.uri, main_store.uri) == {"copied": 0, "joined": 1}
+    assert _history(main_store, name, "eval/final/return") == [(0, 1.0), (1, 2.0)]
+
+
+@pytest.mark.parametrize(
+    ("main_pending", "node_pending", "node_phases", "want"),
+    [
+        (False, True, "tune-coarse,final-1m", True),  # the node's evaluation was cut
+        (True, False, "tune-coarse,final-1m", False),  # the node completed it
+        (True, False, "final-1m", True),  # the node never saw main's phase
+        (False, False, "final-1m", False),
+    ],
+)
+def test_a_join_carries_the_pending_evaluation_tag(
+    main_store: Node,
+    node: Node,
+    main_pending: bool,
+    node_pending: bool,
+    node_phases: str,
+    want: bool,
+) -> None:
+    name = "a-1m-aaaaaaaa-s0"
+    main_id = main_store.add(name, "tune-coarse")
+    node_id = node.add(name, node_phases, experiment="final-1m")
+    for store, run_id, pending in (
+        (main_store, main_id, main_pending),
+        (node, node_id, node_pending),
+    ):
+        if pending:
+            store.client.set_tag(run_id, "eval/pending", "true")
+            store.client.set_tag(run_id, "fail/error", "OSError: disk full")
+    merge_stores(node.uri, main_store.uri)
+    tags = main_store.runs()[name].data.tags
+    assert ("eval/pending" in tags) == want
+    assert ("fail/error" in tags) == (want and main_pending)
+
+
+def test_merge_of_named_runs_seeds_a_node_store(main_store: Node, node: Node) -> None:
+    """The reverse merge copies only the runs a node's worker will reuse or resume."""
+    main_store.add("a-1m-aaaaaaaa-s0", "tune-coarse")
+    main_store.add("b-1m-bbbbbbbb-s0", "tune-coarse")
+    counts = merge_stores(
+        main_store.root / "mlruns.db", node.uri, names={"a-1m-aaaaaaaa-s0", "c"}
+    )
+    assert counts == {"copied": 1, "joined": 0}
+    assert set(node.runs()) == {"a-1m-aaaaaaaa-s0"}
+
+
 def test_merge_cli_reports_the_counts(main_store: Node, node: Node) -> None:
     node.add("a-1m-aaaaaaaa-s0", "tune-coarse")
     cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.store", "merge"]

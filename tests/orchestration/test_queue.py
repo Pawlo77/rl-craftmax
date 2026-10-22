@@ -1011,6 +1011,8 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
         "4",
         "--tracking-uri",
         "sqlite:///node.db",
+        "--seed-from",
+        "main.db",
     ])
     (specs, *flags), (_, *given) = calls
     assert [s.name for s in specs] == [
@@ -1021,9 +1023,48 @@ def test_without_dry_run_the_specs_go_to_the_runner_with_the_flags(
         0,
         1,
         None,
-        {"tracking_uri": None},
+        {"tracking_uri": None, "seed_from": None},
     ]
-    assert given == [Path("p.yaml"), 1, 4, 3, {"tracking_uri": "sqlite:///node.db"}]
+    node = {"tracking_uri": "sqlite:///node.db", "seed_from": "main.db"}
+    assert given == [Path("p.yaml"), 1, 4, 3, node]
+
+
+def test_cli_seed_from_needs_a_node_store() -> None:
+    out = run_cli("--phase", "configs/phases/smoke.yaml", "--seed-from", "main.db")
+    assert out.returncode != 0
+    assert "--seed-from needs --tracking-uri" in out.stderr
+
+
+@pytest.mark.parametrize(
+    ("flags", "want"),
+    [
+        ([], None),
+        (["--tracking-uri", "sqlite:///node.db"], "sqlite:///node.db"),
+        (["--tracking-uri", "sqlite:///n.db", "--seed-from", "m.db"], "m.db"),
+    ],
+)
+def test_cli_expand_fine_reads_the_coarse_results_of_the_given_store(
+    monkeypatch: pytest.MonkeyPatch, flags: list[str], want: str | None
+) -> None:
+    """Review M7: a node's tune-fine ranks the coarse runs of the main store."""
+    seen: list[str | None] = []
+
+    def results(slug: str, **kw: Any) -> dict[str, float]:
+        seen.append(kw["tracking_uri"])
+        return stage1(slug, STAGE1)
+
+    monkeypatch.setattr(queue, "coarse_results", results)
+    argv = ["--methods-dir", str(METHODS), "--expand-fine", "toy", "--dry-run"]
+    queue.main([*argv, *flags])
+    assert seen == [want]
+
+
+def test_cli_mark_tuned_takes_the_tracking_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M7."""
+    seen: list[Any] = []
+    monkeypatch.setattr(queue, "mark_tuned", lambda *a, **kw: seen.append(kw) or "")
+    queue.main(["--mark-tuned", "ppo", "abcd1234", "--tracking-uri", "sqlite:///n.db"])
+    assert seen[0]["tracking_uri"] == "sqlite:///n.db"
 
 
 def test_cli_selects_by_registry_name_and_by_slug() -> None:

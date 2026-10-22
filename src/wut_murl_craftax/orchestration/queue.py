@@ -8,7 +8,7 @@ same config share a run. ``configs/methods/<slug>.yaml`` holds ``base``, ``budge
 resolves shallowly: donor, base, tuned or grid entry, budget, overrides
 (``resolve_config``). ``configs/phases/<phase>.yaml`` picks configs and seeds
 (``expand_phase``). CLI: ``--phase P [--method M] [--dry-run] [--expand-fine SLUG]``
-plus the runner's flags (``--profile``, ``--max-runs``, workers, ``--tracking-uri``).
+plus the runner's flags (``--profile``, ``--max-runs``, workers, node stores).
 """
 
 import argparse
@@ -58,6 +58,8 @@ TAG_ABORT_BUG = "abort/bug"
 TAG_EVAL_PENDING = "eval/pending"
 """Run tag: ``true`` while a reused FINISHED run's evaluation is incomplete (the runner
 keeps it FINISHED through a cut evaluation); results readers count it not complete."""
+TAG_FAIL_ERROR = "fail/error"
+"""Run tag: the error of the last failed call (type and message, truncated)."""
 TAG_BEST = "best"
 """Run tag set by `mark_tuned`: ``true`` on the tuned config's tuning runs."""
 CONFIG_ARTIFACT = "config.json"
@@ -1055,6 +1057,7 @@ def run_specs(specs: Sequence[RunSpec], args: argparse.Namespace) -> None:
         args.num_workers,
         args.max_runs,
         tracking_uri=args.tracking_uri,
+        seed_from=args.seed_from,
     )
 
 
@@ -1143,13 +1146,27 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="store of this worker's runs instead of configs/experiment.yaml's "
         "(a cluster node's own database, merged later by `make merge-mlflow`)",
     )
+    parser.add_argument(
+        "--seed-from",
+        metavar="DB",
+        help="read-only copy of the main store: this worker's runs in it are merged "
+        "into --tracking-uri's store first, and --expand-fine ranks its coarse runs",
+    )
     args = parser.parse_args(argv)
+    if args.seed_from and not args.tracking_uri:
+        parser.error("--seed-from needs --tracking-uri (the node store to seed)")
     if args.mark_tuned:
-        print(mark_tuned(*args.mark_tuned, methods_dir=args.methods_dir))
+        tuned = mark_tuned(
+            *args.mark_tuned,
+            tracking_uri=args.tracking_uri,
+            methods_dir=args.methods_dir,
+        )
+        print(tuned)
         return
     if args.phase is None and args.expand_fine is None:
         parser.error("give --phase, --expand-fine or --mark-tuned")
-    specs = phase_specs(args)
+    # review M7: the coarse results come from the store the flags name
+    specs = phase_specs(args, args.seed_from or args.tracking_uri)
     if specs is None:
         return
     if args.dry_run:

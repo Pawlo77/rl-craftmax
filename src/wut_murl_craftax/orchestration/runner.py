@@ -83,6 +83,7 @@ from .queue import (
     TAG_BUDGET,
     TAG_CONFIG_HASH,
     TAG_EVAL_PENDING,
+    TAG_FAIL_ERROR,
     TAG_METHOD,
     TAG_PHASES,
     TAG_SEED,
@@ -96,6 +97,7 @@ from .runtime import (
     import_craftax,
     select_platforms,
 )
+from .store import merge_stores
 from .tracking import _resolve_tracking_uri, artifact_path, build_mlflow_tracker
 from .train_metrics import (
     compile_seconds,
@@ -116,8 +118,6 @@ TAG_CKPT_MISSING = "ckpt/missing"
 """Run tag: comma-joined updates whose checkpoint file is lost and cannot be rebuilt."""
 TAG_WARN_ARTIFACTS = "warn/artifacts"
 """Run tag: the latest `Trainer.checkpoint_artifacts` failure (update, error)."""
-TAG_FAIL_ERROR = "fail/error"
-"""Run tag: the error of the last failed call (type and message, truncated)."""
 TAG_CODE_COMMIT = "code/commit"
 """Run tag: the git commit the run started training under (``code/dirty`` beside)."""
 TAG_CODE_SEGMENTS = "code/segments"
@@ -1163,6 +1163,7 @@ def main(
     *,
     experiment_config: Path = EXPERIMENT_CONFIG,
     tracking_uri: str | None = None,
+    seed_from: str | None = None,
     methods: Mapping[str, Trainer] | None = None,
     evaluate: Evaluate | str | None = None,
     registry: str = REGISTRY,
@@ -1177,6 +1178,9 @@ def main(
     trace. Runs reused as FINISHED do not count towards ``max_runs``. MLflow settings
     come from ``experiment_config``, the experiment name replaced by each spec's
     phase and the tracking URI by ``tracking_uri`` when given (a node's own store).
+    ``seed_from``, a read-only copy of the main store, first merges this worker's runs
+    into the node's (`merge_stores`): the node reuses and resumes them as the main
+    store would, and the merge back returns their new evaluations (review I5).
 
     A run that fails is closed FAILED with its error tagged (`TAG_FAIL_ERROR`) and
     logged, and the next spec runs; runs marked a bug, or failed for lost
@@ -1185,6 +1189,7 @@ def main(
     Raises:
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
         RuntimeError: At the end, naming every run of this call that failed.
+        ValueError: ``seed_from`` without ``tracking_uri``.
     """
     machine = load_profile(profile)
     mine = worker_specs(specs, worker_index, num_workers)
@@ -1197,6 +1202,13 @@ def main(
             experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
         )
     mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
+    if seed_from is not None:
+        if tracking_uri is None:
+            msg = "seed_from needs tracking_uri: a node store to seed"
+            raise ValueError(msg)
+        names = {s.name for s in mine}
+        counts = merge_stores(seed_from, tracking_uri, names=names)
+        logger.info("seeded from %s: %s", seed_from, counts)
     run_one = (
         _runs_in_children(machine, experiment, registry, evaluate)
         if methods is None

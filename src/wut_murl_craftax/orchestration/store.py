@@ -4,15 +4,16 @@
 failed, counting only runs whose tag ``phases`` contains the phase; without
 ``--expand-fine`` a ``configs: fine`` entry lists its runs in the store. ``merge``
 copies the runs and artifact directories of another SQLite store (a cluster node's)
-into the main one, keyed by run name: a run already there only gets the ``phases``
-merged, unless the node's copy is FINISHED and the main one is not (the finished run
-replaces it). CLI: ``status --phase P [--method M] [--expand-fine SLUG]``,
-``merge SRC``.
+into the main one, keyed by run name: a run already there gets the ``phases`` merged
+and a FINISHED node copy's evaluation files and ``eval/*`` points it lacks, unless the
+node's copy is FINISHED and the main one is not (the finished run replaces it). The
+runner seeds a node's store the same way from the main one (``names``). CLI: ``status
+--phase P [--method M] [--expand-fine SLUG]``, ``merge SRC``.
 """
 
 import argparse
 import shutil
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from .queue import (
     EXPERIMENT_CONFIG,
     METHODS_DIR,
     TAG_EVAL_PENDING,
+    TAG_FAIL_ERROR,
     TAG_METHOD,
     TAG_PHASES,
     fine_registries,
@@ -36,6 +38,8 @@ STATES = ("pending", "running", "eval-pending", "finished", "killed", "failed")
 tag ``eval/pending`` (its evaluation was cut short, results readers skip it)."""
 _BATCH = 1000
 """Most metrics MLflow accepts in one ``log_batch`` call."""
+EVAL = "eval"
+"""Run-directory folder and metric prefix of the evaluation results."""
 
 
 def _main_uri(tracking_uri: str | None) -> str:
@@ -143,6 +147,20 @@ def _experiment_id(client: Any, name: str, tracking_uri: str) -> str:
     return str(client.create_experiment(name, artifact_location=location))
 
 
+def _points(client: Any, run: Any, keys: Collection[str]) -> list[Metric]:
+    """Every logged point of the run's metrics ``keys``."""
+    return [
+        Metric(m.key, m.value, m.timestamp, m.step)
+        for key in keys
+        for m in client.get_metric_history(run.info.run_id, key)
+    ]
+
+
+def _log_points(target: Any, run_id: str, metrics: list[Metric]) -> None:
+    for i in range(0, len(metrics), _BATCH):
+        target.log_batch(run_id, metrics=metrics[i : i + _BATCH])
+
+
 def _copy_run(
     target: Any,
     source: Any,
@@ -159,26 +177,65 @@ def _copy_run(
     )
     run_id = new.info.run_id
     target.log_batch(run_id, params=[Param(k, v) for k, v in run.data.params.items()])
-    metrics = [
-        Metric(m.key, m.value, m.timestamp, m.step)
-        for key in run.data.metrics
-        for m in source.get_metric_history(info.run_id, key)
-    ]
-    for i in range(0, len(metrics), _BATCH):
-        target.log_batch(run_id, metrics=metrics[i : i + _BATCH])
+    _log_points(target, run_id, _points(source, run, run.data.metrics))
     shutil.copytree(artifacts, artifact_path(new.info.artifact_uri), dirs_exist_ok=True)
     target.set_terminated(run_id, info.status, info.end_time)
 
 
-def merge_stores(src: Path | str, dst: str | None = None) -> dict[str, int]:
+def _copy_missing(src: Path, dst: Path) -> None:
+    """Copy each file under ``src`` that ``dst`` lacks; a file that exists is whole."""
+    for path in sorted(src.rglob("*")):
+        to = dst / path.relative_to(src)
+        if path.is_file() and path.suffix != ".tmp" and not to.exists():
+            to.parent.mkdir(parents=True, exist_ok=True)
+            part = to.with_name(f"{to.name}.part")
+            shutil.copy2(path, part)
+            part.replace(to)
+
+
+def _pending(run: Any) -> bool:
+    return bool(run.data.tags.get(TAG_EVAL_PENDING) == "true")
+
+
+def _join_evaluation(
+    target: Any, source: Any, here: Any, run: Any, artifacts: Path
+) -> None:
+    """Give ``here`` the eval files and ``eval/*`` points of the FINISHED ``run``.
+
+    Files and (metric, step) points ``here`` has stay as they are. Its evaluation is
+    pending after the join if ``run``'s is, or if ``here``'s is and ``run`` was not
+    listed in every phase of ``here`` (it never evaluated for those).
+    """
+    run_id = here.info.run_id
+    _copy_missing(artifacts / EVAL, artifact_path(here.info.artifact_uri) / EVAL)
+    keys = [k for k in run.data.metrics if k.startswith(f"{EVAL}/")]
+    have = {(m.key, m.step) for m in _points(target, here, keys)}
+    new = [m for m in _points(source, run, keys) if (m.key, m.step) not in have]
+    _log_points(target, run_id, new)
+    covered = set(_phases(here)) <= set(_phases(run))
+    pending = _pending(run) or (_pending(here) and not covered)
+    if pending and not _pending(here):
+        target.set_tag(run_id, TAG_EVAL_PENDING, "true")
+    elif not pending and _pending(here):
+        for key in (TAG_EVAL_PENDING, TAG_FAIL_ERROR):  # as the runner's FINISHED close
+            if key in here.data.tags:
+                target.delete_tag(run_id, key)
+
+
+def merge_stores(
+    src: Path | str, dst: str | None = None, *, names: Collection[str] | None = None
+) -> dict[str, int]:
     """Merge the runs of the SQLite store ``src`` into ``dst`` (default: the main one).
 
     Returns the runs ``copied`` (new to ``dst``, or FINISHED replacing an unfinished
-    copy) and ``joined`` (already in ``dst``, only the ``phases`` tag merged). Every
-    needed source artifact directory is found before anything is written.
+    copy) and ``joined`` (already in ``dst``: the ``phases`` tag merged, plus the
+    evaluation of a FINISHED ``src`` copy, `_join_evaluation`). ``names`` limits the
+    merge to those run names. Every needed source artifact directory is found before
+    anything is written.
 
     Raises:
-        FileNotFoundError: ``src`` is no database, or a run to copy has no artifacts.
+        FileNotFoundError: ``src`` is no database, or a run to copy or a FINISHED run
+            to join has no artifacts.
     """
     text = str(src)
     db = Path(text.removeprefix("sqlite:///")).resolve()
@@ -190,19 +247,25 @@ def merge_stores(src: Path | str, dst: str | None = None) -> dict[str, int]:
     target = mlflow.MlflowClient(tracking_uri=dst_uri)
     experiments = {e.experiment_id: e.name for e in source.search_experiments()}
     existing = _by_name(_active_runs(target))
-    joins: list[tuple[Any, list[str]]] = []
+    joins: list[tuple[Any, Any, Path | None, list[str]]] = []
     copies: list[tuple[Any, Any | None, str, Path, list[str]]] = []
     for name, run in _by_name(_active_runs(source)).items():
+        if names is not None and name not in names:
+            continue
         here = existing.get(name)
         phases = list(dict.fromkeys([*_phases(here), *_phases(run)]))
-        if here is not None and not (_rank(run)[0] and not _rank(here)[0]):
-            joins.append((here, phases))
-            continue
         experiment = experiments[run.info.experiment_id]
+        finished = run.info.status == "FINISHED"
+        if here is not None and not (finished and here.info.status != "FINISHED"):
+            artifacts = _source_artifacts(run, experiment, db) if finished else None
+            joins.append((here, run, artifacts, phases))
+            continue
         artifacts = _source_artifacts(run, experiment, db)
         copies.append((run, here, experiment, artifacts, phases))
-    for here, phases in joins:
+    for here, run, found, phases in joins:
         target.set_tag(here.info.run_id, TAG_PHASES, ",".join(phases))
+        if found is not None:
+            _join_evaluation(target, source, here, run, found)
     for run, here, experiment, artifacts, phases in copies:
         if here is not None:
             target.delete_run(here.info.run_id)  # soft: the old artifacts stay on disk

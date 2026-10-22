@@ -7,8 +7,10 @@
 # scheduler's variables as SLURM_ARRAY_TASK_ID and SLURM_ARRAY_TASK_COUNT.
 # Preempted or killed jobs resume: rerun the same command with the same store.
 #
-# Environment: PROFILE (default cuda), STORE_DIR (default node-stores), extra queue
-# flags after the phase, e.g. `... tune-coarse --method ppo`.
+# Environment: PROFILE (default cuda), STORE_DIR (default node-stores), SEED_FROM (a
+# read-only copy of the main mlruns.db with its mlruns/ beside it: the node first takes
+# this worker's runs from it, so it reuses finished runs instead of retraining them),
+# extra queue flags after the phase, e.g. `... tune-coarse --method ppo`.
 #SBATCH --job-name=craftax
 #SBATCH --gres=gpu:1
 #SBATCH --output=logs/%x-%A_%a.out
@@ -25,8 +27,13 @@ store_dir="$(cd "$store_dir" && pwd)"
 # A node's own SQLite file: nodes never write one database concurrently. The artifacts
 # go to mlruns/ beside it (see orchestration/tracking.py).
 store="sqlite:///$store_dir/mlruns-node-$index.db"
+seed=()
+if [[ -n "${SEED_FROM:-}" ]]; then
+    seed=(--seed-from "$SEED_FROM")
+fi
 
 exec uv run python -m wut_murl_craftax.orchestration.queue \
     --phase "configs/phases/$phase.yaml" \
     --profile "configs/profiles/${PROFILE:-cuda}.yaml" \
-    --worker-index "$index" --num-workers "$size" --tracking-uri "$store" "$@"
+    --worker-index "$index" --num-workers "$size" --tracking-uri "$store" \
+    ${seed[@]+"${seed[@]}"} "$@"

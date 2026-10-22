@@ -29,6 +29,7 @@ from wut_murl_craftax.orchestration import queue, runner
 from wut_murl_craftax.orchestration.profiles import Profile, load_profile
 from wut_murl_craftax.orchestration.queue import RunSpec, config_hash, expand_phase
 from wut_murl_craftax.orchestration.runner import final_score, worker_specs
+from wut_murl_craftax.orchestration.store import merge_stores
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training.checkpoints import (
     checkpoint_schedule,
@@ -220,6 +221,43 @@ def test_a_tracking_uri_sends_the_runs_to_another_store(
     assert run.info.run_name == specs[0].name
     assert run.info.status == "FINISHED"
     assert artifact_path(run.info.artifact_uri).is_relative_to(tmp_path / "node")
+
+
+def test_a_node_seeded_from_the_main_store_reuses_and_returns_its_runs(
+    store: Store, tmp_path: Path
+) -> None:
+    """Phase 0 review I5: a node evaluates its worker's reused runs, never retrains
+    them, and the merge brings that evaluation back to the main store."""
+    store.run(store.phase("tune-coarse", ["published", "lr-hi"]), FakeTrainer())
+    final = store.phase("final-1m", ["published", "lr-hi"], eval_mode="log_spaced")
+    node_uri = f"sqlite:///{tmp_path / 'node' / 'mlruns-node-0.db'}"
+
+    def evaluate(run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]) -> None:
+        (run_dir / "eval" / "log.npz").write_text(spec.phase)
+        mlflow.log_metric("eval/log/return", 1.0, step=7)
+
+    trainer = FakeTrainer()
+    runner.main(
+        final,
+        PROFILE,
+        0,
+        2,
+        experiment_config=store.config,
+        tracking_uri=node_uri,
+        seed_from=store.tracking_uri,
+        methods={"toy": trainer},
+        evaluate=evaluate,
+    )
+    assert trainer.updates == []
+    node = mlflow.MlflowClient(tracking_uri=node_uri)
+    ids = [e.experiment_id for e in node.search_experiments()]
+    assert [r.info.run_name for r in node.search_runs(ids)] == [final[0].name]
+    merge_stores(node_uri, store.tracking_uri)
+    run = store.runs()[final[0].name]
+    assert run.data.tags[queue.TAG_PHASES] == "tune-coarse,final-1m"
+    assert (artifact_path(run.info.artifact_uri) / "eval/log.npz").exists()
+    history = store.client.get_metric_history(run.info.run_id, "eval/log/return")
+    assert [m.step for m in history] == [7]
 
 
 def test_max_runs_counts_the_runs_it_trains(store: Store) -> None:
