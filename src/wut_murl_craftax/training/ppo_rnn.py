@@ -27,7 +27,7 @@ import functools
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
 import flax.linen as nn
 import jax
@@ -54,6 +54,7 @@ from .hooks import (
     HookMethod,
     HookSpec,
     ResolvedHooks,
+    SplitState,
     Traj,
     check_method_keys,
     check_metric_names,
@@ -99,7 +100,7 @@ _LEARNER_HOOKS = {"observe", "extra_loss_fn"}
 """Hooks that read the method state on the learner. With ``intrinsic_reward_fn`` too
 the state moves between actor and learner each update; without it the state lives on
 the learner (the rollout never reads it); with neither, ``metrics_fn`` reads it on the
-actor, where the rollout keeps it."""
+actor, where the rollout keeps it. A `SplitState` moves its ``actor`` part only."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +109,8 @@ class PPORNNConfig(PPOConfig, HookFields):
 
     rnn_width: int = 512
     activation: Literal["relu", "tanh"] = "relu"
+    splits_method_state: ClassVar[bool] = True
+    """A `SplitState` method state is placed by parts (`_place`)."""
 
     def __post_init__(self) -> None:
         """Also require optimistic resets, whole-env minibatches, a known activation."""
@@ -518,6 +521,16 @@ def _on_actor(tree: Any, s: _Setup, envs: int) -> Any:
     return place_on_actor(tree, envs, s.actor, s.mesh, s.shared_at)
 
 
+def _place(ms: Any, s: _Setup, envs: int) -> Any:
+    """Resident on the learner, else on the actor (a `SplitState`: its actor part)."""
+    if s.resident:
+        return jax.device_put(ms, s.learner)
+    if isinstance(ms, SplitState):
+        learner = jax.device_put(ms.learner, s.learner)
+        return ms.replace(actor=_on_actor(ms.actor, s, envs), learner=learner)
+    return _on_actor(ms, s, envs)
+
+
 class PPORNNState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
     """Full PPO-RNN training state: one pytree that `save_state` round-trips."""
 
@@ -546,8 +559,8 @@ def init_state(
 ) -> PPORNNState:
     """Fresh params on the learner; envs and GRU carry on the actor.
 
-    The method state goes to the actor, or to the learner if only the update reads it.
-    ``memory_limit_bytes`` goes to the method in `HookSpec`.
+    The method state goes to the actor, or to the learner if only the update reads it
+    (`_place`). ``memory_limit_bytes`` goes to the method in `HookSpec`.
     """
     s = _setup(cfg)
     key, k_init, k_reset, k_method = jax.random.split(key, 4)
@@ -582,9 +595,7 @@ def init_state(
         last_done=last_done,
         episode=episode,
         env_steps=jax.device_put(jnp.zeros((), jnp.int32), s.shared_at),
-        method_state=jax.device_put(method_state, s.learner)  # already there
-        if s.resident
-        else _on_actor(method_state, s, cfg.envs),
+        method_state=_place(method_state, s, cfg.envs),
         key=jax.device_put(key, s.learner),
         key_act=jax.device_put(jax.random.fold_in(key, 1), s.shared_at),
         cfg=cfg,
@@ -604,12 +615,14 @@ def collect(
     params = jax.device_put(state.train_state.params, s.shared_at)
     # a state the rollout does not read stays where it is, out of the scan carry
     on_actor = s.rollout_state or not s.learner_state
+    split = isinstance(state.method_state, SplitState)
+    ms = state.method_state.actor if split else state.method_state
     carry = (
         state.hidden,
         state.obs,
         state.last_done,
         state.env_state,
-        _on_actor(state.method_state, s, state.cfg.envs) if on_actor else None,
+        _on_actor(ms, s, state.cfg.envs) if on_actor else None,
         state.env_steps,
         state.episode,
         state.key_act,
@@ -623,7 +636,9 @@ def collect(
         last_done=last_done,
         episode=episode,
         env_steps=t,
-        method_state=ms if on_actor else state.method_state,
+        method_state=(state.method_state.replace(actor=ms) if split else ms)
+        if on_actor
+        else state.method_state,
         key_act=key_act,
     )
     return new, batch, traj, ep
@@ -643,8 +658,12 @@ def train_chunk(
     """
     s = _setup(state.cfg)
     losses, advs, stats, eps, method = [], [], [], [], []
+    ms = state.method_state
     if s.resident:  # `learn` donates it: the caller's state stays valid
-        state = state.replace(method_state=jax.tree.map(jnp.copy, state.method_state))
+        state = state.replace(method_state=jax.tree.map(jnp.copy, ms))
+    elif isinstance(ms, SplitState):  # its learner part is donated alike
+        learner = jax.tree.map(jnp.copy, ms.learner)
+        state = state.replace(method_state=ms.replace(learner=learner))
     for _ in range(n_updates):
         state, batch, traj, ep = collect(state, s.with_traj)
         put = functools.partial(jax.device_put, device=s.learner)

@@ -1,9 +1,13 @@
 """Tests for `combine` and the `combo` entry: composition, config, Classic runs."""
 
 import dataclasses
+import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +24,13 @@ from wut_murl_craftax.orchestration.queue import (
 from wut_murl_craftax.training import count_bonus, sil
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.dyna_q import DynaTrainer
-from wut_murl_craftax.training.hooks import HookFields, HookMethod, HookSpec, resolve
+from wut_murl_craftax.training.hooks import (
+    HookFields,
+    HookMethod,
+    HookSpec,
+    SplitState,
+    resolve,
+)
 from wut_murl_craftax.training.interface import METHODS, combine, combo_trainer
 from wut_murl_craftax.training.ppo_rnn import PPORNNTrainer
 
@@ -31,13 +41,20 @@ DONE = jnp.zeros(4, bool)
 
 
 def _method(
-    prefix: str, *, loss: bool = False, wrap: bool = False, group: str = ""
+    prefix: str,
+    *,
+    loss: bool = False,
+    wrap: bool = False,
+    group: str = "",
+    reward: bool = True,
+    size: int | None = None,
 ) -> HookMethod[Any]:
     """A fixture hook method with keys ``<prefix>_r`` and ``<prefix>_k``.
 
-    Its state counts calls: +1 per reward step, +10 per observe, +100 per extra step,
-    +1000 per after-extra; reward and extra loss are ``<prefix>_r``; its metric is
-    ``<group or prefix>/n``; ``artifacts`` records the state it gets.
+    Its state (int32, shape ``(size,)`` or scalar) counts calls: +1 per reward step,
+    +10 per observe, +100 per extra step, +1000 per after-extra; reward and extra loss
+    are ``<prefix>_r``; its metric is ``<group or prefix>/n``; ``artifacts`` records the
+    state it gets, ``init_state_fn`` the spec.
     """
     fields = [(f"{prefix}_r", float, 1.0), (f"{prefix}_k", int, 1)]
     config = dataclasses.make_dataclass(f"{prefix}Config", fields, frozen=True)
@@ -46,15 +63,19 @@ def _method(
     def hooks(cfg: Any, base: Any) -> HookFields:
         r, k = getattr(cfg, f"{prefix}_r"), getattr(cfg, f"{prefix}_k")
 
-        def reward(s: Any, e: Any, e2: Any, o: Any, d: jax.Array, t: Any) -> Any:
+        def bonus(s: Any, e: Any, e2: Any, o: Any, d: jax.Array, t: Any) -> Any:
             return jnp.full(d.shape, r, jnp.float32), s + 1
+
+        def init(key: jax.Array, spec: HookSpec) -> jax.Array:
+            _SPECS[prefix] = spec
+            return jnp.zeros(() if size is None else (size,), jnp.int32)
 
         def extra(params: Any, s: Any, key: jax.Array) -> Any:
             return jnp.float32(r), (s + 100, {f"{prefix}/loss": jnp.float32(r)})
 
         return HookFields(
-            init_state_fn=lambda key, spec: jnp.zeros((), jnp.int32),
-            intrinsic_reward_fn=reward,
+            init_state_fn=init,
+            intrinsic_reward_fn=bonus if reward else None,
             observe=lambda s, traj: s + 10,
             extra_loss_fn=extra if loss else None,
             extra_steps=k if loss else 0,
@@ -71,11 +92,22 @@ def _method(
 
 _SEEN: dict[str, list[Any]] = {}
 """States each fixture method's ``artifacts`` received, by prefix."""
+_SPECS: dict[str, HookSpec] = {}
+"""The spec each fixture method's ``init_state_fn`` last received, by prefix."""
 
 
-def _hooks(a: HookMethod[Any], b: HookMethod[Any], **knobs: Any) -> HookFields:
+@dataclasses.dataclass(frozen=True)
+class _SplitBase:
+    """A base config whose trainer places a `SplitState` by parts (as PPO-RNN)."""
+
+    splits_method_state: ClassVar[bool] = True
+
+
+def _hooks(
+    a: HookMethod[Any], b: HookMethod[Any], base: Any = None, **knobs: Any
+) -> HookFields:
     pair = combine(a, b)
-    return pair.hooks(pair.config(**knobs), None)
+    return pair.hooks(pair.config(**knobs), base)
 
 
 # --- composition -----------------------------------------------------------------
@@ -153,6 +185,51 @@ def test_artifacts_get_their_methods_part_of_the_state(tmp_path: Path) -> None:
     assert pair.artifacts is not None
     pair.artifacts(tmp_path, 3, ("sa", "sb"))
     assert (_SEEN["a"], _SEEN["b"]) == (["sa"], ["sb"])
+
+
+def test_a_learner_only_method_keeps_its_part_off_the_actor() -> None:
+    """On a splitting base, the rollout reads only the rewarding method's part."""
+    a, b = _method("a"), _method("b", loss=True, reward=False)
+    h = _hooks(a, b, _SplitBase())
+    state = h.init_state_fn(KEY, SPEC)
+    assert isinstance(state, SplitState)
+    r, actor = h.intrinsic_reward_fn(state.actor, None, None, None, DONE, 0)
+    assert np.asarray(r).tolist() == [1.0] * 4
+    state = h.observe(state.replace(actor=actor), None)
+    _, (state, _) = h.extra_loss_fn(None, state, KEY)
+    assert (
+        [int(x) for x in state.actor.values()],
+        [int(x) for x in state.learner.values()],
+    ) == (
+        [11],
+        [110],
+    )
+    assert {k: int(v) for k, v in h.metrics_fn(state).items()} == {
+        "a/n": 11,
+        "b/n": 110,
+    }
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        (_method("a"), _method("b")),  # both read by the rollout
+        (_method("a", reward=False), _method("b", reward=False)),  # both resident
+    ],
+)
+def test_a_pair_on_one_side_keeps_one_state(
+    a: HookMethod[Any], b: HookMethod[Any]
+) -> None:
+    assert isinstance(_hooks(a, b, _SplitBase()).init_state_fn(KEY, SPEC), tuple)
+
+
+def test_each_methods_memory_limit_leaves_room_for_the_other() -> None:
+    h = _hooks(_method("a", size=10), _method("b", size=30))
+    h.init_state_fn(KEY, dataclasses.replace(SPEC, memory_limit_bytes=1000))
+    assert _SPECS["a"].memory_limit_bytes == 1000 - 30 * 4
+    assert _SPECS["b"].memory_limit_bytes == 1000 - 10 * 4
+    h.init_state_fn(KEY, SPEC)
+    assert _SPECS["a"].memory_limit_bytes is None
 
 
 # --- combo.yaml and the registry entry ----------------------------------------------
@@ -264,7 +341,7 @@ def test_both_components_on_are_active(on: tuple[Any, Any, Any]) -> None:
     assert int(np.asarray(m["count/distinct_keys"])[-1]) > 0
     assert int(np.asarray(m["sil/inserted"]).sum()) > 0  # observe fills the buffer
     assert {"sil/policy_loss", "sil/grad_norm", "sil/kl_after"} <= set(m)
-    counts, buffer = state.method_state
+    counts, buffer = state.method_state.actor[0], state.method_state.learner[1]
     assert int(counts.table.sum()) > 0
     assert int((buffer.buffer["stamp"] >= 0).sum()) > 0
 
@@ -319,3 +396,47 @@ def test_a_broken_combo_yaml_breaks_only_the_combo_entry(
     out, err = proc.communicate(timeout=900)
     assert proc.returncode == 0, err[-3000:]
     assert out.strip().splitlines()[-1] == "ok"
+
+
+_ON_TWO_CPUS = """
+import json
+import sys
+import jax
+from wut_murl_craftax.orchestration.runtime import configure_runtime
+configure_runtime(host_devices=2)
+from wut_murl_craftax.training import ppo_rnn
+from wut_murl_craftax.training.hooks import SplitState
+from wut_murl_craftax.training.interface import METHODS
+
+cfg = json.loads(sys.argv[2])
+trainer = METHODS["combo"]
+state = trainer.init(cfg, jax.random.key(0))
+
+def devices(tree):
+    return {len(x.sharding.device_set) for x in jax.tree.leaves(tree)}
+
+for _ in range(2):
+    ms = state.method_state
+    assert isinstance(ms, SplitState), type(ms)
+    assert devices(ms.actor) == {2}, devices(ms.actor)  # the count table, replicated
+    assert devices(ms.learner) == {1}, devices(ms.learner)  # the SIL buffer, resident
+    state = ppo_rnn.collect(state, with_traj=True)[0]  # the rollout keeps the split
+# the update reads both parts on the learner; the SIL part never leaves it
+state, _ = trainer.train_chunk(state, 2)
+assert devices(state.method_state.learner) == {1}
+print("ok")
+"""
+
+
+def test_only_the_count_part_goes_to_the_actor_devices(
+    methods_dir: Path, tmp_path: Path
+) -> None:
+    """Two host CPUs: for the rollout only the count table is replicated over the
+    actor mesh; the SIL buffer stays on the learner throughout."""
+    cfg = _config(methods_dir, "combo", "combined", envs=8, num_steps=8)
+    script = [sys.executable, "-c", _ON_TWO_CPUS, str(tmp_path), json.dumps(cfg)]
+    flags = "--xla_force_host_platform_device_count=2"
+    env = {**os.environ, "JAX_PLATFORMS": "cpu", "XLA_FLAGS": flags}
+    proc = subprocess.run(script, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    assert proc.stdout.strip().splitlines()[-1] == "ok"

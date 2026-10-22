@@ -21,7 +21,17 @@ from ..orchestration.queue import METHODS_DIR, load_method
 from ..orchestration.runner import Trainer
 from . import count_bonus, sil
 from .dyna_q import DynaTrainer
-from .hooks import HookFields, HookMethod, HookSpec, State, Traj, _built, resolve
+from .hooks import (
+    HookFields,
+    HookMethod,
+    HookSpec,
+    ResolvedHooks,
+    SplitState,
+    State,
+    Traj,
+    _built,
+    resolve,
+)
 from .ppo import PPOTrainer
 from .ppo_rnn import PPORNNConfig
 from .ppo_rnn import make_trainer as make_ppo_rnn_trainer
@@ -68,16 +78,61 @@ class Policy(Protocol):
         ...
 
 
-def _put(state: tuple[Any, ...], i: int, part: Any) -> tuple[Any, ...]:
+type _Actor = tuple[int, ...] | None
+"""Methods whose parts the rollout reads, when the pair state is a `SplitState`."""
+
+
+def _put(state: Any, i: int, part: Any) -> Any:
+    """``state`` with method ``i``'s part replaced: a tuple, or a dict by index."""
+    return {**state, i: part} if isinstance(state, dict) else _put_t(state, i, part)
+
+
+def _put_t(state: tuple[Any, ...], i: int, part: Any) -> tuple[Any, ...]:
     return (*state[:i], part, *state[i + 1 :])
 
 
-def _init(fns: tuple[Callable[..., State], ...], key: jax.Array, spec: HookSpec) -> Any:
-    return tuple(f(k, spec) for f, k in zip(fns, jax.random.split(key), strict=True))
+def _join(state: Any) -> tuple[Any, ...]:
+    """Both parts in method order, from a tuple or a `SplitState` of index dicts."""
+    if not isinstance(state, SplitState):
+        return cast(tuple[Any, ...], state)
+    parts = state.actor | state.learner
+    return tuple(parts[i] for i in range(len(parts)))
+
+
+def _split(actor: _Actor, full: tuple[Any, ...]) -> Any:
+    if actor is None:
+        return full
+    return SplitState(
+        actor={i: x for i, x in enumerate(full) if i in actor},
+        learner={i: x for i, x in enumerate(full) if i not in actor},
+    )
+
+
+def _nbytes(tree: Any) -> int:
+    return sum(x.size * x.dtype.itemsize for x in jax.tree.leaves(tree))
+
+
+def _init(
+    fns: tuple[Callable[..., State], ...], actor: _Actor, key: jax.Array, spec: HookSpec
+) -> Any:
+    """Both parts; a memory limit leaves each method room for the other's state."""
+    keys, limit, specs = jax.random.split(key), spec.memory_limit_bytes, [spec] * 2
+    if limit is not None:
+        free = dataclasses.replace(spec, memory_limit_bytes=None)
+        sizes = [
+            _nbytes(jax.eval_shape(lambda k, f=f: f(k, free), k))
+            for f, k in zip(fns, keys, strict=True)
+        ]
+        specs = [
+            dataclasses.replace(spec, memory_limit_bytes=limit - sum(sizes) + n)
+            for n in sizes
+        ]
+    parts = tuple(f(k, s) for f, k, s in zip(fns, keys, specs, strict=True))
+    return _split(actor, parts)
 
 
 def _reward(fns: _Each, state: Any, *step: Any) -> tuple[jax.Array, Any]:
-    """Each set reward on its method's part of the state; the bonuses add up."""
+    """Each set reward on its method's part (of the actor dict when split); they add."""
     total = None
     for i, fn in fns:
         r, part = fn(state[i], *step)
@@ -85,28 +140,36 @@ def _reward(fns: _Each, state: Any, *step: Any) -> tuple[jax.Array, Any]:
     return cast(jax.Array, total), state
 
 
-def _observe(fns: _Each, state: Any, traj: Traj) -> Any:
+def _observe(fns: _Each, actor: _Actor, state: Any, traj: Traj) -> Any:
+    full = _join(state)
     for i, fn in fns:
-        state = _put(state, i, fn(state[i], traj))
-    return state
+        full = _put_t(full, i, fn(full[i], traj))
+    return _split(actor, full)
 
 
-def _extra_loss(fns: _Each, params: Any, state: Any, key: jax.Array) -> Any:
+def _extra_loss(
+    fns: _Each, actor: _Actor, params: Any, state: Any, key: jax.Array
+) -> Any:
     ((i, fn),) = fns  # extra_steps is in _SOLE: one extra loss at most
-    loss, (part, metrics) = fn(params, state[i], key)
-    return loss, (_put(state, i, part), metrics)
+    full = _join(state)
+    loss, (part, metrics) = fn(params, full[i], key)
+    return loss, (_split(actor, _put_t(full, i, part)), metrics)
 
 
-def _after_extra(fns: _Each, state: Any, metrics: dict[str, jax.Array]) -> Any:
+def _after_extra(
+    fns: _Each, actor: _Actor, state: Any, metrics: dict[str, jax.Array]
+) -> Any:
     ((i, fn),) = fns
-    return _put(state, i, fn(state[i], metrics))
+    full = _join(state)
+    return _split(actor, _put_t(full, i, fn(full[i], metrics)))
 
 
 def _metrics(fns: _Each, state: Any) -> dict[str, Any]:
     """Both methods' metrics, each under its own prefix; a name logged twice fails."""
     out: dict[str, Any] = {}
+    full = _join(state)
     for i, fn in fns:
-        new = fn(state[i])
+        new = fn(full[i])
         if clash := sorted(out.keys() & new.keys()):
             msg = f"both methods of the pair log {clash}"
             raise ValueError(msg)
@@ -114,8 +177,22 @@ def _metrics(fns: _Each, state: Any) -> dict[str, Any]:
     return out
 
 
+def _actor_parts(hooks: list[ResolvedHooks], base: Any) -> _Actor:
+    """The methods the rollout reads, when the others can stay on the learner.
+
+    Only on a base that places a `SplitState` (``splits_method_state``), with a learner
+    hook set and methods on both sides; else None, one state placed as a whole.
+    """
+    actor = tuple(i for i, h in enumerate(hooks) if "intrinsic_reward_fn" in h.active)
+    learner = any({"observe", "extra_loss_fn"} & set(h.active) for h in hooks)
+    split = getattr(base, "splits_method_state", False) and learner
+    return actor if split and 0 < len(actor) < len(hooks) else None
+
+
 def _pair_hooks(pair: tuple[HookMethod[Any], ...], cfg: Any, base: Any) -> HookFields:
-    """Both methods' hooks on one state ``(state_a, state_b)``.
+    """Both methods' hooks on one state, a tuple or split (`_actor_parts`).
+
+    A split state holds each part in a dict by method index: ``{0: state_a}``.
 
     Raises:
         ValueError: If both set a field of `_SOLE`.
@@ -127,21 +204,23 @@ def _pair_hooks(pair: tuple[HookMethod[Any], ...], cfg: Any, base: Any) -> HookF
         msg = f"both methods of the pair set {clash}; {_SOLE} do not compose"
         raise ValueError(msg)
     hooks = [resolve(h) for h in built]  # `active` drops a 0-step extra loss
+    actor = _actor_parts(hooks, base)
 
-    def lift(name: str, compose: Callable[..., Any]) -> Any:
+    def lift(name: str, compose: Callable[..., Any], *args: Any) -> Any:
         fns = tuple(
             (i, getattr(h, name)) for i, h in enumerate(hooks) if name in h.active
         )
-        return functools.partial(compose, fns) if fns else None
+        return functools.partial(compose, fns, *args) if fns else None
 
     wrapper = [h.env_wrapper_fn for h in built if h.env_wrapper_fn is not None]
+    init = tuple(h.init_state_fn for h in hooks)
     return HookFields(
-        init_state_fn=functools.partial(_init, tuple(h.init_state_fn for h in hooks)),
+        init_state_fn=functools.partial(_init, init, actor),
         intrinsic_reward_fn=lift("intrinsic_reward_fn", _reward),
-        observe=lift("observe", _observe),
-        extra_loss_fn=lift("extra_loss_fn", _extra_loss),
+        observe=lift("observe", _observe, actor),
+        extra_loss_fn=lift("extra_loss_fn", _extra_loss, actor),
         extra_steps=sum(h.extra_steps for h in hooks),
-        after_extra_fn=lift("after_extra_fn", _after_extra),
+        after_extra_fn=lift("after_extra_fn", _after_extra, actor),
         env_wrapper_fn=wrapper[0] if wrapper else None,
         metrics_fn=lift("metrics_fn", _metrics),
     )
@@ -150,7 +229,7 @@ def _pair_hooks(pair: tuple[HookMethod[Any], ...], cfg: Any, base: Any) -> HookF
 def _pair_artifacts(
     pair: tuple[HookMethod[Any], ...], run_dir: Path, update: int, state: Any
 ) -> None:
-    for method, part in zip(pair, state, strict=True):
+    for method, part in zip(pair, _join(state), strict=True):
         if method.artifacts is not None:
             method.artifacts(run_dir, update, part)
 

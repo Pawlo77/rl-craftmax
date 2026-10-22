@@ -152,6 +152,20 @@ class Traj:
             object.__setattr__(self, "hidden", h.astype(jnp.float16))
 
 
+class SplitState(struct.PyTreeNode):  # type: ignore[no-untyped-call]  # flax API
+    """A method state in two parts, for a trainer that places them apart (PPO-RNN).
+
+    A config class with ``splits_method_state = True`` places one: ``actor`` as a
+    state with an ``intrinsic_reward_fn`` (on the actor for the rollout, on the
+    learner for the update), ``learner`` on the learner for good. The reward hook gets
+    and returns ``actor`` alone, every other hook the whole state; a learner hook
+    (``observe`` or the extra loss) must be set. `interface.combine` builds one.
+    """
+
+    actor: Any
+    learner: Any
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedHooks:
     """Hooks with no-op defaults filled in, plus which ones the method really set."""
