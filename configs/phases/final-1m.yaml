@@ -1,0 +1,32 @@
+# Finals at Craftax-1M: every control's and method's tuned config, 10 seeds (0-9), every
+# log-spaced checkpoint evaluated. Ablations of the method plans are overrides of their
+# tuned config with the same seeds. A tuned config equal to a tuning config hashes like it,
+# so its tuning runs (e.g. PPO's published-1m, seeds 0-9) are reused by name: they join
+# this phase and get their missing evaluations.
+budget: 1m
+eval: log_spaced
+env: Craftax-Symbolic-v1
+seeds: 10
+runs:
+  ppo: {configs: [tuned]}
+  ppo-rnn: {configs: [tuned]}
+  pqn-rnn: {configs: [tuned]}
+  # SimHash ablation on the PPO-RNN variant: counts over a sign hash of the whole
+  # observation, with the larger table of count-bonus.yaml.
+  count-bonus-ppo-rnn:
+    config: count-bonus
+    configs: [tuned, {ref: tuned, set: {key: simhash, log2_k: 24, max_occupancy: 0.1}}]
+  count-bonus-pqn-rnn: {config: count-bonus, configs: [tuned]}
+  # Single-buffer ablation of the per-achievement slots.
+  sil: {configs: [tuned, {ref: tuned, set: {layout: single}}]}
+  # Ablations: random top level, Monte Carlo top level, no low-stat flags.
+  smdp-skills:
+    configs:
+      - tuned
+      - {ref: tuned, set: {eps_top_end: 1.0}}
+      - {ref: tuned, set: {monte_carlo: true}}
+      - {ref: tuned, set: {low_flags: false}}
+  # kappa ablation: 0 while the tuned kappa is above 0. If the tuned kappa is 0, set the
+  # best nonzero stage-1 kappa here instead (as written, the item would duplicate `tuned`
+  # and the queue refuses the phase).
+  dyna-q: {configs: [tuned, {ref: tuned, set: {plan_kappa: 0.0}}]}

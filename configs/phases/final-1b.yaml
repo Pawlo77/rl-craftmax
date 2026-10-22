@@ -1,0 +1,18 @@
+# Finals at Craftax-1B: 3 seeds (0-2), every log-spaced checkpoint evaluated; indicative,
+# significance claims are made at 1M. The controls run their untuned 1B column (`base`
+# plus `budgets.1b`): PPO Table 7, PPO-RNN Table 7 with the published ReLU network, PQN-RNN
+# the repo 1B config. The methods run their tuned 1M knobs on their control's 1B settings
+# (`base_from` resolves the donor at 1b).
+budget: 1b
+eval: log_spaced
+env: Craftax-Symbolic-v1
+seeds: 3
+runs:
+  ppo: {configs: [base]}
+  ppo-rnn: {configs: [base]}
+  pqn-rnn: {configs: [base]}
+  count-bonus-ppo-rnn: {config: count-bonus, configs: [tuned]}
+  count-bonus-pqn-rnn: {config: count-bonus, configs: [tuned]}
+  sil: {configs: [tuned]}
+  smdp-skills: {configs: [tuned]}
+  dyna-q: {configs: [tuned]}
