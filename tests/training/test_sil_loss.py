@@ -272,8 +272,10 @@ def test_updates_log_every_metric_and_slots_never_overfill() -> None:
     trainer = METHODS["sil"]
     state, m = trainer.train_chunk(trainer.init(SMALL, jax.random.key(0)), 3)
     names = achievement_names(SMALL["env"])
-    method = {k for k in m if k not in {"losses", "done", "ach", "ret", "length"}}
-    assert all(k.startswith("sil/") for k in method)
+    extra = {k for k in m if k not in {"losses", "done", "ach", "ret", "length"}}
+    method = {k for k in extra if k.startswith("sil/")}
+    # besides its own, only the PPO-RNN control's metrics (they come with every update)
+    assert {k.split("/")[0] for k in extra - method} == {"ppo", "rnn", "reward"}
     assert method == {f"sil/{n}" for n in NAMES} | {
         f"sil/{group}/{a}" for group in ("slot_fill", "sample_share") for a in names
     }
