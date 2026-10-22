@@ -62,6 +62,30 @@ def select_platforms(mode: RoleMode) -> None:
     jax.config.update("jax_platforms", "metal,cpu")  # type: ignore[no-untyped-call]
 
 
+class BackendError(RuntimeError):
+    """The profile's device mode needs an accelerator that JAX did not start."""
+
+
+def check_backend(mode: RoleMode) -> None:
+    """Fail in the ``gpu`` mode when JAX has no GPU (CUDA) device (review M11).
+
+    Without it, a node whose CUDA plugin or driver failed would train on one CPU
+    device, silently and far slower. Call after ``configure_runtime``.
+
+    Raises:
+        BackendError: ``mode`` is ``gpu`` and no device has the platform ``gpu``.
+    """
+    if mode != "gpu":
+        return
+    platforms = sorted({d.platform for d in jax.devices()})
+    if "gpu" not in platforms:
+        msg = (
+            f"profile mode gpu, but JAX has no GPU backend (platforms {platforms}): "
+            "check `uv sync --group cuda`, the NVIDIA driver and JAX_PLATFORMS"
+        )
+        raise BackendError(msg)
+
+
 def configure_runtime(
     cache_dir: Path | str = DEFAULT_CACHE_DIR, host_devices: int | None = None
 ) -> None:

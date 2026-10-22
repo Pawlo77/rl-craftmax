@@ -20,6 +20,7 @@ import multiprocessing
 import os
 import signal
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -91,7 +92,9 @@ from .queue import (
 )
 from .reproducibility import code_version
 from .runtime import (
+    BackendError,
     DeviceRoles,
+    check_backend,
     configure_runtime,
     device_roles,
     import_craftax,
@@ -146,6 +149,8 @@ REGISTRY = "wut_murl_craftax.training.interface:METHODS"
 """``module:attribute`` of the trainer registry a run's child process imports."""
 _RUN_ID_VARIABLES = ("MLFLOW_RUN_ID", "MLFLOW_ACTIVE_RUN_ID")
 """Environment variables that make MLflow or the tracker reopen a given run."""
+EXIT_NO_BACKEND = 78
+"""Exit code of a child whose machine lacks the profile's backend (EX_CONFIG)."""
 
 
 class ChunkMetrics(TypedDict):
@@ -526,9 +531,13 @@ def _set_up_jax(
 
     A registry reference is imported after ``configure_runtime``: the trainers import
     Craftax, which starts the JAX backends on import.
+
+    Raises:
+        BackendError: The profile's mode needs a GPU this machine lacks.
     """
     select_platforms(machine.device_roles)
     configure_runtime(host_devices=machine.host_devices)
+    check_backend(machine.device_roles)
     import_craftax()  # before evaluation traces ``init``, which builds the env
     trainers = _imported(methods) if isinstance(methods, str) else methods
     if isinstance(evaluate, str):
@@ -1026,7 +1035,11 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any, done: Any) 
 
     # before the setup (imports, backends: seconds), so a stop then opens no run
     threading.Thread(target=forwarded, daemon=True).start()
-    trainers, evaluate = _set_up_jax(job.machine, job.registry, job.evaluate)
+    try:
+        trainers, evaluate = _set_up_jax(job.machine, job.registry, job.evaluate)
+    except BackendError:
+        logger.exception("no backend for profile mode %s", job.machine.device_roles)
+        sys.exit(EXIT_NO_BACKEND)  # every later run would fail the same way
     if job.spec.registry_name not in trainers:
         msg = f"no trainer registered for {job.spec.registry_name!r} in {job.registry}"
         raise ValueError(msg)
@@ -1063,6 +1076,7 @@ def _in_child(job: _Job, stop: _Stop) -> bool:
     A signal to this process is forwarded once; a second one kills the child.
 
     Raises:
+        BackendError: The child found no backend for the profile's mode.
         RuntimeError: The child exited non-zero without a signal (its error, or a
             crash such as an OOM kill: the run is then closed FAILED here).
     """
@@ -1084,6 +1098,9 @@ def _in_child(job: _Job, stop: _Stop) -> bool:
             child.join()
         _close_orphan(job.spec.name, "KILLED", "killed by a second signal")
         raise
+    if child.exitcode == EXIT_NO_BACKEND:
+        msg = "the child found no GPU backend for profile mode gpu (see its log)"
+        raise BackendError(msg)
     if child.exitcode and done.value:
         logger.warning(
             "%s: child exited with %d after closing its run",
@@ -1190,6 +1207,7 @@ def main(
         SystemExit: 128 + the signal number after SIGINT or SIGTERM.
         RuntimeError: At the end, naming every run of this call that failed.
         ValueError: ``seed_from`` without ``tracking_uri``.
+        BackendError: The profile's mode needs a GPU this machine lacks (at once).
     """
     machine = load_profile(profile)
     mine = worker_specs(specs, worker_index, num_workers)
@@ -1221,6 +1239,8 @@ def main(
                 break
             try:
                 trained += run_one(spec, stop)
+            except BackendError:  # every run of this machine would fail the same way
+                raise
             except Exception as error:  # one run must not stop the queue
                 logger.exception("%s failed, next run", spec.name)
                 failed.append(f"{spec.name}: {type(error).__name__}: {error}")

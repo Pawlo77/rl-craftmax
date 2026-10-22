@@ -2,15 +2,17 @@
 
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
-from wut_murl_craftax.orchestration import runner
+from wut_murl_craftax.orchestration import runner, runtime
 from wut_murl_craftax.orchestration.profiles import Profile, load_profile
 
 REPO = Path(__file__).resolve().parents[2]
@@ -183,6 +185,28 @@ else:
     assert out == "metal cpu 8"
 
 
+@pytest.mark.parametrize(
+    ("mode", "platforms", "fails"),
+    [
+        ("gpu", ["cpu"], True),
+        ("gpu", ["METAL", "cpu"], True),
+        ("gpu", ["gpu", "cpu"], False),
+        ("cpu-actor", ["cpu"], False),
+    ],
+)
+def test_the_gpu_mode_fails_loudly_without_a_gpu_backend(
+    monkeypatch: pytest.MonkeyPatch, mode: str, platforms: list[str], fails: bool
+) -> None:
+    """Review M11: a node whose CUDA plugin failed would train on one CPU device."""
+    devices = [SimpleNamespace(platform=p) for p in platforms]
+    monkeypatch.setattr(runtime.jax, "devices", lambda *_: devices)
+    if fails:
+        with pytest.raises(runtime.BackendError, match="no GPU backend"):
+            runtime.check_backend(mode)  # type: ignore[arg-type]
+    else:
+        runtime.check_backend(mode)  # type: ignore[arg-type]
+
+
 def test_the_runner_picks_the_platform_before_it_splits_the_cpu(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -283,3 +307,87 @@ def test_make_merge_mlflow_needs_a_source() -> None:
     )
     assert result.returncode != 0
     assert "SRC" in result.stderr
+
+
+# --- cluster array script -------------------------------------------------------
+
+ARRAY = REPO / "scripts" / "cluster" / "run_array.sh"
+_ARRAY_ENV = ("SLURM_ARRAY_", "ARRAY_", "SEED_FROM", "STORE_DIR", "PROFILE")
+
+
+def _array(tmp_path: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Run the array script with a fake ``uv`` that prints its arguments."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "uv").write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+    (bin_dir / "uv").chmod(0o755)
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(_ARRAY_ENV)}
+    clean["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    return subprocess.run(
+        ["bash", str(ARRAY), *args],
+        cwd=tmp_path,
+        env=clean | env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_run_array_gives_each_task_a_worker_and_its_own_store(tmp_path: Path) -> None:
+    """infra-6 review M8."""
+    out = _array(
+        tmp_path,
+        "final-1b",
+        "--method",
+        "ppo",
+        SLURM_ARRAY_TASK_ID="2",
+        SLURM_ARRAY_TASK_COUNT="4",
+        SEED_FROM="/main/mlruns.db",
+    )
+    assert out.returncode == 0, out.stderr
+    store = (tmp_path / "node-stores").resolve() / "mlruns-node-2.db"
+    assert out.stdout.splitlines() == [
+        *shlex.split(QUEUE)[1:],
+        "--phase",
+        "configs/phases/final-1b.yaml",
+        "--profile",
+        "configs/profiles/cuda.yaml",
+        "--worker-index",
+        "2",
+        "--num-workers",
+        "4",
+        "--tracking-uri",
+        f"sqlite:///{store}",
+        "--seed-from",
+        "/main/mlruns.db",
+        "--method",
+        "ppo",
+    ]
+
+
+def test_run_array_takes_generic_variables_and_needs_an_index(tmp_path: Path) -> None:
+    out = _array(
+        tmp_path,
+        "smoke",
+        ARRAY_INDEX="0",
+        ARRAY_SIZE="1",
+        PROFILE="laptop",
+        STORE_DIR=str(tmp_path / "s"),
+    )
+    assert out.returncode == 0, out.stderr
+    args = out.stdout.splitlines()
+    assert args[args.index("--profile") + 1] == "configs/profiles/laptop.yaml"
+    assert args[args.index("--tracking-uri") + 1].endswith("/s/mlruns-node-0.db")
+    assert "--seed-from" not in args
+    missing = _array(tmp_path, "smoke")
+    assert missing.returncode != 0
+    assert "no array index" in missing.stderr
+
+
+def test_run_array_asks_for_sigterm_well_before_the_time_limit() -> None:
+    """Review M12: the queue gets time to end its chunk and save ``state/``."""
+    grace = re.search(
+        r"^#SBATCH --signal=B:TERM@(\d+)$", ARRAY.read_text(), re.MULTILINE
+    )
+    assert grace is not None
+    assert int(grace[1]) >= 300

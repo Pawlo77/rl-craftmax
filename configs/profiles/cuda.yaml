@@ -6,3 +6,4 @@ device_roles: gpu
 # usually have 128 GB or more); 64 GiB is a safe half, raise it once the cluster is measured.
 memory_limit_bytes: 68719476736
 checkpoint_every: 50  # a GPU run advances fast and is preempted rarely; state saves cost more per update
+# A stop waits for the chunk (<= 50 updates, about 40 s at 1B): run_array.sh asks for SIGTERM 600 s early.

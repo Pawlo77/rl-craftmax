@@ -29,6 +29,7 @@ from wut_murl_craftax.orchestration import queue, runner
 from wut_murl_craftax.orchestration.profiles import Profile, load_profile
 from wut_murl_craftax.orchestration.queue import RunSpec, config_hash, expand_phase
 from wut_murl_craftax.orchestration.runner import final_score, worker_specs
+from wut_murl_craftax.orchestration.runtime import BackendError
 from wut_murl_craftax.orchestration.store import merge_stores
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training.checkpoints import (
@@ -1296,6 +1297,25 @@ def test_each_run_trains_in_its_own_child_process(store: Store) -> None:
     assert len(pids) == 2
     assert str(os.getpid()) not in pids
     assert store.runtime_calls == []  # the parent never sets up JAX
+
+
+def test_a_gpu_profile_without_a_gpu_stops_the_queue_before_any_run(
+    store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M11: the first child finds no GPU, and no run starts on the CPU."""
+    monkeypatch.setenv("JAX_PLATFORMS", "cpu")  # inherited by the child
+    gpu = tmp_path / "gpu.yaml"
+    gpu.write_text(PROFILE.read_text().replace("cpu-actor", "gpu"))
+    specs = store.phase("tune-coarse", ["published", "lr-hi"])
+    with pytest.raises(BackendError, match="no GPU backend"):
+        runner.main(
+            specs,
+            gpu,
+            experiment_config=store.config,
+            registry=REGISTRY,
+            evaluate=NO_EVAL,
+        )
+    assert store.runs() == {}
 
 
 def test_a_crashed_child_fails_its_run_and_the_queue_continues(store: Store) -> None:
