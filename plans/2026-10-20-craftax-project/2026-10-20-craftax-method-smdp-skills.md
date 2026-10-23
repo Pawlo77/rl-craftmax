@@ -235,24 +235,24 @@ Contract with `pqn_rnn.learn` (checked 2026-10-21 against `training/pqn_rnn.py`)
 - Modify: `configs/phases/tune-coarse.yaml` (add `smdp-skills`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
 - [x] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=smdp-skills DRY_RUN=1`; expected: 144 runs.
-- [ ] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=smdp-skills` (144 runs, resumable).
-- [ ] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 144 finished for this method.
-- [ ] **Step 4: Write** the stage-1 table (config, mean final score, sd, keys visited, mean skill success) into this plan under a new section `## Results`.
+- [x] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=smdp-skills` (144 runs, resumable). (done 2026-10-23 01:03 to 08:44, 2 workers)
+- [x] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 144 finished for this method. (144 finished, none killed or aborted)
+- [x] **Step 4: Write** the stage-1 table (config, mean final score, sd, keys visited, mean skill success) into this plan under a new section `## Results`.
 
 ### Task 8: Fine tuning and the tuned config
 
 **Files:**
 - Modify: `configs/phases/tune-fine.yaml` (add `smdp-skills`, stage `fine`, 3 seeds), `configs/methods/smdp-skills.yaml` (`tuned:`), this plan (`## Results`), [[Experiment decisions]]
 
-- [ ] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=smdp-skills FINE=smdp-skills DRY_RUN=1`; expected: 9 configs, the centre reused by run name, 24 new runs.
-- [ ] **Step 2: Run** `make queue PHASE=tune-fine METHOD=smdp-skills FINE=smdp-skills` (resumable); `make status PHASE=tune-fine` shows 27 finished for this method (24 new, 3 reused from `tune-coarse`).
-- [ ] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/smdp-skills.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`); [[2026-10-20-craftax-method-dyna-q]] reads the block through `base_from: smdp-skills.tuned`:
+- [x] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=smdp-skills FINE=smdp-skills DRY_RUN=1`; expected: 9 configs, the centre reused by run name, 24 new runs. (9 configs, 2 of them stage-1 configs reused by run name: the centre and α 0.05 with timeout 1; 21 new runs)
+- [x] **Step 2: Run** `make queue PHASE=tune-fine METHOD=smdp-skills FINE=smdp-skills` (resumable); `make status PHASE=tune-fine` shows 27 finished for this method (24 new, 3 reused from `tune-coarse`). (done 2026-10-23 11:32 to 12:36; 27 finished: 21 new, 6 reused)
+- [x] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/smdp-skills.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`); [[2026-10-20-craftax-method-dyna-q]] reads the block through `base_from: smdp-skills.tuned` (done 2026-10-23 15:43 at 736807f: `0b84c247`, `best=true` on its 3 runs):
 
 ```bash
 uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned smdp-skills <confighash8>
 ```
 
-- [ ] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]].
+- [x] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]]. (done 2026-10-23; Experiment decisions at e64f918)
 
 ### Task 9: Final 1M with ablations
 
@@ -279,6 +279,84 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned smdp-skills <
 - [x] **Step 1: Write the failing tests**: a NaN in `Q_top` or the skill loss aborts the run with status `FAILED` and tag `abort=nan`; occupancy above 0.25 aborts with `abort=table_full`; an updated entry above 300 aborts with `abort=divergence`.
 - [x] **Step 2: Implement** the abort rules: NaN or inf in `Q_top`, losses or parameters; occupancy > 0.25; any updated `Q_top` entry > 300 (no discounted return can exceed the 226 achievement reward plus the bounded health term).
 - [x] **Step 3: Run** `uv run pytest tests/training/test_smdp_trainer.py -q`, then `make tests`.
+
+## Results
+
+Craftax-1M, 3 seeds per config: `tune-coarse` 2026-10-23 01:03 to 08:44 (144 runs), `tune-fine` 2026-10-23 11:32 to 12:36 (21 new runs); every run finished, none aborted. Mean and sd are of `final_score` over the 3 seeds (sample sd); keys visited is `smdp/keys_visited` at the last update (step 999,424), averaged over the seeds. Mean skill success is not logged as one metric: it is the sum over skills of `smdp/skill/<name>/chosen_share` x `smdp/skill/<name>/success_rate` at the last update (the decision-weighted success rate), averaged over the seeds. Config names: a = α, h = horizon $1/(1 - \gamma)$ (200: γ 0.995, 1000: γ 0.999), e = ε decay fraction, t = timeout multiplier, then the key granularity. Rows are sorted by mean.
+
+### Stage 1
+
+| Config | Hash | Mean | sd | Keys visited | Mean skill success |
+|---|---|---|---|---|---|
+| a0.05-h200-e0.3-t2-recipe | 0b84c247 | 1.415 | 0.196 | 157.7 | 0.489 |
+| a0.05-h200-e0.1-t0.5-recipe | 19c7afba | 1.252 | 0.358 | 195.0 | 0.520 |
+| a0.05-h200-e0.1-t0.5-log2 | 20abd682 | 1.244 | 0.313 | 198.0 | 0.437 |
+| a0.05-h200-e0.1-t1-log2 | 444c53cb | 1.179 | 0.555 | 155.7 | 0.401 |
+| a0.05-h1000-e0.1-t1-recipe | 0dfd8119 | 1.098 | 0.272 | 109.0 | 0.434 |
+| a0.05-h1000-e0.1-t1-log2 | f8dc78a9 | 1.062 | 0.593 | 144.7 | 0.466 |
+| a0.2-h200-e0.1-t1-log2 | 56ec83c5 | 1.061 | 0.606 | 212.3 | 0.389 |
+| a0.2-h200-e0.1-t0.5-log2 | 19afd263 | 1.027 | 0.138 | 164.0 | 0.354 |
+| a0.05-h200-e0.1-t1-recipe | ce15b449 | 0.980 | 0.228 | 112.7 | 0.397 |
+| a0.05-h1000-e0.1-t2-recipe | ce43ea6d | 0.957 | 0.474 | 136.3 | 0.345 |
+| a0.2-h1000-e0.3-t0.5-log2 | abbcecb7 | 0.926 | 0.739 | 186.7 | 0.282 |
+| a0.05-h1000-e0.1-t0.5-log2 | a9db0cd0 | 0.918 | 0.249 | 135.0 | 0.382 |
+| a0.2-h1000-e0.3-t1-log2 | 9c69793d | 0.902 | 0.306 | 158.0 | 0.195 |
+| a0.05-h200-e0.3-t0.5-log2 | 4ada2a18 | 0.762 | 0.928 | 195.3 | 0.388 |
+| a0.2-h200-e0.3-t1-log2 | b968eb87 | 0.757 | 0.284 | 168.3 | 0.265 |
+| a0.05-h1000-e0.3-t0.5-recipe | 4b9a4440 | 0.756 | 0.689 | 141.7 | 0.442 |
+| a0.2-h1000-e0.1-t0.5-recipe | 266dbc11 | 0.754 | 0.997 | 185.3 | 0.364 |
+| a0.2-h1000-e0.1-t1-recipe | 6210a984 | 0.734 | 0.935 | 152.3 | 0.247 |
+| a0.2-h200-e0.1-t2-recipe | fe3b47ed | 0.705 | 0.761 | 118.3 | 0.158 |
+| a0.05-h200-e0.3-t2-log2 | 5d748ccc | 0.677 | 0.924 | 173.3 | 0.283 |
+| a0.05-h200-e0.3-t1-recipe | 15cefa4b | 0.672 | 0.195 | 97.3 | 0.248 |
+| a0.05-h1000-e0.3-t0.5-log2 | 61c71a09 | 0.646 | 0.250 | 120.7 | 0.265 |
+| a0.05-h200-e0.3-t0.5-recipe | 291e3368 | 0.641 | 0.434 | 111.3 | 0.305 |
+| a0.05-h1000-e0.1-t2-log2 | de632e0e | 0.640 | 0.255 | 115.7 | 0.383 |
+| a0.2-h200-e0.1-t0.5-recipe | 86b6e526 | 0.636 | 0.145 | 74.3 | 0.212 |
+| a0.05-h200-e0.3-t1-log2 | 9f769fa6 | 0.630 | 0.958 | 169.7 | 0.337 |
+| a0.05-h1000-e0.3-t1-recipe | bc4067e9 | 0.613 | 0.424 | 107.7 | 0.373 |
+| a0.05-h1000-e0.3-t2-log2 | 39e80cf8 | 0.613 | 0.083 | 143.3 | 0.313 |
+| a0.2-h1000-e0.3-t2-recipe | 569f516e | 0.609 | 0.152 | 139.0 | 0.261 |
+| a0.05-h200-e0.1-t2-log2 | 4dd34e55 | 0.564 | 0.817 | 146.3 | 0.306 |
+| a0.05-h1000-e0.1-t0.5-recipe | 7e58e4c7 | 0.545 | 0.393 | 86.7 | 0.318 |
+| a0.2-h200-e0.3-t0.5-log2 | 0677f9a9 | 0.541 | 0.337 | 99.7 | 0.266 |
+| a0.2-h1000-e0.1-t0.5-log2 | 3f20dce9 | 0.528 | 0.738 | 133.0 | 0.179 |
+| a0.2-h200-e0.3-t2-log2 | 4e217798 | 0.510 | 0.889 | 125.7 | 0.195 |
+| a0.2-h200-e0.1-t1-recipe | 9609516c | 0.504 | 0.147 | 109.7 | 0.228 |
+| a0.2-h200-e0.3-t2-recipe | 024ec3ed | 0.496 | 0.619 | 112.3 | 0.184 |
+| a0.2-h1000-e0.1-t2-log2 | e86dcb67 | 0.465 | 0.181 | 161.3 | 0.125 |
+| a0.05-h1000-e0.3-t2-recipe | 1fbec586 | 0.445 | 0.390 | 93.3 | 0.382 |
+| a0.2-h200-e0.3-t0.5-recipe | 2f9b6587 | 0.432 | 0.178 | 110.7 | 0.185 |
+| a0.2-h1000-e0.3-t2-log2 | 43403c70 | 0.408 | 0.884 | 112.3 | 0.054 |
+| a0.2-h1000-e0.3-t1-recipe | 50308b37 | 0.341 | 0.257 | 117.3 | 0.224 |
+| a0.2-h200-e0.3-t1-recipe | b1a684ea | 0.291 | 0.422 | 75.7 | 0.232 |
+| a0.2-h200-e0.1-t2-log2 | 7dca71f1 | 0.221 | 0.651 | 90.0 | 0.225 |
+| a0.05-h1000-e0.3-t1-log2 | 7bb4bec6 | 0.219 | 0.663 | 105.0 | 0.121 |
+| a0.2-h1000-e0.3-t0.5-recipe | 0d4fe820 | 0.153 | 0.404 | 111.3 | 0.051 |
+| a0.05-h200-e0.1-t2-recipe | 5f84ab18 | 0.153 | 0.398 | 82.0 | 0.117 |
+| a0.2-h1000-e0.1-t2-recipe | 94991889 | 0.122 | 0.390 | 78.7 | 0.252 |
+| a0.2-h1000-e0.1-t1-log2 | c18671b3 | -0.122 | 0.396 | 75.7 | 0.090 |
+
+### Stage 2
+
+The rule picked α and the timeout multiplier; horizon 200, ε decay 0.3 and recipe keys stay. α 0.05 x {0.5, 1, 2} crossed with timeout 2 x {0.5, 1, 2}: 9 configs, 2 of them stage-1 configs reused by run name.
+
+| Config | Hash | Runs | Mean | sd | Keys visited | Mean skill success |
+|---|---|---|---|---|---|---|
+| fine-alpha=0.05-timeout_mult=2.0 | 0b84c247 | reused (a0.05-h200-e0.3-t2-recipe) | 1.415 | 0.196 | 157.7 | 0.489 |
+| fine-alpha=0.1-timeout_mult=4.0 | cbb15b50 | new | 0.916 | 0.442 | 155.0 | 0.428 |
+| fine-alpha=0.025-timeout_mult=2.0 | 4230b23f | new | 0.772 | 0.509 | 141.7 | 0.412 |
+| fine-alpha=0.025-timeout_mult=1.0 | 21eb67fc | new | 0.755 | 0.092 | 91.7 | 0.280 |
+| fine-alpha=0.05-timeout_mult=1.0 | 15cefa4b | reused (a0.05-h200-e0.3-t1-recipe) | 0.672 | 0.195 | 97.3 | 0.248 |
+| fine-alpha=0.1-timeout_mult=2.0 | 73afc33b | new | 0.661 | 0.706 | 133.0 | 0.281 |
+| fine-alpha=0.025-timeout_mult=4.0 | 9d6f4f9c | new | 0.286 | 0.290 | 81.3 | 0.182 |
+| fine-alpha=0.05-timeout_mult=4.0 | e2202c44 | new | 0.279 | 0.071 | 71.7 | 0.192 |
+| fine-alpha=0.1-timeout_mult=1.0 | dbbd4d9d | new | -0.297 | 0.069 | 55.7 | 0.084 |
+
+### Chosen config
+
+- `0b84c247` a0.05-h200-e0.3-t2-recipe (α 0.05, γ 0.995, ε decay 0.3, timeout 2, recipe), mean 1.415, sd 0.196; the stage-1 best and stage-2 centre; +0.145 over the PQN-RNN control (1.270, 3 seeds). The other 8 stage-2 configs score -0.297 to 0.916, so the win may be a lucky isolated cell; the 10 `final-1m` seeds will tell.
+- Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
 
 ## Combination with other methods
 

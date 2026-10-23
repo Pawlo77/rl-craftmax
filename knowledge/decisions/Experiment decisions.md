@@ -239,11 +239,11 @@ Best minus base: 0.4480 < h, so a tie and tuned = base (10cbfc16). At 1M the bat
 
 ## 2026-10-23 - Phase 1 tuning results
 
-Decision: each Phase 1 method takes the config with the highest 3-seed mean `final_score` over `tune-coarse` and `tune-fine` (ties to the coarser key, the smaller buffer or the smaller timeout multiplier; no tie occurred); count-bonus is chosen per variant. The tuned block is written with `--mark-tuned`, which also sets `best=true` on the config's tuning runs.
+Decision: each Phase 1 method takes the config with the highest 3-seed mean `final_score` over `tune-coarse` and `tune-fine` (ties to the coarser key, the smaller buffer, the smaller timeout multiplier or the cheaper planning variant; no tie occurred); count-bonus is chosen per variant. The tuned block is written with `--mark-tuned`, which also sets `best=true` on the config's tuning runs.
 
 Why: the method briefs fix this rule; unlike the controls, a method is not held to a band around its base control. Means are of `final_score`, sd is the sample sd over the 3 seeds, n is seeds. "Best stage 2" is the best config new in stage 2; a reused stage-1 centre counts as stage 1.
 
-Consequences: `tuned:` is set in `configs/methods/{smdp-skills,count-bonus,sil}.yaml`; dyna-q starts from `smdp-skills.tuned` (`base_from`). Rejected: choosing the base control's config for any method.
+Consequences: `tuned:` is set in `configs/methods/{smdp-skills,count-bonus,sil}.yaml`; dyna-q starts from `smdp-skills.tuned` (`base_from`), and its own `tuned:` was written 2026-10-23 20:35 by `--mark-best dyna-q` (7dbe10f). Rejected: choosing the base control's config for any method.
 
 smdp-skills (base control pqn-rnn 10cbfc16, 1.27030, n 3):
 
@@ -280,3 +280,12 @@ sil (base control ppo-rnn b3ce95c4, 2.18755, n 10):
 | 4b57f12c fine-sil_steps=1-lambda_sil=0.15 (best stage 2) | lambda_sil 0.15, S 2, K 1 | 3 | 2.10891 | 0.04546 |
 
 Chosen 6f8690ad: -0.048 against the ppo-rnn control (inside the control's sd 0.107), so SIL does not beat PPO-RNN at 1M. The best K is the lower bound of the grid (K 1), so K below 1 was never available; stage 2 tried only K 1 and 2.
+
+dyna-q (base smdp-skills 0b84c247, 1.41543, n 3; base control pqn-rnn 10cbfc16, 1.27030, n 3):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| 670e2f80 uniform-n1-k0.003 (best stage 1, stage-2 centre) | uniform, n 1, kappa 0.003, M 8 | 3 | 0.94895 | 0.34508 |
+| 74c22d85 fine-plan_kappa=0.006-model_slots=4 (best stage 2, chosen) | uniform, n 1, kappa 0.006, M 4 | 3 | 1.36364 | 0.40171 |
+
+Chosen 74c22d85: -0.052 against smdp-skills (inside both sds) and +0.093 over the pqn-rnn base, so planning does not beat the model-free skill table at 1M. It is a corner of the stage-2 grid (largest kappa, smallest M); kappa 0.03 with n 1 scored 0.454 in stage 1. Its kappa is above 0, so the `final-1m` kappa ablation runs kappa 0.

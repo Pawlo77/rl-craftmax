@@ -197,24 +197,24 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 - Modify: `configs/phases/tune-coarse.yaml` (add `sil`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
 - [x] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=sil DRY_RUN=1`; expected: 54 runs.
-- [ ] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=sil` (54 runs, resumable).
-- [ ] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 54 finished for `sil`.
-- [ ] **Step 4: Write** the stage-1 table (config, mean final score, sd, `sil/active` at 1M, non-empty slots) into this plan under a new section `## Results`.
+- [x] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=sil` (54 runs, resumable). (done 2026-10-22 19:46 to 2026-10-23 01:02, 2 workers)
+- [x] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 54 finished for `sil`. (54 finished, none killed or aborted)
+- [x] **Step 4: Write** the stage-1 table (config, mean final score, sd, `sil/active` at 1M, non-empty slots) into this plan under a new section `## Results`.
 
 ### Task 7: Fine tuning and the tuned config
 
 **Files:**
 - Modify: `configs/phases/tune-fine.yaml` (add `sil`, stage `fine`, 3 seeds), `configs/methods/sil.yaml` (`tuned:`), this plan (`## Results`), [[Experiment decisions]]
 
-- [ ] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=sil FINE=sil DRY_RUN=1`; expected: 9 configs, the centre reused by run name, 24 new runs.
-- [ ] **Step 2: Run** `make queue PHASE=tune-fine METHOD=sil FINE=sil` (resumable); `make status PHASE=tune-fine` shows 27 finished for `sil` (24 new, 3 reused from `tune-coarse`).
-- [ ] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/sil.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`):
+- [x] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=sil FINE=sil DRY_RUN=1`; expected: 9 configs, the centre reused by run name, 24 new runs. (6 configs: the best `K` is 1, and 1 x 0.5 rounds to 1, so `K` takes only 1 and 2; 2 stage-1 configs reused by run name, the centre and $\lambda_{\text{sil}}$ 0.3 with `K` 2; 12 new runs)
+- [x] **Step 2: Run** `make queue PHASE=tune-fine METHOD=sil FINE=sil` (resumable); `make status PHASE=tune-fine` shows 27 finished for `sil` (24 new, 3 reused from `tune-coarse`). (done 2026-10-23 10:25 to 11:32; 18 finished: 12 new, 6 reused)
+- [x] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/sil.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`) (done 2026-10-23 15:44 at 402a727: `6f8690ad`, `best=true` on its 3 runs):
 
 ```bash
 uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned sil <confighash8>
 ```
 
-- [ ] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]].
+- [x] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]]. (done 2026-10-23; Experiment decisions at e64f918)
 
 ### Task 8: Final 1M
 
@@ -241,6 +241,51 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned sil <configha
 - [x] **Step 1: Write the failing tests**: a NaN SIL loss aborts the run with status `FAILED` and `abort=nan`; with a `Profile` whose `memory_limit_bytes` is 100 MB (`orchestration/profiles.py`), `sil.check_memory(cfg, spec, profile)` refuses a config with `S` = 2 before compiling and the run ends `FAILED` with `abort=memory`; `sil/kl_after` > 0.5 for 20 consecutive updates aborts with `abort=sil_dominates`.
 - [x] **Step 2: Implement** the abort rules: NaN or inf in loss or parameters; `buffer_bytes + staging_bytes` above `memory_limit_bytes` of the machine profile the runner loaded with `load_profile` of `orchestration/profiles.py` (`configs/profiles/laptop.yaml` or `configs/profiles/cuda.yaml`, field tested in [[2026-10-20-craftax-infrastructure]] Task 6), checked at init; `sil/kl_after` > 0.5 for 20 consecutive updates (the SIL step dominates the policy).
 - [x] **Step 3: Run** `uv run pytest tests/training/test_sil_trainer.py -q`, then `make tests`.
+
+## Results
+
+Craftax-1M, 3 seeds per config: `tune-coarse` 2026-10-22 19:46 to 2026-10-23 01:02 (54 runs), `tune-fine` 2026-10-23 10:25 to 11:32 (12 new runs); every run finished, none aborted. Mean and sd are of `final_score` over the 3 seeds (sample sd); `sil/active` and non-empty slots (`sil/nonempty_slots`) are the values at the last update (step 999,424), averaged over the seeds. Config names: l = $\lambda_{\text{sil}}$, s = `S`, k = `K`. Rows are sorted by mean.
+
+### Stage 1
+
+| Config | Hash | Mean | sd | `sil/active` | Non-empty slots |
+|---|---|---|---|---|---|
+| l0.3-s2-k1 | 6f8690ad | 2.140 | 0.049 | 0.863 | 16.3 |
+| l0.3-s8-k1 | 5af5a226 | 2.136 | 0.161 | 0.861 | 16.0 |
+| l1-s2-k1 | 23c60c53 | 2.133 | 0.069 | 0.768 | 16.3 |
+| l0.1-s2-k1 | 616498cb | 2.128 | 0.108 | 0.825 | 15.3 |
+| l0.1-s8-k1 | f981b2ac | 2.097 | 0.102 | 0.872 | 15.3 |
+| l1-s8-k1 | bfce924d | 2.089 | 0.088 | 0.799 | 16.0 |
+| l0.1-s2-k2 | 416776b8 | 2.076 | 0.147 | 0.819 | 14.3 |
+| l0.1-s2-k4 | 3df9db33 | 2.068 | 0.114 | 0.799 | 14.3 |
+| l0.3-s8-k2 | e87209a5 | 2.057 | 0.075 | 0.839 | 15.7 |
+| l0.1-s8-k2 | 66ffbefe | 2.026 | 0.092 | 0.863 | 16.3 |
+| l0.3-s2-k2 | 8a8a7685 | 2.014 | 0.034 | 0.800 | 15.3 |
+| l1-s2-k2 | 63869bab | 2.014 | 0.047 | 0.831 | 17.7 |
+| l0.1-s8-k4 | b1473913 | 1.983 | 0.137 | 0.815 | 15.3 |
+| l0.3-s8-k4 | 0173b60d | 1.967 | 0.028 | 0.800 | 14.7 |
+| l1-s8-k2 | 7cd81bf3 | 1.943 | 0.021 | 0.836 | 15.3 |
+| l0.3-s2-k4 | fee2e521 | 1.936 | 0.094 | 0.820 | 15.7 |
+| l1-s2-k4 | 0a3c458c | 1.914 | 0.133 | 0.727 | 14.7 |
+| l1-s8-k4 | f9787b8b | 1.901 | 0.049 | 0.746 | 14.3 |
+
+### Stage 2
+
+The rule picked $\lambda_{\text{sil}}$ and `K`; `S` stays 2. $\lambda_{\text{sil}}$ 0.3 x {0.5, 1, 2} gives 0.15, 0.3, 0.6; `K` 1 x {0.5, 1, 2} rounds to 1, 1, 2, so only 2 values: 6 configs, 2 of them stage-1 configs reused by run name.
+
+| Config | Hash | Runs | Mean | sd | `sil/active` | Non-empty slots |
+|---|---|---|---|---|---|---|
+| fine-sil_steps=1-lambda_sil=0.3 | 6f8690ad | reused (l0.3-s2-k1) | 2.140 | 0.049 | 0.863 | 16.3 |
+| fine-sil_steps=1-lambda_sil=0.15 | 4b57f12c | new | 2.109 | 0.045 | 0.825 | 16.3 |
+| fine-sil_steps=2-lambda_sil=0.15 | d28eab4c | new | 2.094 | 0.054 | 0.827 | 17.0 |
+| fine-sil_steps=1-lambda_sil=0.6 | 247defae | new | 2.037 | 0.092 | 0.823 | 17.0 |
+| fine-sil_steps=2-lambda_sil=0.3 | 8a8a7685 | reused (l0.3-s2-k2) | 2.014 | 0.034 | 0.800 | 15.3 |
+| fine-sil_steps=2-lambda_sil=0.6 | e8c033f7 | new | 1.967 | 0.061 | 0.835 | 16.7 |
+
+### Chosen config
+
+- `6f8690ad` l0.3-s2-k1 ($\lambda_{\text{sil}}$ 0.3, `S` 2, `K` 1), mean 2.140, sd 0.049; the stage-1 best and stage-2 centre; -0.048 against the PPO-RNN control (2.188, 10 seeds).
+- Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
 
 ## Detectors to add
 

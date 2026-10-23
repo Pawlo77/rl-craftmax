@@ -222,25 +222,25 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 - Modify: `configs/phases/tune-coarse.yaml` (add `count-bonus`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
 - [x] **Step 1: Check** the expansion: `make queue PHASE=tune-coarse METHOD=count-bonus DRY_RUN=1`; expected: 144 runs (72 per variant).
-- [ ] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=count-bonus` (144 runs, resumable); one variant only: `make queue PHASE=tune-coarse METHOD=count-bonus-ppo-rnn` (or `count-bonus-pqn-rnn`).
-- [ ] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 144 finished for the two count-bonus entries.
-- [ ] **Step 4: Write** the per-variant stage-1 table (config, mean final score, sd, distinct keys at 1M) into this plan under a new section `## Results`.
+- [x] **Step 2: Run** `make queue PHASE=tune-coarse METHOD=count-bonus` (144 runs, resumable); one variant only: `make queue PHASE=tune-coarse METHOD=count-bonus-ppo-rnn` (or `count-bonus-pqn-rnn`). (done 2026-10-22 06:02 to 19:46, 2 workers)
+- [x] **Step 3: Check** `make status PHASE=tune-coarse`; expected: 144 finished for the two count-bonus entries. (72 + 72 finished, none killed or aborted)
+- [x] **Step 4: Write** the per-variant stage-1 table (config, mean final score, sd, distinct keys at 1M) into this plan under a new section `## Results`.
 
 ### Task 7: Fine tuning and the tuned config
 
 **Files:**
 - Modify: `configs/phases/tune-fine.yaml` (add `count-bonus`, stage `fine`, 3 seeds), `configs/methods/count-bonus.yaml` (`tuned:`), this plan (`## Results`), [[Experiment decisions]]
 
-- [ ] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=count-bonus FINE=count-bonus DRY_RUN=1`; expected: 6 configs per variant, the stage-1 best reused by run name, 30 new runs.
-- [ ] **Step 2: Run** `make queue PHASE=tune-fine METHOD=count-bonus FINE=count-bonus` (resumable); `make status PHASE=tune-fine` shows 36 finished for count-bonus (30 new, 6 reused from `tune-coarse`).
-- [ ] **Step 3: Select** the best config per variant by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/count-bonus.yaml` and sets the MLflow tag `best=true` on that config's runs together (one call per variant, each with its own config hash from `make status PHASE=tune-fine`); the YAML block is the source of truth for `base_from`:
+- [x] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=count-bonus FINE=count-bonus DRY_RUN=1`; expected: 6 configs per variant, the stage-1 best reused by run name, 30 new runs. (6 configs per variant, but 2 of them are stage-1 configs reused by run name: the best and the same β with the runner-up value of the categorical knob; 24 new runs)
+- [x] **Step 2: Run** `make queue PHASE=tune-fine METHOD=count-bonus FINE=count-bonus` (resumable); `make status PHASE=tune-fine` shows 36 finished for count-bonus (30 new, 6 reused from `tune-coarse`). (done 2026-10-23 08:32 to 10:24; 36 finished: 24 new, 12 reused)
+- [x] **Step 3: Select** the best config per variant by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/count-bonus.yaml` and sets the MLflow tag `best=true` on that config's runs together (one call per variant, each with its own config hash from `make status PHASE=tune-fine`); the YAML block is the source of truth for `base_from` (done 2026-10-23 15:44 at 402a727: `b0b1c535` and `e6e1fafa`, `best=true` on their 3 runs each):
 
 ```bash
 uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned count-bonus <confighash8-of-the-ppo-rnn-variant>
 uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned count-bonus <confighash8-of-the-pqn-rnn-variant>
 ```
 
-- [ ] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]].
+- [x] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]]. (done 2026-10-23; Experiment decisions at e64f918)
 
 ### Task 8: Final 1M
 
@@ -267,6 +267,103 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned count-bonus <
 - [x] **Step 1: Write the failing tests**: a NaN bonus aborts the run with status `FAILED` and a tag `abort=nan`; occupancy above 0.25 aborts with `abort=table_full`; a table with a decremented entry fails the minimum assertion.
 - [x] **Step 2: Implement** the abort rules: NaN or inf in reward, loss or parameters; occupancy > 0.25 (collisions above about 12%); counts are never decremented (an assertion on the table minimum).
 - [x] **Step 3: Run** `uv run pytest tests/training/test_count_bonus.py -q`, then `make tests`.
+
+## Results
+
+Craftax-1M, 3 seeds per config: `tune-coarse` 2026-10-22 06:02 to 19:46 (144 runs), `tune-fine` 2026-10-23 08:32 to 10:24 (24 new runs); every run finished, none aborted. Mean and sd are of `final_score` over the 3 seeds (sample sd); distinct keys is `count/distinct_keys` at the last update (step 999,424), averaged over the seeds. Rows are sorted by mean.
+
+### Stage 1
+
+PPO-RNN variant (`count-bonus-ppo-rnn`):
+
+| Config | Hash | Mean | sd | Distinct keys |
+|---|---|---|---|---|
+| b0.1-recipe-constant | b0b1c535 | 2.333 | 0.053 | 70.3 |
+| b0.03-tiers-linear | 23c4db19 | 2.302 | 0.102 | 5.3 |
+| b0.01-tiers-linear | 5d540f0e | 2.302 | 0.044 | 4.3 |
+| b0.03-log2-linear | b3b38f7a | 2.250 | 0.036 | 76.7 |
+| b0.01-recipe-constant | e6aa478b | 2.248 | 0.117 | 65.3 |
+| b0.03-tiers-constant | 45748fd5 | 2.241 | 0.275 | 5.7 |
+| b0.3-recipe-constant | 26032225 | 2.232 | 0.154 | 74.3 |
+| b0.03-log2-constant | da26c9c7 | 2.230 | 0.017 | 80.0 |
+| b0.1-tiers-linear | 8f0ea025 | 2.205 | 0.129 | 4.7 |
+| b0.01-log2-constant | c89938a0 | 2.190 | 0.112 | 76.3 |
+| b0.01-tiers-constant | 04d501a3 | 2.174 | 0.095 | 4.3 |
+| b0.1-recipe-linear | b0a554d5 | 2.165 | 0.058 | 64.7 |
+| b0.3-log2-linear | 3d12fca8 | 2.154 | 0.013 | 74.7 |
+| b0.01-recipe-linear | 90d304c6 | 2.151 | 0.114 | 61.0 |
+| b0.03-recipe-linear | 9ad0f171 | 2.149 | 0.020 | 73.3 |
+| b0.1-log2-constant | 20b4e9af | 2.149 | 0.160 | 71.0 |
+| b0.3-tiers-linear | 52569edb | 2.135 | 0.091 | 4.3 |
+| b0.03-recipe-constant | 259e014d | 2.133 | 0.118 | 65.7 |
+| b0.01-log2-linear | 4470b2fa | 2.128 | 0.085 | 64.3 |
+| b0.3-log2-constant | 28691b5c | 2.120 | 0.151 | 71.7 |
+| b0.3-recipe-linear | c65064d0 | 2.114 | 0.131 | 75.7 |
+| b0.1-log2-linear | c423d827 | 2.106 | 0.009 | 75.3 |
+| b0.1-tiers-constant | c02863d0 | 2.105 | 0.013 | 4.7 |
+| b0.3-tiers-constant | 24b669a0 | 2.072 | 0.150 | 4.0 |
+
+PQN-RNN variant (`count-bonus-pqn-rnn`):
+
+| Config | Hash | Mean | sd | Distinct keys |
+|---|---|---|---|---|
+| b0.03-log2-linear | 3c5f5200 | 1.590 | 0.611 | 29.7 |
+| b0.1-tiers-constant | 2229d4dc | 1.583 | 0.312 | 3.0 |
+| b0.03-recipe-linear | 84b5ecfd | 1.574 | 0.102 | 16.0 |
+| b0.1-tiers-linear | 8616e783 | 1.563 | 0.080 | 2.7 |
+| b0.3-tiers-constant | ac112f5d | 1.554 | 0.316 | 3.0 |
+| b0.3-recipe-linear | 11f58978 | 1.553 | 0.457 | 20.3 |
+| b0.1-recipe-constant | 5fc1756b | 1.515 | 0.206 | 21.3 |
+| b0.01-tiers-constant | aa447a2e | 1.488 | 0.266 | 2.7 |
+| b0.03-recipe-constant | 37da37d6 | 1.483 | 0.328 | 17.0 |
+| b0.3-recipe-constant | 2f1ccf1c | 1.424 | 0.495 | 32.7 |
+| b0.3-tiers-linear | adb4ff1c | 1.331 | 0.429 | 3.3 |
+| b0.03-tiers-linear | b38fcd40 | 1.321 | 0.127 | 3.0 |
+| b0.03-log2-constant | 9adfd4c6 | 1.294 | 0.416 | 22.3 |
+| b0.01-log2-constant | d1b8ddf1 | 1.289 | 0.265 | 25.7 |
+| b0.1-log2-linear | 81f5238a | 1.211 | 0.329 | 32.3 |
+| b0.1-log2-constant | db82419f | 1.144 | 0.545 | 30.3 |
+| b0.3-log2-constant | 1f160002 | 1.133 | 0.546 | 25.7 |
+| b0.03-tiers-constant | e86d1294 | 1.114 | 0.306 | 2.0 |
+| b0.3-log2-linear | 3e84bf26 | 1.085 | 0.279 | 25.0 |
+| b0.01-log2-linear | 9722ba46 | 1.021 | 0.724 | 24.7 |
+| b0.1-recipe-linear | dc2ea3c4 | 0.976 | 0.076 | 13.3 |
+| b0.01-recipe-constant | 51b49478 | 0.871 | 0.774 | 17.3 |
+| b0.01-recipe-linear | 41fba98c | 0.737 | 0.245 | 12.7 |
+| b0.01-tiers-linear | ca76d0c5 | 0.624 | 0.181 | 2.7 |
+
+### Stage 2
+
+- PPO-RNN variant: β 0.1 x {0.5, 1, 2} crossed with granularity recipe and tiers (the categorical knob the rule picked); decay stays constant.
+- PQN-RNN variant: β 0.03 x {0.5, 1, 2} crossed with decay linear and constant; granularity stays log2.
+
+PPO-RNN variant:
+
+| Config | Hash | Runs | Mean | sd | Distinct keys |
+|---|---|---|---|---|---|
+| fine-beta=0.1-granularity=recipe | b0b1c535 | reused (b0.1-recipe-constant) | 2.333 | 0.053 | 70.3 |
+| fine-beta=0.2-granularity=tiers | afe0d0f2 | new | 2.187 | 0.128 | 5.0 |
+| fine-beta=0.05-granularity=tiers | 8062f98a | new | 2.173 | 0.047 | 4.7 |
+| fine-beta=0.2-granularity=recipe | 73dd07be | new | 2.165 | 0.061 | 85.3 |
+| fine-beta=0.05-granularity=recipe | 43dee231 | new | 2.161 | 0.095 | 77.3 |
+| fine-beta=0.1-granularity=tiers | c02863d0 | reused (b0.1-tiers-constant) | 2.105 | 0.013 | 4.7 |
+
+PQN-RNN variant:
+
+| Config | Hash | Runs | Mean | sd | Distinct keys |
+|---|---|---|---|---|---|
+| fine-beta=0.015-decay=linear | e6e1fafa | new | 1.721 | 0.138 | 25.3 |
+| fine-beta=0.03-decay=linear | 3c5f5200 | reused (b0.03-log2-linear) | 1.590 | 0.611 | 29.7 |
+| fine-beta=0.06-decay=constant | 2b4dbd1a | new | 1.505 | 0.416 | 27.3 |
+| fine-beta=0.03-decay=constant | 9adfd4c6 | reused (b0.03-log2-constant) | 1.294 | 0.416 | 22.3 |
+| fine-beta=0.06-decay=linear | 47dd0979 | new | 1.268 | 0.622 | 25.3 |
+| fine-beta=0.015-decay=constant | 2e41ebfe | new | 1.035 | 0.641 | 23.3 |
+
+### Chosen configs
+
+- PPO-RNN variant: `b0b1c535` b0.1-recipe-constant (β 0.1, recipe, constant: the base, so `tuned: {ppo-rnn: {}}`), mean 2.333, sd 0.053; the stage-1 best, no new stage-2 config beat it; +0.145 over the PPO-RNN control (2.188, 10 seeds).
+- PQN-RNN variant: `e6e1fafa` fine-beta=0.015-decay=linear (β 0.015, log2, linear), mean 1.721, sd 0.138; +0.451 over the PQN-RNN control (1.270, 3 seeds); β is the lower edge of the stage-2 grid.
+- Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
 
 ## Detectors to add
 

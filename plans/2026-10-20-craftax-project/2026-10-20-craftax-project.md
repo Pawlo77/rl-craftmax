@@ -10,7 +10,7 @@ tags: [plan, project, index]
 ---
 # Craftax project execution plan
 
-Status: Phase 0 complete 2026-10-22 14:10 (full suite on main 0c73a58 plus the SIL metric-key test fix: 966 passed and the fixed test; Phase 1 resume checks 4/4 passed); Phase 1 waits for tuning compute
+Status: Phase 1 complete 2026-10-23 20:33 (all four methods tuned and marked, Dyna-Q last at 7dbe10f; full suite on main 20900ed: 1119 passed); Phase 2 `final-1m` running since 21:41
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -58,9 +58,9 @@ Status: Phase 0 complete 2026-10-22 14:10 (full suite on main 0c73a58 plus the S
 
 Each phase ends with `make check` green and its results visible in MLflow; later phases only read earlier results.
 
-Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06; Phase 0 complete 14:10 (full suite on main 0c73a58: 966 passed plus the fixed SIL metric-key test). Phase 1 code merged 2026-10-22 05:10, stage-1 tuning running since 06:02.
+Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06; Phase 0 complete 14:10 (full suite on main 0c73a58: 966 passed plus the fixed SIL metric-key test). Phase 1 code merged 2026-10-22 05:10; Phase 1 tuning 2026-10-22 06:02 to 2026-10-23 20:33 (all four methods tuned and marked; results in each method plan's `## Results`).
 
-Timetable (measured to 2026-10-23 15:50, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:34 (52.7 run-hours); Dyna-Q tuning started Fri 23 15:43, ends about 21:15 (estimate 5.4 h). Estimates on the laptop with 2 workers: `final-1m` (140 runs) about 13 h, `combo-1m` (10 runs) about 1.2 h; started at 22:15 they end about Sat 24 12:00 and 13:30. Details: [[2026-10-20-craftax-compute-budget]].
+Timetable (measured to 2026-10-23 21:41, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:34 (52.7 run-hours); Dyna-Q tuning Fri 23 15:43 to 20:33. `final-1m` (140 runs) started Fri 23 21:41; estimate on the laptop with 2 workers about 13-14 h, so it ends about Sat 24 11:00; then `combo-1m` (10 runs) about 1.2 h. Details: [[2026-10-20-craftax-compute-budget]].
 
 ### Phase 0: Infrastructure and controls
 
@@ -71,9 +71,9 @@ Timetable (measured to 2026-10-23 15:50, 2 queue workers since 2026-10-22 00:06,
 
 ### Phase 1: Methods, implemented and tuned at 1M
 
-- [ ] For each method file: implementation and tests, `smoke`, `tune-coarse`, `tune-fine` (3 seeds, Craftax-1M). (2026-10-22: implementation, tests and smoke runs done for all four; the smoke Ctrl-C/resume checks passed 2026-10-22, the tuning remains)
-- [ ] Order (shared code first): progress key and count bonus -> SIL -> skill library and SMDP -> Dyna-Q. (implementation followed it; tuning follows it too, Dyna-Q after smdp-skills is tuned)
-- [ ] The last tuning step of each control and method writes its `tuned:` block in `configs/methods/<slug>.yaml` (the source of `base_from`) and tags those runs `best=true` in MLflow, both through `mark_tuned` ([[2026-10-20-craftax-infrastructure]] Task 1). (controls done 2026-10-22 04:22; the four methods wait for their `tune-fine`)
+- [x] For each method file: implementation and tests, `smoke`, `tune-coarse`, `tune-fine` (3 seeds, Craftax-1M). (2026-10-22: implementation, tests and smoke runs done for all four; the smoke Ctrl-C/resume checks passed 2026-10-22; tuning done 2026-10-23 20:33: 405 `tune-coarse` and 81 new `tune-fine` runs, all finished; results in each method plan's `## Results`)
+- [x] Order (shared code first): progress key and count bonus -> SIL -> skill library and SMDP -> Dyna-Q. (done 2026-10-23 20:33; implementation followed it; tuning followed it too, Dyna-Q from 15:43 after smdp-skills was marked)
+- [x] The last tuning step of each control and method writes its `tuned:` block in `configs/methods/<slug>.yaml` (the source of `base_from`) and tags those runs `best=true` in MLflow, both through `mark_tuned` ([[2026-10-20-craftax-infrastructure]] Task 1). (controls done 2026-10-22 04:22; methods done 2026-10-23: smdp-skills 15:43, count-bonus and sil 15:44, dyna-q 20:35)
 
 ### Phase 2: Finals
 

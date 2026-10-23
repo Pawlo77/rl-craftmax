@@ -182,25 +182,25 @@ Contract with `pqn_rnn.learn`: the same as for `smdp-skills`, see [[2026-10-20-c
 **Files:**
 - Modify: `configs/phases/tune-coarse.yaml` (add `dyna-q`: all `grid.coarse` entries, 3 seeds), this plan (`## Results`)
 
-- [ ] **Step 1: Check** that `configs/methods/smdp-skills.yaml` has a `tuned:` block (written by [[2026-10-20-craftax-method-smdp-skills]] Task 8 with `mark_tuned`); `base_from: smdp-skills.tuned` reads it.
-- [ ] **Step 2: Check** the expansion: `make queue PHASE=tune-coarse METHOD=dyna-q DRY_RUN=1`; expected: 63 runs, every config with the tuned `smdp-skills` knobs.
-- [ ] **Step 3: Run** `make queue PHASE=tune-coarse METHOD=dyna-q` (63 runs, resumable); `make status PHASE=tune-coarse` shows 63 finished for this method.
-- [ ] **Step 4: Write** the stage-1 table (config, mean final score, sd, pairs visited, model accuracy, planning wall share) into this plan under a new section `## Results`.
+- [x] **Step 1: Check** that `configs/methods/smdp-skills.yaml` has a `tuned:` block (written by [[2026-10-20-craftax-method-smdp-skills]] Task 8 with `mark_tuned`); `base_from: smdp-skills.tuned` reads it. (written 2026-10-23 15:43 at 736807f; the Dyna-Q queue started on that commit)
+- [x] **Step 2: Check** the expansion: `make queue PHASE=tune-coarse METHOD=dyna-q DRY_RUN=1`; expected: 63 runs, every config with the tuned `smdp-skills` knobs. (63 runs, all with α 0.05, horizon 200, ε decay 0.3, timeout 2, recipe)
+- [x] **Step 3: Run** `make queue PHASE=tune-coarse METHOD=dyna-q` (63 runs, resumable); `make status PHASE=tune-coarse` shows 63 finished for this method. (done 2026-10-23 15:43 to 19:13, 2 workers; 63 finished, none killed or aborted)
+- [x] **Step 4: Write** the stage-1 table (config, mean final score, sd, pairs visited, model accuracy, planning wall share) into this plan under a new section `## Results`.
 
 ### Task 7: Fine tuning and the tuned config
 
 **Files:**
 - Modify: `configs/phases/tune-fine.yaml` (add `dyna-q`, stage `fine`, 3 seeds), `configs/methods/dyna-q.yaml` (`tuned:`), this plan (`## Results`), [[Experiment decisions]]
 
-- [ ] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=dyna-q FINE=dyna-q DRY_RUN=1`; expected: 9 configs (κ x $M$), the centre reused by run name, 24 new runs.
-- [ ] **Step 2: Run** `make queue PHASE=tune-fine METHOD=dyna-q FINE=dyna-q` (resumable); `make status PHASE=tune-fine` shows 27 finished for this method (24 new, 3 reused from `tune-coarse`).
-- [ ] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/dyna-q.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`):
+- [x] **Step 1: Generate** the stage-2 configs from the `grid.fine` rule: `make queue PHASE=tune-fine METHOD=dyna-q FINE=dyna-q DRY_RUN=1`; expected: 9 configs (κ x $M$), the centre reused by run name, 24 new runs.
+- [x] **Step 2: Run** `make queue PHASE=tune-fine METHOD=dyna-q FINE=dyna-q` (resumable); `make status PHASE=tune-fine` shows 27 finished for this method (24 new, 3 reused from `tune-coarse`). (done 2026-10-23 19:13 to 20:33, 2 workers)
+- [x] **Step 3: Select** the best config by the rule above and mark it with `mark_tuned` of `orchestration/queue.py` ([[2026-10-20-craftax-infrastructure]] Task 1), which writes the `tuned:` block of `configs/methods/dyna-q.yaml` and sets the MLflow tag `best=true` on that config's runs together (config hash from `make status PHASE=tune-fine`) (done 2026-10-23 20:35 at 7dbe10f by the Phase 2 chain's `--mark-best dyna-q`, the same rule over all 29 configs: `74c22d85`, `best=true` on its 3 runs):
 
 ```bash
 uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned dyna-q <confighash8>
 ```
 
-- [ ] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]].
+- [x] **Step 4: Record** the choice in `## Results` and [[Experiment decisions]]. (done 2026-10-23)
 
 ### Task 8: Final 1M with the κ ablation
 
@@ -227,6 +227,57 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned dyna-q <confi
 - [x] **Step 1: Write the failing tests**: a NaN after planning aborts with `abort=nan`; reaching $P$ aborts with `abort=model_full`; an updated `Q_top` entry above 300 aborts with `abort=divergence`; `dyna/plan_wall_share` > 0.3 sets the warning tag `plan_slow` without stopping the run.
 - [x] **Step 2: Implement** the abort rules (the `smdp-skills` ones plus `model_full`) and the warning tag `plan_slow`.
 - [x] **Step 3: Run** `uv run pytest tests/training/test_dyna_q_trainer.py -q`, then `make tests`.
+
+## Results
+
+Craftax-1M, 3 seeds per config, every config on the tuned `smdp-skills` knobs (α 0.05, γ 0.995, ε decay 0.3, timeout 2, recipe): `tune-coarse` 2026-10-23 15:43 to 19:13 (63 runs), `tune-fine` 2026-10-23 19:13 to 20:33 (24 new runs); every run finished, none aborted. Mean and sd are of `final_score` over the 3 seeds (sample sd); pairs visited (`dyna/pairs_visited`), model accuracy (`dyna/model_accuracy`) and planning wall share (`dyna/plan_wall_share`) are the values at the last update (step 999,424), averaged over the seeds. Config names: variant, $n$, κ; value iteration (vi) has no $n$. Rows are sorted by mean.
+
+### Stage 1
+
+| Config | Hash | Mean | sd | Pairs visited | Model accuracy | Planning wall share |
+|---|---|---|---|---|---|---|
+| uniform-n1-k0.003 | 670e2f80 | 0.949 | 0.345 | 888.7 | 0.808 | 0.05% |
+| uniform-n20-k0.03 | 15c7171f | 0.889 | 0.573 | 784.7 | 0.747 | 0.04% |
+| prioritized-n1-k0.003 | 0eb51e42 | 0.879 | 0.537 | 741.0 | 0.850 | 0.20% |
+| uniform-n5-k0.003 | a2ea1750 | 0.826 | 0.694 | 710.0 | 0.833 | 0.14% |
+| prioritized-n1-k0 | 0a7c4028 | 0.716 | 0.368 | 665.7 | 0.804 | 0.17% |
+| prioritized-n1-k0.03 | 1daafa6f | 0.691 | 0.232 | 700.3 | 0.823 | 0.20% |
+| prioritized-n5-k0.003 | 8e3cb731 | 0.677 | 0.905 | 843.0 | 0.795 | 0.18% |
+| vi-k0.03 | 4a5c4349 | 0.645 | 0.607 | 735.3 | 0.824 | 5.62% |
+| prioritized-n20-k0.03 | 0f0814c5 | 0.640 | 0.890 | 711.0 | 0.827 | 0.39% |
+| prioritized-n5-k0.03 | faf12f62 | 0.571 | 0.477 | 532.0 | 0.812 | 0.18% |
+| uniform-n5-k0.03 | 32523bae | 0.510 | 0.679 | 618.3 | 0.823 | 0.02% |
+| vi-k0.003 | a08855cc | 0.502 | 0.566 | 639.7 | 0.883 | 2.19% |
+| vi-k0 | 3ca9c9bc | 0.487 | 0.368 | 532.3 | 0.827 | 1.05% |
+| uniform-n1-k0.03 | 40249cbb | 0.454 | 0.663 | 663.7 | 0.858 | 0.04% |
+| prioritized-n20-k0 | 97b28860 | 0.440 | 0.127 | 671.7 | 0.901 | 0.29% |
+| uniform-n1-k0 | 914aa1d8 | 0.427 | 0.754 | 564.3 | 0.890 | 0.05% |
+| prioritized-n20-k0.003 | 60f5301a | 0.358 | 0.695 | 502.3 | 0.849 | 0.22% |
+| uniform-n20-k0.003 | 11dfcc3a | 0.240 | 0.689 | 537.0 | 0.901 | 0.04% |
+| uniform-n20-k0 | c0be4450 | 0.159 | 0.490 | 605.7 | 0.891 | 0.04% |
+| uniform-n5-k0 | bc0d56cd | 0.131 | 0.706 | 645.7 | 0.905 | 0.02% |
+| prioritized-n5-k0 | e7014bd3 | -0.035 | 0.547 | 374.0 | 0.936 | 0.20% |
+
+### Stage 2
+
+κ 0.003 x {0.5, 1, 2} crossed with $M$ 4, 8, 16; uniform, $n$ 1 stays. 9 configs, the centre reused by run name.
+
+| Config | Hash | Runs | Mean | sd | Pairs visited | Model accuracy | Planning wall share |
+|---|---|---|---|---|---|---|---|
+| fine-plan_kappa=0.006-model_slots=4 | 74c22d85 | new | 1.364 | 0.402 | 781.0 | 0.664 | 0.02% |
+| fine-plan_kappa=0.006-model_slots=8 | 245e16ff | new | 1.139 | 0.459 | 970.3 | 0.762 | 0.04% |
+| fine-plan_kappa=0.003-model_slots=8 | 670e2f80 | reused (uniform-n1-k0.003) | 0.949 | 0.345 | 888.7 | 0.808 | 0.05% |
+| fine-plan_kappa=0.0015-model_slots=4 | fcc39127 | new | 0.944 | 0.763 | 829.0 | 0.673 | 0.02% |
+| fine-plan_kappa=0.003-model_slots=4 | e0d377f4 | new | 0.783 | 0.128 | 768.0 | 0.769 | 0.04% |
+| fine-plan_kappa=0.0015-model_slots=8 | 383cb87b | new | 0.731 | 0.389 | 894.3 | 0.829 | 0.02% |
+| fine-plan_kappa=0.006-model_slots=16 | 35b6c23e | new | 0.623 | 0.474 | 488.0 | 0.893 | 0.06% |
+| fine-plan_kappa=0.0015-model_slots=16 | 27a5fca1 | new | 0.585 | 0.308 | 817.7 | 0.890 | 0.03% |
+| fine-plan_kappa=0.003-model_slots=16 | 7ae578d4 | new | 0.438 | 0.694 | 545.3 | 0.877 | 0.02% |
+
+### Chosen config
+
+- `74c22d85` fine-plan_kappa=0.006-model_slots=4 (uniform, $n$ 1, κ 0.006, $M$ 4), mean 1.364, sd 0.402; -0.052 against the tuned `smdp-skills` (1.415, 3 seeds), +0.093 over the PQN-RNN control (1.270, 3 seeds). It sits at a corner of the stage-2 grid (largest κ, smallest $M$); κ 0.03 with $n$ 1 scored 0.454 in stage 1. As κ > 0, the `final-1m` κ ablation runs κ 0.
+- Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
 
 ## Combination with other methods
 
