@@ -1042,6 +1042,119 @@ def mark_tuned(
     )
 
 
+def _tuning_specs(
+    slug: str, tracking_uri: str | None, methods_dir: Path, phases: Path
+) -> list[RunSpec]:
+    """The tuning runs of ``slug``: tune-coarse's, then tune-fine's stage-2 configs."""
+    specs = expand_phase(
+        phases / f"{COARSE_PHASE}.yaml", method=slug, methods_dir=methods_dir
+    )
+    fine_path = phases / f"{TUNING_PHASES[1]}.yaml"
+    if fine_path.exists() and fine_registries(fine_path, slug):
+        results = coarse_results(
+            slug, tracking_uri=tracking_uri, methods_dir=methods_dir, phases_dir=phases
+        )
+        fine = expand_fine(slug, results, methods_dir=methods_dir)
+        specs += expand_phase(
+            fine_path, method=slug, methods_dir=methods_dir, fine=fine
+        )
+    return specs
+
+
+def _not_done(run: Any) -> str | None:
+    """Why a tuning run does not count (None when it does)."""
+    tags = run.data.tags
+    if run.info.status != "FINISHED":
+        return str(run.info.status).lower()
+    if tags.get(TAG_EVAL_PENDING) == "true":
+        return "eval-pending"
+    if tags.get(TAG_ABORT_BUG) == "true":
+        return TAG_ABORT_BUG
+    if not math.isfinite(run.data.metrics.get(SCORE_METRIC, math.nan)):
+        return f"no {SCORE_METRIC}"
+    return None
+
+
+def tuning_means(
+    slug: str,
+    *,
+    tracking_uri: str | None = None,
+    methods_dir: Path = METHODS_DIR,
+    phases_dir: Path | None = None,
+) -> dict[str, dict[str, float]]:
+    """Registry name -> config hash -> mean final score over its tuning runs.
+
+    The runs are the ones tune-coarse lists for ``slug`` and, when tune-fine has a
+    ``configs: fine`` entry of it, those of the stage-2 configs `expand_fine` makes
+    from the coarse results; a run both list (a reused centre) counts once. Hashes
+    keep the phases' order.
+
+    Raises:
+        ValueError: If the coarse stage is incomplete, or naming every listed run that
+            is not FINISHED with a finite final score and free of ``abort/bug`` and
+            ``eval/pending``.
+    """
+    phases = phases_dir or PHASES_DIR
+    names: dict[str, dict[str, list[str]]] = {}
+    for spec in _tuning_specs(slug, tracking_uri, methods_dir, phases):
+        runs = names.setdefault(spec.registry_name, {}).setdefault(spec.config_hash, [])
+        runs += [] if spec.name in runs else [spec.name]
+    client = _client(tracking_uri)
+    done: dict[str, float] = {}
+    why: dict[str, str] = {}
+    for registry in names:
+        for run in _runs(client, f"tags.{TAG_METHOD} = '{registry}'"):
+            phases_of = set(run.data.tags.get(TAG_PHASES, "").split(","))
+            if not phases_of & set(TUNING_PHASES):
+                continue
+            name = run.info.run_name
+            if (reason := _not_done(run)) is None:
+                done[name] = run.data.metrics[SCORE_METRIC]
+            else:
+                why.setdefault(name, reason)
+    listed = [
+        n for by_hash in names.values() for runs in by_hash.values() for n in runs
+    ]
+    if bad := [f"{n} ({why.get(n, 'not started')})" for n in listed if n not in done]:
+        _fail(f"{slug}: {len(bad)} tuning runs do not count: {', '.join(bad)}")
+    return {
+        registry: {
+            h: sum(done[n] for n in runs) / len(runs) for h, runs in by_hash.items()
+        }
+        for registry, by_hash in names.items()
+    }
+
+
+def mark_best(
+    slug: str,
+    *,
+    tracking_uri: str | None = None,
+    methods_dir: Path = METHODS_DIR,
+    phases_dir: Path | None = None,
+) -> str:
+    """Mark the tuned config of each registry entry of ``slug`` by the tuning rule.
+
+    The rule of the controls and Phase 1 methods: the highest mean final score over
+    tune-coarse and tune-fine (`tuning_means`); a tie keeps the config listed first.
+    Each winner goes through `mark_tuned`. Returns one line per entry plus the diffs.
+
+    Raises:
+        ValueError: As `tuning_means` (nothing is written then) or `mark_tuned`.
+    """
+    means = tuning_means(
+        slug, tracking_uri=tracking_uri, methods_dir=methods_dir, phases_dir=phases_dir
+    )
+    out = []
+    for registry, by_hash in means.items():
+        best = max(by_hash, key=by_hash.__getitem__)  # max keeps the first of a tie
+        out.append(f"# best {registry} {best} {by_hash[best]:.5f} of {len(by_hash)}\n")
+        logger.info("best %s config: %s (%.5f)", registry, best, by_hash[best])
+        out.append(
+            mark_tuned(slug, best, tracking_uri=tracking_uri, methods_dir=methods_dir)
+        )
+    return "".join(out)
+
+
 # --- CLI ------------------------------------------------------------------------
 
 
@@ -1140,6 +1253,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="--expand-fine ranks only the coarse configs with all seeds finished",
     )
     parser.add_argument("--mark-tuned", nargs=2, metavar=("SLUG", "HASH8"))
+    parser.add_argument(
+        "--mark-best",
+        metavar="SLUG",
+        help="mark the best tuning config (highest mean over tune-coarse, tune-fine)",
+    )
     parser.add_argument("--methods-dir", type=Path, default=METHODS_DIR)
     parser.add_argument(
         "--profile", type=Path, default=DEFAULT_PROFILE, help="machine profile YAML"
@@ -1174,6 +1292,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.seed_from = _sqlite_uri(args.seed_from)
     if (args.tracking_uri or "").endswith(".db"):
         args.tracking_uri = _sqlite_uri(args.tracking_uri)
+    if args.mark_best:
+        print(
+            mark_best(
+                args.mark_best,
+                tracking_uri=args.tracking_uri,
+                methods_dir=args.methods_dir,
+            )
+        )
+        return
     if args.mark_tuned:
         tuned = mark_tuned(
             *args.mark_tuned,
@@ -1183,7 +1310,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(tuned)
         return
     if args.phase is None and args.expand_fine is None:
-        parser.error("give --phase, --expand-fine or --mark-tuned")
+        parser.error("give --phase, --expand-fine, --mark-tuned or --mark-best")
     # review M7: the coarse results come from the store the flags name
     specs = phase_specs(args, args.seed_from or args.tracking_uri)
     if specs is None:

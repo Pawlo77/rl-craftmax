@@ -22,8 +22,10 @@ from wut_murl_craftax.orchestration.queue import (
     expand_fine,
     expand_phase,
     load_method,
+    mark_best,
     mark_tuned,
     resolve_config,
+    tuning_means,
 )
 
 CONFIGS = Path(__file__).parent / "fixtures" / "configs"
@@ -966,6 +968,160 @@ def test_mark_tuned_refuses_a_config_the_yaml_cannot_reproduce(
     assert (methods / "toy.yaml").read_text() == before
 
 
+# --- mark_best: the tuning rule ------------------------------------------------
+
+OFFSET = (-1.0, 1.0, 0.0)
+"""Seed s scores its config's mean plus ``OFFSET[s]``: a 2- or 3-seed mean is exact."""
+
+
+@pytest.fixture
+def tuning(tmp_path: Path) -> Path:
+    """Phases: tune-coarse runs the toy grid (2 seeds, published 3), tune-fine its
+    stage-2 configs (2 seeds)."""
+    phases = tmp_path / "tuning-phases"
+    phases.mkdir()
+    for name, configs in (("tune-coarse", "coarse"), ("tune-fine", "fine")):
+        body = {"budget": "1m", "eval": "final", "seeds": 2}
+        body["runs"] = {"toy": {"configs": configs}}
+        (phases / f"{name}.yaml").write_text(yaml.safe_dump(body))
+    return phases
+
+
+def _new_fine(phases: Path) -> list[tuple[RunSpec, dict[str, Any]]]:
+    """Stage-2 runs at STAGE1 that are not stage-1 runs, with their overrides."""
+    coarse = {
+        s.name for s in expand_phase(phases / "tune-coarse.yaml", methods_dir=METHODS)
+    }
+    fine = expand_fine("toy", stage1("toy", STAGE1), methods_dir=METHODS)
+    out = []
+    for over in fine["toy"].values():
+        specs = expand_phase(
+            phases / "tune-fine.yaml", methods_dir=METHODS, fine={"toy": {"x": over}}
+        )
+        out += [(s, dict(over)) for s in specs if s.name not in coarse]
+    return out
+
+
+def _fill_tuning(
+    store: Store,
+    phases: Path,
+    fine_scores: dict[str, float],
+    *,
+    skip: str | None = None,
+    **add: Any,
+) -> None:
+    """Coarse runs at STAGE1, then the new stage-2 runs at ``fine_scores`` (keyed by
+    overrides json, default 1.0); run ``skip`` gets ``add`` (score, status, tags)."""
+    by_hash = {config_hash(resolved("toy", n)): n for n in STAGE1}
+    for spec in expand_phase(phases / "tune-coarse.yaml", methods_dir=METHODS):
+        mean = STAGE1[by_hash[spec.config_hash]]
+        store.add("toy", spec.config, mean + OFFSET[spec.seed], seed=spec.seed)
+    for spec, over in _new_fine(phases):
+        kw = dict(add) if spec.name == skip else {}
+        mean = fine_scores.get(json.dumps(over), 1.0) + OFFSET[spec.seed]
+        store.add(
+            "toy",
+            spec.config,
+            kw.pop("score", mean),
+            seed=spec.seed,
+            phases="tune-fine",
+            **kw,
+        )
+
+
+def _mark(store: Store, methods: Path, phases: Path) -> str:
+    return mark_best(
+        "toy", tracking_uri=store.tracking_uri, methods_dir=methods, phases_dir=phases
+    )
+
+
+def test_tuning_means_cover_both_stages_once_per_config(
+    store: Store, tuning: Path
+) -> None:
+    _fill_tuning(store, tuning, {})
+    means = tuning_means(
+        "toy", tracking_uri=store.tracking_uri, methods_dir=METHODS, phases_dir=tuning
+    )["toy"]
+    new = {s.config_hash for s, _ in _new_fine(tuning)}
+    assert means[config_hash(resolved("toy", "lr-hi"))] == pytest.approx(14.0)
+    assert means[config_hash(resolved("toy", "published"))] == pytest.approx(10.0)
+    assert len(means) == len(STAGE1) + len(new)
+    assert all(means[h] == pytest.approx(1.0) for h in new)
+
+
+def test_mark_best_marks_the_highest_mean_of_either_stage(
+    store: Store, methods: Path, tuning: Path
+) -> None:
+    _fill_tuning(store, tuning, {})
+    out = _mark(store, methods, tuning)
+    assert load_method("toy", methods).tuned == {"lr": 4.0e-4}  # lr-hi, 14.0
+    assert config_hash(resolved("toy", "lr-hi")) in out
+
+
+def test_mark_best_takes_a_stage_two_config_that_beats_stage_one(
+    store: Store, methods: Path, tuning: Path
+) -> None:
+    spec, over = _new_fine(tuning)[0]
+    _fill_tuning(store, tuning, {json.dumps(over): 20.0})
+    out = _mark(store, methods, tuning)
+    base = resolved("toy", "base")
+    assert load_method("toy", methods).tuned == {
+        k: v for k, v in over.items() if base[k] != v
+    }
+    assert spec.config_hash in out
+
+
+def test_mark_best_breaks_a_tie_by_phase_order(
+    store: Store, methods: Path, tuning: Path
+) -> None:
+    _fill_tuning(store, tuning, {json.dumps(o): 14.0 for _, o in _new_fine(tuning)})
+    _mark(store, methods, tuning)
+    assert load_method("toy", methods).tuned == {"lr": 4.0e-4}  # stage 1 comes first
+
+
+@pytest.mark.parametrize(
+    ("add", "state"),
+    [
+        ({"status": "FAILED"}, "failed"),
+        ({"status": "KILLED"}, "killed"),
+        ({"extra_tags": {"eval/pending": "true"}}, "eval-pending"),
+        ({"extra_tags": {"abort/bug": "true"}}, "abort/bug"),
+        ({"score": float("nan")}, "no final_score"),
+    ],
+)
+def test_mark_best_refuses_while_a_tuning_run_is_not_finished(
+    store: Store, methods: Path, tuning: Path, add: dict[str, Any], state: str
+) -> None:
+    skip = _new_fine(tuning)[1][0].name
+    _fill_tuning(store, tuning, {}, skip=skip, **add)
+    before = (methods / "toy.yaml").read_text()
+    with pytest.raises(ValueError, match=rf"{skip} \({re.escape(state)}\)"):
+        _mark(store, methods, tuning)
+    assert (methods / "toy.yaml").read_text() == before
+
+
+def test_mark_best_refuses_a_missing_tuning_run(
+    store: Store, methods: Path, tuning: Path
+) -> None:
+    spec = _new_fine(tuning)[0][0]
+    _fill_tuning(store, tuning, {})
+    run = next(
+        r for r in store.client.search_runs([store.exp]) if r.info.run_name == spec.name
+    )
+    store.client.delete_run(run.info.run_id)
+    with pytest.raises(ValueError, match=rf"{spec.name} \(not started\)"):
+        _mark(store, methods, tuning)
+
+
+def test_mark_best_refuses_an_incomplete_coarse_stage(
+    store: Store, methods: Path, tuning: Path
+) -> None:
+    spec = expand_phase(tuning / "tune-coarse.yaml", methods_dir=METHODS)[0]
+    store.add("toy", spec.config, 1.0, seed=spec.seed)
+    with pytest.raises(ValueError, match="incomplete tune-coarse"):
+        _mark(store, methods, tuning)
+
+
 # --- CLI -----------------------------------------------------------------------
 
 
@@ -1112,6 +1268,21 @@ def test_cli_selects_by_registry_name_and_by_slug() -> None:
     assert [ln.split("-1m-")[0] for ln in by_name.stdout.splitlines()] == [
         "multi-pqn-rnn"
     ]
+
+
+def test_cli_mark_best_takes_the_tracking_uri_and_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[Any] = []
+    monkeypatch.setattr(
+        queue, "mark_best", lambda slug, **kw: seen.append((slug, kw)) or "BEST"
+    )
+    queue.main(["--mark-best", "dyna-q", "--tracking-uri", "/tmp/x.db"])
+    assert seen[0][0] == "dyna-q"
+    uri = seen[0][1]["tracking_uri"]
+    assert uri.startswith("sqlite:///")
+    assert uri.endswith("/x.db")
+    assert "BEST" in capsys.readouterr().out
 
 
 def test_cli_mark_tuned_needs_no_phase(
