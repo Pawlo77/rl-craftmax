@@ -1,10 +1,11 @@
-"""Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking."""
+"""Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals."""
 
 import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .abort import first_nonfinite, first_out_of_bounds, flag_hits
+    from .finals import kappa_ablation
     from .profiles import Profile, load_profile
     from .queue import (
         RunSpec,
@@ -62,6 +63,7 @@ _EXPORTS: dict[str, str] = {
     "first_out_of_bounds": "abort",
     "flag_hits": "abort",
     "import_craftax": "runtime",
+    "kappa_ablation": "finals",
     "load_method": "queue",
     "load_profile": "profiles",
     "log_every": "train_metrics",
@@ -106,6 +108,7 @@ __all__ = [
     "first_out_of_bounds",
     "flag_hits",
     "import_craftax",
+    "kappa_ablation",
     "load_method",
     "load_profile",
     "log_every",
