@@ -14,11 +14,13 @@ parent: "[[wut_murl_craftax]]"
 |---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. | 3 |  |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. | 149 |  |
-| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, per-step events and the reproduction check. | 166 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, reproduction, statistics, combo pair. | 203 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. | 611 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. | 394 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. | 173 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? | 226 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. | 432 |  |
+| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the statistics protocol: IQM and probability of improvement. | 33 |  |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 127 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. | 186 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 63 | [[orchestration]] |
@@ -65,6 +67,8 @@ parent: "[[wut_murl_craftax]]"
 
 - [[src/wut_murl_craftax/__init__.py]]
 - [[src/wut_murl_craftax/config.py]]
+- [[src/wut_murl_craftax/evaluation/select_pair.py]]
+- [[src/wut_murl_craftax/evaluation/stats.py]]
 - [[src/wut_murl_craftax/training/count_bonus.py]]
 - [[src/wut_murl_craftax/training/dyna_q.py]]
 - [[src/wut_murl_craftax/training/progress_key.py]]

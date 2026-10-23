@@ -1,4 +1,4 @@
-"""Evaluation and metrics: game tables, per-step events and the reproduction check."""
+"""Evaluation and metrics: game tables, events, reproduction, statistics, combo pair."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -55,6 +55,19 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         reward_weights,
     )
     from .reproduction import Reproduction, band
+    from .select_pair import (
+        SKILL_METHODS,
+        NoPairError,
+        Ranked,
+        choose_pair,
+        combo_text,
+        controls_of,
+        final_scores,
+        method_knobs,
+        rank_methods,
+        write_combo,
+    )
+    from .stats import iqm, probability_of_improvement
 
 _EXPORTS: dict[str, str] = {
     "ADDED_FIELDS": "episode_metrics",
@@ -70,11 +83,14 @@ _EXPORTS: dict[str, str] = {
     "HOSTILE_CLASSES": "milestones",
     "LAVA": "events",
     "NO_SOURCE": "events",
+    "NoPairError": "select_pair",
     "ONLINE_KEYS": "episode_metrics",
     "ONLINE_LAYOUT": "episode_metrics",
     "ONLINE_PREFIX": "episode_metrics",
     "RADAR_AXES": "milestones",
+    "Ranked": "select_pair",
     "Reproduction": "reproduction",
+    "SKILL_METHODS": "select_pair",
     "StepEvents": "events",
     "TECH_LADDER": "milestones",
     "UNKNOWN": "events",
@@ -83,16 +99,24 @@ _EXPORTS: dict[str, str] = {
     "action_names": "milestones",
     "added_paths": "episode_metrics",
     "band": "reproduction",
+    "choose_pair": "select_pair",
     "chunk_sums": "episode_metrics",
     "close_update": "episode_metrics",
+    "combo_text": "select_pair",
+    "controls_of": "select_pair",
     "episode_step": "episode_metrics",
     "events_of": "episode_metrics",
+    "final_scores": "select_pair",
     "first_unlock_offsets": "episode_metrics",
     "game_of": "milestones",
     "init_acc": "episode_metrics",
+    "iqm": "stats",
     "ladder": "milestones",
+    "method_knobs": "select_pair",
     "metric_keys": "episode_metrics",
     "new_first_unlocks": "episode_metrics",
+    "probability_of_improvement": "stats",
+    "rank_methods": "select_pair",
     "resume_from": "episode_metrics",
     "reward_weights": "milestones",
     "score_pct": "episode_metrics",
@@ -103,6 +127,7 @@ _EXPORTS: dict[str, str] = {
     "update_summary": "episode_metrics",
     "update_sums": "episode_metrics",
     "window_metrics": "episode_metrics",
+    "write_combo": "select_pair",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -123,10 +148,13 @@ __all__ = [
     "ONLINE_LAYOUT",
     "ONLINE_PREFIX",
     "RADAR_AXES",
+    "SKILL_METHODS",
     "TECH_LADDER",
     "UNKNOWN",
     "EpisodeAcc",
     "Game",
+    "NoPairError",
+    "Ranked",
     "Reproduction",
     "StepEvents",
     "UpdateSummary",
@@ -134,16 +162,24 @@ __all__ = [
     "action_names",
     "added_paths",
     "band",
+    "choose_pair",
     "chunk_sums",
     "close_update",
+    "combo_text",
+    "controls_of",
     "episode_step",
     "events_of",
+    "final_scores",
     "first_unlock_offsets",
     "game_of",
     "init_acc",
+    "iqm",
     "ladder",
+    "method_knobs",
     "metric_keys",
     "new_first_unlocks",
+    "probability_of_improvement",
+    "rank_methods",
     "resume_from",
     "reward_weights",
     "score_pct",
@@ -154,6 +190,7 @@ __all__ = [
     "update_summary",
     "update_sums",
     "window_metrics",
+    "write_combo",
 ]
 
 
