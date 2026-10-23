@@ -120,7 +120,7 @@ def test_the_method_file_has_the_base_and_both_grids() -> None:
     method = load_method("sil")
     assert method.registry_names == ["sil"]
     assert method.base["base_from"] == "ppo-rnn.tuned"
-    assert method.tuned is None
+    assert method.tuned is None or set(method.tuned) <= KNOBS  # null until marked
     # every knob is set in the base, so no dataclass default decides a run
     assert method.base.keys() - {"base_from"} == KNOBS
     grid = {

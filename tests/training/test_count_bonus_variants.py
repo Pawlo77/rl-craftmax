@@ -86,7 +86,9 @@ def test_the_method_file_has_both_variants_and_the_coarse_grid() -> None:
     assert method.registry_names == ["count-bonus-ppo-rnn", "count-bonus-pqn-rnn"]
     assert method.base["ppo-rnn"]["base_from"] == "ppo-rnn.tuned"
     assert method.base["pqn-rnn"]["base_from"] == "pqn-rnn.tuned"
-    assert method.tuned is None
+    # null until `--mark-tuned`, then one block of method knobs per variant
+    assert method.tuned is None or method.tuned.keys() == {"ppo-rnn", "pqn-rnn"}
+    assert all(set(b or {}) <= KNOBS for b in (method.tuned or {}).values())
     grid = {(e["beta"], e["granularity"], e["decay"]) for e in method.coarse}
     assert len(method.coarse) == len(grid) == 24
     assert grid == {

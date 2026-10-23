@@ -124,7 +124,7 @@ def test_the_method_file_has_the_base_and_both_grids() -> None:
     method = load_method(NAME)
     assert method.registry_names == [NAME]
     assert method.base["base_from"] == "smdp-skills.tuned"
-    assert method.tuned is None
+    assert method.tuned is None or set(method.tuned) <= DYNA_KNOBS  # null until marked
     # every planning knob is set in the base, so no dataclass default decides a run
     assert method.base.keys() - {"base_from"} == DYNA_KNOBS
     assert method.base["model_pairs"] == 2**16

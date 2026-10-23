@@ -111,7 +111,7 @@ def test_the_method_file_has_the_base_and_both_grids() -> None:
     method = load_method(NAME)
     assert method.registry_names == [NAME]
     assert method.base["base_from"] == "pqn-rnn.tuned"
-    assert method.tuned is None
+    assert method.tuned is None or set(method.tuned) <= TOP_KNOBS  # null until marked
     # every method knob is set in the base, so no dataclass default decides a run
     assert method.base.keys() - {"base_from", "extra_obs_dim"} == TOP_KNOBS
     assert method.base["extra_obs_dim"] == smdp.EXTRA_DIM == NUM_SKILLS + 1
