@@ -1,5 +1,6 @@
 """The shipped final phases: the plan's run counts, reused control runs, 1B settings."""
 
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -25,9 +26,21 @@ TUNED = {
     },
     "sil": {"lambda_sil": 0.3, "slots_windows": 8, "sil_steps": 2},
     "smdp-skills": {"alpha": 0.05, "top_horizon": 200, "timeout_mult": 2.0},
-    "dyna-q": {"plan_variant": "prioritized", "plan_n": 20, "plan_kappa": 0.003},
+    "dyna-q": {"plan_variant": "prioritized", "plan_n": 20},
 }
 """Stand-ins for the methods' tuned blocks, still null while their tuning runs."""
+
+
+def _kappa_item(path: Path = PHASES / "final-1m.yaml") -> float:
+    """The kappa of final-1m's dyna-q ablation: 0, or the best nonzero stage-1 kappa
+    once a tuned kappa of 0 made `orchestration.finals` rewrite it."""
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return float(raw["runs"]["dyna-q"]["configs"][1]["set"]["plan_kappa"])
+
+
+KAPPA_ITEM = _kappa_item()
+TUNED["dyna-q"]["plan_kappa"] = 0.003 if KAPPA_ITEM == 0.0 else 0.0
+"""A tuned kappa unlike the phase file's ablation, for either state of the item."""
 FINAL_1M = {
     "ppo": 10,
     "ppo-rnn": 10,
@@ -43,7 +56,7 @@ ABLATIONS = {
     "count-bonus-ppo-rnn": [{"key": "simhash", "log2_k": 24, "max_occupancy": 0.1}],
     "sil": [{"layout": "single"}],
     "smdp-skills": [{"eps_top_end": 1.0}, {"monte_carlo": True}, {"low_flags": False}],
-    "dyna-q": [{"plan_kappa": 0.0}],
+    "dyna-q": [{"plan_kappa": KAPPA_ITEM}],
 }
 """Each method plan's final-1m ablations: the keys they change in the tuned config."""
 
@@ -204,7 +217,23 @@ def test_1b_methods_take_their_1m_knobs_on_the_1b_control_settings(
 def test_a_zero_tuned_kappa_makes_the_kappa_ablation_fail_loudly(
     tmp_path: Path,
 ) -> None:
-    """The ablation item sets kappa 0: with a tuned kappa of 0 it must be rewritten."""
+    """The item as shipped sets kappa 0: with a tuned kappa of 0 it must be rewritten
+    (on a copy whose item is 0 again, whatever the shipped file says now)."""
+    text = (PHASES / "final-1m.yaml").read_text(encoding="utf-8")
+    zero = re.sub(
+        r"set: \{plan_kappa: [0-9.e-]+\}\}\]\}$",
+        "set: {plan_kappa: 0.0}}]}",
+        text,
+        flags=re.MULTILINE,
+    )
+    (tmp_path / "final-1m.yaml").write_text(zero, encoding="utf-8")
+    assert _kappa_item(tmp_path / "final-1m.yaml") == 0.0
     tuned = TUNED | {"dyna-q": TUNED["dyna-q"] | {"plan_kappa": 0.0}}
+    methods = tmp_path / "methods"
+    methods.mkdir()
     with pytest.raises(QueueConfigError, match="duplicate run dyna-q-1m-"):
-        _specs("final-1m", _copy_methods(tmp_path, tuned), "dyna-q")
+        expand_phase(
+            tmp_path / "final-1m.yaml",
+            method="dyna-q",
+            methods_dir=_copy_methods(methods, tuned),
+        )

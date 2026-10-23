@@ -1,5 +1,6 @@
 """Tests for the dyna-q kappa ablation of final-1m once dyna-q is marked tuned."""
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -31,10 +32,15 @@ def _methods(out: Path, kappa: float) -> Path:
 
 @pytest.fixture
 def phases(tmp_path: Path) -> Path:
+    """tune-coarse as shipped; final-1m with the kappa-0 item, whatever the shipped
+    file says now (the chain may have rewritten it)."""
     out = tmp_path / "phases"
     out.mkdir()
-    for name in ("tune-coarse", "final-1m"):
-        shutil.copy(REPO / "configs" / "phases" / f"{name}.yaml", out)
+    shutil.copy(REPO / "configs" / "phases" / "tune-coarse.yaml", out)
+    text = (REPO / "configs" / "phases" / "final-1m.yaml").read_text(encoding="utf-8")
+    line = f"  dyna-q: {{configs: [tuned, {finals.ZERO_ITEM}]}}"
+    text = re.sub(r"^  dyna-q: .*$", line, text, flags=re.MULTILINE)
+    (out / "final-1m.yaml").write_text(text, encoding="utf-8")
     return out
 
 
