@@ -2,7 +2,7 @@
 # in orchestration/queue.py, the composition in training/interface.py (`combine`).
 #
 # TEMPLATE: the pair below is a placeholder, count-bonus-ppo-rnn and sil on PPO-RNN (the
-# only hook-method pair on one control) with their design defaults. Step 1 chooses the
+# only hook-method pair on one control) with their tuned knobs. Step 1 chooses the
 # pair from final-1m and final-1b and rewrites `combine`, `base` (`base_from` the pair's
 # control, then each method's tuned config: its `base` keys with its `tuned` block applied,
 # unchanged) and `abort` (both methods' rules). No retuning: one config, `combined`.
@@ -24,7 +24,7 @@ base:
   key: progress
   max_occupancy: 0.25
   # sil
-  lambda_sil: 1.0
+  lambda_sil: 0.3
   slots_windows: 2
   sil_steps: 1
   window: 128
