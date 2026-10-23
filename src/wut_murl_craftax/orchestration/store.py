@@ -32,6 +32,7 @@ from .queue import (
     TAG_METHOD,
     TAG_PHASES,
     fine_registries,
+    permanently_ended,
     phase_specs,
 )
 from .tracking import _artifact_location, _resolve_tracking_uri, artifact_path
@@ -44,11 +45,13 @@ STATES = (
     "finished",
     "killed",
     "failed",
+    "aborted",
 )
 """Run states `phase_status` reports, in print order; ``eval-pending`` is FINISHED with
-tag ``eval/pending`` (its evaluation was cut short, results readers skip it), and
-``eval-incomplete`` FINISHED in a log-spaced phase without every eval file."""
-_HIDDEN_AT_ZERO = ("failed", "eval-pending", "eval-incomplete")
+tag ``eval/pending`` (its evaluation was cut short, results readers skip it),
+``eval-incomplete`` FINISHED in a log-spaced phase without every eval file, and
+``aborted`` a run the queue skips for good (`queue.permanently_ended`)."""
+_HIDDEN_AT_ZERO = ("failed", "aborted", "eval-pending", "eval-incomplete")
 ARRAY_SUFFIX = ".array.json"
 """Beside a node store's database: the array size (``num_workers``) its runs were
 shared out by, and whether it was merged since its last run (`claim_node_store`)."""
@@ -131,7 +134,7 @@ def _evaluated(run: Any) -> bool:
 def _state(run: Any, log_spaced: bool) -> str:
     """A run's `STATES` name; ``log_spaced``: the phase evaluates every checkpoint."""
     if run.info.status != "FINISHED":
-        return str(run.info.status).lower()
+        return "aborted" if permanently_ended(run) else str(run.info.status).lower()
     if _pending(run):
         return "eval-pending"
     return "eval-incomplete" if log_spaced and not _evaluated(run) else "finished"
@@ -144,6 +147,7 @@ def phase_status(
     method: str | None = None,
     methods_dir: Path = METHODS_DIR,
     expand_fine: str | None = None,
+    min_complete: float | None = None,
 ) -> dict[str, str]:
     """State of every run of ``phase``, by run name, in the phase file's order.
 
@@ -152,6 +156,8 @@ def phase_status(
     ``expand_fine``, the runs of a ``configs: fine`` entry are the phase's runs with
     its registry name (tag ``method``), by name after the listed ones; none is pending.
     In a ``log_spaced`` phase a FINISHED run lacking eval files is ``eval-incomplete``.
+    ``min_complete`` expands the stage-2 configs without the coarse configs aborted
+    for good, as the queue's ``--min-complete`` (`queue.coarse_results`).
     """
     args = argparse.Namespace(
         phase=phase,
@@ -159,6 +165,7 @@ def phase_status(
         expand_fine=expand_fine,
         allow_partial=False,  # status shows an incomplete coarse stage as an error
         methods_dir=methods_dir,
+        min_complete=min_complete,
     )
     specs = phase_specs(args, tracking_uri, skip_fine=True) or []
     fine = [] if expand_fine else fine_registries(phase, method)
@@ -437,6 +444,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     status.add_argument("--expand-fine", metavar="SLUG")
     status.add_argument("--methods-dir", type=Path, default=METHODS_DIR)
     status.add_argument("--tracking-uri", help="default: configs/experiment.yaml")
+    status.add_argument(
+        "--min-complete",
+        type=float,
+        metavar="SHARE",
+        help="with --expand-fine: as the queue's flag",
+    )
     merge = commands.add_parser("merge", help="copy a node store into the main one")
     merge.add_argument("src", help="SQLite database (or sqlite:/// URI) of the node")
     merge.add_argument("--dst", help="tracking URI of the main store")
@@ -451,6 +464,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         method=args.method,
         methods_dir=args.methods_dir,
         expand_fine=args.expand_fine,
+        min_complete=args.min_complete,
     )
     for name, state in states.items():
         print(f"{state:<8} {name}")

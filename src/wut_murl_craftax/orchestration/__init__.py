@@ -17,6 +17,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_method,
         mark_best,
         mark_tuned,
+        permanently_ended,
         resolve_config,
         tuning_means,
     )
@@ -72,6 +73,7 @@ _EXPORTS: dict[str, str] = {
     "mark_tuned": "queue",
     "merge_stores": "store",
     "metric_points": "train_metrics",
+    "permanently_ended": "queue",
     "phase_status": "store",
     "resolve_config": "queue",
     "select_platforms": "runtime",
@@ -117,6 +119,7 @@ __all__ = [
     "mark_tuned",
     "merge_stores",
     "metric_points",
+    "permanently_ended",
     "phase_status",
     "resolve_config",
     "select_platforms",

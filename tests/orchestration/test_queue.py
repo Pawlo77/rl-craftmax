@@ -1122,6 +1122,117 @@ def test_mark_best_refuses_an_incomplete_coarse_stage(
         _mark(store, methods, tuning)
 
 
+# --- partial tuning results: configs aborted for good (--min-complete) ---------
+
+
+def _abort_for_good(store: Store, name: str, tag: str = "abort/guard") -> None:
+    run = next(
+        r for r in store.client.search_runs([store.exp]) if r.info.run_name == name
+    )
+    store.client.set_tag(run.info.run_id, tag, "true" if tag != "abort/guard" else "x")
+
+
+def _lam_hi_seed_1() -> str:
+    return f"toy-1m-{config_hash(resolved('toy', 'lam-hi'))}-s1"
+
+
+@pytest.mark.parametrize("tag", ["abort/guard", "abort/bug", "abort/memory"])
+def test_min_complete_leaves_out_a_coarse_config_aborted_for_good(
+    store: Store, tuning: Path, tag: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    by_hash = {config_hash(resolved("toy", n)): n for n in STAGE1}
+    for spec in expand_phase(tuning / "tune-coarse.yaml", methods_dir=METHODS):
+        mean = STAGE1[by_hash[spec.config_hash]] + OFFSET[spec.seed]
+        failed = spec.name == _lam_hi_seed_1()
+        status = "FAILED" if failed else "FINISHED"
+        store.add("toy", spec.config, mean, seed=spec.seed, status=status)
+    _abort_for_good(store, _lam_hi_seed_1(), tag)
+    kw = {"tracking_uri": store.tracking_uri, "methods_dir": METHODS}
+    kw["phases_dir"] = tuning
+    with pytest.raises(ValueError, match="incomplete tune-coarse"):
+        coarse_results("toy", **kw)
+    got = coarse_results("toy", min_complete=0.8, **kw)  # 6 of 7 configs
+    assert config_hash(resolved("toy", "lam-hi")) not in got
+    assert len(got) == len(STAGE1) - 1
+    assert _lam_hi_seed_1() in caplog.text
+    with pytest.raises(ValueError, match="6 of 7 configs complete"):
+        coarse_results("toy", min_complete=0.9, **kw)
+
+
+def test_min_complete_refuses_a_run_that_may_still_finish(
+    store: Store, tuning: Path
+) -> None:
+    by_hash = {config_hash(resolved("toy", n)): n for n in STAGE1}
+    for spec in expand_phase(tuning / "tune-coarse.yaml", methods_dir=METHODS):
+        failed = spec.name == _lam_hi_seed_1()
+        store.add(
+            "toy",
+            spec.config,
+            STAGE1[by_hash[spec.config_hash]],
+            seed=spec.seed,
+            status="FAILED" if failed else "FINISHED",
+        )
+    with pytest.raises(ValueError, match=f"not ended for good: {_lam_hi_seed_1()}"):
+        coarse_results(
+            "toy",
+            tracking_uri=store.tracking_uri,
+            methods_dir=METHODS,
+            phases_dir=tuning,
+            min_complete=0.5,
+        )
+
+
+def test_mark_best_with_min_complete_skips_a_fine_config_aborted_for_good(
+    store: Store, methods: Path, tuning: Path
+) -> None:
+    spec, over = _new_fine(tuning)[0]
+    _fill_tuning(
+        store,
+        tuning,
+        {json.dumps(over): 20.0},
+        skip=spec.name,
+        status="FAILED",
+    )
+    _abort_for_good(store, spec.name)
+    with pytest.raises(ValueError, match=rf"{spec.name} \(failed\)"):
+        _mark(store, methods, tuning)
+    means = tuning_means(
+        "toy",
+        tracking_uri=store.tracking_uri,
+        methods_dir=METHODS,
+        phases_dir=tuning,
+        min_complete=0.8,
+    )["toy"]
+    assert spec.config_hash not in means
+    mark_best(
+        "toy",
+        tracking_uri=store.tracking_uri,
+        methods_dir=methods,
+        phases_dir=tuning,
+        min_complete=0.8,
+    )
+    assert load_method("toy", methods).tuned == {"lr": 4.0e-4}  # not the 20.0 config
+
+
+def test_cli_min_complete_reaches_the_coarse_results_and_mark_best(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+
+    def results(slug: str, **kw: Any) -> dict[str, float]:
+        seen.append(kw["min_complete"])
+        return stage1(slug, STAGE1)
+
+    monkeypatch.setattr(queue, "coarse_results", results)
+    argv = ["--methods-dir", str(METHODS), "--expand-fine", "toy", "--dry-run"]
+    queue.main([*argv, "--min-complete", "0.9"])
+    monkeypatch.setattr(
+        queue, "mark_best", lambda slug, **kw: seen.append(kw["min_complete"]) or ""
+    )
+    queue.main(["--mark-best", "toy", "--min-complete", "0.9"])
+    assert seen == [0.9, 0.9]
+
+
 # --- CLI -----------------------------------------------------------------------
 
 

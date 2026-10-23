@@ -43,11 +43,14 @@ def kappa_ablation(
     methods_dir: Path = METHODS_DIR,
     phases_dir: Path | None = None,
     dry_run: bool = False,
+    min_complete: float | None = None,
 ) -> float | None:
     """Rewrite the kappa-0 ablation of ``phase`` when dyna-q's tuned kappa is 0.
 
     Returns the new kappa, or None when the tuned kappa is above 0 (nothing changes).
     The rewritten file must expand without a duplicate run, or it is left as it was.
+    ``min_complete``: the coarse configs aborted for good are left out of the choice
+    (`queue.coarse_results`).
 
     Raises:
         QueueConfigError: If the coarse stage is incomplete, no stage-1 kappa is
@@ -61,7 +64,11 @@ def kappa_ablation(
         return None
     phases = phases_dir or PHASES_DIR
     means = coarse_results(
-        DYNA, tracking_uri=tracking_uri, methods_dir=methods_dir, phases_dir=phases
+        DYNA,
+        tracking_uri=tracking_uri,
+        methods_dir=methods_dir,
+        phases_dir=phases,
+        min_complete=min_complete,
     )
     kappas = {
         s.config_hash: float(s.config[KAPPA])
@@ -100,6 +107,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--methods-dir", type=Path, default=METHODS_DIR)
     parser.add_argument("--phases-dir", type=Path, help="phases of the tune-coarse")
     parser.add_argument("--dry-run", action="store_true", help="leave the phase file")
+    parser.add_argument(
+        "--min-complete", type=float, metavar="SHARE", help="as the queue's flag"
+    )
     args = parser.parse_args(argv)
     kappa = kappa_ablation(
         args.phase,
@@ -107,6 +117,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         methods_dir=args.methods_dir,
         phases_dir=args.phases_dir,
         dry_run=args.dry_run,
+        min_complete=args.min_complete,
     )
     if kappa is None:
         print(f"{DYNA} tuned {KAPPA} is above 0: the {KAPPA} 0 ablation stays")

@@ -124,3 +124,26 @@ def test_main_prints_the_ablation(
         str(phases),
     ])
     assert "plan_kappa 0.003" in capsys.readouterr().out
+
+
+def test_min_complete_leaves_out_a_coarse_config_aborted_for_good(
+    tmp_path: Path, phases: Path
+) -> None:
+    methods = _methods(tmp_path / "methods", 0.0)
+    uri = _store(tmp_path, methods, phases)
+    client = mlflow.MlflowClient(tracking_uri=uri)
+    vi = [
+        r
+        for r in client.search_runs([
+            e.experiment_id for e in client.search_experiments()
+        ])
+        if r.data.metrics[queue.SCORE_METRIC] == 2.0
+    ]
+    client.set_terminated(vi[0].info.run_id, "FAILED")
+    client.set_tag(vi[0].info.run_id, "abort/guard", "dyna/divergence")
+    kw = {"tracking_uri": uri, "methods_dir": methods, "phases_dir": phases}
+    with pytest.raises(queue.QueueConfigError, match="incomplete tune-coarse"):
+        kappa_ablation(phases / "final-1m.yaml", dry_run=True, **kw)
+    # the vi k0.003 config is out: the 0.03 configs (mean 1.5) win
+    got = kappa_ablation(phases / "final-1m.yaml", min_complete=0.9, dry_run=True, **kw)
+    assert got == 0.03

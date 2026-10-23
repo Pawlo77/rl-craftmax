@@ -22,7 +22,7 @@ import logging
 import math
 import re
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, NoReturn, cast
@@ -872,6 +872,43 @@ def _runs(client: Any, filter_string: str) -> list[Any]:
             return runs
 
 
+def permanently_ended(run: Any) -> bool:
+    """Whether the queue skips a run for good: ``abort/bug``, guard or memory abort."""
+    # abort imports this module (TAG_ABORT_BUG): its tag names are read here
+    from .abort import TAG_ABORT_GUARD, TAG_ABORT_MEMORY
+
+    tags = run.data.tags
+    return bool(
+        tags.get(TAG_ABORT_BUG) == "true"
+        or tags.get(TAG_ABORT_GUARD)
+        or tags.get(TAG_ABORT_MEMORY) == "true"
+    )
+
+
+def _leave_out(
+    what: str,
+    missing: Mapping[str, Sequence[str]],
+    ended: Collection[str],
+    planned: int,
+    min_complete: float,
+) -> None:
+    """Refuse to leave out ``missing`` configs unless the partial guard holds.
+
+    It holds when each missing run ended for good (in ``ended``) and at least
+    ``min_complete`` of the ``planned`` configs are complete.
+    """
+    stuck = [n for runs in missing.values() for n in runs if n not in ended]
+    share = 1 - len(missing) / planned
+    if stuck or share < min_complete:
+        _fail(
+            f"{what}: {planned - len(missing)} of {planned} configs complete "
+            f"(--min-complete {min_complete}); not ended for good: "
+            f"{', '.join(stuck) or 'none'}"
+        )
+    listing = "; ".join(f"{h}: {', '.join(r)}" for h, r in missing.items())
+    logger.warning("left out %s configs aborted for good: %s", what, listing)
+
+
 def coarse_results(
     slug: str,
     *,
@@ -880,16 +917,20 @@ def coarse_results(
     methods_dir: Path = METHODS_DIR,
     phases_dir: Path | None = None,
     allow_partial: bool = False,
+    min_complete: float | None = None,
 ) -> dict[str, float]:
     """Mean final score per config hash over its ``tune-coarse`` seeds, complete only.
 
     A config is complete when every run the phase file lists for it is FINISHED in
     the store with a finite ``final_score`` and is not marked ``abort/bug`` or
-    ``eval/pending``.
+    ``eval/pending``. ``min_complete`` leaves out incomplete configs only when each
+    of their missing runs ended for good (`permanently_ended`) and at least that
+    share of the configs is complete.
 
     Raises:
         ValueError: Naming each incomplete config's missing runs, unless
-            ``allow_partial`` leaves those configs out with a warning.
+            ``allow_partial`` leaves those configs out with a warning, or
+            ``min_complete`` does and its guard holds.
     """
     names = [
         r
@@ -902,21 +943,26 @@ def coarse_results(
         if spec.registry_name in names:
             expected.setdefault(spec.config_hash, []).append(spec.name)
     done: dict[str, float] = {}
+    ended: set[str] = set()
     for run in _runs(
-        _client(tracking_uri),
-        f"attributes.status = 'FINISHED' and tags.{TAG_PHASES} LIKE '%{COARSE_PHASE}%'",
+        _client(tracking_uri), f"tags.{TAG_PHASES} LIKE '%{COARSE_PHASE}%'"
     ):
         tags, score = run.data.tags, run.data.metrics.get(SCORE_METRIC, math.nan)
-        if (
-            COARSE_PHASE in tags[TAG_PHASES].split(",")
-            and tags.get(TAG_ABORT_BUG) != "true"
+        if COARSE_PHASE not in tags[TAG_PHASES].split(","):
+            continue
+        if permanently_ended(run):
+            ended.add(run.info.run_name)
+        elif (
+            run.info.status == "FINISHED"
             and tags.get(TAG_EVAL_PENDING) != "true"
             and math.isfinite(score)
         ):
             done[run.info.run_name] = score
     missing = {h: [n for n in r if n not in done] for h, r in expected.items()}
     missing = {h: runs for h, runs in missing.items() if runs}
-    if missing:
+    if missing and min_complete is not None:
+        _leave_out(COARSE_PHASE, missing, ended, len(expected), min_complete)
+    elif missing:
         listing = "; ".join(f"{h}: {', '.join(runs)}" for h, runs in missing.items())
         if not allow_partial:
             _fail(f"incomplete {COARSE_PHASE} configs (see --allow-partial): {listing}")
@@ -1043,7 +1089,11 @@ def mark_tuned(
 
 
 def _tuning_specs(
-    slug: str, tracking_uri: str | None, methods_dir: Path, phases: Path
+    slug: str,
+    tracking_uri: str | None,
+    methods_dir: Path,
+    phases: Path,
+    min_complete: float | None = None,
 ) -> list[RunSpec]:
     """The tuning runs of ``slug``: tune-coarse's, then tune-fine's stage-2 configs."""
     specs = expand_phase(
@@ -1052,9 +1102,16 @@ def _tuning_specs(
     fine_path = phases / f"{TUNING_PHASES[1]}.yaml"
     if fine_path.exists() and fine_registries(fine_path, slug):
         results = coarse_results(
-            slug, tracking_uri=tracking_uri, methods_dir=methods_dir, phases_dir=phases
+            slug,
+            tracking_uri=tracking_uri,
+            methods_dir=methods_dir,
+            phases_dir=phases,
+            min_complete=min_complete,
         )
-        fine = expand_fine(slug, results, methods_dir=methods_dir)
+        partial = min_complete is not None
+        fine = expand_fine(
+            slug, results, methods_dir=methods_dir, allow_partial=partial
+        )
         specs += expand_phase(
             fine_path, method=slug, methods_dir=methods_dir, fine=fine
         )
@@ -1081,27 +1138,32 @@ def tuning_means(
     tracking_uri: str | None = None,
     methods_dir: Path = METHODS_DIR,
     phases_dir: Path | None = None,
+    min_complete: float | None = None,
 ) -> dict[str, dict[str, float]]:
     """Registry name -> config hash -> mean final score over its tuning runs.
 
     The runs are the ones tune-coarse lists for ``slug`` and, when tune-fine has a
     ``configs: fine`` entry of it, those of the stage-2 configs `expand_fine` makes
     from the coarse results; a run both list (a reused centre) counts once. Hashes
-    keep the phases' order.
+    keep the phases' order. ``min_complete`` leaves out the configs of runs that
+    ended for good, in both stages, if at least that share of the configs is
+    complete (`coarse_results`); such a config cannot be the best one.
 
     Raises:
         ValueError: If the coarse stage is incomplete, or naming every listed run that
             is not FINISHED with a finite final score and free of ``abort/bug`` and
-            ``eval/pending``.
+            ``eval/pending`` (beyond what ``min_complete`` leaves out).
     """
     phases = phases_dir or PHASES_DIR
     names: dict[str, dict[str, list[str]]] = {}
-    for spec in _tuning_specs(slug, tracking_uri, methods_dir, phases):
+    specs = _tuning_specs(slug, tracking_uri, methods_dir, phases, min_complete)
+    for spec in specs:
         runs = names.setdefault(spec.registry_name, {}).setdefault(spec.config_hash, [])
         runs += [] if spec.name in runs else [spec.name]
     client = _client(tracking_uri)
     done: dict[str, float] = {}
     why: dict[str, str] = {}
+    ended: set[str] = set()
     for registry in names:
         for run in _runs(client, f"tags.{TAG_METHOD} = '{registry}'"):
             phases_of = set(run.data.tags.get(TAG_PHASES, "").split(","))
@@ -1112,14 +1174,27 @@ def tuning_means(
                 done[name] = run.data.metrics[SCORE_METRIC]
             else:
                 why.setdefault(name, reason)
-    listed = [
-        n for by_hash in names.values() for runs in by_hash.values() for n in runs
-    ]
-    if bad := [f"{n} ({why.get(n, 'not started')})" for n in listed if n not in done]:
+                ended |= {name} if permanently_ended(run) else set()
+    missing = {
+        (registry, h): [n for n in runs if n not in done]
+        for registry, by_hash in names.items()
+        for h, runs in by_hash.items()
+    }
+    missing = {key: runs for key, runs in missing.items() if runs}
+    if missing and min_complete is not None:
+        planned = sum(len(by_hash) for by_hash in names.values())
+        labelled = {f"{r} {h}": runs for (r, h), runs in missing.items()}
+        _leave_out(f"{slug} tuning", labelled, ended, planned, min_complete)
+    elif missing:
+        bad = [
+            f"{n} ({why.get(n, 'not started')})" for r in missing.values() for n in r
+        ]
         _fail(f"{slug}: {len(bad)} tuning runs do not count: {', '.join(bad)}")
     return {
         registry: {
-            h: sum(done[n] for n in runs) / len(runs) for h, runs in by_hash.items()
+            h: sum(done[n] for n in runs) / len(runs)
+            for h, runs in by_hash.items()
+            if (registry, h) not in missing
         }
         for registry, by_hash in names.items()
     }
@@ -1131,6 +1206,7 @@ def mark_best(
     tracking_uri: str | None = None,
     methods_dir: Path = METHODS_DIR,
     phases_dir: Path | None = None,
+    min_complete: float | None = None,
 ) -> str:
     """Mark the tuned config of each registry entry of ``slug`` by the tuning rule.
 
@@ -1142,7 +1218,11 @@ def mark_best(
         ValueError: As `tuning_means` (nothing is written then) or `mark_tuned`.
     """
     means = tuning_means(
-        slug, tracking_uri=tracking_uri, methods_dir=methods_dir, phases_dir=phases_dir
+        slug,
+        tracking_uri=tracking_uri,
+        methods_dir=methods_dir,
+        phases_dir=phases_dir,
+        min_complete=min_complete,
     )
     out = []
     for registry, by_hash in means.items():
@@ -1194,21 +1274,25 @@ def phase_specs(
 ) -> list[RunSpec] | None:
     """The specs of ``args.phase`` (None without one), after ``args.expand_fine``.
 
-    ``args`` carries ``phase``, ``method``, ``expand_fine``, ``allow_partial`` and
-    ``methods_dir``; the stage-2 configs come from the coarse results in
+    ``args`` carries ``phase``, ``method``, ``expand_fine``, ``allow_partial``,
+    ``methods_dir`` and optionally ``min_complete`` (`coarse_results`; it ranks
+    the complete configs as ``allow_partial`` does); the stage-2 configs come from
+    the coarse results in
     ``tracking_uri`` (the default store when None) and are printed. ``skip_fine``:
     see `expand_phase`.
     """
     fine = None
     if args.expand_fine:
         slug = args.expand_fine
-        partial = args.allow_partial
+        least = getattr(args, "min_complete", None)
+        partial = args.allow_partial or least is not None
         results = coarse_results(
             slug,
             method=args.method,
             tracking_uri=tracking_uri,
             methods_dir=args.methods_dir,
-            allow_partial=partial,
+            allow_partial=args.allow_partial,
+            min_complete=least,
         )
         fine = expand_fine(
             slug,
@@ -1251,6 +1335,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--allow-partial",
         action="store_true",
         help="--expand-fine ranks only the coarse configs with all seeds finished",
+    )
+    parser.add_argument(
+        "--min-complete",
+        type=float,
+        metavar="SHARE",
+        help="--expand-fine and --mark-best leave out configs of runs aborted for "
+        "good, if at least SHARE of the configs is complete",
     )
     parser.add_argument("--mark-tuned", nargs=2, metavar=("SLUG", "HASH8"))
     parser.add_argument(
@@ -1298,6 +1389,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 args.mark_best,
                 tracking_uri=args.tracking_uri,
                 methods_dir=args.methods_dir,
+                min_complete=args.min_complete,
             )
         )
         return

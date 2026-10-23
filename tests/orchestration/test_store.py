@@ -451,6 +451,32 @@ def test_status_names(main_store: Node, mlflow_status: str, shown: str) -> None:
     assert phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)[name] == shown
 
 
+@pytest.mark.parametrize(
+    ("tag", "value"),
+    [
+        ("abort/guard", "dyna/divergence"),
+        ("abort/bug", "true"),
+        ("abort/memory", "true"),
+    ],
+)
+def test_status_shows_a_run_aborted_for_good_apart(
+    main_store: Node, tag: str, value: str
+) -> None:
+    ppo, pqn, *_ = _names()
+    main_store.client.set_tag(
+        main_store.add(ppo, "entries", status="FAILED"), tag, value
+    )
+    main_store.add(pqn, "entries", status="FAILED")
+    status = phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)
+    assert (status[ppo], status[pqn]) == ("aborted", "failed")
+    cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.store", "status"]
+    cmd += ["--phase", str(ENTRIES), "--methods-dir", str(METHODS)]
+    cmd += ["--tracking-uri", main_store.uri]
+    out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, check=True)
+    last = out.stdout.strip().splitlines()[-1]
+    assert last == "pending 3, running 0, finished 0, killed 0, failed 1, aborted 1"
+
+
 def test_status_shows_a_finished_run_with_a_pending_evaluation_apart(
     main_store: Node,
 ) -> None:
