@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 ---
 # Experiment decisions
 
@@ -236,3 +236,47 @@ PQN-RNN (no 1M published score, h 0.9884 over 3 seeds each):
 | dcb8a7ef fine-lr=0.000225 (best stage 2) | lam 0.8, lr 2.25e-4 | 3 | 1.66113 | 0.11714 |
 
 Best minus base: 0.4480 < h, so a tie and tuned = base (10cbfc16). At 1M the batch-renorm hidden normalisation (1.44072, sd 0.30554) beat the base (layer-norm hidden, 1.27030), and layer-norm input (0.84326) lost; both within h of the base. The base spread (sd 0.85) is the reason h is wide.
+
+## 2026-10-23 - Phase 1 tuning results
+
+Decision: each Phase 1 method takes the config with the highest 3-seed mean `final_score` over `tune-coarse` and `tune-fine` (ties to the coarser key, the smaller buffer or the smaller timeout multiplier; no tie occurred); count-bonus is chosen per variant. The tuned block is written with `--mark-tuned`, which also sets `best=true` on the config's tuning runs.
+
+Why: the method briefs fix this rule; unlike the controls, a method is not held to a band around its base control. Means are of `final_score`, sd is the sample sd over the 3 seeds, n is seeds. "Best stage 2" is the best config new in stage 2; a reused stage-1 centre counts as stage 1.
+
+Consequences: `tuned:` is set in `configs/methods/{smdp-skills,count-bonus,sil}.yaml`; dyna-q starts from `smdp-skills.tuned` (`base_from`). Rejected: choosing the base control's config for any method.
+
+smdp-skills (base control pqn-rnn 10cbfc16, 1.27030, n 3):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| 0b84c247 a0.05-h200-e0.3-t2-recipe (best stage 1, chosen, stage-2 centre) | alpha 0.05, horizon 200, eps decay 0.3, timeout 2 | 3 | 1.41543 | 0.19584 |
+| cbb15b50 fine-alpha=0.1-timeout_mult=4.0 (best stage 2) | alpha 0.1, timeout 4 | 3 | 0.91567 | 0.44200 |
+
+Chosen 0b84c247: +0.145 over the pqn-rnn base. It is the centre of the stage-2 grid and every neighbour is lower (0.28 to 0.92), so the stage-1 win is an isolated, possibly lucky cell; the best new stage-2 config sits at the grid corner (alpha 0.1, timeout 4).
+
+count-bonus, ppo-rnn variant (base control ppo-rnn b3ce95c4, 2.18755, n 10):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| b0b1c535 b0.1-recipe-constant (best stage 1, chosen, stage-2 centre) | beta 0.1, recipe, constant (the base) | 3 | 2.33276 | 0.05290 |
+| afe0d0f2 fine-beta=0.2-granularity=tiers (best stage 2) | beta 0.2, tiers | 3 | 2.18712 | 0.12751 |
+
+Chosen b0b1c535: +0.145 over the control; the stage-2 grid found nothing better (new configs 2.16 to 2.19, `tuned: {ppo-rnn: {}}`).
+
+count-bonus, pqn-rnn variant (base control pqn-rnn 10cbfc16, 1.27030, n 3):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| 3c5f5200 b0.03-log2-linear (best stage 1) | beta 0.03, log2, linear | 3 | 1.59011 | 0.61100 |
+| e6e1fafa fine-beta=0.015-decay=linear (best stage 2, chosen) | beta 0.015, log2, linear | 3 | 1.72111 | 0.13798 |
+
+Chosen e6e1fafa: +0.451 over the base, +0.131 over the stage-1 best (within its sd 0.61). Its beta is the lower edge of the stage-2 grid, and beta 0.01 collapsed in stage 1, so the optimum is close to a cliff.
+
+sil (base control ppo-rnn b3ce95c4, 2.18755, n 10):
+
+| Config | Knobs | n | Mean | sd |
+|---|---|---|---|---|
+| 6f8690ad l0.3-s2-k1 (best stage 1, chosen, stage-2 centre) | lambda_sil 0.3, S 2, K 1 | 3 | 2.13982 | 0.04932 |
+| 4b57f12c fine-sil_steps=1-lambda_sil=0.15 (best stage 2) | lambda_sil 0.15, S 2, K 1 | 3 | 2.10891 | 0.04546 |
+
+Chosen 6f8690ad: -0.048 against the ppo-rnn control (inside the control's sd 0.107), so SIL does not beat PPO-RNN at 1M. The best K is the lower bound of the grid (K 1), so K below 1 was never available; stage 2 tried only K 1 and 2.
