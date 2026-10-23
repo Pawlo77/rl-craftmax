@@ -1579,8 +1579,13 @@ def test_a_hangup_of_the_queue_stops_the_child_like_a_signal(store: Store) -> No
     """SIGHUP (the terminal or SSH session closed) is a stop, not a death."""
     (spec,) = store.phase("tune-coarse", ["published"])
     hangup = _as(spec, "hangup")
-    with pytest.raises(SystemExit) as exit_info:
-        _in_children(store, [hangup])
+    # under ``nohup`` pytest inherits SIG_IGN, which the queue keeps on purpose
+    previous = signal.signal(signal.SIGHUP, signal.SIG_DFL)
+    try:
+        with pytest.raises(SystemExit) as exit_info:
+            _in_children(store, [hangup])
+    finally:
+        signal.signal(signal.SIGHUP, previous)
     assert exit_info.value.code == 128 + signal.SIGHUP
     assert store.runs()[hangup.name].info.status == "KILLED"
 

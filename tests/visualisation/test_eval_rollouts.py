@@ -21,6 +21,7 @@ from craftax.craftax_env import make_craftax_env_from_name
 from wut_murl_craftax.evaluation.events import StepEvents
 from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runtime import device_roles
+from wut_murl_craftax.training import interface
 from wut_murl_craftax.training.checkpoints import save_checkpoint
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.ppo import PPOPolicy
@@ -112,7 +113,8 @@ class _CountingTrainer:
 @pytest.fixture
 def counting_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A run of the counting entry, registered in `METHODS`, checkpoints 0 to 2."""
-    monkeypatch.setitem(METHODS, "counting", _CountingTrainer())
+    # `METHODS` is read-only (it builds ``combo`` lazily) and reads `_ENTRIES` live
+    monkeypatch.setitem(interface._ENTRIES, "counting", _CountingTrainer())
     run = tmp_path / "counting"
     run.mkdir()
     (run / "config.json").write_text(json.dumps({"method": "counting", "env": ENV}))
@@ -221,7 +223,7 @@ def test_each_step_gets_the_reward_and_done_of_the_step_before(
     """Zeros at the episode start, then the transition that produced ``obs``."""
     inputs = _CountingTrainer()
     inputs.policy_class = _InputsPolicy
-    monkeypatch.setitem(METHODS, "counting", inputs)
+    monkeypatch.setitem(interface._ENTRIES, "counting", inputs)
     run = EvalRun.load(counting_run)
     out = rollout_seeds(run, run.params(0), EVAL_SEEDS, greedy=True)
     assert out is not None
