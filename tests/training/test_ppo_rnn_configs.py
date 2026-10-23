@@ -1,5 +1,6 @@
 """Tests for the shipped PPO-RNN config: Table 11, the GRU network, Stage 1."""
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +62,10 @@ def test_base_is_table_11_with_the_relu_gru_network() -> None:
 def test_base_sets_every_trainer_field_but_the_runner_and_hook_ones() -> None:
     """The code defaults are PPO's Classic debugging ones, so none may be left out."""
     runner = {"steps", "n_ckpt", "seed", "extra_steps"}
-    fields = set(PPORNNConfig.__dataclass_fields__) - runner - set(HOOK_NAMES)
+    # dataclasses.fields leaves out class flags (ClassVar splits_method_state)
+    fields = (
+        {f.name for f in dataclasses.fields(PPORNNConfig)} - runner - set(HOOK_NAMES)
+    )
     assert fields == set(BASE)
     PPORNNConfig.from_config(BASE | {"method": "ppo-rnn"})
 
