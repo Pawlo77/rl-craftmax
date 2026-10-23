@@ -102,4 +102,8 @@ abort:
   permanent: [smdp/table_full, smdp/divergence]
 
 # written by `--mark-tuned smdp-skills <hash8>`
-tuned: null
+tuned:
+  alpha: 0.05
+  top_horizon: 200
+  eps_top_decay: 0.3
+  timeout_mult: 2.0
