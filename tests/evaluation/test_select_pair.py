@@ -418,3 +418,40 @@ def test_main_partial_ignores_gaps_outside_the_pair(
         "count-bonus-ppo-rnn",
         "sil",
     ]
+
+
+# --- the plan rule with skill methods (ruling R73) ------------------------------
+
+
+def test_the_plan_rule_pair_keeps_skill_methods_but_not_a_method_on_its_donor(
+    store: Store, methods: Path
+) -> None:
+    ranking = rank_methods(_scores(store, methods), methods_dir=methods)
+    plan = select_pair.plan_pair(ranking, methods_dir=methods)
+    assert plan is not None
+    assert [r.registry for r in plan] == ["smdp-skills", "count-bonus-pqn-rnn"]
+    pair = choose_pair(ranking, methods_dir=methods)
+    assert select_pair.plan_note(pair, plan) == (
+        "plan-rule pair smdp-skills+count-bonus-pqn-rnn not combinable via hooks; "
+        "using best compatible pair count-bonus-ppo-rnn+sil"
+    )
+
+
+def test_main_notes_a_plan_rule_pair_it_cannot_combine(
+    store: Store, methods: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _main(store, methods)
+    out = capsys.readouterr().out
+    assert "NOTE: plan-rule pair smdp-skills+count-bonus-pqn-rnn" in out
+    text = (methods / "combo.yaml").read_text(encoding="utf-8")
+    assert "# NOTE: plan-rule pair smdp-skills+count-bonus-pqn-rnn" in text
+
+
+def test_no_note_when_the_plan_rule_pair_is_the_hook_pair(
+    tmp_path: Path, methods: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = Store(tmp_path)
+    _fill(store, methods, MEANS | {"smdp-skills": 1.0, "dyna-q": 0.9})
+    _main(store, methods)
+    assert "NOTE" not in capsys.readouterr().out
+    assert "NOTE" not in (methods / "combo.yaml").read_text(encoding="utf-8")

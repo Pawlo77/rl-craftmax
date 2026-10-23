@@ -288,6 +288,55 @@ def choose_pair(
     raise NoPairError("; ".join([msg, *reasons]))
 
 
+def _donors(registry: str, entries: Mapping[str, Method]) -> list[str]:
+    """The ``base_from`` chain of a registry entry, nearest donor first."""
+    out, name = [], registry
+    while (donor := _block(entries[name], name).get("base_from")) is not None:
+        name = str(donor).rpartition(".")[0]
+        out.append(name)
+    return out
+
+
+def plan_pair(
+    ranking: Sequence[Ranked], *, methods_dir: Path = METHODS_DIR
+) -> tuple[Ranked, Ranked] | None:
+    """The plan rule's pair, skill methods included (ruling R73 records the gap).
+
+    The same order as `choose_pair`; two methods on one control, neither built on the
+    other (dyna-q on smdp-skills). None if no two ranked methods share a control.
+    """
+    entries = _entries(methods_dir)
+    place = {r.registry: i for i, r in enumerate(ranking)}
+    pairs = sorted(
+        (
+            (a, b)
+            for a, b in itertools.combinations(ranking, 2)
+            if a.control == b.control
+            and a.registry not in _donors(b.registry, entries)
+            and b.registry not in _donors(a.registry, entries)
+        ),
+        key=lambda p: (
+            place[p[0].registry] + place[p[1].registry],
+            place[p[0].registry],
+        ),
+    )
+    return pairs[0] if pairs else None
+
+
+def plan_note(
+    pair: tuple[Ranked, Ranked], plan: tuple[Ranked, Ranked] | None
+) -> str | None:
+    """The R73 note when the plan rule's pair is not the chosen one, else None."""
+    if plan is None or {r.registry for r in plan} == {r.registry for r in pair}:
+        return None
+    x, y = (r.registry for r in plan)
+    a, b = (r.registry for r in pair)
+    return (
+        f"plan-rule pair {x}+{y} not combinable via hooks; "
+        f"using best compatible pair {a}+{b}"
+    )
+
+
 def _merged(rules: Sequence[Mapping[str, Any] | None]) -> dict[str, Any]:
     """Abort blocks joined: names once, one limit per metric, one flag per name."""
     out: dict[str, Any] = {}
@@ -465,6 +514,10 @@ def _choose(
     if short := _short(pair, args.min_seeds):
         msg = f"pair methods below --min-seeds {args.min_seeds}: {', '.join(short)}"
         raise NoPairError(msg)
+    plan = plan_pair(ranking, methods_dir=args.methods_dir)
+    if note := plan_note(pair, plan):
+        print(f"NOTE: {note}")
+        notes.append(note)
     return pair, ranking, notes
 
 
