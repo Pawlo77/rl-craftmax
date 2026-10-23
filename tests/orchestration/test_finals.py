@@ -147,3 +147,19 @@ def test_min_complete_leaves_out_a_coarse_config_aborted_for_good(
     # the vi k0.003 config is out: the 0.03 configs (mean 1.5) win
     got = kappa_ablation(phases / "final-1m.yaml", min_complete=0.9, dry_run=True, **kw)
     assert got == 0.03
+
+
+def test_a_second_run_after_the_rewrite_changes_nothing(
+    tmp_path: Path, phases: Path
+) -> None:
+    assert _ablate(tmp_path, 0.0, phases) == 0.003
+    after = (phases / "final-1m.yaml").read_text(encoding="utf-8")
+    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    again = kappa_ablation(
+        phases / "final-1m.yaml",
+        tracking_uri=uri,
+        methods_dir=tmp_path / "methods",
+        phases_dir=phases,
+    )
+    assert again is None
+    assert (phases / "final-1m.yaml").read_text(encoding="utf-8") == after

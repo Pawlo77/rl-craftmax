@@ -13,6 +13,8 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+import yaml
+
 from .queue import (
     COARSE_PHASE,
     METHODS_DIR,
@@ -36,6 +38,15 @@ ZERO_ITEM = "{ref: tuned, set: {plan_kappa: 0.0}}"
 """The ablation item as final-1m.yaml spells it."""
 
 
+def _item_kappa(phase: Path) -> float | None:
+    """The kappa the phase's dyna-q ablation item sets (None without one)."""
+    raw = yaml.safe_load(phase.read_text(encoding="utf-8"))
+    for item in raw["runs"].get(DYNA, {}).get("configs", []):
+        if isinstance(item, dict) and KAPPA in item.get("set", {}):
+            return float(item["set"][KAPPA])
+    return None
+
+
 def kappa_ablation(
     phase: Path = PHASES_DIR / "final-1m.yaml",
     *,
@@ -47,7 +58,8 @@ def kappa_ablation(
 ) -> float | None:
     """Rewrite the kappa-0 ablation of ``phase`` when dyna-q's tuned kappa is 0.
 
-    Returns the new kappa, or None when the tuned kappa is above 0 (nothing changes).
+    Returns the new kappa, or None when the tuned kappa is above 0 or the item is
+    already rewritten (nothing changes: a rerun is a no-op).
     The rewritten file must expand without a duplicate run, or it is left as it was.
     ``min_complete``: the coarse configs aborted for good are left out of the choice
     (`queue.coarse_results`).
@@ -61,6 +73,9 @@ def kappa_ablation(
         method, DYNA, TUNE_BUDGET, ref="tuned", methods_dir=methods_dir
     )
     if tuned[KAPPA] != 0:
+        return None
+    if (item := _item_kappa(phase)) != 0:
+        logger.info("the %s ablation already runs %s %s", DYNA, KAPPA, item)
         return None
     phases = phases_dir or PHASES_DIR
     means = coarse_results(
