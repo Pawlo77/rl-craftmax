@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, overview, summary]
 ---
 # Craftax project plan overview
@@ -62,14 +62,14 @@ flowchart LR
 
 | Phase | What happens | Runs | Time estimate (training + evaluation) |
 |---|---|---|---|
-| 0 | Infrastructure, metrics, controls tuned and reproduced | 6 smoke + 89 coarse + 36 fine (controls) | about 18 laptop hours (16.2 + 1.8) |
-| 1 | Each method implemented, tested, tuned at 1M | 10 smoke + 405 coarse + 102 fine | about 83 laptop hours (74.5 + 8.5) |
-| 2 | Finals: 10 seeds at 1M, 3 seeds at 1B | 140 `final-1m` + 24 `final-1b` | 1M: about 49 laptop hours (20.0 + 29.4); 1B: about 72 GPU hours on CUDA (33.0 + 39.1; about 2,970 laptop hours) |
-| 3 | Best two methods combined, after both finals | 10 `combo-1m` + 3 `combo-1b` | 1M: about 4 laptop hours (1.7 + 2.5); 1B: about 11 GPU hours (5.1 + 6.0) |
+| 0 | Infrastructure, metrics, controls tuned and reproduced | 6 smoke + 89 coarse + 36 fine (controls) | measured: 13.0 run-hours, 11.9 h wall-clock (estimate: about 18 laptop hours) |
+| 1 | Each method implemented, tested, tuned at 1M | 10 smoke + 405 coarse + 102 fine | measured for 4 of 5 methods: 52.7 run-hours, 30.5 h wall-clock; Dyna-Q running, estimate 5.4 h (was about 83 laptop hours for all) |
+| 2 | Finals: 10 seeds at 1M, 3 seeds at 1B | 140 `final-1m` + 24 `final-1b` | 1M: about 13 laptop hours with 2 workers (estimate from measured run times; was 49); 1B: about 43 GPU hours on CUDA (33.0 + 10.4; was 72), about 2,077 laptop hours |
+| 3 | Best two methods combined, after both finals | 10 `combo-1m` + 3 `combo-1b` | 1M: about 1.2 laptop hours (estimate; was 4); 1B: about 6 GPU hours (5.1 + 1.3; was 11), about 357 laptop hours |
 | 4 | Analysis | offline | small |
 | 5-7 | Videos, report, Hugging Face release | offline | small |
 
-- Totals: 825 runs; everything at 1M about 154.5 laptop hours (112.4 training + 42.1 evaluation); everything at 1B about 83 GPU hours (38.0 training + 45.1 evaluation, the evaluation counted at the laptop rate).
+- Totals: 825 runs; everything at 1M on the laptop with 2 workers: tuning measured (Phase 0 11.9 h, Phase 1 about 31 h plus Dyna-Q 5.4 h estimate) and finals plus combination about 14 h estimate (was 154.5 sequential hours); everything at 1B about 50 GPU hours (38.0 training + 11.7 evaluation at the measured eval rate; was 83).
 - 1B results rest on 3 seeds and are indicative; significance claims are made at 1M (10 seeds) ([[Experiment decisions]]).
 - Full numbers: [[2026-10-20-craftax-compute-budget]].
 
@@ -77,6 +77,7 @@ flowchart LR
 
 - Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); Phase 1 code merged 2026-10-22 05:10; online metric families merged 12:06; Phase 0 complete 14:10 (full suite on main green).
 - Phase 1 stage-1 tuning running since 06:02; checklist and status in [[2026-10-20-craftax-project]].
+- Timetable (measured to 2026-10-23 15:50): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19; Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:34; Dyna-Q tuning started Fri 23 15:43, ends about 21:15 (estimate). Estimate with 2 workers: `final-1m` (140 runs) about 13 h (14 h with retries), `combo-1m` (10 runs) about 1.2 h; started at 22:15 they end about Sat 24 12:00 and 13:30.
 
 ## How to run it
 

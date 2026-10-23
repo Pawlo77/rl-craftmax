@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, hierarchical-rl, options, smdp, q-learning, pqn-rnn]
 ---
 # SMDP Q-Learning over Hand-Defined Skills implementation plan
@@ -110,6 +110,15 @@ Fixed method settings:
 | `final-1m` (best + 3 ablations) | 4 | 10 | 1M | 40 | 2,182 | 5.76 |
 | `final-1b` | 1 | 3 | 1B | 3 | 2,182 | 381.99 |
 | Total | | | | 213 | | 412.0 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs | Measured min per run | Measured steps/s | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` | 144 | 6.2 (2 workers) | 2,937 (tuned config) | 7.5 h (est. 20.73 h + eval) |
+| `tune-fine` | 21 new + 3 reused | 5.4 (2 workers) | | 1.0 h (est. 3.46 h) |
+| `final-1m` (estimate) | 40 | 9.5 (2 workers, 13 checkpoints) | | 3.2 h (est. 5.76 h + 8.5 h eval) |
+| `final-1b` on the laptop (estimate) | 3 | 64.8 h per run | 4,288 (1 worker) | 194 h (est. 382.0 h) |
 
 - One 1M run: 0.144 h; one 1B run: 127.3 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.1 = 194,153 steps/s, 1.43 h per run excluding the 1-minute compile, 4.3 h for 3 seeds.

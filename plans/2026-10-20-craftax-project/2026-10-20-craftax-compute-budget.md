@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, compute, estimates]
 ---
 # Craftax compute budget
@@ -16,7 +16,7 @@ Status: ready
 
 **Goal:** know how many runs each phase holds and how long training and evaluation take on the Apple M4 Pro laptop and on a CUDA GPU, and keep the numbers current as real throughput is measured.
 
-**Architecture:** training totals are sums of the per-method tables in each method plan (steps per second x an overhead factor; laptop hours include 1 minute of compilation per run, GPU hours exclude it); evaluation time is added per method as eval steps per run (all its eval checkpoints) / the method's steps per second; training and evaluation are shown separately. All numbers are estimates until [[2026-10-20-craftax-infrastructure]] Task 7 and each method's smoke task measure real throughput.
+**Architecture:** training totals are sums of the per-method tables in each method plan (steps per second x an overhead factor; laptop hours include 1 minute of compilation per run, GPU hours exclude it); evaluation time is added per method as eval steps per run (all its eval checkpoints) / the method's steps per second; training and evaluation are shown separately. Since 2026-10-23 the tuning phases (`tune-coarse`, `tune-fine`, Phase 0 and four of five Phase 1 methods) are measured wall-clock from MLflow; `final-1m`, `combo-1m`, `final-1b` and the Dyna-Q tuning are estimates recomputed from those measurements. Every table says which of the two it holds.
 
 **Tech Stack:** MLflow (measured steps/s per run), the method plans of [[2026-10-20-craftax-project]].
 
@@ -43,7 +43,10 @@ Status: ready
 | Dyna-Q planning share of an update (`dyna/plan_wall_share`), Classic 200k | uniform n 5: 0.0005 (0.2 ms of planning per update); prioritized n 5, kappa 0.003: 0.0046; value iteration: 0.020 with 7 to 9 sweeps (`dyna/vi_sweeps`) per update | measured 2026-10-22, Classic, laptop |
 | `smdp/pairs_tried` at the end of the smdp-skills `base` config (sizes Dyna's `model_pairs` 2^16 = 65,536) | 157 (200k Classic, base), 134 (200k Classic, random top level), 1,852 (1M Classic), 253 (1M Craftax) | measured 2026-10-22, one seed each |
 | SMDP per-skill test agreement (`smdp/skill/<name>/test_agreement`), the 2 Classic 200k `smoke` runs | 1.0 for all 25 skills at the last update of both runs; the mean over updates is 1.0 except `sleep` 0.94 in one run (most tests are near-vacuous this early) | measured 2026-10-22, read from MLflow |
-| PPO-RNN and PQN-RNN planning value | 2,400 steps/s (0.8 x PPO) | estimate |
+| PPO-RNN and PQN-RNN planning value | 2,400 steps/s (0.8 x PPO); superseded for Craftax by the measured rows below | estimate |
+| Craftax-Symbolic 1M, tuned (published or base) config of the controls, one queue worker, train wall-clock with compile and state saves, no eval (median over the runs) | PPO 4,364 steps/s (10 runs of `e06ac6db`, 3.8 min); PPO-RNN 2,930 (10 runs of `b3ce95c4`, 5.7 min); PQN-RNN 3,830 (3 runs of `10cbfc16`, 4.4 min); the planning values 3,000 and 2,400 were 45%, 22% and 60% too low for them | measured 2026-10-21 and 22, laptop, [[2026-10-20-craftax-method-ppo]] etc. |
+| Craftax-Symbolic 1M, tuned config of the Phase 1 methods, two workers, per worker (median of 3 to 12 runs) | count-bonus PQN-RNN 2,158 steps/s (7.7 min); SIL 1,603 (10.4 min); SMDP skills 2,937 (5.7 min); count-bonus PPO-RNN 1,828 (9.1 min, median of the stage-2 runs) | measured 2026-10-23, laptop |
+| Slowdown per run with 2 workers against 1, same shape | PPO 1.54 x (4.49 to 6.92 min, `845b73b4` against its stage-2 configs), PPO-RNN 1.52 x (8.20 to 12.49 min, `04e6b687` against its stage-2 configs), PQN-RNN 1.31 x (5.2 to 6.8 min, ledger R57); throughput of 2 workers 1.30 x, 1.31 x, 1.53 x | measured 2026-10-22, laptop |
 | CPU rollouts with metal updates | +4-5% end to end for a 256-wide MLP | measured |
 | Authors' RTX 4090, PPO 1B | about 1 hour (266,961 steps/s end to end) | [[Craftax performance]] |
 
@@ -57,11 +60,12 @@ Evaluation follows [[2026-10-20-craftax-infrastructure]] Task 5 and the "Evaluat
 | Quantity | Value | Note |
 |---|---|---|
 | Eval checkpoints per run | tuning and smoke (`smoke`, `tune-coarse`, `tune-fine`): 1 (final); finals (`final-1m`, `final-1b`, `combo-1m`, `combo-1b`): 13 (update 0 + 11 log-spaced + the last, `checkpoint_schedule`) | |
-| Longest eval episode L, rounded up to the chunk | 1,000 steps at 1M and on Classic; 8,000 steps averaged over the 13 checkpoints of a 1B run | estimate |
+| Longest eval episode L, rounded up to the chunk | 1,000 steps at 1M and on Classic (measured at 1M, see below); 8,000 steps averaged over the 13 checkpoints of a 1B run | estimate for 1B |
 | Eval steps per run | tuning and smoke: 128 x 1,000 = 128,000; `final-1m`, `combo-1m`: 13 x 128,000 = 1,664,000; `final-1b`, `combo-1b`: 13 x 128 x 8,000 = 13,312,000 | |
 | Measured, Classic, laptop (2026-10-21) | 128 episodes (64 seeds x 2 modes) = 128,000 steps per checkpoint, as above: the 1,000-step chunk is never exceeded (longest eval episode 393 steps; about 18,900 steps actually played per checkpoint); steady state 0.9 s per mode, about 70,000 steps/s of the 64,000 padded (about 11,000 on the steps actually played, greedy), plus 2.6 s once per run (the `EvalRun` jit load); eval runs as 2 batches of 64 seeds on 8 CPU shards, not one 128-env batch | measured |
 | Measured, Craftax-Symbolic 1M, final checkpoints of the control `tune-coarse` and `tune-fine` runs (2026-10-22) | eval steps per checkpoint: median 128,000 for PPO (37 runs), PPO-RNN (43) and PQN-RNN (42); maximum 256,000, 256,000 and 192,000; above 128,000 in 14%, 16% and 2% of runs (median longest stochastic episode 630, 604 and 440 steps) | measured, read from the eval files |
-| Eval throughput | the method's training planning throughput on the laptop (both modes as one 128-env batch); cluster runs are costed at the same laptop rate, because the GPU eval rate of a 128-env batch is not measured | estimate, conservative on the cluster |
+| Measured eval wall-clock per checkpoint, Craftax-Symbolic 1M, tuning runs (last eval file minus `metrics.npz` modification time, so the one-time `EvalRun` jit load is included; the eval time is not logged as a metric) | 1 worker: 15 s (PPO, PPO-RNN, PQN-RNN), 2 workers: 18 to 22 s (all 7 methods; median 19 s); that is about 8,500 padded steps/s with 1 worker and 6,600 with 2 (128,000 padded steps per checkpoint), 2.2 to 3.5 x the planning values | measured 2026-10-23, laptop |
+| Eval throughput used below | 8,500 steps/s (1 worker, all methods; the 1B cluster runs are costed at the same rate, because the GPU eval rate of a 128-env batch is not measured); the 13 checkpoints of a `final-1m` run cost about 3.5 min with 1 worker (13 x 17 s, 4.3 min with 2) | measured rate, estimate for the finals |
 
 ## Runs per phase
 
@@ -81,51 +85,90 @@ Seeds: 3 per config in tuning, 10 in `final-1m` and `combo-1m`, 3 in `final-1b` 
 
 - The [[2026-10-20-craftax-method-pqn-rnn]] 1M reference-code check adds 3 runs of the original script outside the queue (about 0.4 laptop hours, counted in the PQN-RNN row below, no fixed-seed evaluation).
 
-## Laptop time (sequential, hours, estimates)
+## Laptop time
 
-Sums of the method plans' tables (training, with compile) and evaluation bullets. The "1M finals" and "1B finals" columns hold `final-1m` and `final-1b`; for the combination row they hold `combo-1m` and `combo-1b`.
+Run minutes are queue-run wall-clock: process start to the last eval file (compile, training, state saves, the one fixed-seed evaluation of a tuning run). A run's MLflow `end_time` is not used (the runner stamps it in a batch when a phase closes). Runs resumed after an out-of-memory failure are left out of the medians; "runs/h" is 60 (1 worker) or 120 (2 workers) over the median minutes.
 
-| Method | Training: `smoke` + tuning | Training: 1M finals | Training: 1B finals | Eval: `smoke` + tuning | Eval: 1M finals | Eval: 1B finals | Total |
+### Measured 2026-10-23: tuning (`tune-coarse` + `tune-fine`, Craftax-Symbolic 1M, 3 seeds per config)
+
+| Method | Runs finished (coarse + fine) | Min per run, 1 worker | Min per run, 2 workers | Runs/h, 2 workers | Run-hours | Wall-clock coarse | Wall-clock fine |
 |---|---|---|---|---|---|---|---|
-| PPO | 4.4 | 1.1 | 277.8 | 0.5 | 1.5 | 3.7 | 289.1 |
-| PPO-RNN | 5.7 | 1.3 | 347.3 | 0.6 | 1.9 | 4.6 | 361.5 |
-| PQN-RNN (incl. 0.4 reference-code check) | 6.0 | 1.3 | 347.3 | 0.6 | 1.9 | 4.6 | 361.8 |
-| Count bonus, 2 variants | 24.1 | 4.1 | 729.3 | 2.7 | 6.1 | 9.7 | 776.1 |
-| Self-imitation | 13.1 | 3.3 | 451.4 | 1.5 | 5.0 | 6.0 | 480.4 |
-| SMDP skills | 24.2 | 5.8 | 382.0 | 2.7 | 8.5 | 5.1 | 428.3 |
-| Dyna-Q | 13.1 | 3.0 | 399.4 | 1.5 | 4.4 | 5.3 | 426.7 |
-| Combination (`combo-1m`, `combo-1b`; overhead 1.3, estimate) | - | 1.7 | 451.4 | - | 2.5 | 6.0 | 461.6 |
-| **Total** | **90.7** | **21.7** | **3,385.9** | **10.2** | **31.9** | **45.1** | **3,585.4** |
+| PPO | 28 + 9 (3 more reused) | 4.3 (26 runs) | 6.9 (9) | 17.3 | 3.0 | Wed 21 16:23 to 19:51 (3.5 h) | Thu 22 01:46 to 02:19 (0.5 h) |
+| PPO-RNN | 31 + 12 | 6.0 (28) | 12.5 (12) | 9.6 | 5.6 | Wed 21 19:51 to Thu 22 01:20 (5.5 h) | Thu 22 02:20 to 03:36 (1.3 h) |
+| PQN-RNN | 30 + 12 | 5.2 (12) | 6.8 (14 + 12) | 17.6 | 4.4 | Wed 21 22:54 to Thu 22 01:40 (2.8 h) | Thu 22 03:37 to 04:19 (0.7 h) |
+| Count bonus, PPO-RNN variant | 72 + 12 | - | 8.6 (37) | 14.0 | 12.2 | Thu 22 06:02 to 14:56 (8.9 h) | Fri 23 08:32 to 09:30 (1.0 h) |
+| Count bonus, PQN-RNN variant | 72 + 12 | - | 8.2 (5) | 14.6 | 11.5 | Thu 22 09:15 to 19:34 (10.3 h) | Fri 23 09:30 to 10:22 (0.9 h) |
+| Self-imitation | 54 + 12 | - | 11.2 (54) | 10.8 | 12.2 | Thu 22 19:46 to Fri 23 00:59 (5.2 h) | Fri 23 10:25 to 11:31 (1.1 h) |
+| SMDP skills | 144 + 21 (3 more reused) | - | 6.2 (144) | 19.4 | 16.8 | Fri 23 01:03 to 08:30 (7.5 h) | Fri 23 11:32 to 12:34 (1.0 h) |
+| Dyna-Q | running since Fri 23 15:43 (63 + 24 runs) | - | not yet | - | - | - | - |
 
-- Totals are summed before rounding, so a column of rounded rows can differ from its total by 0.1.
-- Everything at 1M (smoke, tuning, `final-1m`, `combo-1m`) is about 154.5 laptop hours (about 6.4 days): 112.4 h training and 42.1 h evaluation.
-- Evaluation at 1M is dominated by the 13 checkpoints of each 1M final run (1,664,000 eval steps against 1M training steps); a tuning run adds 128,000 eval steps.
-- One 1B run is about 93 hours (PPO) to 150 hours (self-imitation, combination) of training on the laptop, plus 1.2 (PPO) to 2.0 hours (self-imitation, combination) of evaluation.
+- Measured eval per checkpoint (tuning runs, 1 final checkpoint): 15 s with 1 worker, 19 s median with 2 workers; it is inside the run minutes.
+- Run-hours = runs x median minutes (1 and 2 worker periods separately), so the wall-clock of a phase at 2 workers is about half of them; the wall-clock columns are first start to last eval end and include out-of-memory retries and pauses (the count-bonus coarse cascade of Thu 22 12:10, the session gaps of Fri 23).
+- Phase 0 (3 controls): 122 runs, 13.0 run-hours, Wed 21 16:23 to Thu 22 04:19 (11.9 h wall-clock, 1 worker until Thu 22 00:06, then 2). Estimate was about 18 h sequential (17.8 h training + eval).
+- Phase 1 (4 methods, 399 runs): 52.7 run-hours, Thu 22 06:02 to Fri 23 12:34 (30.5 h wall-clock with gaps). Estimate for those four methods was about 68 h sequential (26.8 + 14.6 + 26.9).
+- 2 workers: 1.30 x (PPO), 1.31 x (PPO-RNN) and 1.53 x (PQN-RNN) the throughput of 1 (Throughput assumptions); mean about 1.4 x.
+
+### Estimates for what has not run (2 workers, 13 eval checkpoints in a `final-1m` run)
+
+Per-run minutes: the tuned config's measured minutes (controls: the 1-worker median times the slowdown of the method's matched measurement; Phase 1 methods: measured at 2 workers; Dyna-Q: PQN-RNN 6.4 x 1.15, the planned overhead; Classic measured 1.11 to 1.15) plus 12 further checkpoints x 17 s = 3.4 min.
+
+| Method | `final-1m` runs | Measured tuned-config min (2 workers) | + 12 checkpoints | Min per run | Wall-clock h |
+|---|---|---|---|---|---|
+| PPO | 10 | 6.2 | 3.4 | 9.6 | 0.8 |
+| PPO-RNN | 10 | 9.1 | 3.4 | 12.5 | 1.0 |
+| PQN-RNN | 10 | 6.4 | 3.4 | 9.8 | 0.8 |
+| Count bonus, 2 variants | 30 | 8.9 (9.5 PPO-RNN, 8.3 PQN-RNN) | 3.4 | 12.3 | 3.1 |
+| Self-imitation | 20 | 10.8 | 3.4 | 14.2 | 2.4 |
+| SMDP skills | 40 | 6.1 | 3.4 | 9.5 | 3.2 |
+| Dyna-Q (estimate, not measured) | 20 | 7.4 | 3.4 | 10.8 | 1.8 |
+| **`final-1m`** | **140** | | | | **13.1 (10.7 runs/h; 8.8 training + 4.3 evaluation)** |
+| `combo-1m` (SIL-like 10.8 + 3.4 = 14.2 min, overhead 1.3) | 10 | 10.8 | 3.4 | 14.2 | 1.2 |
+| Dyna-Q tuning remaining (63 coarse + 24 fine, 7.4 min per run, no 13 checkpoints) | 87 | 7.4 | - | 7.4 | 5.4 (ends about Fri 23 21:15) |
+
+- The estimate before the measurements was 21.7 h training + 31.9 h evaluation sequential for the 1M finals (53.6 h) and 4.2 h for `combo-1m`: the 13-checkpoint evaluation was planned at the training rate (9 min per run) and measures 3.7 min, and PPO, PPO-RNN and PQN-RNN train faster than planned.
+- Add about 10% to `final-1m` for out-of-memory retries (the cleanup pass of `run_workers.sh`): about 14 h, 0.6 days, with `combo-1m` about 15 h.
+- Laptop 1B (`final-1b`, `combo-1b`; estimate): the 1M rates of the tuned configs applied to 1B steps, one run at a time; the Phase 1 methods' rates are the 2-worker per-worker rates x 1.46 (mean measured slowdown) to get 1 worker; eval at 8,500 steps/s. Memory at the 1B rollout shape (1,024 envs x 64 steps needs more than 36 GB, [[2026-10-20-craftax-infrastructure]]) is not covered.
+
+| Method | Steps/s (1 worker) | Hours per 1B run | 3 seeds, training | Eval h per run | 3 seeds, training + eval |
+|---|---|---|---|---|---|
+| PPO | 4,364 (measured) | 63.7 | 191.0 | 0.43 | 192.3 |
+| PPO-RNN | 2,930 (measured) | 94.8 | 284.4 | 0.43 | 285.7 |
+| PQN-RNN | 3,830 (measured) | 72.5 | 217.6 | 0.43 | 218.9 |
+| Count bonus, PPO-RNN variant | 2,668 (2-worker 1,828 x 1.46) | 104.1 | 312.3 | 0.43 | 313.6 |
+| Count bonus, PQN-RNN variant | 3,151 (2,158 x 1.46) | 88.2 | 264.5 | 0.43 | 265.8 |
+| Self-imitation | 2,340 (1,603 x 1.46) | 118.7 | 356.1 | 0.43 | 357.4 |
+| SMDP skills | 4,288 (2,937 x 1.46) | 64.8 | 194.3 | 0.43 | 195.6 |
+| Dyna-Q (not measured) | 3,389 (PQN-RNN / 1.13, Classic overhead) | 82.0 | 245.9 | 0.43 | 247.2 |
+| Combination (`combo-1b`, as SIL) | 2,340 | 118.7 | 356.1 | 0.43 | 357.4 |
+| **`final-1b`** (8 methods, 24 runs) | | | **2,066.1** | | **2,076.5** |
+| **`combo-1b`** | | | **356.1** | | **357.4** |
+
+- 1B on the laptop: about 2,077 h (87 days) for `final-1b` and 357 h for `combo-1b`; before the measurements 2,970 laptop hours for `final-1b` (training only, the CUDA estimate below is unchanged).
 
 ## 1B finals on a CUDA GPU (authors' hardware, estimates)
 
-Training hours per run exclude the 1-minute compile; eval hours are counted at the laptop rate (Evaluation assumptions).
+Training hours per run exclude the 1-minute compile and are the unchanged estimates (authors' 266,961 steps/s divided by the overhead factor). Eval hours per run are 13 checkpoints x 128 episodes x 8,000 steps = 13,312,000 steps at the measured laptop eval rate of 8,500 steps/s (Evaluation assumptions): 0.43 h, instead of 1.23 to 2.00 h at the planning rate; the 8,000-step episode length at 1B stays an estimate.
 
 | Method | Training hours per run | Eval hours per run | 3 seeds, training + eval |
 |---|---|---|---|
-| PPO | 1.04 | 1.23 | 6.8 |
-| PPO-RNN, PQN-RNN | 1.30 each | 1.54 each | 8.5 each |
-| Count bonus | 1.37 per variant | 1.62 per variant | 17.9 for both |
-| Self-imitation | 1.69 | 2.00 | 11.1 |
-| SMDP skills | 1.43 | 1.69 | 9.4 |
-| Dyna-Q | 1.50 | 1.77 | 9.8 |
-| Combination (`combo-1b`) | 1.69 | 2.00 | 11.1 |
-| **Total** | | | **about 83 GPU hours** (38.0 training + 45.1 eval) |
+| PPO | 1.04 | 0.43 | 4.4 |
+| PPO-RNN, PQN-RNN | 1.30 each | 0.43 | 5.2 each |
+| Count bonus | 1.37 per variant | 0.43 | 10.8 for both |
+| Self-imitation | 1.69 | 0.43 | 6.4 |
+| SMDP skills | 1.43 | 0.43 | 5.6 |
+| Dyna-Q | 1.50 | 0.43 | 5.8 |
+| Combination (`combo-1b`) | 1.69 | 0.43 | 6.4 |
+| **Total** | | | **about 50 GPU hours** (38.0 training + 11.7 eval; was 83) |
 
-- `final-1b` is about 72 GPU hours (33.0 training + 39.1 eval) and `combo-1b` about 11 (5.1 + 6.0).
-- Seeds are independent runs: with k GPUs the 1B wall-clock is about 83 / k hours.
+- `final-1b` is about 43 GPU hours (33.0 training + 10.4 eval) and `combo-1b` about 6 (5.1 + 1.3).
+- Seeds are independent runs: with k GPUs the 1B wall-clock is about 50 / k hours.
 
 ## Mix of machines
 
 ```mermaid
 flowchart LR
-  L["Laptop: smoke, tune-coarse, tune-fine, final-1m, combo-1m (about 155 h with eval)"] --> M["mlruns.db"]
-  C["Cluster GPUs: final-1b, combo-1b (about 83 GPU h with eval)"] --> N["node stores"]
+  L["Laptop, 2 workers: smoke, tune-coarse, tune-fine (measured), final-1m, combo-1m (estimate about 15 h)"] --> M["mlruns.db"]
+  C["Cluster GPUs: final-1b, combo-1b (estimate about 50 GPU h with eval)"] --> N["node stores"]
   N -- "make merge-mlflow" --> M
   M --> A["Phase 4 analysis"]
 ```
@@ -140,3 +183,4 @@ flowchart LR
 - [ ] **Step 1:** after [[2026-10-20-craftax-infrastructure]] Task 7 and each method's smoke task, read each method's mean steps/s and eval steps per checkpoint (longest of the 128 eval episodes) from the `smoke` runs (`make status PHASE=smoke`, then the runs in `make mlflow`).
 - [ ] **Step 2:** recompute every table with the measured values (laptop hours with compile, GPU hours without); mark them "measured".
 - [ ] **Step 3:** after `tune-coarse` of each method, recheck its overhead factor against the PPO-RNN or PQN-RNN base and the eval episode length at its final checkpoint; after the first `final-1b` run, replace the 1B eval assumptions with its measured eval time.
+- Note 2026-10-23: Steps 1 to 3 are done for what has run (tuning of the three controls and four Phase 1 methods; see "Laptop time"): run minutes, 2-worker throughput, eval per checkpoint and Craftax steps/s are measured; the `final-1m`, `combo-1m` and 1B numbers are recomputed estimates. Still open: Dyna-Q tuning (running), the first `final-1m` run times (replace the "Estimates" table), the first `final-1b` eval time.

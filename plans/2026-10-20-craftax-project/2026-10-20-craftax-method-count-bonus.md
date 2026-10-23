@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, exploration, count-based, ppo-rnn, pqn-rnn]
 ---
 # Count-Based Progress Bonus implementation plan
@@ -132,6 +132,15 @@ PQN-RNN variant (`count-bonus-pqn-rnn`):
 | `final-1m` | 1 | 10 | 1M | 10 | 2,286 | 1.38 |
 | `final-1b` | 1 | 3 | 1B | 3 | 2,286 | 364.63 |
 | Total | | | | 102 | | 378.1 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs (PPO-RNN + PQN-RNN variant) | Measured min per run (2 workers) | Measured steps/s per worker | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` | 72 + 72 | 8.6 + 8.2 | 1,828 + 2,158 (tuned configs) | 8.9 h + 10.3 h with out-of-memory retries (est. 9.95 h + 1.12 h eval each) |
+| `tune-fine` | 12 + 12 | 9.5 + 8.4 | | 1.0 h + 0.9 h (est. 2.07 h + 0.23 h each) |
+| `final-1m` (estimate, 30 runs incl. SimHash ablation) | 30 | 12.3 mean (2 workers, 13 checkpoints) | | 3.1 h (est. 2.76 h + 1.38 h + 6.1 h eval) |
+| `final-1b` on the laptop (estimate) | 3 + 3 | 104.1 + 88.2 h per run | 2,668 + 3,151 (1 worker) | 313 h + 265 h (est. 364.6 h + 364.6 h) |
 
 - Both variants: 214 runs, 757.6 laptop training hours (estimate).
 - One 1M run: 0.138 h; one 1B run: 121.5 h (both with compile).

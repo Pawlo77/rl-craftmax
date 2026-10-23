@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, control, ppo, recurrent]
 ---
 # Craftax PPO-RNN control implementation plan
@@ -93,6 +93,15 @@ Throughput (estimate): GRU 512 planning value 2,400 steps/s (0.8 x PPO); Craftax
 | `final-1m` | 1 | 10 | 1M | 10 | 2,400 | 1.32 |
 | `final-1b` | 1 | 3 | 1B | 3 | 2,400 | 347.27 |
 | Total | | | | 58 | | 354.3 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs | Measured min per run | Measured steps/s | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` | 31 | 6.0 (1 worker) | 2,930 (base config) | 5.5 h with out-of-memory retries (est. 4.10 h + 0.46 h eval) |
+| `tune-fine` | 12 | 12.5 (2 workers) | | 1.3 h (est. 1.59 h + 0.18 h) |
+| `final-1m` (estimate) | 10 | 12.5 (2 workers, 13 checkpoints) | | 1.0 h (est. 1.32 h + 1.93 h) |
+| `final-1b` on the laptop (estimate) | 3 | 94.8 h per run | 2,930 | 284 h (est. 347.3 h) |
 
 - One 1M run: 1e6 / 2,400 + 60 s = 477 s; one 1B run: 416,727 s = 115.8 h.
 - final-1b on a CUDA cluster GPU (authors' hardware, estimate): 1e9 / 266,961 steps/s x 1.25 = 1.30 h per run excluding the 1-minute compile (the budget convention), 3.9 h for 3 seeds; laptop hours in the table include it.

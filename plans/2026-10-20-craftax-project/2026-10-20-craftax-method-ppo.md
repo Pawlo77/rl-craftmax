@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, control, ppo]
 ---
 # Craftax PPO control implementation plan
@@ -84,6 +84,15 @@ Throughput (estimate): PPO on Craftax-Symbolic 3,000 steps/s with 8 CPU shards, 
 | `final-1m` | 1 | 10 | 1M | 10 | 3,000 | 1.09 |
 | `final-1b` | 1 | 3 | 1B | 3 | 3,000 | 277.83 |
 | Total | | | | 55 | | 283.3 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs | Measured min per run | Measured steps/s | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` | 28 | 4.3 (1 worker) | 4,364 (published config) | 3.5 h (est. 3.06 h + 0.33 h eval) |
+| `tune-fine` | 9 new + 3 reused | 6.9 (2 workers) | | 0.5 h (est. 1.31 h + 0.14 h) |
+| `final-1m` (estimate) | 10 | 9.6 (2 workers, 13 checkpoints) | | 0.8 h (est. 1.09 h + 1.54 h) |
+| `final-1b` on the laptop (estimate) | 3 | 63.7 h per run | 4,364 | 191 h (est. 277.8 h) |
 
 - One 1M run: 1e6 / 3,000 + 60 s = 393 s; one 1B run: 333,393 s = 92.6 h.
 - Optimistic resets should raise the measured throughput above these estimates (the authors report about 2x, [[Craftax performance]]); Task 3 records the measurement.

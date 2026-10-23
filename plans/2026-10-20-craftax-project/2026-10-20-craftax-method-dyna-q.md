@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, model-based, dyna, planning, tabular, pqn-rnn]
 ---
 # Dyna-Q over a Skill-Level Progress Model implementation plan
@@ -96,6 +96,15 @@ Fixed settings:
 | `final-1m` (best + κ ablation) | 2 | 10 | 1M | 20 | 2,087 | 3.00 |
 | `final-1b` | 1 | 3 | 1B | 3 | 2,087 | 399.36 |
 | Total | | | | 112 | | 415.4 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs | Measured min per run | Measured steps/s | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` (running since Fri 23 15:43) | 63 | 7.4 (estimate: PQN-RNN 6.4 min x 1.15, 2 workers) | | 3.9 h (est. 9.44 h + eval) |
+| `tune-fine` (estimate) | 24 | 7.4 | | 1.5 h (est. 3.59 h) |
+| `final-1m` (estimate) | 20 | 10.8 (2 workers, 13 checkpoints) | | 1.8 h (est. 3.00 h + 4.4 h eval) |
+| `final-1b` on the laptop (estimate) | 3 | 82.0 h per run | 3,389 (PQN-RNN / 1.13) | 246 h (est. 399.4 h) |
 
 - One 1M run: 0.150 h; one 1B run: 133.1 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.15 = 185,712 steps/s, 1.50 h per run excluding the 1-minute compile, 4.5 h for 3 seeds.

@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, control, q-learning, recurrent]
 ---
 # Craftax PQN-RNN control implementation plan
@@ -98,6 +98,15 @@ Throughput (estimate): 2,400 steps/s on Craftax-Symbolic, 8,000 on Classic; over
 | `final-1m` | 1 | 10 | 1M | 10 | 2,400 | 1.32 |
 | `final-1b` | 1 | 3 | 1B | 3 | 2,400 | 347.27 |
 | Total | | | | 57 | | 354.2 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs | Measured min per run | Measured steps/s | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` | 30 | 5.2 (1 worker, 12 runs), 6.8 (2 workers, 14 runs) | 3,830 (base config, 1 worker) | 2.8 h (est. 3.97 h + 0.44 h eval) |
+| `tune-fine` | 12 | 6.8 (2 workers) | | 0.7 h (est. 1.59 h + 0.18 h) |
+| `final-1m` (estimate) | 10 | 9.8 (2 workers, 13 checkpoints) | | 0.8 h (est. 1.32 h + 1.93 h) |
+| `final-1b` on the laptop (estimate) | 3 | 72.5 h per run | 3,830 | 218 h (est. 347.3 h) |
 
 - One 1M run: 477 s; one 1B run: 416,727 s = 115.8 h.
 - The 1M reference-code check (Task 6) adds 3 runs of the original script outside the queue, about 0.4 h at the same throughput including compile (estimate), outside the table and without fixed-seed evaluation.

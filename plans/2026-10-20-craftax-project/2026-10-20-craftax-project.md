@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, project, index]
 ---
 # Craftax project execution plan
@@ -60,6 +60,8 @@ Each phase ends with `make check` green and its results visible in MLflow; later
 
 Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06; Phase 0 complete 14:10 (full suite on main 0c73a58: 966 passed plus the fixed SIL metric-key test). Phase 1 code merged 2026-10-22 05:10, stage-1 tuning running since 06:02.
 
+Timetable (measured to 2026-10-23 15:50, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:34 (52.7 run-hours); Dyna-Q tuning started Fri 23 15:43, ends about 21:15 (estimate 5.4 h). Estimates on the laptop with 2 workers: `final-1m` (140 runs) about 13 h, `combo-1m` (10 runs) about 1.2 h; started at 22:15 they end about Sat 24 12:00 and 13:30. Details: [[2026-10-20-craftax-compute-budget]].
+
 ### Phase 0: Infrastructure and controls
 
 - [x] [[2026-10-20-craftax-infrastructure]] Tasks 1-3, then [[2026-10-20-craftax-evaluation-and-metrics]] Tasks 1-2 (`evaluation/events.py`), then [[2026-10-20-craftax-method-ppo]] Task 2 (`training/wrappers.py`, which returns the step events), then infrastructure Tasks 4-7 (metrics, eval, profiles, smoke).
@@ -75,7 +77,7 @@ Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN
 
 ### Phase 2: Finals
 
-- [ ] `final-1m`: tuned configuration of every control and method, 10 seeds.
+- [ ] `final-1m`: tuned configuration of every control and method, 10 seeds. (estimate 2026-10-23: 140 runs, about 13 h on the laptop with 2 workers, 10.7 runs/h; [[2026-10-20-craftax-compute-budget]])
 - [ ] `final-1b`: same, 3 seeds, 1B steps (laptop or cluster; same run names); 1B results are indicative, significance claims are made at 1M ([[Experiment decisions]], 2026-10-21).
 - [ ] Fixed-seed evaluation of every log-spaced checkpoint of each final run (tuning runs evaluate their final checkpoint only), run by the queue before a run is marked FINISHED ([[2026-10-20-craftax-infrastructure]] Task 5).
 
@@ -95,7 +97,7 @@ Starts after both `final-1m` and `final-1b` are finished.
 - [ ] **Step 3: Implement** `combine` and register `combo` in `training/interface.py`.
 - [ ] **Step 4: Write** `configs/methods/combo.yaml` (`base: {base_from: <base control>.tuned}`, the two methods' `tuned` blocks unchanged, `grid: {coarse: [the single combined config], fine: null}`, no retuning) and the phase files `combo-1m.yaml` (10 seeds) and `combo-1b.yaml` (3 seeds), both with log-spaced evaluation.
 - [ ] **Step 5: Run** `uv run pytest tests/training/test_combo.py -q`; expected: pass.
-- [ ] **Step 6: Run** `make queue PHASE=combo-1m METHOD=combo` (laptop), then `make queue PHASE=combo-1b METHOD=combo PROFILE=cuda` (cluster); check `make status PHASE=combo-1m` shows 10 finished and `make status PHASE=combo-1b` shows 3.
+- [ ] **Step 6: Run** (estimate: `combo-1m` 10 runs, about 1.2 h with 2 workers) `make queue PHASE=combo-1m METHOD=combo` (laptop), then `make queue PHASE=combo-1b METHOD=combo PROFILE=cuda` (cluster); check `make status PHASE=combo-1m` shows 10 finished and `make status PHASE=combo-1b` shows 3.
 - [ ] **Step 7: Check** that every Phase 4 command lists the four final phases `final-1m final-1b combo-1m combo-1b`; the combination is one more method row in every analysis.
 
 ### Phase 4: Analysis

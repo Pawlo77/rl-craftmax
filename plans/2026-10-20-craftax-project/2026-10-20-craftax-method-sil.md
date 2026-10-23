@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-23
 tags: [plan, method, self-imitation, replay, ppo-rnn]
 ---
 # Self-Imitation Learning implementation plan
@@ -111,6 +111,15 @@ Fixed SIL settings:
 | `final-1m` (best + single-buffer ablation) | 2 | 10 | 1M | 20 | 1,846 | 3.34 |
 | `final-1b` | 1 | 3 | 1B | 3 | 1,846 | 451.44 |
 | Total | | | | 103 | | 467.9 |
+
+Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to last eval file; the estimate table above is superseded for these rows; details and caveats in [[2026-10-20-craftax-compute-budget]]):
+
+| Phase | Runs | Measured min per run | Measured steps/s | Measured wall-clock |
+|---|---|---|---|---|
+| `tune-coarse` | 54 | 11.2 (2 workers) | 1,603 (tuned config) | 5.2 h (est. 9.03 h + eval) |
+| `tune-fine` | 12 | 10.8 (2 workers) | | 1.1 h (est. 4.01 h) |
+| `final-1m` (estimate) | 20 | 14.2 (2 workers, 13 checkpoints) | | 2.4 h (est. 3.34 h + 5.0 h eval) |
+| `final-1b` on the laptop (estimate) | 3 | 118.7 h per run | 2,340 (1 worker) | 356 h (est. 451.4 h) |
 
 - One 1M run: 0.167 h; one 1B run: 150.5 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.3 = 164,284 steps/s, 1.69 h per run excluding the 1-minute compile, 5.1 h for 3 seeds.
