@@ -75,4 +75,7 @@ abort:
     - {name: plan_slow, metric: dyna/plan_wall_share, above: 0.3, updates: 3}
 
 # written by `--mark-tuned dyna-q <hash8>`
-tuned: null
+tuned:
+  plan_n: 1
+  plan_kappa: 0.006
+  model_slots: 4
