@@ -10,3 +10,10 @@ runs:
   ppo: {configs: fine}
   ppo-rnn: {configs: fine}
   pqn-rnn: {configs: fine}
+  # Phase 1 methods; each entry expands with `--expand-fine <slug>` once its tune-coarse
+  # is complete (dyna-q also needs smdp-skills marked tuned, its base_from).
+  count-bonus-ppo-rnn: {config: count-bonus, configs: fine}
+  count-bonus-pqn-rnn: {config: count-bonus, configs: fine}
+  sil: {configs: fine}
+  smdp-skills: {configs: fine}
+  dyna-q: {configs: fine}
