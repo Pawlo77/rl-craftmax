@@ -252,7 +252,7 @@ smdp-skills (base control pqn-rnn 10cbfc16, 1.27030, n 3):
 | 0b84c247 a0.05-h200-e0.3-t2-recipe (best stage 1, chosen, stage-2 centre) | alpha 0.05, horizon 200, eps decay 0.3, timeout 2 | 3 | 1.41543 | 0.19584 |
 | cbb15b50 fine-alpha=0.1-timeout_mult=4.0 (best stage 2) | alpha 0.1, timeout 4 | 3 | 0.91567 | 0.44200 |
 
-Chosen 0b84c247: +0.145 over the pqn-rnn base. It is the centre of the stage-2 grid and every neighbour is lower (0.28 to 0.92), so the stage-1 win is an isolated, possibly lucky cell; the best new stage-2 config sits at the grid corner (alpha 0.1, timeout 4).
+Chosen 0b84c247: +0.145 over the pqn-rnn base. It is the centre of the stage-2 grid and its four direct neighbours are lower (0.28 to 0.77; the other stage-2 configs score -0.30 to 0.92), so the stage-1 win is an isolated, possibly lucky cell; the best new stage-2 config sits at the grid corner (alpha 0.1, timeout 4).
 
 count-bonus, ppo-rnn variant (base control ppo-rnn b3ce95c4, 2.18755, n 10):
 
@@ -270,7 +270,7 @@ count-bonus, pqn-rnn variant (base control pqn-rnn 10cbfc16, 1.27030, n 3):
 | 3c5f5200 b0.03-log2-linear (best stage 1) | beta 0.03, log2, linear | 3 | 1.59011 | 0.61100 |
 | e6e1fafa fine-beta=0.015-decay=linear (best stage 2, chosen) | beta 0.015, log2, linear | 3 | 1.72111 | 0.13798 |
 
-Chosen e6e1fafa: +0.451 over the base, +0.131 over the stage-1 best (within its sd 0.61). Its beta is the lower edge of the stage-2 grid, and beta 0.01 collapsed in stage 1, so the optimum is close to a cliff.
+Chosen e6e1fafa: +0.451 over the base, +0.131 over the stage-1 best (within its sd 0.61). Its beta is the lower edge of the stage-2 grid, and beta 0.01 was erratic in stage 1 (0.62 to 1.49 over its six configs), so the optimum may sit near unstable values.
 
 sil (base control ppo-rnn b3ce95c4, 2.18755, n 10):
 

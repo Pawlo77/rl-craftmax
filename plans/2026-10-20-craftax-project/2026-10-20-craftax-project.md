@@ -60,7 +60,7 @@ Each phase ends with `make check` green and its results visible in MLflow; later
 
 Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06; Phase 0 complete 14:10 (full suite on main 0c73a58: 966 passed plus the fixed SIL metric-key test). Phase 1 code merged 2026-10-22 05:10; Phase 1 tuning 2026-10-22 06:02 to 2026-10-23 20:33 (all four methods tuned and marked; results in each method plan's `## Results`).
 
-Timetable (measured to 2026-10-23 21:41, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:34 (52.7 run-hours); Dyna-Q tuning Fri 23 15:43 to 20:33. `final-1m` (140 runs) started Fri 23 21:41; estimate on the laptop with 2 workers about 13-14 h, so it ends about Sat 24 11:00; then `combo-1m` (10 runs) about 1.2 h. Details: [[2026-10-20-craftax-compute-budget]].
+Timetable (measured to 2026-10-23 21:41, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:36 (52.7 run-hours); Dyna-Q tuning Fri 23 15:43 to 20:33. `final-1m` (140 runs) started Fri 23 21:41; estimate on the laptop with 2 workers about 13-14 h, so it ends about Sat 24 11:00; then `combo-1m` (10 runs) about 1.2 h. Details: [[2026-10-20-craftax-compute-budget]].
 
 ### Phase 0: Infrastructure and controls
 
