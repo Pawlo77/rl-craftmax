@@ -31,6 +31,7 @@ from .queue import (
     TAG_FAIL_ERROR,
     TAG_METHOD,
     TAG_PHASES,
+    _sqlite_uri,
     fine_registries,
     permanently_ended,
     phase_specs,
@@ -458,9 +459,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         counts = merge_stores(args.src, args.dst)
         print(f"copied {counts['copied']}, joined {counts['joined']}")
         return
+    uri = args.tracking_uri
+    if (uri or "").endswith(".db"):  # MLflow reads a plain path as a file store
+        uri = _sqlite_uri(uri)
     states = phase_status(
         args.phase,
-        args.tracking_uri,
+        uri,
         method=args.method,
         methods_dir=args.methods_dir,
         expand_fine=args.expand_fine,

@@ -471,7 +471,8 @@ def test_status_shows_a_run_aborted_for_good_apart(
     assert (status[ppo], status[pqn]) == ("aborted", "failed")
     cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.store", "status"]
     cmd += ["--phase", str(ENTRIES), "--methods-dir", str(METHODS)]
-    cmd += ["--tracking-uri", main_store.uri]
+    # a plain .db path, as the chain passes it
+    cmd += ["--tracking-uri", main_store.uri.removeprefix("sqlite:///")]
     out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, check=True)
     last = out.stdout.strip().splitlines()[-1]
     assert last == "pending 3, running 0, finished 0, killed 0, failed 1, aborted 1"
