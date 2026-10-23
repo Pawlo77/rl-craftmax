@@ -69,4 +69,5 @@ abort:
     - {name: hidden_saturation, metric: rnn/hidden_saturation, above: 0.9, span: 0.05}
 
 # written by `--mark-tuned sil <hash8>`
-tuned: null
+tuned:
+  lambda_sil: 0.3

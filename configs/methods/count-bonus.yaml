@@ -108,4 +108,9 @@ abort:
       - {name: bn_var_low, metric: pqn/bn_var_min, below: 1.0e-6}
 
 # written by `--mark-tuned count-bonus <hash8>`, one block per variant
-tuned: null
+tuned:
+  ppo-rnn: {}
+  pqn-rnn:
+    beta: 0.015
+    granularity: log2
+    decay: linear
