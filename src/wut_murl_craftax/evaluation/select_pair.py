@@ -5,8 +5,9 @@ its runs' final scores. Methods rank by IQM, ties by the probability of improvem
 over their base control (the end of the ``base_from`` chain), then by name. The pair
 is the compatible one of the smallest rank sum (ties: the better best rank): two hook
 methods on one control that set no knob two ways. Skill methods (`SKILL_METHODS`) are
-left out with a logged reason: ``combine`` composes hook methods only. Exit status 1
-on unfinished tuned runs or without a compatible pair. Usage: ``python -m
+left out with a logged reason: ``combine`` composes hook methods only. Exit status 3
+on unfinished tuned runs (``--allow-partial`` ranks without them, ``--min-seeds``
+guards the pair), 1 without a compatible pair. Usage: ``python -m
 wut_murl_craftax.evaluation.select_pair --phase final-1m [--dry-run]``
 """
 
@@ -66,6 +67,20 @@ HEADER = """\
 
 class NoPairError(ValueError):
     """No two ranked methods can be combined."""
+
+
+class UnfinishedRunsError(ValueError):
+    """Some tuned runs of the phase do not count yet; ``gaps`` names them per entry."""
+
+    def __init__(self, gaps: Sequence[str]) -> None:
+        """Keep the gap lines; the message joins them."""
+        super().__init__("; ".join(gaps))
+        self.gaps = list(gaps)
+
+
+UNFINISHED_EXIT = 3
+"""Exit status when only unfinished tuned runs stop the choice (a retry with
+``--allow-partial`` may then go ahead); other refusals exit 1."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,21 +145,12 @@ def _tuned_runs(phase: Path, methods_dir: Path) -> dict[str, list[str]]:
     return names
 
 
-def final_scores(
-    phase: Path,
-    *,
-    tracking_uri: str | None = None,
-    methods_dir: Path = METHODS_DIR,
-    allow_partial: bool = False,
-) -> dict[str, list[float]]:
-    """Registry name -> the final scores of its tuned config's runs in ``phase``.
+def final_results(
+    phase: Path, *, tracking_uri: str | None = None, methods_dir: Path = METHODS_DIR
+) -> tuple[dict[str, list[float]], list[str]]:
+    """Each entry's counted tuned scores, and a gap line per entry missing some.
 
-    A run counts when it is FINISHED in the phase (tag ``phases``) with a finite
-    ``final_score``, not tagged ``abort/bug`` or ``eval/pending``.
-
-    Raises:
-        ValueError: Naming every tuned run that does not count, unless
-            ``allow_partial`` leaves them out with a warning.
+    What counts is said in `final_scores`.
     """
     expected = _tuned_runs(phase, methods_dir)
     done: dict[str, float] = {}
@@ -168,12 +174,34 @@ def final_scores(
                 f"{registry}: {n_done} of {len(names)} tuned runs finished in "
                 f"{phase.stem}, not {', '.join(missing)}"
             )
+    scores = {r: [done[n] for n in names if n in done] for r, names in expected.items()}
+    return {r: s for r, s in scores.items() if s}, gaps
+
+
+def final_scores(
+    phase: Path,
+    *,
+    tracking_uri: str | None = None,
+    methods_dir: Path = METHODS_DIR,
+    allow_partial: bool = False,
+) -> dict[str, list[float]]:
+    """Registry name -> the final scores of its tuned config's runs in ``phase``.
+
+    A run counts when it is FINISHED in the phase (tag ``phases``) with a finite
+    ``final_score``, not tagged ``abort/bug`` or ``eval/pending``.
+
+    Raises:
+        UnfinishedRunsError: Naming every tuned run that does not count, unless
+            ``allow_partial`` leaves them out with a warning.
+    """
+    scores, gaps = final_results(
+        phase, tracking_uri=tracking_uri, methods_dir=methods_dir
+    )
     if gaps and not allow_partial:
-        raise ValueError("; ".join(gaps))
+        raise UnfinishedRunsError(gaps)
     if gaps:
         logger.warning("ranking without the unfinished runs: %s", "; ".join(gaps))
-    scores = {r: [done[n] for n in names if n in done] for r, names in expected.items()}
-    return {r: s for r, s in scores.items() if s}
+    return scores
 
 
 def rank_methods(
@@ -331,8 +359,12 @@ def combo_text(
     *,
     methods_dir: Path = METHODS_DIR,
     phase: str = "final-1m",
+    notes: Sequence[str] = (),
 ) -> str:
-    """The text of ``combo.yaml`` for ``pair``, with the ranking as a comment."""
+    """The text of ``combo.yaml`` for ``pair``.
+
+    The ranking and ``notes`` (one ``# NOTE:`` line each) go in the header comment.
+    """
     entries = _entries(methods_dir)
     names = [r.registry for r in pair]
     lines = [HEADER.format(phase=phase)]
@@ -340,6 +372,7 @@ def combo_text(
         f"#   {i} {r.registry} {r.control} {r.n} {r.iqm:.5f} {r.poi:.3f}\n"
         for i, r in enumerate(ranking, 1)
     ]
+    lines += [f"# NOTE: {note}\n" for note in notes]
     lines.append(_dump({"combine": {"base": pair[0].control, "methods": names}}))
     lines.append("\n" + _base_text(pair[0].control, names, methods_dir))
     if budgets := _budgets(names, methods_dir):
@@ -360,6 +393,7 @@ def write_combo(
     *,
     methods_dir: Path = METHODS_DIR,
     phase: str = "final-1m",
+    notes: Sequence[str] = (),
 ) -> Path:
     """Rewrite ``combo.yaml`` of ``methods_dir`` for ``pair``; return its path.
 
@@ -368,7 +402,9 @@ def write_combo(
     path = methods_dir / f"{COMBO}.yaml"
     old = path.read_text(encoding="utf-8") if path.exists() else None
     new = path.with_name(f".{path.name}.new")
-    new.write_text(combo_text(pair, ranking, methods_dir=methods_dir, phase=phase))
+    new.write_text(
+        combo_text(pair, ranking, methods_dir=methods_dir, phase=phase, notes=notes)
+    )
     new.replace(path)
     try:
         combo = load_method(COMBO, methods_dir)
@@ -389,8 +425,55 @@ def _phase_path(phase: str) -> Path:
     return Path(phase) if phase.endswith(".yaml") else PHASES_DIR / f"{phase}.yaml"
 
 
+def _print_ranking(
+    scores: Mapping[str, Sequence[float]], ranking: Sequence[Ranked]
+) -> None:
+    print("rank method control seeds iqm poi")
+    for c in sorted({r.control for r in ranking}):
+        print(f"control {c} - {len(scores[c])} {iqm(scores[c]):.5f} -")
+    for i, r in enumerate(ranking, 1):
+        print(f"{i} {r.registry} {r.control} {r.n} {r.iqm:.5f} {r.poi:.3f}")
+
+
+def _short(pair: Sequence[Ranked], min_seeds: int | None) -> list[str]:
+    """The pair's methods with fewer counted seeds than ``min_seeds``."""
+    if min_seeds is None:
+        return []
+    return [f"{r.registry} ({r.n})" for r in pair if r.n < min_seeds]
+
+
+def _choose(
+    args: argparse.Namespace, phase: Path
+) -> tuple[tuple[Ranked, Ranked], list[Ranked], list[str]]:
+    """Rank, print and choose for the CLI: the pair, the ranking and the header notes.
+
+    Raises:
+        UnfinishedRunsError: Without ``allow_partial``, if tuned runs do not count.
+        NoPairError: Without a compatible pair or below ``min_seeds``.
+    """
+    uri = args.tracking_uri and _sqlite_uri(args.tracking_uri)
+    scores, gaps = final_results(phase, tracking_uri=uri, methods_dir=args.methods_dir)
+    if gaps and not args.allow_partial:
+        raise UnfinishedRunsError(gaps)
+    notes = []
+    if gaps:
+        notes.append(f"PARTIAL ranking without {'; '.join(gaps)}")
+        print(f"PARTIAL: {'; '.join(gaps)}")
+    ranking = rank_methods(scores, methods_dir=args.methods_dir)
+    _print_ranking(scores, ranking)
+    pair = choose_pair(ranking, methods_dir=args.methods_dir)
+    if short := _short(pair, args.min_seeds):
+        msg = f"pair methods below --min-seeds {args.min_seeds}: {', '.join(short)}"
+        raise NoPairError(msg)
+    return pair, ranking, notes
+
+
 def main(argv: Sequence[str] | None = None) -> None:
-    """Command-line entry point; exits 1 without a pair or with unfinished runs."""
+    """Command-line entry point.
+
+    Exits `UNFINISHED_EXIT` when unfinished tuned runs alone stop the choice, 1 on any
+    other refusal (no compatible pair, a pair method below ``--min-seeds``).
+    """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--phase", required=True, help="phase name or file")
@@ -399,31 +482,23 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--allow-partial", action="store_true", help="rank without unfinished runs"
     )
+    parser.add_argument(
+        "--min-seeds", type=int, help="refuse a pair method with fewer counted runs"
+    )
     parser.add_argument("--dry-run", action="store_true", help="leave combo.yaml")
     args = parser.parse_args(argv)
-    uri = args.tracking_uri and _sqlite_uri(args.tracking_uri)
     phase = _phase_path(args.phase)
     try:
-        scores = final_scores(
-            phase,
-            tracking_uri=uri,
-            methods_dir=args.methods_dir,
-            allow_partial=args.allow_partial,
-        )
-        ranking = rank_methods(scores, methods_dir=args.methods_dir)
-        controls = sorted({r.control for r in ranking})
-        print("rank method control seeds iqm poi")
-        for c in controls:
-            print(f"control {c} - {len(scores[c])} {iqm(scores[c]):.5f} -")
-        for i, r in enumerate(ranking, 1):
-            print(f"{i} {r.registry} {r.control} {r.n} {r.iqm:.5f} {r.poi:.3f}")
-        pair = choose_pair(ranking, methods_dir=args.methods_dir)
+        pair, ranking, notes = _choose(args, phase)
+    except UnfinishedRunsError as err:
+        print(f"select_pair: {err}", file=sys.stderr)
+        sys.exit(UNFINISHED_EXIT)
     except ValueError as err:
         sys.exit(f"select_pair: {err}")
     print(f"pair: {pair[0].registry} + {pair[1].registry} on {pair[0].control}")
     if not args.dry_run:
         path = write_combo(
-            pair, ranking, methods_dir=args.methods_dir, phase=phase.stem
+            pair, ranking, methods_dir=args.methods_dir, phase=phase.stem, notes=notes
         )
         print(f"wrote {path}")
 

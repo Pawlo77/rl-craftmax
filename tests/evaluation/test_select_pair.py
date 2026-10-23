@@ -358,9 +358,63 @@ def test_main_exits_nonzero_without_a_compatible_pair(
     assert (methods / "combo.yaml").read_text(encoding="utf-8") == before
 
 
-def test_main_exits_nonzero_on_unfinished_runs(tmp_path: Path, methods: Path) -> None:
+def _sil_tuned(methods: Path) -> list[queue.RunSpec]:
+    return [
+        s
+        for s in expand_phase(FINAL_1M, method="sil", methods_dir=methods)
+        if s.config_hash == _tuned_hash(methods, s)
+    ]
+
+
+def test_main_exits_3_on_unfinished_runs(
+    tmp_path: Path, methods: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     store = Store(tmp_path)
-    spec = expand_phase(FINAL_1M, method="sil", methods_dir=methods)[0]
+    spec = _sil_tuned(methods)[0]
     _fill(store, methods, skip=(spec.name,))
-    with pytest.raises(SystemExit, match=spec.name):
+    with pytest.raises(SystemExit) as exit_info:
         _main(store, methods)
+    assert exit_info.value.code == select_pair.UNFINISHED_EXIT == 3
+    assert spec.name in capsys.readouterr().err
+
+
+def test_main_partial_ranks_without_the_unfinished_runs_and_says_so(
+    tmp_path: Path, methods: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = Store(tmp_path)
+    missing = [s.name for s in _sil_tuned(methods)[:2]]
+    _fill(store, methods, skip=tuple(missing))
+    _main(store, methods, "--allow-partial", "--min-seeds", "8")
+    out = capsys.readouterr().out
+    partial = [ln for ln in out.splitlines() if ln.startswith("PARTIAL: ")]
+    assert len(partial) == 1
+    assert all(name in partial[0] for name in missing)
+    assert "sil: 8 of 10" in partial[0]
+    assert "4 sil ppo-rnn 8 " in out
+    text = (methods / "combo.yaml").read_text(encoding="utf-8")
+    assert "# NOTE: PARTIAL ranking without sil: 8 of 10" in text
+
+
+def test_main_partial_refuses_a_pair_method_below_min_seeds(
+    tmp_path: Path, methods: Path
+) -> None:
+    store = Store(tmp_path)
+    _fill(store, methods, skip=tuple(s.name for s in _sil_tuned(methods)[:3]))
+    before = (methods / "combo.yaml").read_text(encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"min-seeds 8: sil \(7\)") as exit_info:
+        _main(store, methods, "--allow-partial", "--min-seeds", "8")
+    assert exit_info.value.code != select_pair.UNFINISHED_EXIT
+    assert (methods / "combo.yaml").read_text(encoding="utf-8") == before
+
+
+def test_main_partial_ignores_gaps_outside_the_pair(
+    tmp_path: Path, methods: Path
+) -> None:
+    store = Store(tmp_path)
+    dyna = expand_phase(FINAL_1M, method="dyna-q", methods_dir=methods)
+    _fill(store, methods, skip=tuple(s.name for s in dyna[:5]))
+    _main(store, methods, "--allow-partial", "--min-seeds", "8")
+    assert load_method("combo", methods).combine["methods"] == [  # type: ignore[index]
+        "count-bonus-ppo-rnn",
+        "sil",
+    ]
