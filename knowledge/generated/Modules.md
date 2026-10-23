@@ -21,7 +21,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? | 226 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. | 432 |  |
 | [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the statistics protocol: IQM and probability of improvement. | 33 |  |
-| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 127 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: fast JAX runtime, run queue, resumable runner, MLflow tracking. | 133 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. | 186 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 63 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 1325 | [[orchestration]] |

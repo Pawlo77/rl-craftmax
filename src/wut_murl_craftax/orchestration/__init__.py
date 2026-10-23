@@ -14,8 +14,10 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         expand_fine,
         expand_phase,
         load_method,
+        mark_best,
         mark_tuned,
         resolve_config,
+        tuning_means,
     )
     from .reproducibility import ReproducibilityReport, collect_reproducibility_report
     from .runner import ChunkMetrics, Trainer, final_score, worker_specs
@@ -64,6 +66,7 @@ _EXPORTS: dict[str, str] = {
     "load_profile": "profiles",
     "log_every": "train_metrics",
     "log_points": "train_metrics",
+    "mark_best": "queue",
     "mark_tuned": "queue",
     "merge_stores": "store",
     "metric_points": "train_metrics",
@@ -71,6 +74,7 @@ _EXPORTS: dict[str, str] = {
     "resolve_config": "queue",
     "select_platforms": "runtime",
     "shard_envs": "runtime",
+    "tuning_means": "queue",
     "warm_texture_cache": "runtime",
     "worker_specs": "runner",
 }
@@ -106,6 +110,7 @@ __all__ = [
     "load_profile",
     "log_every",
     "log_points",
+    "mark_best",
     "mark_tuned",
     "merge_stores",
     "metric_points",
@@ -113,6 +118,7 @@ __all__ = [
     "resolve_config",
     "select_platforms",
     "shard_envs",
+    "tuning_means",
     "warm_texture_cache",
     "worker_specs",
 ]
