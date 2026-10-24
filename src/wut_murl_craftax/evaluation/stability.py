@@ -10,7 +10,8 @@ import pandas as pd
 WINDOW_FRAC = 0.01
 """Rolling-median window of the smoothed curve, as a share of the updates."""
 MIN_MAX = 1.0
-"""Drawdowns are defined where the running max is at least this score (percent)."""
+"""Default ``floor``: drawdowns are defined where the running max is at least this
+score (percent); a lower floor reads low-scoring runs (R92)."""
 DROP_DEPTH = 0.2
 """Drawdown a drop must reach."""
 DROP_FRAC = 0.02
@@ -56,8 +57,8 @@ def _filled(c: np.ndarray) -> np.ndarray:
     return out
 
 
-def drawdowns(c: np.ndarray) -> np.ndarray:
-    """Relative fall from the running max; NaN while that max is below 1% score.
+def drawdowns(c: np.ndarray, floor: float = MIN_MAX) -> np.ndarray:
+    """Relative fall from the running max; NaN while that max is below ``floor``.
 
     ``c`` is the smoothed curve in percent score and may hold NaN: a NaN stretch
     carries the last known score forward (so a drop spanning it stays one drop and
@@ -66,20 +67,23 @@ def drawdowns(c: np.ndarray) -> np.ndarray:
     f = _filled(c)
     m = np.fmax.accumulate(f)
     d = np.full(len(c), np.nan)
-    ok = m >= MIN_MAX
+    ok = m >= floor
     d[ok] = (m[ok] - f[ok]) / m[ok]
     return d
 
 
 def drops(
-    c: np.ndarray, depth: float = DROP_DEPTH, min_frac: float = DROP_FRAC
+    c: np.ndarray,
+    depth: float = DROP_DEPTH,
+    min_frac: float = DROP_FRAC,
+    floor: float = MIN_MAX,
 ) -> list[tuple[int, int]]:
     """Maximal intervals ``[start, stop)`` of drawdown >= ``depth``, long enough.
 
     Indices count updates of the smoothed curve ``c`` (percent score, NaN allowed,
     see ``drawdowns``); an interval lasts long enough at ``min_frac`` of the updates.
     """
-    deep = np.concatenate([[False], drawdowns(c) >= depth, [False]])
+    deep = np.concatenate([[False], drawdowns(c, floor) >= depth, [False]])
     edges = np.flatnonzero(deep[1:] != deep[:-1])
     min_len = math.ceil(min_frac * len(c) - 1e-9)
     return [
@@ -89,7 +93,7 @@ def drops(
     ]
 
 
-def collapsed(c: np.ndarray) -> bool:
+def collapsed(c: np.ndarray, floor: float = MIN_MAX) -> bool:
     """Drawdown reached 50% and the last known value is below 90% of the running max.
 
     ``c`` is the smoothed curve in percent score; NaN is carried forward (see
@@ -97,16 +101,20 @@ def collapsed(c: np.ndarray) -> bool:
     """
     f = _filled(c)
     return bool(
-        (drawdowns(c) >= COLLAPSE_DEPTH).any() and f[-1] < COLLAPSE_FINAL * np.nanmax(f)
+        (drawdowns(c, floor) >= COLLAPSE_DEPTH).any()
+        and f[-1] < COLLAPSE_FINAL * np.nanmax(f)
     )
 
 
-def recovery_times(c: np.ndarray, steps: np.ndarray) -> list[float]:
+def recovery_times(
+    c: np.ndarray, steps: np.ndarray, floor: float = MIN_MAX
+) -> list[float]:
     """Env steps from each drop's start until the drawdown is below 5% (inf: never).
 
     Args:
         c: Smoothed curve in percent score, NaN allowed (see ``drawdowns``).
         steps: Env steps of each update, one per entry of ``c``.
+        floor: Running max from which drawdowns are defined (see ``drawdowns``).
 
     Raises:
         ValueError: If ``steps`` and ``c`` differ in length.
@@ -114,9 +122,9 @@ def recovery_times(c: np.ndarray, steps: np.ndarray) -> list[float]:
     if len(steps) != len(c):
         msg = f"steps ({len(steps)}) and the curve ({len(c)}) differ in length"
         raise ValueError(msg)
-    d = drawdowns(c)
+    d = drawdowns(c, floor)
     out = []
-    for start, _ in drops(c):
+    for start, _ in drops(c, floor=floor):
         back = np.flatnonzero(d[start:] < RECOVERED)
         out.append(
             float(steps[start + back[0]] - steps[start]) if back.size else np.inf
