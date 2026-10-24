@@ -1,7 +1,6 @@
 """Tests for the literature table: the CSV against its source note, block mapping."""
 
 import re
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -128,7 +127,8 @@ def test_first_row_of_a_note_in_a_block(block, note, score, spread, kind):
 
 def test_controls_agree_with_the_reproduction_references():
     """The reproduction gate's published values are the note's rows (drift guard)."""
-    ref = yaml.safe_load(Path("configs/reference/published_scores.yaml").read_text())
+    ref_path = LITERATURE_CSV.parents[1] / "reference" / "published_scores.yaml"
+    ref = yaml.safe_load(ref_path.read_text())
     lit = load_literature()
     rows = {
         ("ppo", "1b"): ("A", "PPO (Matthews 2024)", "1B"),
@@ -213,3 +213,49 @@ def test_package_reexports_the_public_names():
     assert analysis.comparable_rows is comparable_rows
     assert analysis.load_literature is load_literature
     assert analysis.COMPARABLE_BLOCKS is COMPARABLE_BLOCKS
+
+
+def _parse_score_text(text: str) -> tuple[float, float, str]:
+    """Headline score, spread and spread kind of a score cell, by the CSV's rule."""
+    score = float(re.match(r"\d+(?:\.\d+)?", text).group())
+    stated = re.match(r"\d+(?:\.\d+)? ± (\d+(?:\.\d+)?) (sd|s\.e\.)", text)
+    if stated:
+        return score, float(stated.group(1)), stated.group(2)
+    stated = re.match(r"\d+(?:\.\d+)? \(sd (\d+(?:\.\d+)?)[,;)]", text)
+    return (score, float(stated.group(1)), "sd") if stated else (score, np.nan, "none")
+
+
+def test_score_pct_spread_and_kind_follow_score_text_on_every_row():
+    for _, row in load_literature().iterrows():
+        score, spread, kind = _parse_score_text(row.score_text)
+        assert row.score_pct == score, row.score_text
+        assert row.spread_kind == kind, row.score_text
+        assert (np.isnan(row.spread) and np.isnan(spread)) or row.spread == spread
+    assert load_literature()["spread"].notna().sum() == 11
+
+
+def test_protocol_is_the_block_s_unless_the_note_says_it_is_unstated():
+    """Rule: `n.r.` where the row's source note says the protocol is unstated."""
+    lit = load_literature()
+    unstated = {
+        ("A", "PPO-GTrXL (Hamon 2024)"),
+        ("A", "PQN-RNN (Gallici 2025)"),
+        ("A2", "SimBa (Lee 2025)"),
+        ("D", "EASimulus (Peng 2026)"),
+    }
+    got = {(r.block, r.note) for r in lit.itertuples() if r.protocol == "n.r."}
+    assert got == unstated
+    block_protocol = {
+        "A": "training-episode return",
+        "A2": "separate evaluation of the trained policy",
+    }
+    for r in lit.itertuples():
+        if r.protocol == "n.r.":
+            continue
+        if r.block in block_protocol:
+            assert r.protocol == block_protocol[r.block]
+        else:  # block D states its protocol per row
+            assert r.protocol in {
+                "training-episode return",
+                "mean of 100 test episodes at the end of training",
+            }

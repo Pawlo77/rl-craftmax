@@ -32,26 +32,26 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
 
 _EXPORTS: dict[str, str] = {
     "BASE_CONTROL": "load",
+    "COMPARABLE_BLOCKS": "literature",
     "CONTROLS": "load",
     "FINAL_PHASES": "load",
     "Frames": "load",
+    "LITERATURE_COLUMNS": "literature",
+    "LITERATURE_CSV": "literature",
     "METRICS_ROOT": "load",
     "MissingPhaseError": "load",
     "SchemaError": "load",
     "UNIT_COLUMNS": "load",
     "base_control": "load",
+    "comparable_rows": "literature",
     "final_checkpoint": "load",
     "in_phase": "load",
+    "load_literature": "literature",
     "load_phase": "load",
     "load_phases": "load",
     "pair_of": "load",
     "select": "load",
     "units": "load",
-    "COMPARABLE_BLOCKS": "literature",
-    "LITERATURE_COLUMNS": "literature",
-    "LITERATURE_CSV": "literature",
-    "comparable_rows": "literature",
-    "load_literature": "literature",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""

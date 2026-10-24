@@ -25,7 +25,7 @@ related-code:
 - `units(frames)`: each (`method`, `config_ref`) with its own frames.
 - `BASE_CONTROL` (non-combo method -> control), `CONTROLS`, `base_control(row)`, `pair_of(row)`: the control a run is compared with; a combo run's comes from its own pair.
 - `final_checkpoint(episodes, run=None)`: the last checkpoint's eval episodes per run.
-- `load_literature(path=)`: the published rows of blocks A, A2 and D of [[Existing Implementations]] from `configs/literature/existing_implementations.csv` (columns `block, implementation, note, env, observation, budget, protocol, score_pct, spread, spread_kind, seeds, score_text`; `note` is the linked note's file stem).
+- `load_literature(path=)`: the published rows of blocks A, A2 and D of [[Existing Implementations]] from `configs/literature/existing_implementations.csv` (columns `block, implementation, note, env, observation, budget, protocol, score_pct, spread, spread_kind, seeds, score_text`; `note` is the linked note's file stem; `protocol` is the block's (A: training-episode return, A2: separate evaluation of the trained policy), `n.r.` where the row's source note says the protocol is unstated (PPO-GTrXL, PQN-RNN, SimBa, EASimulus), and per row in block D from the notes). `LITERATURE_CSV` and `LITERATURE_COLUMNS` are the path and the column list.
 - `comparable_rows(score_kind, budget)`: the like-for-like block (`COMPARABLE_BLOCKS`): `("training", "1b")` is A, `("training", "1m")` is D, `("stochastic", "1b")` is A2; any other pair raises `ValueError`.
 - `MissingPhaseError` (a `FileNotFoundError` naming the phases), `SchemaError`, `FINAL_PHASES`, `METRICS_ROOT`, `UNIT_COLUMNS`.
 
@@ -50,6 +50,7 @@ One line each; signatures and details: [[Modules]].
 - Controls come from `select_pair.controls_of` and `SKILL_METHODS`, never copies; a combo run's base control is read from its own `config_json` pair (`combo_pair`), never from combo.yaml.
 - Literature is compared like with like only: training-episode score at 1B with block A, at 1M with block D, stochastic evaluation at 1B with block A2; greedy evaluation and stochastic at 1M have no block and raise. Blocks A3, B, B2, C, C2, C3 and E to I are not in the CSV.
 - The CSV copies the note's cells as written; `spread` is set only when the score cell states an sd or s.e. of the % score itself (a raw-return sd, a CI or an sd of another variant gives `spread_kind` `none`; `score_text` keeps the cell). Nothing is recomputed from figures. After a note edit the test against the note shows which rows drifted.
+- `protocol` follows one rule: the block's protocol, except `n.r.` when the row's source note says it is unstated or undocumented; block D has no heading protocol, so it is read per row from the notes. T2 shows it, because block D's Simulus row is a test-episode score.
 - Every `note` value is the stem of a file in `research/Existing Implementations/`.
 
 ## Known issues
