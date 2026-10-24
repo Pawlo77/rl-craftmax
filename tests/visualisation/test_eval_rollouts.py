@@ -36,6 +36,7 @@ from wut_murl_craftax.training.skills import (
     SKILL_IDS,
     step_limit,
 )
+from wut_murl_craftax.visualisation import eval_rollouts
 from wut_murl_craftax.visualisation.eval_rollouts import (
     EVAL_SEEDS as PRODUCTION_SEEDS,
 )
@@ -691,3 +692,45 @@ def test_primitive_skill_steps_are_one_hot_on_the_stored_action() -> None:
     assert not prim.all()
     np.testing.assert_array_equal(probs[prim], np.eye(N_ACTIONS)[actions[prim]])
     assert (probs[~prim].max(1) < 0.9).all()  # epsilon about 0.5 elsewhere
+
+
+def test_network_outputs_load_a_checkpoint_once_for_many_episodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bulk callers (distillation) re-run many episodes of one checkpoint: the skill
+    methods' table is read from disk once, and only the last checkpoint is kept."""
+    run = EvalRun.load(method_run("pqn-rnn"))
+    loads: list[int] = []
+    real = eval_rollouts.load_params
+
+    def spy(run_dir: Path, update: int, template: Any) -> Any:
+        loads.append(update)
+        return real(run_dir, update, template)
+
+    monkeypatch.setattr(eval_rollouts, "load_params", spy)
+    for u in (2, 2, 0, 0, 2):
+        for seed in EVAL_SEEDS:
+            episode_outputs(run, u, "greedy", seed)
+    assert loads == [2, 0, 2]
+
+
+def test_network_outputs_refuse_inputs_shorter_or_longer_than_obs() -> None:
+    run, u, seed = EvalRun.load(method_run("smdp-skills")), 2, EVAL_SEEDS[0]
+    ev = load_eval(run.dir, u)
+    skill, steps = _skill_inputs(ev, 0)
+    ep, actions = stored_episode(run, u, seed)
+    good = {"actions": actions, "dones": ep.done, "skill": skill, "skill_steps": steps}
+    for name in good:
+        bad = good | {name: good[name][:-1]}
+        n = len(ep.obs)
+        with pytest.raises(ValueError, match=f"{name} has {n - 1} steps, obs {n}"):
+            network_outputs(
+                run,
+                u,
+                ep.obs,
+                bad["actions"],
+                bad["dones"],
+                False,
+                bad["skill"],
+                bad["skill_steps"],
+            )

@@ -56,7 +56,7 @@ flowchart LR
 - The keep/drop CSV is the only source of truth for what gets cut.
 - The only HTML is the one static review template.
 - `EvalRun.load` builds the trainer with `run_trainer`: a combo run replays the pair it trained with, whatever combo.yaml names now.
-- `network_outputs` threads the recurrent carry from zeros over the episode (reset after a done); PQN-RNN and the skill network get the previous stored action as last action, the skill network the stored skill one-hot and `steps_in_skill / step_limit` (the run's `timeout_mult`). Value-based methods give max Q and the epsilon-greedy distribution at the checkpoint's `params["eps"]` (one-hot when greedy); primitive-skill steps are one-hot on the stored action. Greedy probabilities' argmax is the stored greedy action.
+- `network_outputs` threads the recurrent carry from zeros over the episode (reset after a done); PQN-RNN and the skill network get the previous stored action as last action, the skill network the stored skill one-hot and `steps_in_skill / step_limit` (the run's `timeout_mult`). Value-based methods give max Q and the epsilon-greedy distribution at the checkpoint's `params["eps"]` (one-hot when greedy); primitive-skill steps are one-hot on the stored action. Greedy probabilities' argmax is the stored greedy action up to float near-ties (the sequence re-run and the live one-step acting may round differently): use the stored action as the label, never assert argmax equality on production checkpoints.
 - Hook methods and combo re-run through the PPO-RNN or PQN-RNN branch of their base, dyna-q through the skills branch; a new policy class without a family raises `TypeError`.
 
 ## Known issues

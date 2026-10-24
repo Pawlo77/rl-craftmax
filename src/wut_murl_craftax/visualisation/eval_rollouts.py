@@ -198,6 +198,22 @@ class EvalRun:
         """Params of a checkpoint."""
         return load_params(self.dir, update, self.template)
 
+    @functools.cached_property
+    def _last_params(self) -> dict[int, Any]:
+        """The last checkpoint `network_outputs` loaded, at most one entry."""
+        return {}
+
+    def _cached_params(self, update: int) -> Any:
+        """`params`, kept for the last checkpoint only.
+
+        Bulk callers stay on one checkpoint, and skill tables hold up to 2^20 rows.
+        """
+        memo = self._last_params
+        if update not in memo:
+            memo.clear()
+            memo[update] = self.params(update)
+        return memo[update]
+
     def env_step(
         self, state: Any, action: jax.Array, key: jax.Array
     ) -> tuple[jax.Array, Any, jax.Array, jax.Array, StepEvents]:
@@ -587,14 +603,26 @@ def network_outputs(
     epsilon-greedy distribution at ``params["eps"]`` (one-hot when ``greedy``, and
     one-hot on the stored action at primitive-skill steps).
 
+    The checkpoint is read once while calls stay on one ``update``.
+
     Raises:
-        ValueError: If a skill method gets no ``skill`` or ``skill_steps``.
+        ValueError: If a skill method gets no ``skill`` or ``skill_steps``, or a
+            per-step input is not as long as ``obs``.
     """
     family, n = network_family(run.policy), len(obs)
     if family == "skills" and (skill is None or skill_steps is None):
         msg = f"{run.method} needs the running skill and skill_steps of every step"
         raise ValueError(msg)
-    params = run.params(update)
+    per_step = {"actions": actions, "dones": dones, "skill": skill}
+    per_step["skill_steps"] = skill_steps
+    if bad := [
+        f"{k} has {len(v)} steps"
+        for k, v in per_step.items()
+        if v is not None and len(v) != n
+    ]:
+        msg = f"{', '.join(bad)}, obs {n}"
+        raise ValueError(msg)
+    params = run._cached_params(update)
     q = family in Q_FAMILIES
     width = -(-max(n, 1) // CHUNK_STEPS) * CHUNK_STEPS  # one compile per bucket
 
