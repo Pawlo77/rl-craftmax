@@ -6,8 +6,9 @@ in jitted chunks of `CHUNK_STEPS` until every episode has ended and writes
 ``eval/<mode>/<update>.npz``: ``seeds``, ``actions`` (-1 after the end), ``length``,
 ``method``, ``events/<StepEvents field>`` per step and the policy's ``extras/<name>``.
 Observations, rewards, states and frames are rebuilt by replaying seed + actions
-(`replay_episode`); `evaluate_spec` is the runner's schedule. Keys: [[Recording training
-data]]. Usage: ``python -m wut_murl_craftax.visualisation.eval_rollouts RUN``
+(`replay_episode`); `evaluate_spec` is the runner's schedule; `network_outputs` and
+`episode_outputs` re-run any method's network over an episode. Keys: [[Recording
+training data]]. Usage: ``python -m wut_murl_craftax.visualisation.eval_rollouts RUN``
 """
 
 import argparse
@@ -18,7 +19,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, Literal, NamedTuple, assert_never, cast
 
 import jax
 import jax.numpy as jnp
@@ -37,22 +38,36 @@ from ..orchestration import (
 )
 from ..orchestration.queue import COMBINE_KEY, CONFIG_ARTIFACT, RunSpec
 from ..orchestration.runner import Trainer
+from ..training import ppo_rnn, pqn_rnn
 from ..training.checkpoints import CheckpointEntry, load_index, load_params
 from ..training.interface import Policy, run_trainer
 from ..training.ppo import PPOPolicy, make_env, policy_value
 from ..training.records import achievement_weights, is_classic
+from ..training.skills import NUM_SKILLS, PRIMITIVE, step_limit
+from ..training.smdp import SMDPPolicy
 from ..training.wrappers import unwrap_state
 from .rollout import FEATURES, GameKind, Rollout, game_for, keys
 
 logger = logging.getLogger(__name__)
 
 type Mode = Literal["stochastic", "greedy"]
+type Family = Literal["ppo", "ppo-rnn", "pqn-rnn", "skills"]
 EVAL_SEEDS: tuple[int, ...] = tuple(range(10000, 10064))
 """The 64 eval seeds of every checkpoint, method and benchmark."""
 MODES: tuple[Mode, ...] = ("stochastic", "greedy")
 """Sampled actions (key ``fold_in(k_act, t)``) and the policy's argmax."""
 CHUNK_STEPS = 1000
 """Steps per jitted scan; scans repeat until every seed's episode has ended."""
+Q_FAMILIES: frozenset[Family] = frozenset({"pqn-rnn", "skills"})
+"""Value-based families: value max Q, probabilities epsilon-greedy."""
+_FAMILIES: tuple[tuple[type, Family], ...] = (
+    (PPOPolicy, "ppo"),
+    (ppo_rnn.PPORNNPolicy, "ppo-rnn"),
+    (pqn_rnn.PQNRNNPolicy, "pqn-rnn"),
+    (SMDPPolicy, "skills"),
+)
+"""Policy class -> network family; hook methods and combo act through their base's
+policy, dyna-q through the skills method's."""
 
 
 def _never() -> bool:
@@ -80,6 +95,20 @@ class Replay(NamedTuple):
     events: StepEvents
     states: Any
     """Craftax states before each action plus the final one: ``n + 1`` rows."""
+
+
+class _Inputs(NamedTuple):
+    """One episode's network inputs, padded to a `CHUNK_STEPS` multiple."""
+
+    obs: jax.Array
+    actions: jax.Array
+    """The stored actions: the next step's last-action input, primitive one-hots."""
+    resets: jax.Array
+    """Step t starts an episode: zero carry, no last action."""
+    skill: jax.Array
+    steps: jax.Array
+    eps: jax.Array
+    """Exploration of value-based methods, 0 when greedy."""
 
 
 def _where(live: jax.Array, new: Any, old: Any) -> Any:
@@ -271,6 +300,12 @@ class EvalRun:
 
         return cast(Callable[[jax.Array, jax.Array], Any], jax.jit(replay))
 
+    @functools.cached_property
+    def _network(self) -> Callable[[Any, _Inputs], tuple[jax.Array, jax.Array]]:
+        """Jitted ``(params, inputs) -> (probs, value)`` of the policy's network."""
+        fn = jax.jit(functools.partial(_outputs, self.policy))
+        return cast(Callable[[Any, _Inputs], tuple[jax.Array, jax.Array]], fn)
+
 
 def rollout_seeds(
     run: EvalRun,
@@ -452,14 +487,83 @@ def replay_episode(run: EvalRun, seed: int, actions: np.ndarray) -> Replay:
     return Replay(o, r, d, ev, states)
 
 
+def _seed_row(ev: Mapping[str, np.ndarray], seed: int) -> int:
+    """Row of ``seed`` in an eval file.
+
+    Raises:
+        ValueError: If the file does not hold the seed.
+    """
+    rows = np.flatnonzero(ev["seeds"] == seed)
+    if not len(rows):
+        msg = f"seed {seed} is not in the eval file (seeds {ev['seeds'].tolist()})"
+        raise ValueError(msg)
+    return int(rows[0])
+
+
 def stored_episode(
     run: EvalRun, update: int, seed: int, greedy: bool = False
 ) -> tuple[Replay, np.ndarray]:
     """The replayed episode of ``seed`` in an eval file, and its actions."""
     ev = load_eval(run.dir, update, greedy)
-    i = int(np.flatnonzero(ev["seeds"] == seed)[0])
+    i = _seed_row(ev, seed)
     row = ev["actions"][i]
     return replay_episode(run, seed, row), row[: ev["length"][i]]
+
+
+def network_family(policy: Policy) -> Family:
+    """The network family a policy re-runs through (`network_outputs`).
+
+    Raises:
+        TypeError: For a policy class of no family.
+    """
+    for cls, family in _FAMILIES:
+        if isinstance(policy, cls):
+            return family
+    msg = f"no network family for policy {type(policy).__name__}"
+    raise TypeError(msg)
+
+
+def _q_outputs(
+    policy: pqn_rnn.PQNRNNPolicy | SMDPPolicy, variables: Any, x: _Inputs
+) -> tuple[jax.Array, jax.Array]:
+    """Epsilon-greedy probabilities and max Q of the PQN-RNN or skill network."""
+    net = policy.net
+    if isinstance(policy, SMDPPolicy):  # as `smdp._skill_actions`
+        frac = x.steps / step_limit(x.skill, policy.cfg.timeout_mult)
+        extra = jnp.concatenate(
+            [jax.nn.one_hot(x.skill, NUM_SKILLS), frac[:, None]], -1
+        )
+        obs = jnp.concatenate([x.obs, extra.astype(x.obs.dtype)], -1)
+    else:
+        obs = pqn_rnn.widen(x.obs, net.obs_dim)
+    last = jnp.where(x.resets, pqn_rnn.NO_ACTION, jnp.roll(x.actions, 1))
+    h0, seq = net.init_carry(1), (obs[:, None], x.resets[:, None], last[:, None])
+    q = pqn_rnn.apply_network(net, variables, h0, *seq)[1][:, 0]
+    n = q.shape[-1]
+    probs = x.eps / n + (1 - x.eps) * jax.nn.one_hot(q.argmax(-1), n)
+    if isinstance(policy, SMDPPolicy):  # a primitive option acts with a fixed action
+        prim = jnp.asarray(PRIMITIVE)[x.skill][:, None]
+        probs = jnp.where(prim, jax.nn.one_hot(x.actions, n), probs)
+    return probs, q.max(-1)
+
+
+def _outputs(policy: Policy, params: Any, x: _Inputs) -> tuple[jax.Array, jax.Array]:
+    """Action probabilities and values of one episode's padded inputs."""
+    family = network_family(policy)
+    match family:
+        case "ppo":
+            logits, value = policy_value(cast(PPOPolicy, policy).net, params, x.obs)
+            return jax.nn.softmax(logits), value
+        case "ppo-rnn":
+            net = cast(ppo_rnn.PPORNNPolicy, policy).net
+            h0 = jnp.zeros((1, net.rnn_width))
+            seq = (x.obs[:, None], x.resets[:, None])
+            _, logits, value = ppo_rnn.apply_network(net, params, h0, *seq)
+            return jax.nn.softmax(logits[:, 0]), value[:, 0]
+        case "pqn-rnn" | "skills":
+            return _q_outputs(cast(Any, policy), params, x)
+        case _ as never:
+            assert_never(never)
 
 
 def network_outputs(
@@ -469,20 +573,75 @@ def network_outputs(
     actions: np.ndarray,
     dones: np.ndarray,
     greedy: bool,
+    skill: np.ndarray | None = None,
+    skill_steps: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Action probabilities and values of the checkpoint's network at ``obs``.
+    """Action probabilities ``(T, n_actions)`` and values ``(T,)`` at ``obs``, float32.
 
-    ``actions``, ``dones`` and ``greedy`` are for recurrent and two-level policies.
+    The checkpoint's network re-runs over the episode's observations with its
+    recurrent carry threaded from zeros (and reset after a ``dones`` step). PQN-RNN
+    and the skill network get the previous entry of ``actions`` as last action; the
+    skill network also the running ``skill`` and its ``skill_steps`` (the eval file's
+    ``extras/skill`` and ``extras/steps_in_skill``). The PPO family returns the policy
+    softmax and the critic value; value-based methods (`Q_FAMILIES`) max Q and the
+    epsilon-greedy distribution at ``params["eps"]`` (one-hot when ``greedy``, and
+    one-hot on the stored action at primitive-skill steps).
 
     Raises:
-        NotImplementedError: For a method other than PPO.
+        ValueError: If a skill method gets no ``skill`` or ``skill_steps``.
     """
-    del actions, dones, greedy
-    if not isinstance(run.policy, PPOPolicy):
-        msg = f"network outputs of {run.method!r} are not implemented yet"
-        raise NotImplementedError(msg)
-    logits, value = policy_value(run.policy.net, run.params(update), jnp.asarray(obs))
-    return np.asarray(jax.nn.softmax(logits)), np.asarray(value)
+    family, n = network_family(run.policy), len(obs)
+    if family == "skills" and (skill is None or skill_steps is None):
+        msg = f"{run.method} needs the running skill and skill_steps of every step"
+        raise ValueError(msg)
+    params = run.params(update)
+    q = family in Q_FAMILIES
+    width = -(-max(n, 1) // CHUNK_STEPS) * CHUNK_STEPS  # one compile per bucket
+
+    def pad(a: np.ndarray | None, dtype: Any) -> jax.Array:
+        a = np.zeros(n, dtype) if a is None else np.asarray(a, dtype)[:n]
+        return jnp.asarray(np.pad(a, [(0, width - n)] + [(0, 0)] * (a.ndim - 1)))
+
+    resets = np.r_[True, np.asarray(dones, bool)[: n - 1]]
+    eps = 0.0 if greedy or not q else params["eps"]
+    with jax.default_device(device_roles().actor):  # where the eval rollouts ran
+        x = _Inputs(
+            pad(obs, np.asarray(obs).dtype),
+            pad(actions, np.int32),
+            pad(resets, np.bool_),
+            pad(skill, np.int32),
+            pad(skill_steps, np.int32),
+            jnp.asarray(eps, jnp.float32),
+        )
+        probs, value = run._network(params["variables"] if q else params, x)
+    return np.asarray(probs[:n], np.float32), np.asarray(value[:n], np.float32)
+
+
+def episode_outputs(
+    run: EvalRun, update: int, mode: str, seed: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """`network_outputs` of the stored episode of ``seed`` in ``eval/<mode>/<update>``.
+
+    The episode is replayed from seed + actions; skill methods pass the file's
+    ``extras/skill`` and ``extras/steps_in_skill``.
+
+    Raises:
+        ValueError: On a mode outside `MODES` or a seed the file does not hold.
+    """
+    if mode not in MODES:
+        msg = f"mode must be one of {MODES}, got {mode!r}"
+        raise ValueError(msg)
+    greedy = mode == "greedy"
+    ev = load_eval(run.dir, update, greedy)
+    i = _seed_row(ev, seed)
+    n = int(ev["length"][i])
+    actions = ev["actions"][i, :n]
+    ep = replay_episode(run, seed, actions)
+    skill, steps = (
+        ev[k][i, :n] if k in ev else None
+        for k in ("extras/skill", "extras/steps_in_skill")
+    )
+    return network_outputs(run, update, ep.obs, actions, ep.done, greedy, skill, steps)
 
 
 def game_kind(run: EvalRun) -> GameKind:

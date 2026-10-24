@@ -34,6 +34,7 @@ related-code:
 - Shared: `ffmpeg` (encode, GIF, stacks, audio mix, YouTube checks), `text` (Pillow captions and cards), `rollout` (`Rollout`, `play`, `replay`, policies `RandomPolicy`, `HeuristicPolicy`, `NetworkPolicy`).
 - Gameplay: `render_master`, `render_kept`, `detect`, `candidates`, `build_assets`, `write_page`, `short_cut`, `long_cut`, `gif`.
 - Learning process: `EvalRun`, `evaluate`, `evaluate_spec`, `load_eval`, `replay_episode` (eval file format: [[Recording training data]]), `build_grid`, `render_curves`, `render_timeline`, `render_overlay`, `sequence`.
+- Agent internals: `network_outputs(run, update, obs, actions, dones, greedy, skill, skill_steps)` re-runs a checkpoint's network over a replayed episode for action probabilities `(T, n_actions)` and values `(T,)`, float32, for every registry method; `episode_outputs(run, update, mode, seed)` does it for a stored eval episode (skill extras from the file); `network_family` (`ppo`, `ppo-rnn`, `pqn-rnn`, `skills`) picks the branch from the run's policy, `Q_FAMILIES` are the value-based ones; `value_label` names the overlay's value (`V(s)` or `max Q(s, a)`).
 - Every step runs as `python -m wut_murl_craftax.visualisation.<step>` (`make vis STEP=<step> ARGS=...`).
 
 ## Data flow
@@ -55,6 +56,8 @@ flowchart LR
 - The keep/drop CSV is the only source of truth for what gets cut.
 - The only HTML is the one static review template.
 - `EvalRun.load` builds the trainer with `run_trainer`: a combo run replays the pair it trained with, whatever combo.yaml names now.
+- `network_outputs` threads the recurrent carry from zeros over the episode (reset after a done); PQN-RNN and the skill network get the previous stored action as last action, the skill network the stored skill one-hot and `steps_in_skill / step_limit` (the run's `timeout_mult`). Value-based methods give max Q and the epsilon-greedy distribution at the checkpoint's `params["eps"]` (one-hot when greedy); primitive-skill steps are one-hot on the stored action. Greedy probabilities' argmax is the stored greedy action.
+- Hook methods and combo re-run through the PPO-RNN or PQN-RNN branch of their base, dyna-q through the skills branch; a new policy class without a family raises `TypeError`.
 
 ## Known issues
 

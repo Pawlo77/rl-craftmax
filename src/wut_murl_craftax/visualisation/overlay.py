@@ -2,8 +2,9 @@
 
 One eval step per frame: the decoded symbolic observation (map, mobs, inventory and
 vitals), the policy's action distribution with the chosen action highlighted, and the
-value estimate against the discounted return actually obtained. Both games.
-Usage: ``python -m wut_murl_craftax.visualisation.overlay RUN --update 122``
+value estimate (the critic, or max Q for value-based methods) against the discounted
+return actually obtained. Every registry method (`eval_rollouts.network_outputs`), both
+games. Usage: ``python -m wut_murl_craftax.visualisation.overlay RUN --update 122``
 """
 
 import argparse
@@ -24,10 +25,12 @@ from .charts import INK, MUTED, SERIES, SURFACE, figure, frame, style
 from .eval_rollouts import (
     EVAL_SEEDS,
     MODES,
+    Q_FAMILIES,
     EvalRun,
     Mode,
     episode_frames,
-    network_outputs,
+    episode_outputs,
+    network_family,
     stored_episode,
 )
 
@@ -150,7 +153,8 @@ class _Episode:
     ) -> "_Episode":
         """Replay seed + actions; re-run the network on the observations."""
         ep, actions = stored_episode(run, update, seed, greedy)
-        probs, value = network_outputs(run, update, ep.obs, actions, ep.done, greedy)
+        mode = "greedy" if greedy else "stochastic"
+        probs, value = episode_outputs(run, update, mode, seed)
         n = len(actions)
         return cls(
             probs,
@@ -163,13 +167,31 @@ class _Episode:
         )
 
 
+def value_label(run: EvalRun) -> str:
+    """``max Q(s, a)`` for value-based methods (`Q_FAMILIES`), else ``V(s)``."""
+    return "max Q(s, a)" if network_family(run.policy) in Q_FAMILIES else "V(s)"
+
+
+def _header(run: EvalRun, update: int, mode: Mode, seed: int) -> str:
+    """Panel title: method, checkpoint, eval mode and seed."""
+    steps = run.env_steps(update) / 1e6
+    return f"{run.method}, checkpoint {steps:.1f}M steps, {mode} eval seed {seed}"
+
+
 class _Panel:
     """The internals figure; ``draw(t)`` updates its artists for step ``t``."""
 
     def __init__(
-        self, run: EvalRun, ep: _Episode, size: tuple[int, int], s0: int, s1: int
+        self,
+        run: EvalRun,
+        ep: _Episode,
+        size: tuple[int, int],
+        s0: int,
+        s1: int,
+        header: str,
     ) -> None:
         self.ep, self.acts, fs = ep, action_names(run.classic), size[1] / 90
+        self.value_label = value_label(run)
         self.ent = -(ep.probs * np.log(ep.probs + 1e-8)).sum(1)
         self.fig = fig = figure(*size)
         gs = fig.add_gridspec(
@@ -201,6 +223,7 @@ class _Panel:
         ax_pi.tick_params(axis="y", length=0)
         self.pi_title = ax_pi.set_title("", loc="left", fontsize=fs, color=INK)
         self._value(style(fig.add_subplot(gs[2, :]), fs), fs, s0, s1)
+        fig.text(0.02, 0.975, header, fontsize=size[1] / 80, color=INK)
 
     def _observation(self, ax: Axes, classic: bool, fs: float) -> None:
         view = self.ep.view
@@ -235,7 +258,7 @@ class _Panel:
             label="discounted return obtained",
         )
         (self.v_line,) = ax.plot(
-            [], [], color=SERIES[0], lw=2, label="value estimate V(s)"
+            [], [], color=SERIES[0], lw=2, label=f"estimate {self.value_label}"
         )
         self.cursor = ax.axvline(s0, color=MUTED, lw=1, ls=":")
         lo = min(ep.rtg[s0:s1].min(), ep.value[s0:s1].min())
@@ -267,7 +290,7 @@ class _Panel:
         self.v_line.set_data(self.ts[self.s0 : t + 1], ep.value[self.s0 : t + 1])
         self.cursor.set_xdata([t, t])
         self.v_title.set_text(
-            f"value V(s) = {ep.value[t]:.2f}   reward r = {ep.reward[t]:+.1f}"
+            f"{self.value_label} = {ep.value[t]:.2f}   reward r = {ep.reward[t]:+.1f}"
         )
         return frame(self.fig)
 
@@ -291,14 +314,7 @@ def render_overlay(
     t0 = time.time()
     ep = _Episode.load(run, update, seed, gamma, mode == "greedy")
     s0, s1 = steps[0], min(steps[1], ep.n_alive)
-    fig = _Panel(run, ep, panel, s0, s1)
-    fig.fig.text(
-        0.02,
-        0.975,
-        f"checkpoint {run.env_steps(update) / 1e6:.1f}M steps, {mode} eval seed {seed}",
-        fontsize=panel[1] / 80,
-        color=INK,
-    )
+    fig = _Panel(run, ep, panel, s0, s1, _header(run, update, mode, seed))
     with ffmpeg.FrameWriter(work / "internals.mkv", *panel, fps=fps) as writer:
         for t in range(s0, s1):  # streamed: 300 panels at 840 x 1080 would be 0.8 GB
             writer.write(fig.draw(t))
