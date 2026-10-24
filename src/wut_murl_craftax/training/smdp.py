@@ -12,6 +12,7 @@ Design: [[SMDP Q-Learning over Hand-Defined Skills design]].
 """
 
 import functools
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -24,7 +25,7 @@ import optax
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from flax import struct
+from flax import serialization, struct
 from jax.sharding import Mesh, NamedSharding
 
 from ..evaluation.episode_metrics import (
@@ -36,6 +37,7 @@ from ..evaluation.episode_metrics import (
     stack_online,
 )
 from ..orchestration import shard_envs
+from .checkpoints import load_index
 from .hooks import Traj
 from .ppo import env_placement, make_train_env
 from .pqn_rnn import (
@@ -1147,6 +1149,9 @@ def method_metrics(
 
 GREEDY_TABLE_FILE = "smdp_greedy_table.parquet"
 """File in the run directory's ``eval/``: `greedy_table` rows of each checkpoint."""
+GREEDY_TYPES = {"greedy_skill": pa.string(), "greedy_tried_skill": pa.string()}
+"""Arrow types of the greedy table's text columns: a checkpoint without stored keys
+has them empty, which Arrow would type null and refuse to join to text (ruling R81)."""
 FLAG_NAMES = ("low_food", "low_drink", "low_energy", "low_health")
 """Columns of the low-stat flags in `key_vector` order."""
 
@@ -1257,18 +1262,47 @@ def write_greedy_table(
     Rows of an earlier call for the same update are replaced.
     """
     path = Path(run_dir) / "eval" / GREEDY_TABLE_FILE
-    return write_update_rows(path, update, greedy_table(params, q_init))
+    return write_update_rows(path, update, greedy_table(params, q_init), GREEDY_TYPES)
 
 
-def write_update_rows(path: Path, update: int, cols: Mapping[str, Any]) -> Path:
+def rebuild_greedy_table(run_dir: Path) -> Path:
+    """Rewrite the run's `GREEDY_TABLE_FILE` from its ``ckpt/`` files (ruling R81).
+
+    Each checkpoint's stored sparse table is read without a params template and
+    ``q_init`` from ``config.json`` (an ``smdp-skills`` config); the old file is
+    replaced as a whole, atomically, so a broken one never joins the new rows.
+    """
+    run_dir = Path(run_dir)
+    cfg = json.loads((run_dir / "config.json").read_text())
+    q_init = SMDPTrainConfig.from_config(cfg).top.q_init
+    path = run_dir / "eval" / GREEDY_TABLE_FILE
+    part = path.with_suffix(".rebuild")
+    part.unlink(missing_ok=True)
+    for e in load_index(run_dir):
+        data = (run_dir / "ckpt" / e["file"]).read_bytes()
+        cols = greedy_table(serialization.msgpack_restore(data), q_init)
+        write_update_rows(part, e["update"], cols, GREEDY_TYPES)
+    part.replace(path)
+    return path
+
+
+def write_update_rows(
+    path: Path,
+    update: int,
+    cols: Mapping[str, Any],
+    types: Mapping[str, pa.DataType] | None = None,
+) -> Path:
     """Put the rows ``cols`` of ``update`` into the parquet file ``path``, atomically.
 
     An ``update`` column comes first; rows of an earlier call for the same update
-    are replaced.
+    are replaced. ``types`` fixes the Arrow type of columns numpy cannot type (text
+    in object arrays), so an empty chunk keeps the file's schema.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     n = len(next(iter(cols.values())))
-    new = pa.table({"update": np.full(n, update, np.int32), **cols})
+    types = types or {}
+    arrays = {k: pa.array(v, types.get(k)) for k, v in cols.items()}
+    new = pa.table({"update": pa.array(np.full(n, update, np.int32)), **arrays})
     if path.is_file():
         old = pq.read_table(path)
         keep = pc.not_equal(old["update"], pa.scalar(update, pa.int32()))

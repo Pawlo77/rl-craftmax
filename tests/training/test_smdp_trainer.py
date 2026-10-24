@@ -13,6 +13,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import yaml
@@ -488,6 +489,58 @@ def test_the_tried_columns_of_a_row_without_updates() -> None:
     assert cols["tried"][0] == 0
     assert cols["greedy_tried_skill"][0] == ""
     assert np.isnan(cols["greedy_tried_value"][0])
+
+
+def _sparse(keys: list[int], q_init: float = 10.0) -> dict[str, np.ndarray]:
+    """A `sparse_table` payload with ``keys`` stored (key k: skill k % 25 best)."""
+    out = {
+        "rows": np.full(1024, smdp.SENTINEL_ROW, np.int32),
+        "q_rows": np.full((1024, NUM_SKILLS), q_init, np.float32),
+        "fields": np.full((1024, 16), -1, np.int8),
+    }
+    for i, k in enumerate(keys):
+        out["rows"][i], out["fields"][i] = k, k % 7
+        out["q_rows"][i, k % NUM_SKILLS] = q_init + 1.0
+    return out
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_a_checkpoint_without_stored_keys_and_one_with_keys_share_a_table(
+    tmp_path: Path, order: tuple[int, int]
+) -> None:
+    """Ruling R81: the empty table's text columns are strings, never Arrow null."""
+    tables = {0: _sparse([]), 1: _sparse([3, 40])}
+    for u in order:
+        path = smdp.write_greedy_table(tmp_path, u, tables[u], 10.0)
+    table = pq.read_table(path)
+    assert table["update"].to_pylist() == [1, 1]
+    for name in ("greedy_skill", "greedy_tried_skill"):
+        assert str(table.schema.field(name).type) == "string"
+    assert table["greedy_skill"].to_pylist() == [SKILLS[3].name, SKILLS[15].name]
+
+
+def test_rebuild_greedy_table_rewrites_the_file_from_the_checkpoints(
+    tmp_path: Path,
+) -> None:
+    """A broken file (null-typed, no rows) is replaced by the checkpoints' tables."""
+    run, fresh = tmp_path / "run", tmp_path / "fresh"
+    run.mkdir()
+    (run / "config.json").write_text('{"method": "smdp-skills", "q_init": 5.0}')
+    keys = {0: [], 1: [], 3: [7], 9: [7, 2048, 9]}
+    for u, k in keys.items():
+        params = {"eps": np.float32(0.5), **_sparse(k, 5.0)}
+        save_checkpoint(run, u, 64 * u, 0.0, params)
+        smdp.write_greedy_table(fresh, u, params, 5.0)
+    broken = pa.table({"update": pa.array([], pa.int32()), "greedy_skill": pa.nulls(0)})
+    (run / "eval").mkdir()
+    pq.write_table(broken, run / "eval" / smdp.GREEDY_TABLE_FILE)
+    path = smdp.rebuild_greedy_table(run)
+    assert path == run / "eval" / smdp.GREEDY_TABLE_FILE
+    rebuilt = pq.read_table(path)
+    assert rebuilt.equals(pq.read_table(fresh / "eval" / smdp.GREEDY_TABLE_FILE))
+    assert sorted(set(rebuilt["update"].to_pylist())) == [3, 9]
+    assert rebuilt.num_rows == 4
+    assert sorted(p.name for p in (run / "eval").iterdir()) == [smdp.GREEDY_TABLE_FILE]
 
 
 # --- the two-level policy -----------------------------------------------------------

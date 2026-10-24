@@ -17,6 +17,7 @@ related-code:
   - "[[src/wut_murl_craftax/orchestration/store.py]]"
   - "[[src/wut_murl_craftax/orchestration/abort.py]]"
   - "[[src/wut_murl_craftax/orchestration/train_metrics.py]]"
+  - "[[src/wut_murl_craftax/orchestration/greedy_tables.py]]"
 ---
 # orchestration
 
@@ -51,6 +52,7 @@ One line each; signatures and details: [[Modules]].
 - `tracking`: resumable MLflow run tracking and the store location.
 - `train_metrics`: windowed MLflow points of the per-update metrics.
 - `reproducibility`: environment snapshot (platform, packages, git state) for MLflow.
+- `greedy_tables`: eval-only rebuild of the SMDP greedy tables of one config hash from their checkpoints; clears only the schema-failure `warn/artifacts` tag (ruling R81).
 
 ## Data flow
 
@@ -68,4 +70,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/test_runtime.py]], [[tests/orchestration/test_runner.py]], [[tests/orchestration/test_queue.py]], [[tests/orchestration/test_abort.py]], [[tests/orchestration/test_profiles.py]], [[tests/orchestration/test_store.py]], [[tests/orchestration/test_training_metrics.py]]
+- [[tests/test_runtime.py]], [[tests/orchestration/test_runner.py]], [[tests/orchestration/test_queue.py]], [[tests/orchestration/test_abort.py]], [[tests/orchestration/test_profiles.py]], [[tests/orchestration/test_store.py]], [[tests/orchestration/test_training_metrics.py]], [[tests/orchestration/test_greedy_tables.py]]
