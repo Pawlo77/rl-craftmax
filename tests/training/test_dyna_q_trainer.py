@@ -396,6 +396,19 @@ def test_the_model_graph_lists_every_visited_pair(entry: Any, tmp_path: Path) ->
         assert table["mean_tau"][i] == pytest.approx(float(tau.mean()), rel=1e-3)
 
 
+def test_a_model_graph_without_pairs_then_one_with_pairs_share_a_file(
+    entry: Any, tmp_path: Path
+) -> None:
+    """The R81 bug class: an empty ``skill`` column is text, never Arrow null."""
+    _, _, start, (state, _) = entry
+    assert int(start.model.n_pairs) == 0
+    dyna_q.write_model_graph(tmp_path, 0, start)
+    path = dyna_q.write_model_graph(tmp_path, 2, state)
+    table = pq.read_table(path)
+    assert str(table.schema.field("skill").type) == "string"
+    assert set(table["update"].to_pylist()) == {2}
+
+
 # --- through the runner ---------------------------------------------------------------
 
 

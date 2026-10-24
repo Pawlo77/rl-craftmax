@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pyarrow as pa
 from flax import struct
 
 from .pqn_rnn import FILLED_LOSS_COLUMNS
@@ -820,6 +821,9 @@ def method_metrics(
 
 MODEL_GRAPH_FILE = "dyna_model_graph.parquet"
 """File in the run directory's ``eval/``: `model_graph` rows of each checkpoint."""
+MODEL_GRAPH_TYPES = {"skill": pa.string()}
+"""Arrow type of the graph's text column: a checkpoint without pairs has it empty,
+which Arrow would type null and refuse to join to text (the R81 bug class)."""
 
 
 def model_graph(state: DynaState) -> dict[str, np.ndarray]:
@@ -870,7 +874,7 @@ def write_model_graph(run_dir: Path, update: int, state: DynaState) -> Path:
     training state only (``state/``, not ``ckpt/``), so this runs at training time.
     """
     path = Path(run_dir) / "eval" / MODEL_GRAPH_FILE
-    return write_update_rows(path, update, model_graph(state))
+    return write_update_rows(path, update, model_graph(state), MODEL_GRAPH_TYPES)
 
 
 _SMDP = SMDPTrainer()

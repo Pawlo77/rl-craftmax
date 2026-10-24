@@ -53,7 +53,7 @@ One line each; signatures and details: [[Modules]].
 
 - Same seed, same config, same backend: same parameters and records.
 - Score is training-episode return as % of the game's maximum (226 or 22).
-- Per-checkpoint parquet files (`smdp_greedy_table.parquet`) type their text columns explicitly, so a checkpoint without stored keys still joins later rows; `smdp.rebuild_greedy_table` rewrites one from `ckpt/` (ruling R81).
+- Per-checkpoint parquet files (`smdp_greedy_table.parquet`, `dyna_model_graph.parquet`) type their text columns explicitly, so a checkpoint without stored keys still joins later rows; `smdp.rebuild_greedy_table` rewrites one from `ckpt/` (ruling R81).
 - A saved combo run replays the pair it trained with: its `combine` block, else the one registry pair its keys fit; zero or two fitting pairs raise (ruling R80a).
 
 ## Known issues
