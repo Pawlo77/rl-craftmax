@@ -2,23 +2,23 @@
 
 ``outputs/metrics/<phase>/{runs,curves,eval_episodes}.parquet`` is read as a dict of
 frames keyed by those stems. Runs belong to a phase by their ``phases`` tag (R77), and
-statistics are per (``method``, ``config_ref``): select a ``config_ref`` whenever tuned
-and ablation runs of one method share a frame. Base controls come from
-`select_pair.controls_of`; a combo run's control comes from its own pair (R80a).
+statistics are per (``method``, ``config_ref``): `select` refuses a result that mixes
+two ``config_ref`` values of a method unless asked to pool, and `units` walks the
+units. Base controls come from `select_pair.controls_of`; a combo run's control comes
+from its own pair (R80a). Parquet-only use imports neither JAX nor MLflow: the registry
+is imported by the functions that need it.
 
 @see [[2026-10-20-craftax-training-analysis]]
 """
 
+import functools
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-
-from ..evaluation.select_pair import COMBO, controls_of
-from ..training.interface import METHODS, combo_pair
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +120,32 @@ _REQUIRED = {
 }
 _EPISODE_KEYS = ["method", "config_ref", "budget"]
 
-# controls_of also reads combo.yaml; its "combo" entry is dropped, never used (R80a)
-_CONTROL_OF = controls_of()
-CONTROLS = tuple(sorted(r for r, c in _CONTROL_OF.items() if r == c))
-"""The registry methods that are their own base control."""
-BASE_CONTROL = {r: c for r, c in _CONTROL_OF.items() if r != c and r != COMBO}
+_COMBO = "combo"
+"""`select_pair.COMBO`, repeated so that this module imports without the registry."""
+CONTROLS: tuple[str, ...]
+"""The registry methods that are their own base control (combo never is)."""
+BASE_CONTROL: dict[str, str]
 """Non-combo method -> its control; a combo run's control: `base_control` of its row."""
+
+
+@functools.cache
+def _control_maps() -> tuple[tuple[str, ...], dict[str, str]]:
+    """`CONTROLS` and `BASE_CONTROL` from the registry's ``base_from`` chains."""
+    # imported here: select_pair pulls in MLflow and the orchestration code
+    from ..evaluation.select_pair import COMBO, controls_of
+
+    # controls_of also reads combo.yaml; its "combo" entry is dropped, never used (R80a)
+    of = {r: c for r, c in controls_of().items() if r != COMBO}
+    controls = tuple(sorted(r for r, c in of.items() if r == c))
+    return controls, {r: c for r, c in of.items() if r != c}
+
+
+def __getattr__(name: str) -> object:
+    """Build `CONTROLS` and `BASE_CONTROL` on first access (they read the registry)."""
+    if name in ("CONTROLS", "BASE_CONTROL"):
+        return _control_maps()[name == "BASE_CONTROL"]
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 class MissingPhaseError(FileNotFoundError):
@@ -198,6 +218,23 @@ def load_phase(phase_dir: Path) -> Frames:
     return frames
 
 
+def _warn_dropped(dropped: pd.DataFrame, kept: dict[str, tuple[str, str]]) -> None:
+    """Warn about duplicate runs whose kept copy has another phase or `config_ref`."""
+    differ = [
+        r.run_id
+        for r in dropped.itertuples()
+        if kept[r.run_id] != (r.phase, r.config_ref)
+    ]
+    if differ:
+        was = kept[differ[0]]
+        logger.warning(
+            "%d runs listed in two phases keep their first copy, e.g. %s (%s, %s)",
+            len(differ),
+            differ[0],
+            *was,
+        )
+
+
 def load_phases(
     phases: Sequence[str], root: Path = METRICS_ROOT, *, skip_missing: bool = False
 ) -> Frames:
@@ -205,8 +242,12 @@ def load_phases(
 
     A run listed in two phases (its ``phases`` tag) is kept once, with the rows of the
     first phase of ``phases`` that holds it, so ``phase`` and ``config_ref`` come from
-    that phase in all three frames. ``skip_missing`` leaves out phases with no export
-    at all (``final-1b`` before 1B exists, R86); an incomplete export still fails.
+    that phase in all three frames; a warning names the run count when the dropped
+    copy differs in either. Pass ``final-*`` and ``combo-*`` phases before a tuning
+    phase: the other way round the control runs get their hash as ``config_ref``,
+    which splits their (method, config_ref) unit. ``skip_missing`` leaves out phases
+    with no export at all (``final-1b`` before 1B exists, R86); an incomplete export
+    still fails.
 
     Raises:
         MissingPhaseError: Naming every phase that lacks an export (those left out by
@@ -227,11 +268,17 @@ def load_phases(
     if absent:
         logger.info("phases without an export, skipped: %s", ", ".join(absent))
     parts: dict[str, list[pd.DataFrame]] = {t: [] for t in TABLES}
-    seen: set[str] = set()
+    kept: dict[str, tuple[str, str]] = {}
     for phase in todo:
         frames = load_phase(root / phase)
-        fresh = set(frames["runs"]["run_id"]) - seen
-        seen |= fresh
+        runs = frames["runs"]
+        fresh = set(runs["run_id"]) - kept.keys()
+        _warn_dropped(runs[~runs["run_id"].isin(fresh)], kept)
+        kept |= {
+            r.run_id: (phase, r.config_ref)
+            for r in runs.itertuples()
+            if r.run_id in fresh
+        }
         for name in TABLES:
             parts[name].append(frames[name][frames[name]["run_id"].isin(fresh)])
     # an empty part would only add a dtype-warning to the concatenation
@@ -248,11 +295,18 @@ def select(
     config_ref: str | Sequence[str] | None = None,
     budget: str | Sequence[str] | None = None,
     phase: str | None = None,
+    pool: bool = False,
 ) -> Frames:
     """The runs that match every given filter and their rows of every other frame.
 
     ``phase`` matches the ``phases`` tag (R77), not the ``phase`` column. The input is
     left alone; no match gives empty frames with the same columns.
+
+    Raises:
+        ValueError: If no ``config_ref`` is given, ``pool`` is False and some method in
+            the result has more than one ``config_ref`` (tuned and ablation runs must
+            not be pooled, R77): name the ``config_ref``, walk `units`, or pass
+            ``pool=True``.
     """
     runs = frames["runs"]
     keep = pd.Series(True, index=runs.index)
@@ -265,11 +319,26 @@ def select(
             keep &= runs[column].isin([want] if isinstance(want, str) else list(want))
     if phase is not None:
         keep &= in_phase(runs, phase)
+    if config_ref is None and not pool:
+        refs = runs.loc[keep].groupby("method")["config_ref"].nunique()
+        if mixed := sorted(refs[refs > 1].index):
+            msg = (
+                f"select would pool several config_ref values of {', '.join(mixed)}; "
+                "pass config_ref, iterate units(frames) or pass pool=True"
+            )
+            raise ValueError(msg)
     ids = runs.loc[keep, "run_id"]
     return {
         name: frame[frame["run_id"].isin(ids)].reset_index(drop=True)
         for name, frame in frames.items()
     }
+
+
+def units(frames: Frames) -> Iterator[tuple[tuple[str, str], Frames]]:
+    """Each (``method``, ``config_ref``) of ``frames``, sorted, with its own frames."""
+    pairs = frames["runs"][list(UNIT_COLUMNS)].drop_duplicates()
+    for method, ref in sorted(pairs.itertuples(index=False, name=None)):
+        yield (method, ref), select(frames, method=method, config_ref=ref)
 
 
 def pair_of(run: Mapping[str, Any] | pd.Series) -> dict[str, Any] | None:
@@ -278,8 +347,11 @@ def pair_of(run: Mapping[str, Any] | pd.Series) -> dict[str, Any] | None:
     Never reads combo.yaml: a recorded ``combine`` block wins, else the pair is
     inferred from the config's keys (R80a).
     """
-    if run["method"] != COMBO:
+    if run["method"] != _COMBO:
         return None
+    # imported here: the registry pulls in JAX and MLflow
+    from ..training.interface import METHODS, combo_pair
+
     return combo_pair(json.loads(run["config_json"]), METHODS)
 
 
@@ -292,10 +364,11 @@ def base_control(run: Mapping[str, Any] | pd.Series) -> str:
     if (pair := pair_of(run)) is not None:
         return str(pair["base"])
     method = str(run["method"])
-    if method not in BASE_CONTROL and method not in CONTROLS:
+    controls, base = _control_maps()
+    if method not in base and method not in controls:
         msg = f"unknown method {method!r}: not in the registry"
         raise ValueError(msg)
-    return BASE_CONTROL.get(method, method)
+    return base.get(method, method)
 
 
 def final_checkpoint(episodes: pd.DataFrame, run: str | None = None) -> pd.DataFrame:

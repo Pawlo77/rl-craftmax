@@ -1,10 +1,10 @@
-"""Fixtures of the synthetic export (`_export`), shared by every analysis test."""
+"""Fixtures of the synthetic export (`_analysis_export`) for the analysis tests."""
 
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from _export import write_export
+from _analysis_export import write_export
 
 
 @pytest.fixture(scope="session")

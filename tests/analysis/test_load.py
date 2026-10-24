@@ -1,12 +1,15 @@
 """Tests for the export loaders: schema, run membership, controls and missing phases."""
 
 import json
+import logging
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 import pytest
-from _export import (
+from _analysis_export import (
     COMBO_PAIR,
     FINAL_GROUPS,
     SEEDS,
@@ -14,13 +17,16 @@ from _export import (
 )
 
 from wut_murl_craftax.analysis.load import (
+    _COMBO,
     BASE_CONTROL,
     CONTROLS,
     EPISODE_REQUIRED,
     FINAL_PHASES,
     RUNS_COLUMNS,
+    UNIT_COLUMNS,
     MissingPhaseError,
     SchemaError,
+    _control_maps,
     base_control,
     final_checkpoint,
     in_phase,
@@ -28,7 +34,9 @@ from wut_murl_craftax.analysis.load import (
     load_phases,
     pair_of,
     select,
+    units,
 )
+from wut_murl_craftax.evaluation import select_pair
 from wut_murl_craftax.evaluation.select_pair import SKILL_METHODS, controls_of
 from wut_murl_craftax.training import interface
 from wut_murl_craftax.training.interface import METHODS
@@ -218,7 +226,7 @@ def test_a_later_budget_loads_beside_the_first(
     root = export_writer(tmp_path, ("final-1m", "final-1b"))
     frames = load_phases(["final-1m", "final-1b"], root)
     assert set(frames["runs"]["budget"]) == {"1m", "1b"}
-    assert set(select(frames, budget="1b")["runs"]["phase"]) == {"final-1b"}
+    assert set(select(frames, budget="1b", pool=True)["runs"]["phase"]) == {"final-1b"}
 
 
 # --- select ---------------------------------------------------------------------
@@ -236,21 +244,41 @@ def test_select_filters_every_frame_consistently(export_root: Path) -> None:
     assert len(frames["runs"]) == N_FINAL + len(SEEDS)  # the input is left alone
 
 
-def test_select_by_method_alone_pools_every_config_ref_so_statistics_use_both(
+def test_select_refuses_to_pool_the_config_refs_of_a_method(export_root: Path) -> None:
+    """R77: tuned and ablation runs of one method are separate statistics units."""
+    frames = load_phase(export_root / "final-1m")
+    with pytest.raises(ValueError, match=r"smdp-skills.*config_ref"):
+        select(frames, method="smdp-skills")
+    with pytest.raises(ValueError, match="count-bonus-ppo-rnn, smdp-skills"):
+        select(frames)
+    tuned = select(frames, method="smdp-skills", config_ref="tuned")["runs"]
+    assert len(tuned) == len(SEEDS)
+    pooled = select(frames, method="smdp-skills", pool=True)["runs"]
+    assert set(pooled["config_ref"]) == {"tuned", "monte-carlo"}
+    assert len(select(frames, method="sil")["runs"]) == len(SEEDS)  # one config_ref
+
+
+def test_units_walks_each_method_config_ref_pair_with_its_own_frames(
     export_root: Path,
 ) -> None:
-    frames = load_phase(export_root / "final-1m")
-    runs = select(frames, method="smdp-skills")["runs"]
-    assert set(runs["config_ref"]) == {"tuned", "monte-carlo"}
-    tuned = select(frames, method="smdp-skills", config_ref="tuned")["runs"]
-    assert len(tuned) == len(runs) // 2
+    frames = load_phases(["final-1m", "combo-1m"], export_root)
+    walked = dict(units(frames))
+    assert list(walked) == sorted(walked)
+    assert ("smdp-skills", "monte-carlo") in walked
+    assert ("combo", "tuned") in walked
+    assert set(walked) == {tuple(x) for x in frames["runs"][list(UNIT_COLUMNS)].values}
+    for (method, ref), unit in walked.items():
+        assert set(unit["runs"]["method"]) == {method}
+        assert set(unit["runs"]["config_ref"]) == {ref}
+        assert len(unit["runs"]) == len(SEEDS)
+        assert set(unit["eval_episodes"]["run_id"]) == set(unit["runs"]["run_id"])
 
 
 def test_select_takes_a_budget_a_phase_tag_and_several_values(
     export_root: Path,
 ) -> None:
     frames = load_phases(["final-1m", "combo-1m"], export_root)
-    assert len(select(frames, budget="1m")["runs"]) == len(frames["runs"])
+    assert len(select(frames, budget="1m", pool=True)["runs"]) == len(frames["runs"])
     by_tag = select(frames, phase="tune-coarse")["runs"]
     assert set(by_tag["method"]) == {"ppo", "ppo-rnn"}
     two = select(frames, method=["ppo", "combo"], config_ref="tuned")["runs"]
@@ -392,3 +420,57 @@ def test_final_checkpoint_of_an_unknown_run_is_an_error(export_root: Path) -> No
     episodes = load_phase(export_root / "final-1m")["eval_episodes"]
     with pytest.raises(ValueError, match=r"no eval episodes.*nope"):
         final_checkpoint(episodes, "nope")
+
+
+def test_the_controls_never_include_combo_even_without_a_base_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A combo.yaml rewritten without ``base_from`` must not make combo a control."""
+    real = controls_of()
+    monkeypatch.setattr(select_pair, "controls_of", lambda: real | {"combo": "combo"})
+    _control_maps.cache_clear()
+    try:
+        assert "combo" not in _control_maps()[0]
+        assert "combo" not in _control_maps()[1]
+    finally:
+        monkeypatch.undo()
+        _control_maps.cache_clear()
+    assert select_pair.COMBO == _COMBO
+
+
+# --- imports and duplicate runs -------------------------------------------------
+
+
+def test_parquet_only_use_imports_neither_jax_nor_mlflow(export_root: Path) -> None:
+    code = (
+        "import sys\n"
+        "from wut_murl_craftax.analysis.load import load_phases, select, "
+        "final_checkpoint, units\n"
+        "from pathlib import Path\n"
+        f"f = load_phases(['final-1m'], Path({str(export_root)!r}))\n"
+        "list(units(f)); select(f, config_ref='tuned')\n"
+        "final_checkpoint(f['eval_episodes'])\n"
+        "bad = [m for m in ('jax', 'mlflow') if m in sys.modules]\n"
+        "assert not bad, bad\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_dropped_duplicate_with_another_phase_or_config_ref_is_warned_about(
+    export_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="wut_murl_craftax.analysis.load"):
+        load_phases(["final-1m", "tune-coarse"], export_root)
+    (record,) = caplog.records
+    assert "6 runs" in record.message
+    assert "final-1m" in record.message
+
+
+def test_the_same_phase_twice_loads_once_without_a_warning(
+    export_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="wut_murl_craftax.analysis.load"):
+        runs = load_phases(["final-1m", "final-1m"], export_root)["runs"]
+    assert len(runs) == N_FINAL
+    assert not caplog.records

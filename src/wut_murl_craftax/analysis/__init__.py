@@ -20,6 +20,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         load_phases,
         pair_of,
         select,
+        units,
     )
 
 _EXPORTS: dict[str, str] = {
@@ -38,6 +39,7 @@ _EXPORTS: dict[str, str] = {
     "load_phases": "load",
     "pair_of": "load",
     "select": "load",
+    "units": "load",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -58,6 +60,7 @@ __all__ = [
     "load_phases",
     "pair_of",
     "select",
+    "units",
 ]
 
 
