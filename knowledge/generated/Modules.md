@@ -27,7 +27,8 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. |  |  | 560 |  |
 | [[src/wut_murl_craftax/evaluation/stability.py]] | Learning stability of one run (drawdowns, drops, collapse) and tuning sensitivity. |  |  | 231 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 267 | [[evaluation]] |
-| [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 18 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 26 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 263 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals. |  |  | 139 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/finals.py]] | The dyna-q kappa ablation of final-1m, set once dyna-q is marked tuned. |  |  | 144 |  |

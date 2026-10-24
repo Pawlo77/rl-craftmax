@@ -1,12 +1,20 @@
 """Policy interpretation: features, datasets, decision-tree distillation and rules."""
 
 import importlib
+from typing import TYPE_CHECKING
 
-_EXPORTS: dict[str, str] = {}
+if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .features import CREATURES, FEATURES, featurize
+
+_EXPORTS: dict[str, str] = {
+    "CREATURES": "features",
+    "FEATURES": "features",
+    "featurize": "features",
+}
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
 
-__all__: list[str] = []
+__all__ = ["CREATURES", "FEATURES", "featurize"]
 
 
 def __getattr__(name: str) -> object:
