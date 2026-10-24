@@ -1,11 +1,11 @@
 """Hardware usage of one run, summarised from its stored MLflow series.
 
 ``hardware_summary(store, run_id)`` reads one run's rows of the SQLite store (read-only,
-by ``run_uuid``) and returns wall-clock, SPS, compile and eval time, CPU and GPU
-utilisation, peak memory and energy. A series the store lacks (the laptop logs no
-power, GPU or eval-time series) gives NaN, which `show_metric` writes "n.m."; never 0.
-Runs compare only inside one `profile_of`; `shared_machine` flags the runs reused from
-tuning (wall-clock and SPS confounded by a second queue worker). CLI: ``--run <id>``.
+by ``run_uuid``): wall-clock, SPS, compile and eval time, CPU and GPU utilisation, peak
+memory, energy. A series the store lacks gives NaN, which `show_metric` writes "n.m.".
+Runs compare only inside one `profile_of`. Every laptop run trained with 2 queue workers
+(R97): its wall-clock, SPS and the machine-wide cpu, host-memory and RSS series are
+context only. `reused_from_tuning` marks runs reused from tuning. CLI: ``--run <id>``.
 @see [[2026-10-20-craftax-evaluation-and-metrics]]
 @tested-by [[tests/evaluation/test_hardware.py]]
 """
@@ -33,13 +33,16 @@ WALL = "train/wall_s"
 """Cumulative seconds at an update; the runner carries it across resume segments."""
 COMPILE = "compile_s"
 EVAL_TIME = "eval_s"
+# placeholder: no runner code logs eval time yet, so it reads NaN until one does
 RSS = "peak_rss_mb"
+DEVICE_PEAK = "peak_device_mb"
+"""The runner's peak device memory (``memory_stats``); no Metal device logs it."""
 SYSTEM_LO, SYSTEM_HI = "system/", "system0"
 """Key range of the mlflow-sysmetrics series (``'0'`` follows ``'/'``)."""
-_TRAIN_KEYS = (WALL, COMPILE, EVAL_TIME, RSS)
+_TRAIN_KEYS = (WALL, COMPILE, EVAL_TIME, RSS, DEVICE_PEAK)
 _LOAD_SQL = (
     "SELECT key, step, timestamp, value FROM metrics WHERE run_uuid = ? "
-    "AND is_nan = 0 AND (key IN (?, ?, ?, ?) OR (key >= ? AND key < ?)) "
+    "AND is_nan = 0 AND (key IN (?, ?, ?, ?, ?) OR (key >= ? AND key < ?)) "
     "ORDER BY timestamp"  # one ? per `_TRAIN_KEYS` entry, then the system key range
 )
 WARMUP_UPDATES = 10
@@ -74,7 +77,7 @@ HARDWARE_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 """Per profile, per metric, the stored names it is read from (``fnmatch`` patterns)."""
 TUNING_PHASES = frozenset({"tune-coarse", "tune-fine"})
-"""Phases that ran beside a second queue worker."""
+"""Phases whose runs `final-*` and `combo-*` phases reuse."""
 _BUDGET = re.compile(r"(\d+)([mb])")
 _BUDGET_UNIT = {"m": 10**6, "b": 10**9}
 _NAN = math.nan
@@ -97,8 +100,8 @@ def profile_of(learner_device: str) -> str:
     return "unknown"
 
 
-def shared_machine(phases: str) -> bool:
-    """True for a run reused from a tuning phase (it trained beside a second worker)."""
+def reused_from_tuning(phases: str) -> bool:
+    """True for a run whose ``phases`` tag lists a tuning phase (it was reused)."""
     return not TUNING_PHASES.isdisjoint(phases.split(","))
 
 
@@ -124,8 +127,13 @@ def _open(store: Store) -> Generator[sqlite3.Connection]:
 
 
 def system_keys(store: Store, run_id: str) -> list[str]:
-    """The ``system/*`` metric names stored for one run, sorted."""
+    """The ``system/*`` metric names stored for one run, sorted.
+
+    Raises:
+        ValueError: If the run is not in the store (a typo is not "nothing logged").
+    """
     with _open(store) as con:
+        _tags(con, run_id)
         rows = con.execute(
             "SELECT DISTINCT key FROM metrics WHERE run_uuid = ? AND key >= ? "
             "AND key < ? ORDER BY key",
@@ -279,7 +287,9 @@ def hardware_summary(
     Energy covers the logged GPU power only: mlflow-sysmetrics has no CPU or system
     power, so steps per joule overstates the efficiency of a machine that also burns
     CPU power. ``peak_rss_mb`` is the peak of the whole worker process, as the runner
-    logs it (several runs of one worker share it).
+    logs it (several runs of one worker share it). ``peak_device_mem_mb`` is the largest
+    of the runner's ``peak_device_mb`` and the sampled device-memory series (the sampled
+    ones see the whole node, so the runner's figure is the floor on a shared GPU).
 
     Raises:
         ValueError: If the run is not in the store or its ``train/wall_s`` decreases.
@@ -295,7 +305,7 @@ def hardware_summary(
         "device_kind": tags.get("device_kind", ""),
         "actor_device": tags.get("actor_device", ""),
         "learner_device": learner,
-        "shared_machine": shared_machine(tags.get("phases", "")),
+        "reused_from_tuning": reused_from_tuning(tags.get("phases", "")),
         **_timing(series, budget, run_id),
     }
     out["cpu_util_mean"], out["cpu_util_p95"] = _utilisation(

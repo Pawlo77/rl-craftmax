@@ -16,7 +16,7 @@ from wut_murl_craftax.evaluation.hardware import (
     NOT_MEASURED,
     hardware_summary,
     profile_of,
-    shared_machine,
+    reused_from_tuning,
     show_metric,
 )
 
@@ -223,13 +223,40 @@ def test_cuda_profile_reads_gpu_utilisation_and_device_memory(add_run: AddRun) -
         **sys_series("gpu_1_utilization_percentage", [60.0, 100.0]),
         **sys_series("gpu_0_memory_usage_megabytes", [1000.0, 2000.0]),
         **sys_series("gpu_1_memory_usage_gigabytes", [1.0, 3.0]),
-        "peak_device_mb": [(1000, T0, 2500.0)],
     }
     out = run_with(add_run, series, learner_device="cuda:0", device_kind="NVIDIA A100")
     assert out["profile"] == "cuda"
     assert out["gpu_util_mean"] == pytest.approx(70.0)  # pooled over both devices
     assert out["gpu_util_p95"] == pytest.approx(np.percentile([40, 80, 60, 100], 95))
     assert out["peak_device_mem_mb"] == 3000.0  # 3 GB, in decimal MB like the others
+
+
+def test_the_runners_device_peak_counts_and_the_larger_peak_wins(
+    add_run: AddRun,
+) -> None:
+    sampled = sys_series("gpu_0_memory_usage_megabytes", [1000.0, 2000.0])
+    above = {**sampled, "peak_device_mb": [(1000, T0, 9000.0)]}
+    below = {**sampled, "peak_device_mb": [(1000, T0, 500.0)]}
+    cuda = {"learner_device": "cuda:0"}
+    assert run_with(add_run, above, **cuda)["peak_device_mem_mb"] == 9000.0
+    assert run_with(add_run, below, **cuda)["peak_device_mem_mb"] == 2000.0
+    only = {"peak_device_mb": [(1000, T0, 2500.0), (2000, T0 + 1, 3500.0)]}
+    assert run_with(add_run, only, **cuda)["peak_device_mem_mb"] == 3500.0
+
+
+def test_an_unknown_profile_reads_the_series_of_every_profile(add_run: AddRun) -> None:
+    series = {
+        **sys_series("cpu_utilization_percentage", [30.0, 50.0]),
+        **sys_series("gpu_0_utilization_percentage", [70.0, 90.0]),
+        **sys_series("gpu_0_power_usage_watts", [100.0, 100.0]),
+        "peak_device_mb": [(1000, T0, 4000.0)],
+    }
+    out = run_with(add_run, series, learner_device="TFRT_CPU_0")
+    assert out["profile"] == "unknown"
+    assert out["cpu_util_mean"] == 40.0
+    assert out["gpu_util_mean"] == 80.0
+    assert out["energy_j"] == pytest.approx(1000.0)
+    assert out["peak_device_mem_mb"] == 4000.0
 
 
 # --- energy -------------------------------------------------------------------------
@@ -324,17 +351,17 @@ def test_device_tags_are_passed_through_and_never_a_host_name(add_run: AddRun) -
         ("final-1m,combo-1m", False),
     ],
 )
-def test_runs_reused_from_tuning_are_flagged_as_sharing_the_machine(
+def test_runs_whose_phases_list_a_tuning_phase_are_reused_from_tuning(
     phases: str, flag: bool
 ) -> None:
-    assert shared_machine(phases) is flag
+    assert reused_from_tuning(phases) is flag
 
 
-def test_summary_carries_the_shared_machine_flag(add_run: AddRun) -> None:
+def test_summary_carries_the_reused_from_tuning_flag(add_run: AddRun) -> None:
     out = run_with(add_run, train(1, 20, steady), phases="tune-coarse,final-1m")
-    assert out["shared_machine"] is True
+    assert out["reused_from_tuning"] is True
     out = run_with(add_run, train(1, 20, steady), phases="final-1m")
-    assert out["shared_machine"] is False
+    assert out["reused_from_tuning"] is False
 
 
 # --- reading the store --------------------------------------------------------------
@@ -372,6 +399,12 @@ def test_list_keys_names_the_system_series_of_a_run(add_run: AddRun) -> None:
         "system/cpu_utilization_percentage",
         "system/disk_usage_megabytes",
     ]
+
+
+def test_list_keys_of_an_unknown_run_is_refused(add_run: AddRun) -> None:
+    add_run({**LAPTOP}, {})
+    with pytest.raises(ValueError, match="no run"):
+        hardware.system_keys(store_of(add_run), "0" * 32)
 
 
 def test_cli_lists_keys_and_prints_the_summary(
