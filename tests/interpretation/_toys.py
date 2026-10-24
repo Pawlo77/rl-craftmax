@@ -13,6 +13,7 @@ from wut_murl_craftax.training.checkpoints import save_checkpoint
 from wut_murl_craftax.visualisation.eval_rollouts import EvalRun
 
 CLASSIC = "Craftax-Classic-Symbolic-v1"
+CRAFTAX = "Craftax-Symbolic-v1"
 
 
 class ToyTrainer:
@@ -35,9 +36,9 @@ class ToyTrainer:
         return None
 
 
-def toy_run(root: Path, policy: Any) -> EvalRun:
-    """A Classic run of method ``toy`` acting through ``policy``, checkpoint 0."""
+def toy_run(root: Path, policy: Any, env: str = CLASSIC) -> EvalRun:
+    """A run of method ``toy`` acting through ``policy``, checkpoint 0."""
     root.mkdir()
-    (root / "config.json").write_text(json.dumps({"method": "toy", "env": CLASSIC}))
+    (root / "config.json").write_text(json.dumps({"method": "toy", "env": env}))
     save_checkpoint(root, 0, 0, 0.0, {"w": np.int32(0)})
     return EvalRun.load(root, {"toy": ToyTrainer(policy)})

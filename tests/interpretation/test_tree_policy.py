@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from _toys import CLASSIC, toy_run
+from _toys import CLASSIC, CRAFTAX, toy_run
 from craftax.craftax_classic.constants import BlockType
 from sklearn.tree import DecisionTreeClassifier
 
@@ -24,6 +24,7 @@ from wut_murl_craftax.interpretation import (
     closed_loop,
     collect,
     featurize,
+    tree_policy,
     tree_rollouts,
 )
 from wut_murl_craftax.interpretation.tree_policy import _JaxTree
@@ -250,8 +251,40 @@ def test_both_protocols_play_the_same_episode(
         np.testing.assert_array_equal(r.actions, played["actions"][i, : r.steps])
 
 
+def test_an_online_unlock_count_off_the_events_is_refused(
+    memory_play: tuple[EvalRun, FittedTree, dict[str, np.ndarray]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reward that no longer says when an unlock happened (reward shaping)."""
+    run, tree, _ = memory_play
+    monkeypatch.setattr(tree_policy, "_UNLOCK", 99.0)
+    with pytest.raises(RuntimeError, match="steps_since_unlock"):
+        tree_rollouts(tree, run, 0, SEEDS)
+
+
+def test_a_tree_plays_a_craftax_episode(tmp_path: Path) -> None:
+    """The 8268-wide observation, tier-weighted unlocks and the closed-loop check."""
+    run = toy_run(tmp_path / "craftax", _FacingPolicy(), CRAFTAX)
+    x = _grid(range(1, 5), range(-1, 43), range(40))
+    prev, since = x[:, 1], x[:, 2]
+    y = np.where(prev == DO, 1 + (since // 5) % 4, DO)
+    tree = _fit(("direction", *MEMORY_FEATURES), x, y, 16)
+    played = tree_rollouts(tree, run, 0, TEST_SEEDS[:1])  # raises on a count mismatch
+    n = played["length"][0]
+    assert played["events/unlocked"][0, :n].any()
+    assert (played["extras/steps_since_unlock"][0, 1:n] == 0).any()
+
+
 def test_memory_proxies_need_the_reward() -> None:
     policy = TreePolicy(_memory_tree(), "classic")
+    obs = jnp.zeros((1, 1345))
+    with pytest.raises(ValueError, match="reward"):
+        policy.step(None, policy.init_carry(1), obs, jax.random.key(0), True)
+
+
+def test_a_top_level_needs_the_reward() -> None:
+    """Without it, skills ending on an unlock or a kill would never end."""
+    policy = TreePolicy(_move_tree(), "classic", top_level=_TopLevel())
     obs = jnp.zeros((1, 1345))
     with pytest.raises(ValueError, match="reward"):
         policy.step(None, policy.init_carry(1), obs, jax.random.key(0), True)
@@ -305,23 +338,28 @@ def test_a_skill_methods_top_level_sees_the_trees_actions(tmp_path: Path) -> Non
     run = EvalRun.load(root)
     tree = _skill_tree()
     policy = TreePolicy(tree, "classic", top_level=run.policy)
-    obs = run._reset(jnp.asarray(SEEDS[:1]))[0]
+    obs = replay_episode(run, SEEDS[0], np.zeros(1, np.int32)).obs[:1]  # reset obs
     zeros = jnp.zeros(1)
     act, carry = policy.step(
         run.params(0),
         policy.init_carry(1),
-        obs,
+        jnp.asarray(obs),
         jax.random.key(0),
         True,
         zeros,
         zeros > 0,
     )
     assert int(carry.top[1][0]) == int(act[0])  # the skill network's last action input
-    result = closed_loop(
-        tree, run, 0, SEEDS[:1]
-    )  # skill columns: the top level is used
-    assert np.isfinite(result.tree).all()
-    assert np.isfinite(result.network).all()
+    played = tree_rollouts(tree, run, 0, SEEDS[:1])  # skill columns: top level found
+    n = played["length"][0]
+    skill = played["extras/skill"][0, :n]
+    assert len(set(skill)) > 1  # the top level ends and picks skills
+    ds = _offline(run, played, "skills")
+    learned = ~PRIMITIVE[skill]
+    np.testing.assert_array_equal(
+        played["actions"][0, :n][learned],
+        _predict(tree, ds.features, ds.columns)[learned],
+    )
 
 
 def test_a_tree_equal_to_the_network_has_closed_loop_fidelity_one(
@@ -336,6 +374,8 @@ def test_a_tree_equal_to_the_network_has_closed_loop_fidelity_one(
     assert other.network is result.network
     assert other.fidelity == pytest.approx(other.tree.mean() / result.network.mean())
     assert not np.array_equal(other.tree, result.tree)
+    with pytest.raises(ValueError, match="2 seeds"):
+        closed_loop(_move_tree(), facing_run, 0, SEEDS, network=result.network[:1])
 
 
 def test_float32_features_split_as_scikit_learn_splits_them() -> None:

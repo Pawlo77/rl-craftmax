@@ -11,6 +11,7 @@ its score with the network's. Plan: [[2026-10-20-craftax-interpretation-and-rule
 
 import dataclasses
 import functools
+import logging
 import math
 from collections.abc import Sequence
 from typing import Any, NamedTuple, Self, cast
@@ -35,6 +36,8 @@ from .dataset import MEMORY_FEATURES, SKILL_FEATURES, TEST_SEEDS
 from .distill import FittedTree
 from .features import FEATURES, featurize
 
+logger = logging.getLogger(__name__)
+
 CLOSED_LOOP_LEAVES = 256
 """The leaf-grid size played in the closed loop: one tree per policy (preflight I4)."""
 HEALTH_REWARD = 0.1
@@ -56,6 +59,7 @@ class Memory(NamedTuple):
     health: jax.Array
     """Health of the observation: the next step's unlock test."""
     started: jax.Array
+    """Whether a step was taken: before it, the first observation starts an episode."""
 
 
 class TreeCarry(NamedTuple):
@@ -184,13 +188,15 @@ class TreePolicy:
         ``reward`` and ``done`` belong to the step that produced ``obs``. An unlock is
         the reward the health change does not explain, so ``steps_since_unlock``
         needs ``reward``. The top level gets ``params``, ``key``, ``greedy``,
-        ``reward`` and ``done``; primitive skills keep their fixed action.
+        ``reward`` and ``done`` (without ``reward`` its unlock and kill skills never
+        end); primitive skills keep their fixed action.
 
         Raises:
-            ValueError: If the tree reads ``steps_since_unlock`` without ``reward``.
+            ValueError: If ``reward`` is None and the tree reads
+                ``steps_since_unlock`` or there is a top level.
         """
-        if reward is None and self._needs_reward:
-            msg = "steps_since_unlock needs the reward of each step"
+        if reward is None and (self._needs_reward or self.top_level is not None):
+            msg = "steps_since_unlock and a top level need the reward of each step"
             raise ValueError(msg)
         feats = cast(jax.Array, featurize(obs, self.game, jnp))
         mem, top = carry
@@ -254,7 +260,30 @@ def _rollouts(
     top = run.policy if hasattr(run.policy, "extras") else None
     policy = TreePolicy(tree, game_kind(run), top_level=top)
     played = rollout_seeds(dataclasses.replace(run, policy=policy), params, seeds, True)
-    return cast(dict[str, np.ndarray], played)  # no should_stop: never None
+    played = cast(dict[str, np.ndarray], played)  # no should_stop: never None
+    _check_unlocks(played, "steps_since_unlock" in tree.columns)
+    return played
+
+
+def _check_unlocks(played: dict[str, np.ndarray], read: bool) -> None:
+    """Compare the online ``steps_since_unlock`` with the count from the unlock events.
+
+    The online count trusts the reward to be Craftax's own; a reward-shaping env
+    wrapper would skew it. Raises `RuntimeError` when the tree read the column,
+    else logs a warning.
+    """
+    for i, n in enumerate(played["length"]):
+        t = np.arange(n)
+        hit = np.where(played["events/unlocked"][i, :n].any(-1), t, -1)
+        last = np.maximum.accumulate(np.r_[-1, hit[:-1]])  # last unlock before t
+        online = played["extras/steps_since_unlock"][i, :n]
+        if np.array_equal(online, t - last - 1):
+            continue
+        seed = int(played["seeds"][i])
+        msg = f"steps_since_unlock online differs from the unlock events (seed {seed})"
+        if read:
+            raise RuntimeError(msg)
+        logger.warning(msg)
 
 
 def tree_rollouts(
@@ -264,6 +293,10 @@ def tree_rollouts(
 
     A run whose policy has ``extras`` is two-level: that policy, with the params of
     ``update``, is the tree's top level.
+
+    Raises:
+        RuntimeError: If a tree reading ``steps_since_unlock`` counted it apart
+            from the episode's unlock events (`_check_unlocks`).
     """
     return _rollouts(tree, run, run.params(update), seeds)
 
@@ -298,7 +331,13 @@ def closed_loop(
 
     Both use the eval keys of each seed ([[Recording training data]]). ``network``
     reuses the network's scores of an earlier call on the same seeds.
+
+    Raises:
+        ValueError: If ``network`` does not hold one score per seed.
     """
+    if network is not None and len(network) != len(seeds):
+        msg = f"network holds {len(network)} scores for {len(seeds)} seeds"
+        raise ValueError(msg)
     params = run.params(update)
     if network is None:
         network = _scores(run, rollout_seeds(run, params, seeds, greedy=True))
