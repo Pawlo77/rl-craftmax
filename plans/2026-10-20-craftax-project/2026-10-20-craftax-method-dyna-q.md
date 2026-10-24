@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, model-based, dyna, planning, tabular, pqn-rnn]
 ---
 # Dyna-Q over a Skill-Level Progress Model implementation plan
@@ -207,8 +207,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned dyna-q <confi
 **Files:**
 - Modify: `configs/phases/final-1m.yaml` (add `dyna-q`: `tuned` and the κ ablation as an override of `tuned`, seeds 0-9)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=dyna-q` (best config and the κ ablation, seeds 0-9: 20 runs); the ablation sets κ = 0 if the best κ > 0, else the best nonzero stage-1 κ; `make status PHASE=final-1m` shows 20 finished for this method.
-- [ ] **Step 2: Check** that the `smdp-skills` and PQN-RNN finals exist with the same seeds; the model-free against planning comparison, the learning-speed comparison (env steps to the first and tenth `COLLECT_DIAMOND` episode, logged by both methods as `smdp/diamond_episodes`, [[2026-10-20-craftax-method-smdp-skills]] Task 5) and the statistics follow [[2026-10-20-craftax-comparison-and-results]], in the skill methods' own block.
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=dyna-q` (best config and the κ ablation, seeds 0-9: 20 runs); the ablation sets κ = 0 if the best κ > 0, else the best nonzero stage-1 κ; `make status PHASE=final-1m` shows 20 finished for this method. (done 2026-10-24: 20 finished, the ablation at κ 0; results in `## Results`)
+- [x] **Step 2: Check** that the `smdp-skills` and PQN-RNN finals exist with the same seeds; the model-free against planning comparison, the learning-speed comparison (env steps to the first and tenth `COLLECT_DIAMOND` episode, logged by both methods as `smdp/diamond_episodes`, [[2026-10-20-craftax-method-smdp-skills]] Task 5) and the statistics follow [[2026-10-20-craftax-comparison-and-results]], in the skill methods' own block. (done 2026-10-24: both finished seeds 0-9 in `final-1m`; the comparisons are Phase 4)
 
 ### Task 9: Final 1B
 
@@ -278,6 +278,18 @@ Craftax-1M, 3 seeds per config, every config on the tuned `smdp-skills` knobs (�
 
 - `74c22d85` fine-plan_kappa=0.006-model_slots=4 (uniform, $n$ 1, κ 0.006, $M$ 4), mean 1.364, sd 0.402; -0.052 against the tuned `smdp-skills` (1.415, 3 seeds), +0.093 over the PQN-RNN control (1.270, 3 seeds). It sits at a corner of the stage-2 grid (largest κ, smallest $M$); κ 0.03 with $n$ 1 scored 0.454 in stage 1. As κ > 0, the `final-1m` κ ablation runs κ 0.
 - Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]); seeds 0-2 of the tuned config are its tuning runs, joined by run name; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM and PoI (probability of improvement over the base control's 10 runs) from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM | PoI vs PQN-RNN |
+|---|---|---|---|---|---|---|
+| tuned (fine-plan_kappa=0.006-model_slots=4) | 74c22d85 | 10 | 1.077 | 0.619 | 1.200 | 0.350 |
+| κ 0 ablation (`plan_kappa: 0.0`) | 3fd02b70 | 10 | 0.692 | 0.591 | 0.679 | 0.180 |
+
+- Control: PQN-RNN 10cbfc16 mean 1.356, sd 0.508, IQM 1.465; tuned `smdp-skills` 0b84c247 mean 0.831, sd 0.651, IQM 0.907.
+- The Dyna-Q+ bonus helps: PoI of κ 0.006 over κ 0 is 0.700. Planning now edges the model-free skill table (PoI over tuned `smdp-skills` 0.600), the reverse of the 3-seed tuning order; both stay below the control.
 
 ## Combination with other methods
 

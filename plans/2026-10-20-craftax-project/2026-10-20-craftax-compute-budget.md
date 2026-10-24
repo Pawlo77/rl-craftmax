@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, compute, estimates]
 ---
 # Craftax compute budget
@@ -121,12 +121,13 @@ Per-run minutes: the tuned config's measured minutes (controls: the 1-worker med
 | Self-imitation | 20 | 10.8 | 3.4 | 14.2 | 2.4 |
 | SMDP skills | 40 | 6.1 | 3.4 | 9.5 | 3.2 |
 | Dyna-Q (estimate, not measured) | 20 | 7.4 | 3.4 | 10.8 | 1.8 |
-| **`final-1m`** | **140** | | | | **13.1 (10.7 runs/h; 8.8 training + 4.3 evaluation)** |
-| `combo-1m` (SIL-like 10.8 + 3.4 = 14.2 min, overhead 1.3) | 10 | 10.8 | 3.4 | 14.2 | 1.2 |
+| **`final-1m`** | **140** | | | | **13.1 (10.7 runs/h; 8.8 training + 4.3 evaluation); measured 9.7 (Fri 23 21:41 to Sat 24 07:23, 14.4 runs/h)** |
+| `combo-1m` (SIL-like 10.8 + 3.4 = 14.2 min, overhead 1.3) | 10 | 10.8 | 3.4 | 14.2 | 1.2; measured 1.2 (Sat 24 07:24 to 08:35) |
 | Dyna-Q tuning remaining (63 coarse + 24 fine, 7.4 min per run, no 13 checkpoints) | 87 | 7.4 | - | 7.4 | 5.4 (ran Fri 23 15:43 to 20:33, 4.8 h) |
 
 - The estimate before the measurements was 21.7 h training + 31.9 h evaluation sequential for the 1M finals (53.6 h) and 4.2 h for `combo-1m`: the 13-checkpoint evaluation was planned at the training rate (9 min per run) and measures 3.7 min, and PPO, PPO-RNN and PQN-RNN train faster than planned.
 - Add about 10% to `final-1m` for out-of-memory retries (the cleanup pass of `run_workers.sh`): about 14 h, 0.6 days, with `combo-1m` about 15 h.
+- Measured 2026-10-24: `final-1m` 9.7 h and `combo-1m` 1.2 h wall-clock with 2 workers, 10.9 h together, no out-of-memory retries. 38 of the 140 `final-1m` runs were tuning runs of a tuned config, joined by run name, which only added their 12 missing checkpoint evaluations; per-run minutes of the finals are not measured yet.
 - Laptop 1B (`final-1b`, `combo-1b`; estimate): the 1M rates of the tuned configs applied to 1B steps, one run at a time; the Phase 1 methods' rates are the 2-worker per-worker rates x 1.46 (mean measured slowdown) to get 1 worker; eval at 8,500 steps/s. Memory at the 1B rollout shape (1,024 envs x 64 steps needs more than 36 GB, [[2026-10-20-craftax-infrastructure]]) is not covered.
 
 | Method | Steps/s (1 worker) | Hours per 1B run | 3 seeds, training | Eval h per run | 3 seeds, training + eval |
@@ -167,7 +168,7 @@ Training hours per run exclude the 1-minute compile and are the unchanged estima
 
 ```mermaid
 flowchart LR
-  L["Laptop, 2 workers: smoke, tune-coarse, tune-fine (measured), final-1m, combo-1m (estimate about 15 h)"] --> M["mlruns.db"]
+  L["Laptop, 2 workers: smoke, tune-coarse, tune-fine, final-1m, combo-1m (measured; finals 10.9 h)"] --> M["mlruns.db"]
   C["Cluster GPUs: final-1b, combo-1b (estimate about 50 GPU h with eval)"] --> N["node stores"]
   N -- "make merge-mlflow" --> M
   M --> A["Phase 4 analysis"]

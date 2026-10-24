@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, control, ppo, recurrent]
 ---
 # Craftax PPO-RNN control implementation plan
@@ -232,7 +232,7 @@ flowchart TD
 **Files:**
 - Modify: `configs/phases/final-1m.yaml` (add `ppo-rnn`: `tuned`, 10 seeds), `configs/phases/final-1b.yaml` (add `ppo-rnn`: Table 7 and the published network, 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=ppo-rnn`; 10 finished.
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=ppo-rnn`; 10 finished. (done 2026-10-24: 10 finished; results in `## Results`)
 - [ ] **Step 2: Run** `make queue PHASE=final-1b METHOD=ppo-rnn` (laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 3 finished.
 - [ ] **Step 3: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method ppo-rnn --budget 1b --phase final-1b` (n = 3, the wider band); report the result in [[2026-10-20-craftax-comparison-and-results]].
 
@@ -246,6 +246,18 @@ flowchart TD
 - [x] **Step 2: Implement** the rules: abort on NaN or inf in any loss (one rerun from the last `state/` save, then an issue note); abort on a first-minibatch ratio error > 1e-3 (or the device bound recorded in Task 3); flags for `rnn/hidden_saturation` > 0.9 for 5% of the budget, approx KL > 0.1 for 3 updates, entropy < 0.2 nats before 10% of the budget; no early stopping on score.
 - [x] **Step 3: Hand** to [[2026-10-20-craftax-training-analysis]] the obstacles to watch: skill forgetting of `defeat_zombie` (the paper: lowest for PPO-RNN), `eat_plant` never unlocked, dungeon entry rate as the expected signature (floor 1 more often than PPO), Gnomish Mines not reached, plateau at 1M, hidden-state saturation ([[Craftax floors and progression]], [[Craftax farming and food]]).
 - [x] **Step 4: Run** `uv run pytest tests/orchestration/test_runner.py -q`, then `make tests` and `uv run python scripts/check_vault.py`.
+
+## Results
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]). `tuned` is the published 1M config, so its 10 `tune-coarse` runs (published-1m) joined the phase by run name and gained the 12 missing checkpoint evaluations; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM |
+|---|---|---|---|---|---|
+| tuned (published-1m) | b3ce95c4 | 10 | 2.188 | 0.107 | 2.187 |
+
+- The same 10 runs as the 1M reproduction check (Task 6), so the gap to the published 2.3 is unchanged; base control of `count-bonus-ppo-rnn`, `sil` and the combination.
 
 ## Risks
 

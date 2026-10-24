@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, control, ppo]
 ---
 # Craftax PPO control implementation plan
@@ -196,7 +196,7 @@ flowchart TD
 - [x] **Step 2: Run** `make queue PHASE=tune-fine METHOD=ppo FINE=ppo` (the same specs, handed to the runner; resumable); `make status PHASE=tune-fine` shows 12 finished for `ppo`.
 - [x] **Step 3: Apply** the selection rule (Hyperparameter grid) and add a dated section to [[Experiment decisions]] with the 3-seed means, h and the choice.
 - [x] **Step 4: Mark** the selected config (its `<hash8>` from the run names in `make status PHASE=tune-fine`, or `PHASE=tune-coarse` when `tuned` = published): `uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned ppo <hash8>` writes the `tuned:` block of `ppo.yaml` (the source of truth for `base_from: ppo.tuned`) and sets `best=true` on that config's runs, always both (infrastructure Task 1); review the YAML diff. (done 2026-10-22; the published config won, so `tuned: {}` equals the base, see Experiment decisions)
-- [ ] **Step 5: Check** `make queue PHASE=final-1m METHOD=ppo DRY_RUN=1` lists the `tuned` config with 10 seeds. (open: `configs/phases/final-1m.yaml` does not exist yet, Phase 2)
+- [x] **Step 5: Check** `make queue PHASE=final-1m METHOD=ppo DRY_RUN=1` lists the `tuned` config with 10 seeds. (done 2026-10-24: `final-1m` ran `tuned` e06ac6db with seeds 0-9)
 
 ### Task 7: PPO metrics logged per update
 
@@ -213,7 +213,7 @@ flowchart TD
 **Files:**
 - Modify: `configs/phases/final-1m.yaml`, `configs/phases/final-1b.yaml` (add `ppo`: `tuned` at 1M with 10 seeds; Table 7 at 1B with 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=ppo`; 10 finished.
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=ppo`; 10 finished. (done 2026-10-24: 10 finished; results in `## Results`)
 - [ ] **Step 2: Run** `make queue PHASE=final-1b METHOD=ppo` (laptop or `scripts/cluster/run_array.sh`; merge with `make merge-mlflow SRC=<store>`); 3 finished.
 - [ ] **Step 3: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method ppo --budget 1b --phase final-1b` (n = 3, the wider band); a fail is reported in [[2026-10-20-craftax-comparison-and-results]] with the band, not rerun.
 
@@ -227,6 +227,18 @@ flowchart TD
 - [x] **Step 2: Implement** the rules: abort on any NaN or inf in a logged loss; rerun once from the last full-state save (`state/`, `load_state`) with the same seed, and a second NaN marks a bug (open an issue note); flags (tags `flag/*`) for approx KL > 0.1 for 3 updates, entropy < 0.2 nats before 10% of the budget, explained variance < 0 after 20% of the budget; no early stopping on score. (done 2026-10-21; a method metric aborts a run only if the method YAML lists it under `abort.finite`, see Experiment decisions)
 - [x] **Step 3: Hand** to [[2026-10-20-craftax-training-analysis]] the obstacles to watch for PPO: plateau at 1M (the paper: only basic achievements at 1M), entropy collapse, value failure, skill forgetting of `defeat_zombie` at 1B, exploration failure (rare dungeon entry), survival failure.
 - [x] **Step 4: Run** `uv run pytest tests/orchestration/test_runner.py -q`, then `make tests` and `uv run python scripts/check_vault.py`.
+
+## Results
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]). `tuned` is the published 1M config, so its 10 `tune-coarse` runs (published-1m) joined the phase by run name and gained the 12 missing checkpoint evaluations; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM |
+|---|---|---|---|---|---|
+| tuned (published-1m) | e06ac6db | 10 | 2.173 | 0.091 | 2.173 |
+
+- The same 10 runs as the 1M reproduction check (Task 5), so the gap to the published 2.2 is unchanged.
 
 ## Risks
 

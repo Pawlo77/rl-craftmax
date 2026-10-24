@@ -5,12 +5,12 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, project, index]
 ---
 # Craftax project execution plan
 
-Status: Phase 1 complete 2026-10-23 20:33 (all four methods tuned and marked, Dyna-Q last at 7dbe10f; full suite on main 20900ed: 1119 passed); Phase 2 `final-1m` running since 21:41
+Status: Phases 2-3 at 1M complete 2026-10-24 08:35 (`final-1m` 140 and `combo-1m` 10 runs finished; pair count-bonus-ppo-rnn + sil from `final-1m`); `final-1b` and `combo-1b` open, planned on the cluster
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -60,7 +60,7 @@ Each phase ends with `make check` green and its results visible in MLflow; later
 
 Phase 0 training done 2026-10-22 04:22 (controls tuned; PPO 2.17 vs 2.2, PPO-RNN 2.19 vs 2.3, PQN-RNN matches the original code); online metric families (evaluation Task 3) merged 12:06; Phase 0 complete 14:10 (full suite on main 0c73a58: 966 passed plus the fixed SIL metric-key test). Phase 1 code merged 2026-10-22 05:10; Phase 1 tuning 2026-10-22 06:02 to 2026-10-23 20:33 (all four methods tuned and marked; results in each method plan's `## Results`).
 
-Timetable (measured to 2026-10-23 21:41, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:36 (52.7 run-hours); Dyna-Q tuning Fri 23 15:43 to 20:33. `final-1m` (140 runs) started Fri 23 21:41; estimate on the laptop with 2 workers about 13-14 h, so it ends about Sat 24 11:00; then `combo-1m` (10 runs) about 1.2 h. Details: [[2026-10-20-craftax-compute-budget]].
+Timetable (measured, 2 queue workers since 2026-10-22 00:06, about 1.4 x the throughput of 1): Phase 0 tuning Wed 21 16:23 to Thu 22 04:19 (13.0 run-hours); Phase 1 tuning of count bonus, SIL and SMDP skills Thu 22 06:02 to Fri 23 12:36 (52.7 run-hours); Dyna-Q tuning Fri 23 15:43 to 20:33. `final-1m` (140 runs, 38 of them tuning runs joined by name) Fri 23 21:41 to Sat 24 07:23 (9.7 h; estimate was 13-14 h); `combo-1m` (10 runs) Sat 24 07:24 to 08:35 (1.2 h, as estimated). Details: [[2026-10-20-craftax-compute-budget]].
 
 ### Phase 0: Infrastructure and controls
 
@@ -77,9 +77,9 @@ Timetable (measured to 2026-10-23 21:41, 2 queue workers since 2026-10-22 00:06,
 
 ### Phase 2: Finals
 
-- [ ] `final-1m`: tuned configuration of every control and method, 10 seeds. (estimate 2026-10-23: 140 runs, about 13 h on the laptop with 2 workers, 10.7 runs/h; [[2026-10-20-craftax-compute-budget]])
+- [ ] `final-1m`: tuned configuration of every control and method, 10 seeds. (done 2026-10-24 07:23: 140 finished, 0 killed, Fri 23 21:41 to Sat 24 07:23, 9.7 h on the laptop with 2 workers (estimate 13 h); results in each method plan's `## Results`)
 - [ ] `final-1b`: same, 3 seeds, 1B steps (laptop or cluster; same run names); 1B results are indicative, significance claims are made at 1M ([[Experiment decisions]], 2026-10-21).
-- [ ] Fixed-seed evaluation of every log-spaced checkpoint of each final run (tuning runs evaluate their final checkpoint only), run by the queue before a run is marked FINISHED ([[2026-10-20-craftax-infrastructure]] Task 5).
+- [ ] Fixed-seed evaluation of every log-spaced checkpoint of each final run (tuning runs evaluate their final checkpoint only), run by the queue before a run is marked FINISHED ([[2026-10-20-craftax-infrastructure]] Task 5). (done for the 1M finals 2026-10-24: 13 greedy and 13 stochastic checkpoint evaluations in each of the 140 `final-1m` and 10 `combo-1m` runs; `final-1b` and `combo-1b` open)
 
 ### Phase 3: Combination of the two best methods
 
@@ -92,13 +92,13 @@ Starts after both `final-1m` and `final-1b` are finished.
 - Modify: `src/wut_murl_craftax/training/interface.py` (`combine` and the registry entry `combo`)
 - Test: `tests/training/test_combo.py`
 
-- [ ] **Step 1: Choose** the pair from `final-1m` and `final-1b` together: rank the methods by the IQM of the final score at 1M (10 seeds) and by the mean at 1B (3 seeds), sum the two ranks, break ties by the 1M probability of improvement against its base control; take the best two that are compatible (same base control, and no `HookFields` field set by both, e.g. a reward term and an extra loss on PPO-RNN). Record the pair and the ranking in [[Experiment decisions]]. If the pair contains a skill method (`smdp-skills`, `dyna-q`), the combination is reported in the "uses hand-written skills" block.
-- [ ] **Step 2: Write the failing tests** in `tests/training/test_combo.py`: `combine(a, b)` of two fixture methods sums their intrinsic rewards, chains their `observe` and `extra_loss_fn` and merges their metrics with each method's own prefix; a field set by both fails loudly; with both components switched off the first 2 updates on Craftax-Classic equal the base control's bit for bit; with both on, both components are active (each logs non-zero metrics); the `combo` entry passes the interface test of [[2026-10-20-craftax-infrastructure]] Task 3.
-- [ ] **Step 3: Implement** `combine` and register `combo` in `training/interface.py`.
-- [ ] **Step 4: Write** `configs/methods/combo.yaml` (`base: {base_from: <base control>.tuned}`, the two methods' `tuned` blocks unchanged, `grid: {coarse: [the single combined config], fine: null}`, no retuning) and the phase files `combo-1m.yaml` (10 seeds) and `combo-1b.yaml` (3 seeds), both with log-spaced evaluation.
-- [ ] **Step 5: Run** `uv run pytest tests/training/test_combo.py -q`; expected: pass.
-- [ ] **Step 6: Run** (estimate: `combo-1m` 10 runs, about 1.2 h with 2 workers) `make queue PHASE=combo-1m METHOD=combo` (laptop), then `make queue PHASE=combo-1b METHOD=combo PROFILE=cuda` (cluster); check `make status PHASE=combo-1m` shows 10 finished and `make status PHASE=combo-1b` shows 3.
-- [ ] **Step 7: Check** that every Phase 4 command lists the four final phases `final-1m final-1b combo-1m combo-1b`; the combination is one more method row in every analysis.
+- [ ] **Step 1: Choose** the pair from `final-1m` and `final-1b` together: rank the methods by the IQM of the final score at 1M (10 seeds) and by the mean at 1B (3 seeds), sum the two ranks, break ties by the 1M probability of improvement against its base control; take the best two that are compatible (same base control, and no `HookFields` field set by both, e.g. a reward term and an extra loss on PPO-RNN). Record the pair and the ranking in [[Experiment decisions]]. If the pair contains a skill method (`smdp-skills`, `dyna-q`), the combination is reported in the "uses hand-written skills" block. (2026-10-24, ruling R71: chosen from `final-1m` only by `select_pair` (1dc1b40), IQM at 1M, ties by PoI over the base control: 1 count-bonus-ppo-rnn 2.278 (PoI 0.68), 2 sil 2.138 (0.33), 3 count-bonus-pqn-rnn 1.558 (0.56), 4 dyna-q 1.200 (0.35), 5 smdp-skills 0.907 (0.24); pair count-bonus-ppo-rnn + sil on PPO-RNN, the same as the plan-rule pair with skill methods included; recorded in [[Experiment decisions]]; the 1B rank-sum re-check is open until `final-1b` has run)
+- [x] **Step 2: Write the failing tests** in `tests/training/test_combo.py`: `combine(a, b)` of two fixture methods sums their intrinsic rewards, chains their `observe` and `extra_loss_fn` and merges their metrics with each method's own prefix; a field set by both fails loudly; with both components switched off the first 2 updates on Craftax-Classic equal the base control's bit for bit; with both on, both components are active (each logs non-zero metrics); the `combo` entry passes the interface test of [[2026-10-20-craftax-infrastructure]] Task 3. (done 2026-10-22 in c55bab8, extended in 17d5391, a71625d and 2ca606a; on main since 2026-10-23 20:35)
+- [x] **Step 3: Implement** `combine` and register `combo` in `training/interface.py`. (done in c55bab8, 17d5391, a71625d, 2ca606a)
+- [x] **Step 4: Write** `configs/methods/combo.yaml` (`base: {base_from: <base control>.tuned}`, the two methods' `tuned` blocks unchanged, `grid: {coarse: [the single combined config], fine: null}`, no retuning) and the phase files `combo-1m.yaml` (10 seeds) and `combo-1b.yaml` (3 seeds), both with log-spaced evaluation. (done: template and phase files in c55bab8, tuned knobs 0f90cac, pair written by `select_pair` in 1dc1b40)
+- [x] **Step 5: Run** `uv run pytest tests/training/test_combo.py -q`; expected: pass. (done 2026-10-24 07:24 with the written `combo.yaml`: 28 passed; full suite on main 20900ed: 1119 passed)
+- [ ] **Step 6: Run** (estimate: `combo-1m` 10 runs, about 1.2 h with 2 workers) `make queue PHASE=combo-1m METHOD=combo` (laptop), then `make queue PHASE=combo-1b METHOD=combo PROFILE=cuda` (cluster); check `make status PHASE=combo-1m` shows 10 finished and `make status PHASE=combo-1b` shows 3. (`combo-1m` done 2026-10-24 07:24 to 08:35: 10 finished, config fd6c4333, mean 2.132, sd 0.093, IQM 2.121; `combo-1b` open)
+- [x] **Step 7: Check** that every Phase 4 command lists the four final phases `final-1m final-1b combo-1m combo-1b`; the combination is one more method row in every analysis. (checked 2026-10-24 in the Phase 4 plans: the run commands of the metrics export, training analysis, interpretation and comparison list the four phases, and each gives the combination its own row)
 
 ### Phase 4: Analysis
 

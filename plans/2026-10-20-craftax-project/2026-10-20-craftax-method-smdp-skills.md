@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, hierarchical-rl, options, smdp, q-learning, pqn-rnn]
 ---
 # SMDP Q-Learning over Hand-Defined Skills implementation plan
@@ -259,8 +259,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned smdp-skills <
 **Files:**
 - Modify: `configs/phases/final-1m.yaml` (add `smdp-skills`: `tuned` and the 3 ablations as overrides of `tuned`, seeds 0-9)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=smdp-skills` (best config and the 3 ablations of [[SMDP Q-Learning over Hand-Defined Skills design#Ablations]], seeds 0-9: 40 runs); `make status PHASE=final-1m` shows 40 finished for this method.
-- [ ] **Step 2: Check** that the PQN-RNN control final exists with the same seeds ([[2026-10-20-craftax-method-pqn-rnn]]); comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]], with the skill methods in their own block.
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=smdp-skills` (best config and the 3 ablations of [[SMDP Q-Learning over Hand-Defined Skills design#Ablations]], seeds 0-9: 40 runs); `make status PHASE=final-1m` shows 40 finished for this method. (done 2026-10-24: 40 finished; results in `## Results`)
+- [x] **Step 2: Check** that the PQN-RNN control final exists with the same seeds ([[2026-10-20-craftax-method-pqn-rnn]]); comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]], with the skill methods in their own block. (done 2026-10-24: the PQN-RNN control finished seeds 0-9 in `final-1m`)
 
 ### Task 10: Final 1B
 
@@ -357,6 +357,22 @@ The rule picked α and the timeout multiplier; horizon 200, ε decay 0.3 and rec
 
 - `0b84c247` a0.05-h200-e0.3-t2-recipe (α 0.05, γ 0.995, ε decay 0.3, timeout 2, recipe), mean 1.415, sd 0.196; the stage-1 best and stage-2 centre; +0.145 over the PQN-RNN control (1.270, 3 seeds). The other 8 stage-2 configs score -0.297 to 0.916, so the win may be a lucky isolated cell; the 10 `final-1m` seeds will tell.
 - Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]); seeds 0-2 of the tuned config are its tuning runs, joined by run name; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM and PoI (probability of improvement over the base control's 10 runs) from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM | PoI vs PQN-RNN |
+|---|---|---|---|---|---|---|
+| tuned (a0.05-h200-e0.3-t2-recipe) | 0b84c247 | 10 | 0.831 | 0.651 | 0.907 | 0.240 |
+| random top level (`eps_top_end: 1.0`) | 1f559f2c | 10 | 0.274 | 0.399 | 0.342 | 0.050 |
+| Monte Carlo top level (`monte_carlo: true`) | 20ec0807 | 10 | 0.478 | 0.482 | 0.518 | 0.080 |
+| no low-stat flags (`low_flags: false`) | 89f3c98f | 10 | 0.446 | 0.531 | 0.520 | 0.100 |
+
+- Control: PQN-RNN 10cbfc16 mean 1.356, sd 0.508, IQM 1.465.
+- The tuning win did not hold: seeds 0-2 average 1.415 and seeds 3-9 0.581, so the tuned config falls below the control at 10 seeds.
+- The tuned config beats each ablation (PoI over random 0.740, over Monte Carlo 0.680, over no flags 0.660).
+- The Monte Carlo ablation's greedy-table artifact (`eval/smdp_greedy_table.parquet`) holds no rows in all 10 runs, each tagged `warn/artifacts`: the per-checkpoint write failed on a parquet schema mismatch (`greedy_skill` null against string). Scores and eval files are complete.
 
 ## Combination with other methods
 

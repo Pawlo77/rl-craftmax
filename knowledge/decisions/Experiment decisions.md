@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 ---
 # Experiment decisions
 
@@ -289,3 +289,23 @@ dyna-q (base smdp-skills 0b84c247, 1.41543, n 3; base control pqn-rnn 10cbfc16, 
 | 74c22d85 fine-plan_kappa=0.006-model_slots=4 (best stage 2, chosen) | uniform, n 1, kappa 0.006, M 4 | 3 | 1.36364 | 0.40171 |
 
 Chosen 74c22d85: -0.052 against smdp-skills (inside both sds) and +0.093 over the pqn-rnn base, so planning does not beat the model-free skill table at 1M. It is a corner of the stage-2 grid (largest kappa, smallest M); kappa 0.03 with n 1 scored 0.454 in stage 1. Its kappa is above 0, so the `final-1m` kappa ablation runs kappa 0.
+
+## 2026-10-24 - Phase 3 combination pair
+
+Decision: the combination is `count-bonus-ppo-rnn` + `sil` on PPO-RNN (`combo-1m` config fd6c4333), chosen by `select_pair` from `final-1m` alone (ruling R71, 1dc1b40). Methods are ranked by the IQM of `final_score` over 10 seeds, ties by PoI over the base control (none occurred); the pair is the best one combinable through hooks (ruling R73).
+
+Why: `combo-1m` was to run right after `final-1m`, before `final-1b`, and the plan's rank sum needs the 1B means. With skill methods included, the plan-rule pair is the same (ranks 1 and 2; the PQN-RNN pair is ranks 3 and 4), so there is no R73 deviation; `select_pair` logged no PARTIAL or NOTE line. IQM and PoI come from `evaluation/stats.py`; PoI is P(method > control) over the 100 seed pairs.
+
+Consequences: this departs from the 2026-10-21 decision (pair from both budgets). The ranking is in the header of `configs/methods/combo.yaml`. The 1B re-check is pending: once `final-1b` has run, the plan rule (1M IQM rank plus 1B mean rank, ties by 1M PoI) is recomputed; if it gives another pair, that is recorded here as a deviation and any change for `combo-1b` is a new dated decision, never a silent swap.
+
+| Rank | Method | Base control | n | IQM | PoI vs control |
+|---|---|---|---|---|---|
+| - | ppo-rnn (control) | - | 10 | 2.18722 | - |
+| - | pqn-rnn (control) | - | 10 | 1.46508 | - |
+| 1 | count-bonus-ppo-rnn | ppo-rnn | 10 | 2.27844 | 0.680 |
+| 2 | sil | ppo-rnn | 10 | 2.13793 | 0.330 |
+| 3 | count-bonus-pqn-rnn | pqn-rnn | 10 | 1.55828 | 0.560 |
+| 4 | dyna-q | pqn-rnn | 10 | 1.19965 | 0.350 |
+| 5 | smdp-skills | pqn-rnn | 10 | 0.90668 | 0.240 |
+
+Outcome (`combo-1m`, 10 seeds, 2026-10-24 07:24 to 08:35): mean 2.13164, sd 0.09252, IQM 2.12066. It is below `count-bonus-ppo-rnn` alone (PoI of the combination over it 0.170) and the PPO-RNN control (0.330), and level with `sil` (0.450), so at 1M the two components do not add up.

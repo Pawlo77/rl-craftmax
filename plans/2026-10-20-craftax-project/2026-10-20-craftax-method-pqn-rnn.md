@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, control, q-learning, recurrent]
 ---
 # Craftax PQN-RNN control implementation plan
@@ -213,7 +213,7 @@ flowchart TD
 **Files:**
 - Modify: `configs/phases/final-1m.yaml` (add `pqn-rnn`: `tuned`, 10 seeds), `configs/phases/final-1b.yaml` (add `pqn-rnn`: the repo 1B config, 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=pqn-rnn`; 10 finished.
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=pqn-rnn`; 10 finished. (done 2026-10-24: 10 finished; results in `## Results`)
 - [ ] **Step 2: Run** `make queue PHASE=final-1b METHOD=pqn-rnn` (repo 1B config; laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 3 finished.
 - [ ] **Step 3: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method pqn-rnn --budget 1b --phase final-1b` (n = 3, the wider band); report in [[2026-10-20-craftax-comparison-and-results]] with the note that the paper does not say whether 16.0% is training or greedy-test episodes.
 
@@ -237,6 +237,18 @@ flowchart TD
 - [x] **Step 2: Implement** the rules: abort on NaN or inf (one rerun from the last `state/` save, then an issue note); abort when `pqn/q_max_mean` > 300 (no Craftax episode returns more than the 226 achievement points plus the small net health term, [[Craftax scoring and evaluation]]); flags for the TD-loss spike, `pqn/action_gap` < 1e-3 after epsilon reaches its floor (Q-values that do not separate actions), `pqn/bn_var_min` < 1e-6; no early stopping on score.
 - [x] **Step 3: Hand** to [[2026-10-20-craftax-training-analysis]] the obstacles to watch: exploration failure once epsilon reaches 0.005 (epsilon-greedy is "too simple" per the PQN paper), value failure and numerical failure (bootstrapping with no target network, [[09b Control with approximation, bootstrapping]]), plateau at 1M, skill forgetting, survival failure; compare the dungeon-entry rate with PPO-RNN ([[Craftax floors and progression]]).
 - [x] **Step 4: Run** `uv run pytest tests/orchestration/test_runner.py -q`, then `make tests` and `uv run python scripts/check_vault.py`.
+
+## Results
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]). `tuned` is the base 1M config, so seeds 0-2 are its `tune-coarse` runs (base-1m), joined by run name; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM |
+|---|---|---|---|---|---|
+| tuned (base-1m) | 10cbfc16 | 10 | 1.356 | 0.508 | 1.465 |
+
+- The 3 tuning seeds gave 1.270 (sd 0.849); seeds 3-9 put the mean higher and the spread lower, and the IQM sits above the mean (two seeds below 0.8: 0.303 and 0.790). Base control of `count-bonus-pqn-rnn`, `smdp-skills` and `dyna-q`.
 
 ## Risks
 

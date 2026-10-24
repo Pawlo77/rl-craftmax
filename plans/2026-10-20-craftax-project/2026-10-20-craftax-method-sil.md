@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, self-imitation, replay, ppo-rnn]
 ---
 # Self-Imitation Learning implementation plan
@@ -221,8 +221,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned sil <configha
 **Files:**
 - Modify: `configs/phases/final-1m.yaml` (add `sil`: `tuned` x 10 seeds and `tuned` with `layout: single` x the same 10 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=sil` (best config x 10 seeds and the same config with `layout: single` x the same 10 seeds: 20 runs); `make status PHASE=final-1m` shows 20 finished for `sil`.
-- [ ] **Step 2: Check** that the PPO-RNN control final exists with the same seeds; comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]].
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=sil` (best config x 10 seeds and the same config with `layout: single` x the same 10 seeds: 20 runs); `make status PHASE=final-1m` shows 20 finished for `sil`. (done 2026-10-24: 20 finished; results in `## Results`)
+- [x] **Step 2: Check** that the PPO-RNN control final exists with the same seeds; comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]]. (done 2026-10-24: the PPO-RNN control finished seeds 0-9 in `final-1m`)
 
 ### Task 9: Final 1B
 
@@ -286,6 +286,19 @@ The rule picked $\lambda_{\text{sil}}$ and `K`; `S` stays 2. $\lambda_{\text{sil
 
 - `6f8690ad` l0.3-s2-k1 ($\lambda_{\text{sil}}$ 0.3, `S` 2, `K` 1), mean 2.140, sd 0.049; the stage-1 best and stage-2 centre; -0.048 against the PPO-RNN control (2.188, 10 seeds).
 - Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]); seeds 0-2 of the tuned config are its tuning runs, joined by run name; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM and PoI (probability of improvement over the base control's 10 runs) from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM | PoI vs PPO-RNN |
+|---|---|---|---|---|---|---|
+| tuned (l0.3-s2-k1) | 6f8690ad | 10 | 2.137 | 0.046 | 2.138 | 0.330 |
+| `layout: single` ablation | 57a864f9 | 10 | 2.138 | 0.094 | 2.133 | 0.360 |
+
+- Control: PPO-RNN b3ce95c4 mean 2.188, sd 0.107, IQM 2.187.
+- Per-achievement slots and one shared buffer tie (PoI of the tuned config over the ablation 0.520); both stay below the control, as in tuning.
+- `select_pair` ranks `sil` second; it is in the combination ([[Experiment decisions]], 2026-10-24).
 
 ## Detectors to add
 

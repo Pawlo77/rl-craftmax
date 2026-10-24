@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-23
+updated: 2026-10-24
 tags: [plan, method, exploration, count-based, ppo-rnn, pqn-rnn]
 ---
 # Count-Based Progress Bonus implementation plan
@@ -247,8 +247,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned count-bonus <
 **Files:**
 - Modify: `configs/phases/final-1m.yaml` (add `count-bonus`: `tuned` per variant x 10 seeds, plus `key: simhash` on the PPO-RNN variant's tuned config with the same seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1m METHOD=count-bonus` (best config per variant x 10 seeds, plus `key: simhash` with the PPO-RNN variant's best β and decay and the same seeds: 30 runs); `make status PHASE=final-1m` shows 30 finished for count-bonus.
-- [ ] **Step 2: Check** that the PPO-RNN and PQN-RNN control finals exist with the same seeds ([[2026-10-20-craftax-method-ppo-rnn]], [[2026-10-20-craftax-method-pqn-rnn]]); comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]].
+- [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=count-bonus` (best config per variant x 10 seeds, plus `key: simhash` with the PPO-RNN variant's best β and decay and the same seeds: 30 runs); `make status PHASE=final-1m` shows 30 finished for count-bonus. (done 2026-10-24: 30 finished; results in `## Results`)
+- [x] **Step 2: Check** that the PPO-RNN and PQN-RNN control finals exist with the same seeds ([[2026-10-20-craftax-method-ppo-rnn]], [[2026-10-20-craftax-method-pqn-rnn]]); comparisons and statistics follow [[2026-10-20-craftax-comparison-and-results]]. (done 2026-10-24: both controls finished seeds 0-9 in `final-1m`)
 
 ### Task 9: Final 1B
 
@@ -364,6 +364,20 @@ PQN-RNN variant:
 - PPO-RNN variant: `b0b1c535` b0.1-recipe-constant (β 0.1, recipe, constant: the base, so `tuned: {ppo-rnn: {}}`), mean 2.333, sd 0.053; the stage-1 best, no new stage-2 config beat it; +0.145 over the PPO-RNN control (2.188, 10 seeds).
 - PQN-RNN variant: `e6e1fafa` fine-beta=0.015-decay=linear (β 0.015, log2, linear), mean 1.721, sd 0.138; +0.451 over the PQN-RNN control (1.270, 3 seeds); β is the lower edge of the stage-2 grid.
 - Rule and comparison: [[Experiment decisions]] (2026-10-23, Phase 1 tuning results).
+
+### `final-1m`
+
+Craftax-1M, seeds 0-9, phase `final-1m` 2026-10-23 21:41 to 2026-10-24 07:23 ([[2026-10-20-craftax-project]]); seeds 0-2 of each tuned config are its tuning runs, joined by run name; 13 evaluated checkpoints per run, none aborted. Mean and sd (sample) are of `final_score`; IQM and PoI (probability of improvement over the base control's 10 runs) from `evaluation/stats.py`, as `select_pair` ranks.
+
+| Config | Hash | n | Mean | sd | IQM | PoI vs control |
+|---|---|---|---|---|---|---|
+| PPO-RNN variant, tuned (b0.1-recipe-constant) | b0b1c535 | 10 | 2.274 | 0.117 | 2.278 | 0.680 |
+| PPO-RNN variant, `key: simhash` ablation | 9403d21d | 10 | 1.783 | 0.125 | 1.778 | 0.010 |
+| PQN-RNN variant, tuned (fine-beta=0.015-decay=linear) | e6e1fafa | 10 | 1.481 | 0.375 | 1.558 | 0.560 |
+
+- Controls: PPO-RNN b3ce95c4 mean 2.188, sd 0.107, IQM 2.187; PQN-RNN 10cbfc16 mean 1.356, sd 0.508, IQM 1.465.
+- SimHash ablation: the tuned β 0.1 and constant decay with `key: simhash`, `log2_k` 24 and `max_occupancy` 0.1 (the larger table, `configs/phases/final-1m.yaml`); the progress key beats it on all 100 seed pairs (PoI 1.000).
+- The 10-seed means are below the 3-seed tuning means (2.333 and 1.721). `select_pair` ranks the PPO-RNN variant first and the PQN-RNN variant third; the PPO-RNN variant is in the combination ([[Experiment decisions]], 2026-10-24).
 
 ## Detectors to add
 
