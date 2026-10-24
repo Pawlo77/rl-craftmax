@@ -42,8 +42,18 @@ RARE_RATE = 0.05
 NEVER, NEVER_EVAL, RARE, COMMON = "never", "never in eval", "rare", "common"
 """Statuses: ``never in eval`` is a rate of 0 in every eval of every seed with the
 training episodes not logged for every seed, so "never" cannot be asserted."""
-NO_DEATHS = "(no deaths)"
-"""`death_causes` row of a checkpoint whose episodes all timed out."""
+NO_DEATHS, NOT_RECORDED = "(no deaths)", "not recorded"
+"""`death_causes` row of a checkpoint whose episodes all timed out, and the cause of a
+death with an empty ``cause_of_death`` (not the real ``unknown`` damage source)."""
+BASIS = ("mode", "scope")
+"""Columns that say what a row summarises: the eval mode and the checkpoints (``final``
+= each run's last, ``all`` = every one, ``checkpoint`` = one row set per checkpoint)."""
+SCOPE_TEXT = {
+    "final": "final checkpoint",
+    "all": "all checkpoints",
+    "checkpoint": "every checkpoint",
+}
+"""Plot-title words of a ``scope`` value."""
 START, UNKNOWN = "(episode start)", "(unknown)"
 """``started_by`` of a stall that starts with the episode, and of one whose first frame
 matches no unlock step."""
@@ -60,9 +70,11 @@ class Achievement(NamedTuple):
 
     tier: str
     floor: int
-    """The floor where it first becomes available ([[Craftax achievements]], "by
-    floor"); approximate for spells and enchanting, which the note spreads over
-    floors 3 and 4."""
+    """Home floor: where the mob lives or the floor entered; for ore, the floor with
+    the ore (sapphire and ruby 2, though a floor-1 chest can hold them); for chest
+    loot (bow, potion, books and so the spells and enchanting) the first floor whose
+    chests hold it. Crafting at a table has no floor (floor 0). Checked against
+    craftax 1.6.1."""
 
 
 _BASIC = (
@@ -96,7 +108,7 @@ _REST: tuple[tuple[str, str, int], ...] = (
     ("collect_sapphire", "intermediate", 2),
     ("learn_fireball", "advanced", 3), ("cast_fireball", "advanced", 3),
     ("learn_iceball", "advanced", 3), ("cast_iceball", "advanced", 3),
-    ("collect_ruby", "intermediate", 2), ("make_diamond_pickaxe", "intermediate", 2),
+    ("collect_ruby", "intermediate", 2), ("make_diamond_pickaxe", "intermediate", 0),
     ("open_chest", "intermediate", 1), ("drink_potion", "intermediate", 1),
     ("enchant_sword", "advanced", 3), ("enchant_armour", "advanced", 3),
     ("defeat_knight", "advanced", 4), ("defeat_archer", "advanced", 4),
@@ -113,7 +125,7 @@ _STALL_COLUMNS = (
     "run_id", "seed", "update", "env_steps", "mode", "eval_seed", "start", "end",
     "length", "floor", "ending", "ended_by", "started_by",
 )  # fmt: skip
-STALL_COLUMNS = (*GROUP, *_STALL_COLUMNS)
+STALL_COLUMNS = (*GROUP, "scope", *_STALL_COLUMNS)
 """Columns of `stall_table`."""
 
 _FLOOR_COLUMNS = (
@@ -126,8 +138,7 @@ _ACH_COLUMNS = (
     "status",
 )  # fmt: skip
 _DEATH_COLUMNS = (
-    "update", "env_steps", "is_final", "cause", "n_deaths", "n_episodes", "n_seeds",
-    "share",
+    "update", "env_steps", "cause", "n_deaths", "n_episodes", "n_seeds", "share",
 )  # fmt: skip
 STAT_FLOORS = tuple(f"start_floor/{f}" for f in range(N_FLOORS))
 _STALL_STAT_COLUMNS = (
@@ -174,8 +185,17 @@ def _blocks(episodes: pd.DataFrame) -> list[tuple[tuple[Hashable, ...], pd.DataF
     return [(tuple(k), g) for k, g in episodes.groupby(list(GROUP), sort=True)]
 
 
-def _lead(key: tuple[Hashable, ...]) -> dict[str, Hashable]:
-    return dict(zip(GROUP, key, strict=True))
+def _lead(key: tuple[Hashable, ...], mode: str, scope: str) -> dict[str, Hashable]:
+    """The leading columns of a summary row: the unit, then what it summarises."""
+    return {**dict(zip(GROUP, key, strict=True)), "mode": mode, "scope": scope}
+
+
+def _by_basis(frame: pd.DataFrame) -> list[tuple[dict[str, Hashable], pd.DataFrame]]:
+    """Each unit, mode and scope of a stall table, as leading columns and rows."""
+    return [
+        (_lead(k[:3], k[3], k[4]), g)
+        for k, g in frame.groupby([*GROUP, *BASIS], sort=True)
+    ]
 
 
 # ---------------------------------------------------------------------- floors
@@ -199,6 +219,7 @@ def floor_reach(
     bootstrap interval ``lo`` and ``hi`` over seeds; ``reached_seeds`` is the number of
     seeds with at least one such episode. ``status`` is ``never`` (no final episode of
     any seed reaches the floor), ``rare`` (``rate`` below `RARE_RATE`) or ``common``.
+    ``mode`` and ``scope`` (``final``) columns record the basis.
     """
     final = _selected(episodes, mode, final=True)
     rows = []
@@ -209,7 +230,7 @@ def floor_reach(
             per_seed = hit.groupby(run).mean().to_numpy()
             est = _ci(per_seed, n)
             rows.append({
-                **_lead(key),
+                **_lead(key, mode, "final"),
                 "floor": f,
                 "floor_name": FLOORS[f][0],
                 "n_seeds": int(run.nunique()),
@@ -220,7 +241,7 @@ def floor_reach(
                 "reached_seeds": int(hit.groupby(run).any().sum()),
                 "status": _floor_status(int(hit.sum()), est.estimate),
             })
-    return pd.DataFrame(rows) if rows else _empty((*GROUP, *_FLOOR_COLUMNS))
+    return pd.DataFrame(rows) if rows else _empty((*GROUP, *BASIS, *_FLOOR_COLUMNS))
 
 
 # --------------------------------------------------------------- achievements
@@ -306,7 +327,8 @@ def achievement_status(
     with no finished episode is not logged. ``status``: ``never`` (no unlock anywhere,
     training series logged for every seed), ``never in eval`` (no eval unlock, training
     not logged for every seed), ``rare`` (final rate below `RARE_RATE`), ``common``.
-    Rows are ordered by tier, floor and ``.value`` of the achievement.
+    Rows are ordered by tier, floor and ``.value`` of the achievement; a ``mode`` column
+    records the eval mode of the rates.
 
     Raises:
         ValueError: If an ``ach/<name>`` column is not a Craftax achievement.
@@ -318,51 +340,61 @@ def achievement_status(
         if not (g["mode"] == mode).any():
             continue
         peak = _training(curves, pd.Index(sorted(g["run_id"].unique())))
-        rows += [{**_lead(key), **r} for r in _achievement_block(g, names, peak, mode)]
-    return pd.DataFrame(rows) if rows else _empty((*GROUP, *_ACH_COLUMNS))
+        rows += [
+            {**dict(zip(GROUP, key, strict=True)), "mode": mode, **r}
+            for r in _achievement_block(g, names, peak, mode)
+        ]
+    return pd.DataFrame(rows) if rows else _empty((*GROUP, "mode", *_ACH_COLUMNS))
 
 
 # ---------------------------------------------------------------------- deaths
 
 
+def _death_rows(
+    u: pd.DataFrame, lead: dict[str, Hashable], update: int
+) -> list[dict[str, Any]]:
+    """Cause rows of the episodes ``u`` (one checkpoint, or each run's last)."""
+    dead = u[u["end_type"] == "death"]
+    cause = dead["cause_of_death"].fillna("").replace("", NOT_RECORDED)
+    counts = cause.value_counts().sort_index()
+    counts = counts.sort_values(ascending=False, kind="stable")
+    row = {
+        **lead,
+        "update": update,
+        "env_steps": int(u["env_steps"].max()),
+        "n_episodes": len(u),
+        "n_seeds": int(u["run_id"].nunique()),
+    }
+    if counts.empty:
+        return [{**row, "cause": NO_DEATHS, "n_deaths": 0, "share": np.nan}]
+    return [
+        {**row, "cause": c, "n_deaths": int(k), "share": k / counts.sum()}
+        for c, k in counts.items()
+    ]
+
+
 def death_causes(episodes: pd.DataFrame, mode: str = EVAL_MODE) -> pd.DataFrame:
-    """Cause-of-death shares at every eval checkpoint (``is_final`` marks the last).
+    """Cause-of-death shares per eval checkpoint (``scope`` ``checkpoint``) and final.
 
     One row per (unit, checkpoint, cause) over the ``mode`` episodes of all seeds:
-    ``share`` is the cause's deaths over all deaths at that checkpoint, so the shares of
-    a checkpoint sum to 1 (a timeout is not a death; a death without a stored cause is
-    ``unknown``). A checkpoint with no death has one row, cause `NO_DEATHS`, ``share``
-    NaN (undefined, not 0). ``n_episodes`` counts all its episodes, timeouts included.
+    ``share`` is the cause's deaths over all deaths there, so the shares of a
+    checkpoint sum to 1 (a timeout is not a death; a death with an empty cause is
+    `NOT_RECORDED`, distinct from the real ``unknown`` cause). The rows with scope
+    ``final`` use each run's own last checkpoint, as the other final tables do; their
+    ``update`` and ``env_steps`` are the largest of those. A set with no death has one
+    row, cause `NO_DEATHS`, ``share`` NaN (undefined, not 0). ``n_episodes`` counts all
+    its episodes, timeouts included.
     """
     rows = []
     sel = episodes[episodes["mode"] == mode]
     for key, g in _blocks(sel):
-        last = g["update"].max()
         for update, u in g.groupby("update", sort=True):
-            dead = u[u["end_type"] == "death"]
-            cause = dead["cause_of_death"].fillna("").replace("", "unknown")
-            counts = cause.value_counts()
-            counts = counts.sort_index().sort_values(ascending=False, kind="stable")
-            lead = {
-                **_lead(key),
-                "update": int(update),
-                "env_steps": int(u["env_steps"].max()),
-                "is_final": bool(update == last),
-                "n_episodes": len(u),
-                "n_seeds": int(u["run_id"].nunique()),
-            }
-            if counts.empty:
-                rows.append({
-                    **lead,
-                    "cause": NO_DEATHS,
-                    "n_deaths": 0,
-                    "share": np.nan,
-                })
-            rows += [
-                {**lead, "cause": c, "n_deaths": int(k), "share": k / counts.sum()}
-                for c, k in counts.items()
-            ]
-    return pd.DataFrame(rows) if rows else _empty((*GROUP, *_DEATH_COLUMNS))
+            rows += _death_rows(u, _lead(key, mode, "checkpoint"), int(update))
+        final = final_checkpoint(g)
+        rows += _death_rows(
+            final, _lead(key, mode, "final"), int(final["update"].max())
+        )
+    return pd.DataFrame(rows) if rows else _empty((*GROUP, *BASIS, *_DEATH_COLUMNS))
 
 
 # ---------------------------------------------------------------------- stalls
@@ -377,8 +409,15 @@ def _cells(cell: Any) -> list[dict[str, Any]]:
     return list(cell)
 
 
+def _by_value(names: Sequence[str]) -> list[str]:
+    """Achievement names in ``.value`` order; the order that breaks unlock ties."""
+    for n in names:
+        _info(n)
+    return sorted(names, key=_VALUE.__getitem__)
+
+
 def _started_by(start: int, steps: np.ndarray | None, names: list[str]) -> str:
-    """The achievement whose first unlock step is the stall's first frame."""
+    """The achievement unlocked at the stall's first frame (ties: lowest value)."""
     if start == 0:
         return START
     if steps is None:
@@ -392,16 +431,17 @@ def stall_table(
 ) -> pd.DataFrame:
     """One row per stall of the ``mode`` episodes (final checkpoint only if ``final``).
 
-    Columns: the unit, the episode (``run_id``, ``seed``, ``update``, ``env_steps``,
-    ``mode``, ``eval_seed``) and the stall frames (``start``, ``end``, ``length``,
-    ``floor``, ``ending``, ``ended_by``) as stored, plus ``started_by``: the achievement
-    whose ``unlock_step/<name>`` is ``start`` (lowest ``.value`` of several),
-    `START` at 0 and `UNKNOWN` without a match or without the ``unlock_step`` columns.
+    Columns: the unit, ``scope`` (``final`` or ``all``), the episode (``run_id``,
+    ``seed``, ``update``, ``env_steps``, ``mode``, ``eval_seed``) and the stall frames
+    (``start``, ``end``, ``length``, ``floor``, ``ending``, ``ended_by``) as stored,
+    plus ``started_by``: the achievement whose ``unlock_step/<name>`` is ``start``
+    (lowest ``.value`` of several), `START` at 0 and `UNKNOWN` without a match or
+    without the ``unlock_step`` columns.
     The replay-only fields of a stall (``intrinsics``, ``inventory``) are dropped.
     """
     sel = _selected(episodes, mode, final=final).reset_index(drop=True)
-    unlock = _achievement_order([
-        c.replace("unlock_step/", "ach/")
+    unlock = _by_value([
+        c.removeprefix("unlock_step/")
         for c in sel.columns
         if c.startswith("unlock_step/")
     ])
@@ -415,6 +455,7 @@ def stall_table(
             )
             rows.append({
                 **{c: episode[c] for c in GROUP},
+                "scope": "final" if final else "all",
                 **{c: episode[c] for c in _STALL_COLUMNS[:6]},
                 **{c: s[c] for c in _STALL_COLUMNS[6:12]},
                 "started_by": by,
@@ -441,12 +482,13 @@ def stall_stats(
     table = stall_table(episodes, mode, final=final)
     by_unit = {tuple(k): g for k, g in table.groupby(list(GROUP), sort=False)}
     rows = []
+    scope = "final" if final else "all"
     for key, g in _blocks(sel):
         stalls = by_unit.get(key, table.iloc[:0])
         est = _ci(g.groupby("run_id")["n_stalls"].mean().to_numpy(), n)
         floors = stalls["floor"].value_counts()
         rows.append({
-            **_lead(key),
+            **_lead(key, mode, scope),
             "n_seeds": int(g["run_id"].nunique()),
             "n_episodes": len(g),
             "n_stalls": len(stalls),
@@ -461,31 +503,31 @@ def stall_stats(
             else np.nan,
             **{f"start_floor/{f}": int(floors.get(f, 0)) for f in range(N_FLOORS)},
         })
-    return pd.DataFrame(rows) if rows else _empty((*GROUP, *_STALL_STAT_COLUMNS))
+    return (
+        pd.DataFrame(rows) if rows else _empty((*GROUP, *BASIS, *_STALL_STAT_COLUMNS))
+    )
 
 
 def stall_starts(stalls: pd.DataFrame) -> pd.DataFrame:
     """Where stalls start: count and share of a unit's stalls per floor and unlock."""
-    keys = [*GROUP, "floor", "started_by"]
+    keys = [*GROUP, *BASIS, "floor", "started_by"]
     if stalls.empty:
         return _empty([*keys, "n_stalls", "share"])
     out = stalls.groupby(keys, sort=True).size().rename("n_stalls").reset_index()
-    out["share"] = out["n_stalls"] / out.groupby(list(GROUP))["n_stalls"].transform(
-        "sum"
-    )
-    return out.sort_values(
-        [*GROUP, "n_stalls"], ascending=[True] * 3 + [False]
-    ).reset_index(drop=True)
+    by_unit = out.groupby([*GROUP, *BASIS])["n_stalls"].transform("sum")
+    out["share"] = out["n_stalls"] / by_unit
+    order = [*GROUP, *BASIS, "n_stalls"]
+    return out.sort_values(order, ascending=[True] * 5 + [False]).reset_index(drop=True)
 
 
 def stall_ccdf(stalls: pd.DataFrame) -> pd.DataFrame:
     """Per unit and stall length, the share of stalls at least that long."""
-    keys = [*GROUP, "length", "ccdf"]
+    keys = [*GROUP, *BASIS, "length", "ccdf"]
     rows: list[dict[str, Any]] = []
-    for key, g in _blocks(stalls) if len(stalls) else []:
+    for lead, g in _by_basis(stalls) if len(stalls) else []:
         lengths = np.sort(g["length"].to_numpy())
         rows += [
-            {**_lead(key), "length": int(x), "ccdf": float((lengths >= x).mean())}
+            {**lead, "length": int(x), "ccdf": float((lengths >= x).mean())}
             for x in np.unique(lengths)
         ]
     return pd.DataFrame(rows) if rows else _empty(keys)
@@ -515,6 +557,24 @@ def _unit_keys(table: pd.DataFrame) -> list[tuple[str, str]]:
     pairs = table[list(UNIT_COLUMNS)].drop_duplicates()
     keys = [(str(m), str(r)) for m, r in pairs.itertuples(index=False, name=None)]
     return sorted(keys, key=lambda k: (k[0], k[1] != "tuned", k[1]))
+
+
+def _basis(table: pd.DataFrame) -> str:
+    """Title words for the eval mode and checkpoints of a plotted table.
+
+    Raises:
+        ValueError: If the table mixes modes or scopes (one basis per plot).
+    """
+    parts = []
+    for column in BASIS:
+        if column not in table:
+            continue
+        values = table[column].unique()
+        if len(values) != 1:
+            msg = f"one {column} per plot, got {sorted(values)}"
+            raise ValueError(msg)
+        parts.append(f"{values[0]} eval" if column == "mode" else SCOPE_TEXT[values[0]])
+    return ", ".join(parts)
 
 
 def _rows_of(table: pd.DataFrame, key: tuple[str, str]) -> pd.DataFrame:
@@ -616,32 +676,52 @@ def plot_floor_reach(table: pd.DataFrame, out_dir: Path) -> Path:
     ax.set_xticks(floors, [f"{f}\n{names[f]}" for f in floors])
     ax.set_xlabel("floor")
     ax.set_ylabel("final eval episodes reaching the floor")
-    _title(ax, f"Floor reach, {table['budget'].iloc[0]} (dashed: 5% rare limit)")
+    budget = table["budget"].iloc[0]
+    _title(ax, f"Floor reach, {budget}, {_basis(table)} (dashed: 5% rare limit)")
     _legend(fig, ax.get_legend_handles_labels()[0], loc="upper right")
     return _save(fig, out_dir, name)
 
 
+MARK_LABELS = {
+    NEVER: "never unlocked",
+    NEVER_EVAL: "no eval unlock (training not logged)",
+}
+"""Legend and scatter labels of the two zero marks: ``never`` is asserted, ``never in
+eval`` is not (R78), so they are drawn apart."""
+
+
 def _achievement_marks(ax: Axes, t: pd.DataFrame, y: np.ndarray) -> None:
-    """Final-rate dots (blue common, amber rare), crosses for never, hollow best."""
+    """Final-rate dots (blue common, amber rare), zero marks for never, hollow best.
+
+    ``never``: a solid cross; ``never in eval``: a hollow diamond (both at 0).
+    """
     final, best = t["final_rate"] * 100, t["best_rate"] * 100
     for status, color in ((COMMON, charts.SERIES[0]), (RARE, charts.SERIES[3])):
         m = (t["status"] == status).to_numpy()
         ax.hlines(y[m], final[m], best[m], color=charts.GRID)
         ax.scatter(final[m], y[m], s=16, color=color, zorder=3)
-    never = t["status"].isin([NEVER, NEVER_EVAL]).to_numpy()
+    never = (t["status"] == NEVER).to_numpy()
     ax.scatter(
-        np.zeros(never.sum()), y[never], marker="x", s=18, color=charts.SERIES[1]
-    )
+        np.zeros(never.sum()), y[never], marker="x", s=18, color=charts.SERIES[1],
+        label=MARK_LABELS[NEVER],
+    )  # fmt: skip
+    unknown = (t["status"] == NEVER_EVAL).to_numpy()
+    ax.scatter(
+        np.zeros(unknown.sum()), y[unknown], marker="D", s=14, facecolors="none",
+        edgecolors=charts.SERIES[1], linewidths=0.9, label=MARK_LABELS[NEVER_EVAL],
+    )  # fmt: skip
     ax.scatter(best, y, s=22, facecolors="none", edgecolors=charts.INK2, linewidths=0.8)
 
 
 def plot_achievement_status(table: pd.DataFrame, out_dir: Path) -> Path:
     """``achievement_status.png``: a dot row per achievement, grouped by tier and floor.
 
-    Filled dot: final rate; hollow: best rate over training; a cross at 0 marks an
-    achievement never unlocked (``never`` or ``never in eval``); rare ones are drawn in
-    the second colour. One panel per unit, the rate axis symlog in %; the group labels
-    (tier and floor) stand right of the last panel.
+    Filled dot: final rate; hollow: best rate over training; a solid cross at 0 marks an
+    achievement never unlocked (``never``), a hollow diamond one with no eval unlock
+    whose training episodes are not logged for every seed (``never in eval``, which
+    does not assert "never", R78); rare ones are drawn in the second colour. One
+    panel per unit, the rate axis symlog in %; the group labels (tier and floor) stand
+    right of the last panel.
     """
     name = "achievement_status.png"
     if table.empty:
@@ -680,11 +760,16 @@ def plot_achievement_status(table: pd.DataFrame, out_dir: Path) -> Path:
             _handle("final rate", color=charts.SERIES[0]),
             _handle("best over training", mec=charts.INK2, mfc="none"),
             _handle("rare (< 5%)", color=charts.SERIES[3]),
-            _handle("never unlocked", color=charts.SERIES[1], marker="x"),
+            _handle(MARK_LABELS[NEVER], color=charts.SERIES[1], marker="x"),
+            _handle(
+                MARK_LABELS[NEVER_EVAL], marker="D", mec=charts.SERIES[1], mfc="none"
+            ),
         ],
         loc="lower center",
-        ncol=4,
+        ncol=3,
     )
+    basis = f"{_basis(table)}: final rate, best over all checkpoints"
+    fig.suptitle(basis, x=0.01, ha="left", fontsize=9, color=charts.INK)
     return _save(fig, out_dir, name)
 
 
@@ -695,6 +780,7 @@ def plot_death_causes(table: pd.DataFrame, out_dir: Path) -> Path:
     checkpoint without deaths has no bar. One panel per unit.
     """
     name = "death_causes_over_training.png"
+    table = table[table["scope"] == "checkpoint"]
     deaths = table[table["n_deaths"] > 0] if len(table) else table
     if deaths.empty:
         return _nothing(out_dir, name, "deaths")
@@ -730,6 +816,7 @@ def plot_death_causes(table: pd.DataFrame, out_dir: Path) -> Path:
         ax.set_xlabel("env steps")
         _title(ax, _label(*key))
     axes[0].set_ylabel("share of deaths (%)")
+    fig.suptitle(_basis(table), x=0.01, ha="left", fontsize=9, color=charts.INK)
     _legend(
         fig,
         [
@@ -760,6 +847,6 @@ def plot_stall_lengths(ccdf: pd.DataFrame, out_dir: Path) -> Path:
     _plain_log(ax.yaxis)
     ax.set_xlabel("stall length (steps without an unlock)")
     ax.set_ylabel("share of stalls at least this long")
-    _title(ax, f"Stall lengths, {ccdf['budget'].iloc[0]}")
+    _title(ax, f"Stall lengths, {ccdf['budget'].iloc[0]}, {_basis(ccdf)}")
     _legend(fig, ax.get_legend_handles_labels()[0], loc="upper right")
     return _save(fig, out_dir, name)

@@ -14,11 +14,18 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.figure import Figure
 
+from wut_murl_craftax.analysis import hard
 from wut_murl_craftax.analysis.hard import (
     ACHIEVEMENTS,
+    MARK_LABELS,
+    NEVER,
+    NEVER_EVAL,
     NO_DEATHS,
+    NOT_RECORDED,
     RARE_RATE,
+    UNKNOWN,
     achievement_status,
     death_causes,
     floor_reach,
@@ -355,6 +362,40 @@ def test_achievements_table_matches_the_game() -> None:
     assert ACHIEVEMENTS["enter_graveyard"].floor == 8
 
 
+def test_mob_achievement_floors_match_the_game() -> None:
+    """Each kill or eat achievement's floor is the lowest floor its mob spawns on."""
+    from wut_murl_craftax.evaluation.milestones import achievement_names, constants
+
+    game = constants("craftax")
+    mobs = np.asarray(game.MOB_ACHIEVEMENT_MAP)  # (passive, melee, ranged) x type
+    on_floor = np.asarray(game.FLOOR_MOB_MAPPING)  # floor x (passive, melee, ranged)
+    names = achievement_names("craftax")
+    lowest: dict[str, int] = {}
+    for floor, types in enumerate(on_floor):
+        for kind, mob in enumerate(types):
+            lowest.setdefault(names[mobs[kind, mob]], floor)
+    assert len(lowest) >= 19
+    assert {n: ACHIEVEMENTS[n].floor for n in lowest} == lowest
+
+
+def test_other_home_floors() -> None:
+    floor = {n: a.floor for n, a in ACHIEVEMENTS.items()}
+    # crafting at a table has no floor, whatever the ore
+    for name in ("make_diamond_sword", "make_diamond_pickaxe", "make_iron_armour"):
+        assert floor[name] == 0
+    # chest loot: the first floor with chests (1), books and so spells and enchants (3)
+    assert [floor[n] for n in ("find_bow", "open_chest", "drink_potion")] == [1, 1, 1]
+    for name in ("learn_fireball", "cast_iceball", "enchant_sword", "enchant_armour"):
+        assert floor[name] == 3
+    assert (floor["collect_sapphire"], floor["collect_ruby"]) == (2, 2)
+    entered = {
+        "enter_dungeon": 1, "enter_gnomish_mines": 2, "enter_sewers": 3,
+        "enter_vault": 4, "enter_troll_mines": 5, "enter_fire_realm": 6,
+        "enter_ice_realm": 7, "enter_graveyard": 8,
+    }  # fmt: skip
+    assert {n: floor[n] for n in entered} == entered
+
+
 def test_unknown_achievement_raises() -> None:
     episodes = achievement_frame()
     episodes["ach/not_a_craftax_achievement"] = False
@@ -388,11 +429,26 @@ def death_frame() -> pd.DataFrame:
     return frame(rows)
 
 
+def died(*causes: str) -> list[dict[str, Any]]:
+    return [{"end_type": "death", "cause_of_death": c} for c in causes]
+
+
+def checkpoints(out: pd.DataFrame) -> pd.DataFrame:
+    return out[out["scope"] == "checkpoint"]
+
+
+def final(out: pd.DataFrame) -> pd.DataFrame:
+    return out[out["scope"] == "final"]
+
+
 def test_death_causes_shares_sum_to_one_per_checkpoint() -> None:
     out = death_causes(death_frame())
-    deaths = out[out["n_deaths"] > 0]
-    assert deaths.groupby("update")["share"].sum().tolist() == pytest.approx([1, 1])
-    mid = out[out["update"] == 122].set_index("cause")
+    for part in (checkpoints(out), final(out)):
+        deaths = part[part["n_deaths"] > 0]
+        assert deaths.groupby("update")["share"].sum().tolist() == pytest.approx(
+            [1.0] * deaths["update"].nunique()
+        )
+    mid = checkpoints(out).query("update == 122").set_index("cause")
     assert mid["share"].to_dict() == pytest.approx({
         "zombie": 0.5, "skeleton": 0.25, "starvation": 0.25
     })  # fmt: skip
@@ -401,20 +457,52 @@ def test_death_causes_shares_sum_to_one_per_checkpoint() -> None:
     assert set(mid["n_seeds"]) == {2}
 
 
-def test_death_causes_final_flag_modes_and_unknown_cause() -> None:
+def test_death_causes_scope_mode_and_not_recorded_cause() -> None:
     out = death_causes(death_frame())
-    assert out.groupby("update")["is_final"].first().to_dict() == {
-        0: False, 122: False, 244: True
+    assert set(out["mode"]) == {"stochastic"}
+    assert sorted(checkpoints(out)["update"].unique()) == [0, 122, 244]
+    last = final(out).set_index("cause")
+    # greedy zombie deaths are out of the mode; "" is a death with no cause stored
+    assert last["share"].to_dict() == pytest.approx({
+        "lava": 2 / 3, NOT_RECORDED: 1 / 3
+    })  # fmt: skip
+    assert final(out)["update"].unique().tolist() == [244]
+    greedy = final(death_causes(death_frame(), mode="greedy"))
+    assert greedy["share"].tolist() == [1.0]
+    assert set(greedy["mode"]) == {"greedy"}
+
+
+def test_death_causes_not_recorded_is_not_the_real_unknown_cause() -> None:
+    rows = run_rows(
+        0,
+        [
+            {"end_type": "death", "cause_of_death": "unknown"},
+            {"end_type": "death", "cause_of_death": ""},
+            {"end_type": "death", "cause_of_death": ""},
+        ],
+    )
+    out = final(death_causes(frame(rows))).set_index("cause")
+    assert out["n_deaths"].to_dict() == {NOT_RECORDED: 2, "unknown": 1}
+
+
+def test_death_causes_final_is_each_runs_own_last_checkpoint() -> None:
+    """A run without the last checkpoint still counts in the final rows."""
+    rows = run_rows(0, died("lava", "lava", ""), update=244)
+    rows += run_rows(1, died("zombie", "zombie", "skeleton"), update=122)
+    out = death_causes(frame(rows))
+    last = final(out).set_index("cause")
+    assert last["n_deaths"].to_dict() == {
+        "lava": 2, "zombie": 2, NOT_RECORDED: 1, "skeleton": 1
     }  # fmt: skip
-    last = out[out["is_final"]].set_index("cause")
-    # greedy zombie deaths are out of the mode; "" is a death of unknown cause
-    assert last["share"].to_dict() == pytest.approx({"lava": 2 / 3, "unknown": 1 / 3})
-    greedy = death_causes(death_frame(), mode="greedy")
-    assert greedy[greedy["is_final"]]["share"].tolist() == [1.0]
+    assert last["n_seeds"].unique().tolist() == [2]
+    assert last["update"].unique().tolist() == [244]
+    # the checkpoint rows stay per checkpoint: 244 holds seed 0 only
+    at_244 = checkpoints(out).query("update == 244")
+    assert at_244["n_seeds"].unique().tolist() == [1]
 
 
 def test_death_causes_checkpoint_without_deaths_is_not_available() -> None:
-    first = death_causes(death_frame()).query("update == 0")
+    first = checkpoints(death_causes(death_frame())).query("update == 0")
     assert first["cause"].tolist() == [NO_DEATHS]
     assert first["n_deaths"].tolist() == [0]
     assert first["share"].isna().all()  # undefined, not 0
@@ -428,7 +516,8 @@ def test_death_causes_env_steps_and_units_apart() -> None:
     other["run_id"] = other["run_id"].str.replace("m-", "n-")
     out = death_causes(pd.concat([episodes, other], ignore_index=True))
     assert out.groupby("method").size().tolist() == [len(death_causes(episodes))] * 2
-    assert set(out.loc[out["update"] == 122, "env_steps"]) == {122 * 4096}
+    mid = checkpoints(out).query("update == 122")
+    assert set(mid["env_steps"]) == {122 * 4096}
 
 
 # ---------------------------------------------------------------------- stalls
@@ -473,6 +562,24 @@ def test_stall_table_rows_final_checkpoint_and_started_by() -> None:
     everything = stall_table(stall_frame(), final=False)
     assert 5000 in everything["length"].tolist()
     assert 4000 not in everything["length"].tolist()  # still the stochastic mode
+
+
+def test_started_by_tie_is_the_lowest_value_not_the_lowest_floor() -> None:
+    """find_bow (value 52, floor 1) and make_diamond_pickaxe (60, floor 0) at once."""
+    stalls = [stall(100, 600, 0, "timeout")]
+    episodes = frame(run_rows(0, [{"stalls": stalls}]))
+    for first, other in (
+        ("find_bow", "make_diamond_pickaxe"),
+        ("make_diamond_pickaxe", "find_bow"),
+    ):  # either column order
+        wide = episodes.assign(**{
+            f"unlock_step/{first}": np.int32(100),
+            f"unlock_step/{other}": np.int32(100),
+        })
+        assert stall_table(wide)["started_by"].tolist() == ["find_bow"]
+    # a later unlock does not match
+    late = episodes.assign(**{"unlock_step/find_bow": np.int32(250)})
+    assert stall_table(late)["started_by"].tolist() == [UNKNOWN]
 
 
 def test_stall_table_unmatched_start_and_json_cells() -> None:
@@ -549,7 +656,7 @@ def test_stall_starts_floor_and_achievement() -> None:
 def test_stall_ccdf() -> None:
     table = pd.DataFrame({
         "method": "m", "config_ref": "tuned", "budget": "1m",
-        "length": [300, 300, 500, 900],
+        "mode": "stochastic", "scope": "final", "length": [300, 300, 500, 900],
     })  # fmt: skip
     out = stall_ccdf(table)
     assert out["length"].tolist() == [300, 500, 900]
@@ -632,6 +739,97 @@ def test_plot_images_differ_by_data(tmp_path: Path) -> None:
     assert one.read_bytes() != two.read_bytes()
 
 
+def test_never_and_never_in_eval_are_drawn_apart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert MARK_LABELS[NEVER] != MARK_LABELS[NEVER_EVAL]
+    table = pd.DataFrame({
+        "final_rate": [0.0, 0.0, 0.3, 0.01],
+        "best_rate": [0.0, 0.0, 0.5, 0.01],
+        "status": [NEVER, NEVER_EVAL, "common", "rare"],
+    })  # fmt: skip
+    ax = Figure().add_subplot()
+    hard._achievement_marks(ax, table, np.arange(4.0))
+    labels = set(MARK_LABELS.values())
+    marks = {c.get_label(): c for c in ax.collections if c.get_label() in labels}
+    never, unknown = marks[MARK_LABELS[NEVER]], marks[MARK_LABELS[NEVER_EVAL]]
+    assert np.asarray(never.get_offsets()).tolist() == [[0.0, 0.0]]
+    assert np.asarray(unknown.get_offsets()).tolist() == [[0.0, 1.0]]
+    a = np.asarray(never.get_paths()[0].vertices)
+    b = np.asarray(unknown.get_paths()[0].vertices)
+    assert a.shape != b.shape or not np.allclose(a, b)  # another marker shape
+    assert len(unknown.get_facecolor()) == 0  # hollow: no claim of "never"
+    # and the legend of the saved figure lists both
+    seen: list[str] = []
+
+    def capture(fig: Figure, handles: list[Any], **kw: Any) -> None:
+        seen.extend(h.get_label() for h in handles)
+
+    monkeypatch.setattr(hard, "_legend", capture)
+    status = achievement_status(achievement_frame())  # no curves: never in eval
+    assert (status["status"] == NEVER_EVAL).any()
+    plot_achievement_status(status, tmp_path)
+    assert {MARK_LABELS[NEVER], MARK_LABELS[NEVER_EVAL]} <= set(seen)
+
+
+def test_summaries_record_their_basis() -> None:
+    reach = floor_reach(floor_frame(), n=N)
+    assert set(reach["mode"]) == {"stochastic"}
+    assert set(reach["scope"]) == {"final"}
+    assert set(floor_reach(floor_frame(), "greedy", n=N)["mode"]) == {"greedy"}
+    assert set(achievement_status(achievement_frame())["mode"]) == {"stochastic"}
+    deaths = death_causes(death_frame())
+    assert set(deaths["scope"]) == {"checkpoint", "final"}
+    assert set(deaths["mode"]) == {"stochastic"}
+    table = stall_table(stall_frame())
+    assert set(table["scope"]) == {"final"}
+    assert set(stall_table(stall_frame(), final=False)["scope"]) == {"all"}
+    stats = stall_stats(stall_frame(), n=N)
+    assert stats[["mode", "scope"]].iloc[0].tolist() == ["stochastic", "final"]
+    assert stall_stats(stall_frame(), n=N, final=False)["scope"].tolist() == ["all"]
+    for derived in (stall_ccdf(table), stall_starts(table)):
+        assert set(derived["mode"]) == {"stochastic"}
+        assert set(derived["scope"]) == {"final"}
+
+
+def test_plot_titles_name_the_basis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    figures: list[Figure] = []
+
+    def keep(fig: Figure, out_dir: Path, name: str) -> Path:
+        figures.append(fig)
+        return out_dir / name
+
+    monkeypatch.setattr(hard, "_save", keep)
+    table = stall_table(stall_frame(), final=False)
+    plot_floor_reach(floor_reach(floor_frame(), n=N), tmp_path)
+    plot_stall_lengths(stall_ccdf(table), tmp_path)
+    plot_achievement_status(achievement_status(achievement_frame()), tmp_path)
+    plot_death_causes(death_causes(death_frame()), tmp_path)
+    reach, stalls, achievements, deaths = figures
+    title = reach.axes[0].get_title(loc="left")
+    assert "stochastic eval, final checkpoint" in title
+    assert "1m" in title
+    assert "stochastic eval, all checkpoints" in stalls.axes[0].get_title(loc="left")
+    text = achievements._suptitle.get_text()  # type: ignore[attr-defined]  # matplotlib private
+    assert "stochastic eval" in text
+    assert "best over all checkpoints" in text
+    text = deaths._suptitle.get_text()  # type: ignore[attr-defined]  # matplotlib private
+    assert "stochastic eval, every checkpoint" in text
+
+
+def test_plots_refuse_mixed_modes_and_scopes(tmp_path: Path) -> None:
+    stochastic = floor_reach(floor_frame(), n=N)
+    greedy = floor_reach(floor_frame(), "greedy", n=N)
+    with pytest.raises(ValueError, match="mode"):
+        plot_floor_reach(pd.concat([stochastic, greedy]), tmp_path)
+    with pytest.raises(ValueError, match="scope"):
+        plot_floor_reach(
+            pd.concat([stochastic, stochastic.assign(scope="all")]), tmp_path
+        )
+
+
 # ------------------------------------------------------------- export fixture
 
 
@@ -651,7 +849,7 @@ def test_summaries_on_the_export_fixture(export_root: Path, tmp_path: Path) -> N
     deaths = death_causes(episodes)
     shares = (
         deaths[deaths["n_deaths"] > 0]
-        .groupby(["method", "config_ref", "update"])["share"]
+        .groupby(["method", "config_ref", "scope", "update"])["share"]
         .sum()
     )
     assert shares.to_numpy() == pytest.approx(1.0)

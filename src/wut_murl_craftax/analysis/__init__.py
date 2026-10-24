@@ -65,20 +65,6 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     )
 
 _EXPORTS: dict[str, str] = {
-    "ACHIEVEMENTS": "hard",
-    "RARE_RATE": "hard",
-    "Achievement": "hard",
-    "achievement_status": "hard",
-    "death_causes": "hard",
-    "floor_reach": "hard",
-    "plot_achievement_status": "hard",
-    "plot_death_causes": "hard",
-    "plot_floor_reach": "hard",
-    "plot_stall_lengths": "hard",
-    "stall_ccdf": "hard",
-    "stall_starts": "hard",
-    "stall_stats": "hard",
-    "stall_table": "hard",
     "BASE_CONTROL": "load",
     "COMPARABLE_BLOCKS": "literature",
     "CONTROLS": "load",
@@ -116,6 +102,20 @@ _EXPORTS: dict[str, str] = {
     "sil_detectors": "obstacles",
     "skill_detectors": "obstacles",
     "table_rows": "obstacles",
+    "ACHIEVEMENTS": "hard",
+    "RARE_RATE": "hard",
+    "Achievement": "hard",
+    "achievement_status": "hard",
+    "death_causes": "hard",
+    "floor_reach": "hard",
+    "plot_achievement_status": "hard",
+    "plot_death_causes": "hard",
+    "plot_floor_reach": "hard",
+    "plot_stall_lengths": "hard",
+    "stall_ccdf": "hard",
+    "stall_starts": "hard",
+    "stall_stats": "hard",
+    "stall_table": "hard",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
