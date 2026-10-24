@@ -36,7 +36,12 @@ SENSITIVITY_COLUMNS = [
 
 
 def smoothed(curve: np.ndarray, window_frac: float = WINDOW_FRAC) -> np.ndarray:
-    """Rolling median over ``window_frac`` of the updates, centred (no lag at dips)."""
+    """Rolling median over ``window_frac`` of the updates, centred (no lag at dips).
+
+    The curve is the per-update score in percent. NaN scores (updates without a
+    finished episode) are skipped by the median; NaN stays only where a whole
+    window is NaN.
+    """
     window = max(1, round(window_frac * len(curve)))
     rolled = pd.Series(np.asarray(curve, dtype=float)).rolling(
         window, center=True, min_periods=1
@@ -45,19 +50,35 @@ def smoothed(curve: np.ndarray, window_frac: float = WINDOW_FRAC) -> np.ndarray:
     return out
 
 
+def _filled(c: np.ndarray) -> np.ndarray:
+    """Forward-fill NaN with the last known score (leading NaN stays)."""
+    out: np.ndarray = pd.Series(np.asarray(c, dtype=float)).ffill().to_numpy()
+    return out
+
+
 def drawdowns(c: np.ndarray) -> np.ndarray:
-    """Relative fall from the running max; NaN while that max is below 1% score."""
-    m = np.maximum.accumulate(c)
+    """Relative fall from the running max; NaN while that max is below 1% score.
+
+    ``c`` is the smoothed curve in percent score and may hold NaN: a NaN stretch
+    carries the last known score forward (so a drop spanning it stays one drop and
+    the running max survives), and leading NaN has no drawdown.
+    """
+    f = _filled(c)
+    m = np.fmax.accumulate(f)
     d = np.full(len(c), np.nan)
     ok = m >= MIN_MAX
-    d[ok] = (m[ok] - c[ok]) / m[ok]
+    d[ok] = (m[ok] - f[ok]) / m[ok]
     return d
 
 
 def drops(
     c: np.ndarray, depth: float = DROP_DEPTH, min_frac: float = DROP_FRAC
 ) -> list[tuple[int, int]]:
-    """Maximal intervals ``[start, stop)`` of drawdown >= ``depth``, long enough."""
+    """Maximal intervals ``[start, stop)`` of drawdown >= ``depth``, long enough.
+
+    Indices count updates of the smoothed curve ``c`` (percent score, NaN allowed,
+    see ``drawdowns``); an interval lasts long enough at ``min_frac`` of the updates.
+    """
     deep = np.concatenate([[False], drawdowns(c) >= depth, [False]])
     edges = np.flatnonzero(deep[1:] != deep[:-1])
     min_len = math.ceil(min_frac * len(c) - 1e-9)
@@ -69,14 +90,30 @@ def drops(
 
 
 def collapsed(c: np.ndarray) -> bool:
-    """Drawdown reached 50% and the final value is below 90% of the running max."""
+    """Drawdown reached 50% and the last known value is below 90% of the running max.
+
+    ``c`` is the smoothed curve in percent score; NaN is carried forward (see
+    ``drawdowns``), so a trailing NaN stretch is judged by its last known score.
+    """
+    f = _filled(c)
     return bool(
-        (drawdowns(c) >= COLLAPSE_DEPTH).any() and c[-1] < COLLAPSE_FINAL * c.max()
+        (drawdowns(c) >= COLLAPSE_DEPTH).any() and f[-1] < COLLAPSE_FINAL * np.nanmax(f)
     )
 
 
 def recovery_times(c: np.ndarray, steps: np.ndarray) -> list[float]:
-    """Env steps from each drop's start until the drawdown is below 5% (inf: never)."""
+    """Env steps from each drop's start until the drawdown is below 5% (inf: never).
+
+    Args:
+        c: Smoothed curve in percent score, NaN allowed (see ``drawdowns``).
+        steps: Env steps of each update, one per entry of ``c``.
+
+    Raises:
+        ValueError: If ``steps`` and ``c`` differ in length.
+    """
+    if len(steps) != len(c):
+        msg = f"steps ({len(steps)}) and the curve ({len(c)}) differ in length"
+        raise ValueError(msg)
     d = drawdowns(c)
     out = []
     for start, _ in drops(c):
@@ -88,13 +125,20 @@ def recovery_times(c: np.ndarray, steps: np.ndarray) -> list[float]:
 
 
 def dispersion(c: np.ndarray) -> float:
-    """IQR of the first differences of the curve (NaN below two points)."""
-    q1, q3 = np.percentile(np.diff(c), [25, 75]) if len(c) > 1 else (np.nan, np.nan)
+    """IQR of the first differences of the curve; differences touching NaN are skipped.
+
+    NaN when fewer than one difference is finite.
+    """
+    diff = np.diff(np.asarray(c, dtype=float))
+    diff = diff[np.isfinite(diff)]
+    if not diff.size:
+        return float("nan")
+    q1, q3 = np.percentile(diff, [25, 75])
     return float(q3 - q1)
 
 
 def config_scores(tuning_table: pd.DataFrame) -> pd.DataFrame:
-    """Per config: seed mean, sd, count and ``r_c`` (mean over the best's).
+    """Per config: seed mean, sd, count and ``r_c`` (mean over the best config's mean).
 
     Args:
         tuning_table: One row per run with ``config_hash`` and ``final_score``.

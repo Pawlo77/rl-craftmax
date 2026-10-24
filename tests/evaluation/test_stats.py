@@ -1,9 +1,12 @@
 """Tests for the statistics protocol: intervals, Holm-corrected tests, spread, bands."""
 
+import logging
+
 import numpy as np
 import pytest
 from scipy import stats as sps
 
+from wut_murl_craftax.evaluation import stats
 from wut_murl_craftax.evaluation.stats import (
     Interval,
     curve_band,
@@ -147,6 +150,20 @@ def test_mann_whitney_holm_family_is_the_whole_table() -> None:
 # --- t interval, spread, bands -----------------------------------------------------
 
 
+def test_mann_whitney_warns_when_no_pair_can_reach_alpha(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        table = mann_whitney_holm({"1B": ([4.0, 5.0, 6.0], [1.0, 2.0, 3.0])})
+    assert "cannot reach" in caplog.text
+    assert "1B" in caplog.text
+    assert not table.loc["1B", "reject"]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        mann_whitney_holm({"1M": (SCORES, SCORES[::-1])})
+    assert not caplog.text
+
+
 def test_t_ci_of_three_scores() -> None:
     ci = t_ci([10, 11, 12])
     assert ci.estimate == 11
@@ -165,6 +182,11 @@ def test_seed_spread() -> None:
     assert spread["iqr"] == pytest.approx(3.0)
     assert spread["range"] == 6.0
     assert spread["cv"] == pytest.approx(spread["sd"] / 5.0)
+
+
+def test_seed_spread_needs_a_score() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        seed_spread([])
 
 
 def test_seed_spread_of_a_zero_mean_has_no_cv() -> None:
@@ -232,6 +254,27 @@ def test_curve_band_holds_the_last_value_only_within_one_logging_gap() -> None:
     band = curve_band(curves, np.array([1_005_000.0, 1_100_000.0]), n=100)
     assert band.loc[0, "estimate"] == pytest.approx(10.5)
     assert band.loc[1, ["estimate", "lo", "hi"]].isna().all()
+
+
+def test_curve_band_skips_non_finite_points_of_a_seed() -> None:
+    steps, values = make_curves([0.0])[0]
+    holed = values.copy()
+    holed[[40, 41, 42]] = np.nan  # updates without a finished episode
+    band = curve_band([(steps, values), (steps, holed)], np.array([steps[41]]), n=100)
+    assert band.loc[0, "estimate"] == pytest.approx(values[41])
+    assert np.isfinite(band.loc[0, ["lo", "hi"]]).all()
+
+
+def test_curve_band_chunks_do_not_change_the_draws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curves = make_curves([0.0, 1.0, 2.5, -1.0, 0.3])
+    grid = np.array([100_000.0, 600_000.0])
+    chunked = curve_band(curves, grid, n=2500, seed=2)  # 2.5 chunks of 1000
+    monkeypatch.setattr(stats, "CHUNK", 10_000)
+    whole = curve_band(curves, grid, n=2500, seed=2)
+    assert chunked.equals(whole)
+    assert (chunked["lo"] < chunked["hi"]).all()
 
 
 def test_curve_band_rejects_unknown_statistic() -> None:

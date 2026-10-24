@@ -119,6 +119,48 @@ def test_drop_at_the_end_of_the_run_is_kept() -> None:
     assert drops(dip(0.3, 970, None)) == [(970, N)]
 
 
+# --- NaN scores (updates without a finished episode) ---------------------------------
+
+
+def with_nans(c: np.ndarray, start: int, stop: int) -> np.ndarray:
+    out = c.copy()
+    out[start:stop] = np.nan
+    return out
+
+
+def test_a_nan_stretch_does_not_hide_a_collapse() -> None:
+    raw = with_nans(dip(0.6, 300, None), 100, 130)
+    c = smoothed(raw)
+    assert np.isnan(c).any()
+    assert collapsed(c)
+    assert drops(c) == [(300, N)]
+    assert np.isfinite(drawdowns(c)[200:]).all()
+
+
+def test_a_nan_stretch_inside_a_drop_does_not_split_it() -> None:
+    c = with_nans(dip(0.4, 300, 200), 380, 420)
+    assert drops(c) == [(300, 500)]
+    assert recovery_times(c, STEPS) == [200 * STEP]
+
+
+def test_leading_nans_leave_the_drawdown_undefined() -> None:
+    c = with_nans(plateau(), 0, 50)
+    d = drawdowns(c)
+    assert np.isnan(d[:50]).all()
+    assert (d[50:] == 0).all()
+
+
+def test_a_trailing_nan_stretch_uses_the_last_known_value_for_collapse() -> None:
+    assert collapsed(with_nans(dip(0.6, 300, None), 950, N))
+    assert not collapsed(with_nans(dip(0.6, 300, 100), 950, N))
+
+
+def test_dispersion_ignores_nan_differences() -> None:
+    c = np.array([0.0, 1.0, np.nan, 3.0, 4.0, 5.0])
+    assert dispersion(c) == pytest.approx(0.0)
+    assert np.isnan(dispersion(np.array([np.nan, np.nan, 1.0])))
+
+
 # --- recovery ------------------------------------------------------------------------
 
 
@@ -137,6 +179,11 @@ def test_recovery_needs_to_get_within_five_percent() -> None:
 
 def test_a_drop_that_never_recovers_has_infinite_recovery_time() -> None:
     assert recovery_times(dip(0.6, 500, None), STEPS) == [np.inf]
+
+
+def test_recovery_needs_one_step_per_update() -> None:
+    with pytest.raises(ValueError, match="steps"):
+        recovery_times(plateau(), STEPS[:-1])
 
 
 def test_no_drop_gives_no_recovery_time() -> None:
@@ -165,17 +212,22 @@ NOISE = [-0.01, 0.0, 0.01]
 """Per-seed offsets (sd 0.01) around a config's mean."""
 
 
-def tuning_table(effect: dict[float, float], other: dict[str, float]) -> pd.DataFrame:
+def tuning_table(
+    effect: dict[float, float], other: dict[str, float], jitter: float = 0.0
+) -> pd.DataFrame:
+    """Runs of a grid; ``jitter`` adds config-level noise (sd) on top of seed noise."""
+    rng = np.random.default_rng(0)
     rows = []
     for lr, base in effect.items():
         for clip, shift in other.items():
+            level = base + shift + (rng.normal(0, jitter) if jitter else 0.0)
             for seed, eps in enumerate(NOISE):
                 cfg = {"method": "ppo", "lr": lr, "clip": clip, "seed_free": 1}
                 rows.append({
                     "run_id": f"{lr}-{clip}-{seed}",
                     "config_hash": f"{lr}-{clip}",
                     "seed": seed,
-                    "final_score": base + shift + eps,
+                    "final_score": level + eps,
                     "config_json": json.dumps(cfg),
                 })
     return pd.DataFrame(rows)
@@ -197,6 +249,15 @@ def test_only_the_learning_rate_is_sensitive(grid: pd.DataFrame) -> None:
     assert table.loc["lr", "n_values"] == 3
     assert table.loc["lr", "best_value"] == 3e-4
     assert table.loc["lr", "worst_value"] == 1e-4
+
+
+def test_config_noise_alone_stays_below_the_noise_floor() -> None:
+    table = sensitivity(tuning_table(LR, {"0.1": 0.0, "0.2": 0.0}, jitter=0.01))
+    by_h = table.set_index("hyperparameter")
+    assert 0 < by_h.loc["clip", "sensitivity"] < by_h.loc["clip", "noise_floor"]
+    assert by_h.loc["clip", "insensitive"]
+    assert by_h.loc["lr", "sensitivity"] == pytest.approx(0.6, abs=0.05)
+    assert not by_h.loc["lr", "insensitive"]
 
 
 def test_constants_and_seed_like_keys_are_not_hyperparameters() -> None:

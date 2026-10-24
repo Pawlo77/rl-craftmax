@@ -1,11 +1,15 @@
 """Seed statistics of the protocol: point estimates, intervals, tests, bands."""
 
+import logging
+import math
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 from scipy import stats as sps
+
+logger = logging.getLogger(__name__)
 
 TRIM = 0.25
 """Share cut from each end for the IQM, as ``scipy.stats.trim_mean(x, 0.25)``."""
@@ -117,7 +121,20 @@ def mann_whitney_holm(
         One row per comparison key with ``u`` (of the first sample), ``p``,
         ``p_holm`` and ``reject`` (``p_holm < alpha``). The mapping is one Holm
         family: pass the pairs of one table together, a block of its own apart.
+
+    Only 1M comparisons (10 seeds) are significance claims. A pair whose smallest
+    attainable two-sided exact p-value is already at or above ``alpha`` (3 seeds a
+    side: 0.1) can never be rejected; the call logs a warning naming such pairs.
     """
+    stuck = [
+        k
+        for k, (x, y) in comparisons.items()
+        if 2 / math.comb(len(x) + len(y), len(x)) >= alpha
+    ]
+    if stuck:
+        logger.warning(
+            "Mann-Whitney cannot reach alpha %s with so few seeds: %s", alpha, stuck
+        )
     tests = [
         sps.mannwhitneyu(x, y, alternative="two-sided") for x, y in comparisons.values()
     ]
@@ -151,6 +168,9 @@ def t_ci(scores: Sequence[float], level: float = CI_LEVEL) -> Interval:
 def seed_spread(scores: Sequence[float]) -> dict[str, float]:
     """Sd, IQR, range and coefficient of variation (NaN at mean 0) of final scores."""
     x = np.asarray(scores, dtype=float)
+    if not x.size:
+        msg = "the spread needs at least one score"
+        raise ValueError(msg)
     mean = x.mean()
     sd = float(x.std(ddof=1)) if x.size > 1 else float("nan")
     q1, q3 = np.percentile(x, [25, 75])
@@ -175,9 +195,17 @@ def step_grid(budget: float, n: int = GRID_POINTS) -> np.ndarray:
 
 
 def _on_grid(steps: np.ndarray, values: np.ndarray, grid: np.ndarray) -> np.ndarray:
-    """Linear interpolation; NaN before the first step and past the last logging gap."""
+    """Linear interpolation over finite points; NaN outside a seed's logged range.
+
+    Non-finite scores (updates without a finished episode) are skipped. NaN before
+    the first step and past one median logging gap after the last.
+    """
+    ok = np.isfinite(steps) & np.isfinite(values)
+    steps, values = steps[ok], values[ok]
+    if not steps.size:
+        return np.full(grid.size, np.nan)
     out: np.ndarray = np.interp(grid, steps, values, left=np.nan)
-    gap = np.diff(steps).max() if steps.size > 1 else 0.0
+    gap = np.median(np.diff(steps)) if steps.size > 1 else 0.0
     out[grid > steps[-1] + gap] = np.nan
     return out
 
@@ -192,7 +220,8 @@ def curve_band(
     """Mean (or IQM) learning curve over seeds with a 95% percentile bootstrap band.
 
     Args:
-        curves: One ``(env_steps, values)`` pair per seed.
+        curves: One ``(env_steps, values)`` pair per seed; non-finite values are
+            skipped.
         grid: Env steps to evaluate on (see ``step_grid``).
         statistic: ``"mean"`` or ``"iqm"``, the robust variant.
         n: Bootstrap resamples; whole curves are resampled, seeds being the unit.
