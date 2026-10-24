@@ -27,7 +27,6 @@ import mlflow
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-import pyarrow.compute as pc
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 import yaml
@@ -293,7 +292,7 @@ def _stored_table(
 def _check_replay(t: pa.Table, head: Mapping[str, Any], where: Path) -> None:
     """Raise unless a replay table's identity columns match the run's tags."""
     for col in ("run_id", "method", "budget", "seed", "update", "mode"):
-        if (got := pc.unique(t.column(col)).to_pylist()) != [head[col]]:
+        if (got := t.column(col).unique().to_pylist()) != [head[col]]:
             msg = f"{where}: {col} {got} disagrees with the run's {head[col]!r}"
             raise ValueError(msg)
 
@@ -483,8 +482,9 @@ def log_export(folder: Path, phase: str, tracking_uri: str, *, csv: bool = True)
         [exp.experiment_id], filter_string=f"attributes.run_name = '{name}'"
     )
     if found:
-        run_id = found[0].info.run_id
-        shutil.rmtree(artifact_path(found[0].info.artifact_uri), ignore_errors=True)
+        run_id, old = found[0].info.run_id, found[0].info.artifact_uri
+        if old:  # never rmtree a path made from an empty URI
+            shutil.rmtree(artifact_path(old), ignore_errors=True)
     else:
         run_id = client.create_run(exp.experiment_id, run_name=name).info.run_id
     budgets = sorted(
