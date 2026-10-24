@@ -190,6 +190,31 @@ def test_no_drop_gives_no_recovery_time() -> None:
     assert recovery_times(plateau(), STEPS) == []
 
 
+# --- the drawdown floor (R92) -------------------------------------------------------
+
+
+def test_the_floor_defaults_to_one_point() -> None:
+    c = np.array([0.2, 0.5, 0.4, 2.0, 1.0])
+    np.testing.assert_array_equal(drawdowns(c), drawdowns(c, floor=1.0))
+
+
+def test_a_lower_floor_defines_drawdowns_of_a_low_curve() -> None:
+    d = drawdowns(np.array([0.2, 0.5, 0.4, 2.0, 1.0]), floor=0.3)
+    assert np.isnan(d[0])
+    assert d[1:] == pytest.approx([0.0, 0.2, 0.0, 0.5])
+
+
+def test_drops_and_collapse_see_a_low_curve_only_with_a_lower_floor() -> None:
+    low = dip(0.6, 500, None) / 20  # a plateau of 0.5% falling to 0.2%
+    c = smoothed(low)
+    assert drops(c) == []
+    assert not collapsed(c)
+    assert drops(c, floor=0.1) == [(500, N)]
+    assert collapsed(c, floor=0.1)
+    assert recovery_times(low, STEPS) == []
+    assert recovery_times(low, STEPS, floor=0.1) == [np.inf]
+
+
 # --- dispersion ----------------------------------------------------------------------
 
 

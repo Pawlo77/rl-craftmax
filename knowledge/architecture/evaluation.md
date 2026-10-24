@@ -17,6 +17,7 @@ related-code:
   - "[[src/wut_murl_craftax/evaluation/reproduction.py]]"
   - "[[src/wut_murl_craftax/evaluation/stats.py]]"
   - "[[src/wut_murl_craftax/evaluation/stability.py]]"
+  - "[[src/wut_murl_craftax/evaluation/hardware.py]]"
 ---
 # evaluation
 
@@ -38,8 +39,9 @@ related-code:
 - `holm(p_values)`, `mann_whitney_holm(comparisons, alpha=0.05) -> DataFrame` (`u`, `p`, `p_holm`, `reject`): one Holm family per mapping; logs a warning for a pair that cannot reach alpha (3 seeds a side).
 - `step_grid(budget, n=200)`: 50 log-spaced points from 0.05% to 5% of the budget, then 150 evenly spaced up to the budget (our reading of the plan's "log-spaced for the first 5%"; points below a seed's first update are NaN in `curve_band`).
 - `curve_band(curves, grid, statistic="mean"|"iqm") -> DataFrame` (`env_steps`, `estimate`, `lo`, `hi`): learning curves on the common grid with a bootstrap band.
-- `smoothed(curve)`, `drawdowns(c)`, `drops(c) -> [(start, stop)]`, `collapsed(c)`, `recovery_times(c, steps)`, `dispersion(c)`: learning stability of one per-update score curve (`c` is the smoothed curve; indices are updates).
+- `smoothed(curve)`, `drawdowns(c, floor=1.0)`, `drops(c, floor=1.0) -> [(start, stop)]`, `collapsed(c, floor=1.0)`, `recovery_times(c, steps, floor=1.0)`, `dispersion(c)`: learning stability of one per-update score curve (`c` is the smoothed curve; indices are updates).
 - `config_scores(tuning_table)`, `robust_share(scores)`, `sensitivity(tuning_table) -> DataFrame`: config score `r_c`, robust share and `S_h` per hyperparameter with its noise floor; the table is the `runs` rows of one method's tuning phase (`config_hash`, `final_score`, `config_json`).
+- `hardware_summary(store, run_id, *, budget=None) -> dict`: hardware metrics of one run read from the SQLite store (path, `sqlite:///` URI or connection), keys `profile`, `device_kind`, `actor_device`, `learner_device`, `reused_from_tuning`, `wall_clock_s`, `steady_sps`, `overall_sps`, `compile_s`, `eval_s`, `cpu_util_mean|p95`, `gpu_util_mean|p95`, `peak_rss_mb`, `peak_host_mem_mb`, `peak_device_mem_mb`, `energy_j`, `steps_per_joule`; NaN is "not measured". `profile_of(learner_device)`, `reused_from_tuning(phases)`, `show_metric(value)` ("n.m." for NaN), `system_keys(store, run_id)`, `HARDWARE_KEYS` (stored names per profile and metric), `NOT_MEASURED`. CLI: `python -m wut_murl_craftax.evaluation.hardware --run <id> [--list-keys] [--tracking-uri ...]`.
 
 ## Modules
 
@@ -54,6 +56,7 @@ One line each; signatures and details: [[Modules]].
 - `reproduction`: does a control's final score match the published one (`band`, CLI)?
 - `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`.
 - `stability`: drawdown, drop, collapse and recovery of a run's curve; config scores and hyperparameter sensitivity of a tuning grid ([[2026-10-20-craftax-evaluation-and-metrics]] "Learning stability").
+- `hardware`: wall-clock, SPS, compile time, utilisation, memory and energy of a run from its stored series ([[2026-10-20-craftax-evaluation-and-metrics]] "Hardware usage").
 
 ## Data flow
 
@@ -65,7 +68,7 @@ One line each; signatures and details: [[Modules]].
 ## Invariants
 
 - Statistics take one score per run; `stratified_bootstrap_ci` never mixes strata, and a bootstrap seed fixes its draws. A mapping given to `mann_whitney_holm` is one Holm family. No test is run at 1B (three seeds cannot reach 0.05; [[2026-10-20-craftax-evaluation-and-metrics]] "Statistics protocol").
-- `smoothed` is a centred rolling median over 1% of the updates; a drop is a drawdown of at least 0.2 lasting at least 2% of the updates; recovery is `inf` when the drawdown never falls below 0.05. Drawdowns are NaN while the running max is below 1% score and never count.
+- `smoothed` is a centred rolling median over 1% of the updates; a drop is a drawdown of at least 0.2 lasting at least 2% of the updates; recovery is `inf` when the drawdown never falls below 0.05. Drawdowns are NaN while the running max is below `floor` (default 1% score, `MIN_MAX`) and never count; a 1M caller passes a lower floor (R92).
 - Stability functions take the smoothed curve in percent score. NaN scores (updates without a finished episode) are skipped by `smoothed`; `drawdowns` carries the last known score across NaN, so a NaN stretch neither hides a collapse nor splits a drop.
 - Hyperparameters of `sensitivity` are the `config_json` keys constant within a `config_hash` and varying across them, so seeds drop out; a table with no varying key gives an empty result.
 - `curve_band` skips non-finite scores per seed and is NaN where some seed has no data: before its first finite update, or later than one median logging gap after its last. Between those it interpolates linearly; nothing else is extrapolated.
@@ -79,12 +82,18 @@ One line each; signatures and details: [[Modules]].
 - A skill runs from the frame of its decision to the next decision (or the episode end, reason `episode_end`); `key` is `smdp.top_key` of the decision observation; the other reasons are the `skill_step` reason of the step before the next decision. `capped_steps` counts the states before each action with a material at its `progress_key.CAPS` cap (potions summed).
 - The per-run eval tables leave out `config_ref`: it depends on the exported phase. `stalls` and `fights` have fixed Arrow types, so files with no stall concatenate.
 - Resumable and idempotent: the eval table is written last (atomic writes), a `.logged` marker after the MLflow logging; the CLI skips what exists and loads a run only for pending files. Final checkpoints of every run come first.
+- Hardware: one run per call, read-only SQL by `run_uuid` (never a scan of `metrics`); a series the store lacks is NaN, never 0 (the laptop store has no power, GPU or eval-time series and no `profile` tag, so `gpu_util_*`, `peak_device_mem_mb`, `energy_j`, `steps_per_joule` and `eval_s` are all "n.m." there; `eval_s` and `peak_device_mb` are names the runner may log, `eval_s` is a placeholder no runner code logs yet). `peak_device_mem_mb` is the largest of the runner's `peak_device_mb` and the sampled GPU memory series. `profile` comes from the `learner_device` tag (`MetalDevice` laptop, `cuda`/`CudaDevice` cuda, else unknown) and runs are compared inside one profile only.
+- `train/wall_s` is cumulative across resume segments (the runner restores it), so the wall-clock is its last value; a re-logged update keeps its latest value, and a `wall_s` that runs backwards raises. MLflow's step of those points is the env steps. Steady SPS runs from the point at 10 times the first point's steps (update 10 at 1M, a window of updates at 1B) to the last. Compile time is the stored `compile_s`, else the first point's `wall_s` minus its steps at the median per-step time (they agree on the final-1m runs checked).
+- Energy is the trapezoid integral over the sample timestamps (the sysmetrics step counts samples, not time) of every `system/gpu_*_power_usage_watts` series; an interval above 10 times the median one is a resume gap and is skipped, so a resumed run's energy is a lower bound. It covers logged GPU power only (no CPU or system power).
+- Context only (R97): every laptop run trained with 2 queue workers, fresh `final-1m` runs included, so laptop wall-clock, SPS and compile time, and the machine-wide `cpu_util_*` and `peak_host_mem_mb`, are context, never a clean comparison. `peak_rss_mb` is the peak of the whole worker process (several runs of a worker share it). Reports say "two concurrent workers" beside them.
+- `reused_from_tuning` is True for a run whose `phases` tag lists `tune-coarse` or `tune-fine` (38 of the 140 `final-1m` runs, including the 26 without online families). It only separates reused from freshly trained runs; it says nothing about which timings are clean. Reused runs were in fact faster than fresh ones of the same method.
 - Importing a table module never starts the JAX backends; `rollout_metrics` imports the replay modules inside functions, so the CLI can split the CPU (`--host-devices`) first.
 
 ## Known issues
 
-- None.
+- Hardware (EV9 Step 2, open with 1B, R75): the cuda key patterns of `HARDWARE_KEYS` come from mlflow's source, not from a cluster store; run `--list-keys` on a cluster smoke run and confirm them.
+- On a multi-GPU node the pooled `gpu_util_*` and the summed `energy_j` cover every GPU sysmetrics sees, not only the learner's; check at Step 2.
 
 ## Tests
 
-- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_rollout_metrics.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]]
+- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]], [[tests/evaluation/test_hardware.py]], [[tests/evaluation/test_rollout_metrics.py]]
