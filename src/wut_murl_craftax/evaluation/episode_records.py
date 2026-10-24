@@ -521,32 +521,36 @@ def stored_records(arrays: Mapping[str, np.ndarray], game: Game) -> list[Episode
     ]
 
 
-def _tier(inventory: Any, tool: str) -> np.ndarray:
+def _tier(inventory: Any, tool: str, xp: Any = np) -> Any:
     """Classic tool tier: 1 wood, 2 stone, 3 iron by the best one owned, else 0."""
     owned = [
-        np.asarray(getattr(inventory, f"{m}_{tool}")) > 0
+        xp.asarray(getattr(inventory, f"{m}_{tool}")) > 0
         for m in ("wood", "stone", "iron")
     ]
-    return np.max([(k + 1) * o for k, o in enumerate(owned)], axis=0)
+    return xp.max(xp.stack([(k + 1) * o for k, o in enumerate(owned)]), axis=0)
 
 
-def trace_of(states: Any, game: Game) -> Trace:
-    """The `Trace` of replayed raw ``EnvState`` rows (``Replay.states``, numpy)."""
+def trace_of(states: Any, game: Game, xp: Any = np) -> Trace:
+    """The `Trace` of replayed raw ``EnvState`` rows (``Replay.states``, numpy).
+
+    ``xp=jnp`` traces it under ``jit`` (a replay scan builds its rows in place of
+    keeping every state) with the numpy values.
+    """
     c = constants(game)
-    inv, pos = states.inventory, np.asarray(states.player_position)
-    rows = np.arange(len(pos))
-    grid = np.asarray(states.map)
+    inv, pos = states.inventory, xp.asarray(states.player_position)
+    rows = xp.arange(len(pos))
+    grid = xp.asarray(states.map)
     if game == "classic":
-        floor = np.zeros(len(pos), np.int32)
-        levels = np.stack([_tier(inv, "pickaxe"), _tier(inv, "sword")], -1)
+        floor = xp.zeros(len(pos), np.int32)
+        levels = xp.stack([_tier(inv, "pickaxe", xp), _tier(inv, "sword", xp)], -1)
     else:
-        floor = np.asarray(states.player_level)
+        floor = xp.asarray(states.player_level)
         grid = grid[rows, floor]
         tools = (inv.pickaxe, inv.sword, inv.bow, inv.arrows, inv.torches, inv.armour)
-        levels = np.column_stack([np.asarray(x) for x in tools])
+        levels = xp.column_stack([xp.asarray(x) for x in tools])
     near = pos[:, None] + np.asarray(c.CLOSE_BLOCKS)
-    inside = ((near >= 0) & (near < grid.shape[1:])).all(-1)
-    r, col = (np.clip(near[..., i], 0, grid.shape[1 + i] - 1) for i in (0, 1))
+    inside = ((near >= 0) & (near < np.array(grid.shape[1:]))).all(-1)
+    r, col = (xp.clip(near[..., i], 0, grid.shape[1 + i] - 1) for i in (0, 1))
     table = grid[rows[:, None], r, col] == c.BlockType.CRAFTING_TABLE.value
     stats = (
         states.player_health,
@@ -557,8 +561,8 @@ def trace_of(states: Any, game: Game) -> Trace:
     return Trace(
         position=pos,
         floor=floor,
-        intrinsics=np.stack([np.asarray(x, np.float32) for x in stats], -1),
-        inventory=np.stack([np.asarray(getattr(inv, k)) for k in resources(game)], -1),
+        intrinsics=xp.stack([xp.asarray(x, np.float32) for x in stats], -1),
+        inventory=xp.stack([xp.asarray(getattr(inv, k)) for k in resources(game)], -1),
         levels=levels,
         table_near=(table & inside).any(-1),
     )
