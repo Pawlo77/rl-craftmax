@@ -28,6 +28,8 @@ type Array = np.ndarray | jax.Array
 
 CREATURES = ("none", "melee", "passive", "ranged", "projectile")
 """``facing_creature`` codes: the creature classes both games share, Craftax order."""
+_WIDTHS: dict[GameKind, int] = {"craftax": 8268, "classic": 1345}
+"""Flat observation width per game."""
 _CHUNK = 4096
 """Rows per numpy pass; bounds the float32 copy ``decode_obs`` makes (about 135 MB)."""
 _TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -44,7 +46,8 @@ _TARGETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "lava": (("LAVA",), ()),
     "chest": (("CHEST",), ()),
     "ripe_plant": (("RIPE_PLANT",), ()),
-    "down_ladder": ((), ("LADDER_DOWN", "LADDER_DOWN_BLOCKED")),  # open: ladder_open
+    # the symbolic obs never shows LADDER_DOWN_BLOCKED; whether it opens is ladder_open
+    "down_ladder": ((), ("LADDER_DOWN",)),
     "up_ladder": ((), ("LADDER_UP",)),
     "fire_table": (("ENCHANTMENT_TABLE_FIRE",), ()),
     "ice_table": (("ENCHANTMENT_TABLE_ICE",), ()),
@@ -162,6 +165,9 @@ def featurize(obs: Array, game: GameKind, xp: ModuleType | None = None) -> Array
     ``jax.numpy`` the function is traceable by ``jax.jit``.
     """
     xp = xp or (jnp if isinstance(obs, jax.Array) else np)
+    if obs.shape[-1] != _WIDTHS[game]:
+        msg = f"observation width {obs.shape[-1]} is not {game}'s {_WIDTHS[game]}"
+        raise ValueError(msg)
     flat = xp.reshape(obs, (-1, obs.shape[-1]))
     out: Array
     if xp is np and len(flat) > _CHUNK:
@@ -180,6 +186,8 @@ def _featurize(obs: Array, game: GameKind, xp: ModuleType) -> Array:
     n = obs.shape[0]
     blocks = xp.reshape(view.blocks, (n, -1))
     mobs = xp.reshape(view.mobs, (n, blocks.shape[1], -1))[..., :4]
+    # an unlit tile has all one-hots zeroed, so its argmax block is 0 (INVALID): never
+    # a target, never walkable, and facing_block 0 when faced
     hits = xp.asarray(lay.block_hits)[blocks]
     if lay.item_hits is not None:  # Craftax: items and the visibility channel
         tiles = xp.reshape(obs[:, : lay.map_size], (n, blocks.shape[1], -1))

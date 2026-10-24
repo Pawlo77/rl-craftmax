@@ -1,20 +1,20 @@
 """Tests for the named observation features of decision-tree distillation."""
 
-import time
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from craftax.craftax.constants import BlockType
+from craftax.craftax.constants import BlockType, ItemType
 from craftax.craftax.renderer import render_craftax_symbolic as craftax_symbolic
 from craftax.craftax_classic.renderer import (
     render_craftax_symbolic as classic_symbolic,
 )
 from craftax.craftax_env import make_craftax_env_from_name
 
-from wut_murl_craftax.interpretation import FEATURES, featurize
+from wut_murl_craftax.interpretation import CREATURES, FEATURES, features, featurize
+from wut_murl_craftax.visualisation.overlay import decode_obs
 from wut_murl_craftax.visualisation.rollout import ENV_NAMES, GameKind
 
 GAMES: tuple[GameKind, ...] = ("craftax", "classic")
@@ -51,7 +51,11 @@ def _grass_world(game: GameKind) -> Any:
     """Reset state on an all-grass, fully lit map without creatures."""
     s = _no_mobs(_reset(game), game)
     s = s.replace(map=jnp.full_like(s.map, BlockType.GRASS.value))
-    return s.replace(light_map=jnp.ones_like(s.light_map)) if game == "craftax" else s
+    if game == "classic":
+        return s
+    return s.replace(
+        light_map=jnp.ones_like(s.light_map), item_map=jnp.zeros_like(s.item_map)
+    )
 
 
 def _put(state: Any, game: GameKind, offset: tuple[int, int], block: int) -> Any:
@@ -170,12 +174,84 @@ def test_numpy_and_jitted_jax_give_identical_features(game: GameKind) -> None:
 
 
 @pytest.mark.parametrize("game", GAMES)
-def test_ten_thousand_observations_are_featurized_at_once(game: GameKind) -> None:
+def test_ten_thousand_observations_are_featurized_at_once(
+    game: GameKind, monkeypatch: pytest.MonkeyPatch
+) -> None:
     obs = _rollout_obs(game, 50)
-    many = np.tile(obs, (200, 1))
-    start = time.perf_counter()
-    out = featurize(many, game)
-    elapsed = time.perf_counter() - start
-    np.testing.assert_array_equal(out, np.tile(featurize(obs, game), (200, 1)))
-    # a Python loop over 10,000 states takes tens of seconds
-    assert elapsed < 3.0
+    want = np.tile(featurize(obs, game), (200, 1))
+    calls: list[int] = []
+
+    def counted(o: np.ndarray, classic: bool) -> Any:
+        calls.append(len(o))
+        return decode_obs(o, classic)
+
+    monkeypatch.setattr(features, "decode_obs", counted)
+    np.testing.assert_array_equal(featurize(np.tile(obs, (200, 1)), game), want)
+    assert calls == [4096, 4096, 1808]  # whole chunks, no loop over states
+
+
+@pytest.mark.parametrize(("game", "width"), [("craftax", 1345), ("classic", 8268)])
+def test_an_observation_of_the_other_game_is_refused(
+    game: GameKind, width: int
+) -> None:
+    with pytest.raises(ValueError, match="observation width"):
+        featurize(np.zeros((2, width), np.float32), game)
+
+
+def _item(state: Any, offset: tuple[int, int], item: int) -> Any:
+    r, c = np.asarray(state.player_position) + offset
+    return state.replace(item_map=state.item_map.at[0, r, c].set(item))
+
+
+def _mob(state: Any, kind: str, offset: tuple[int, int]) -> Any:
+    m = getattr(state, kind)
+    pos = m.position.at[0, 0].set(state.player_position + jnp.array(offset))
+    return state.replace(**{
+        kind: m.replace(position=pos, mask=m.mask.at[0, 0].set(True))
+    })
+
+
+def test_ladders_fountain_and_tree_kinds_are_targets() -> None:
+    s = _item(_grass_world("craftax"), (2, 0), ItemType.LADDER_DOWN.value)
+    s = _item(s, (-1, -2), ItemType.LADDER_UP.value)
+    s = _put(s, "craftax", (0, 4), BlockType.FOUNTAIN.value)
+    row = _row("craftax", _put(s, "craftax", (-3, 0), BlockType.FIRE_TREE.value))
+    assert [row[f"down_ladder_{p}"] for p in ("dist", "row_sign", "col_sign")] == [
+        2,
+        1,
+        0,
+    ]
+    assert [row[f"up_ladder_{p}"] for p in ("dist", "row_sign", "col_sign")] == [
+        3,
+        -1,
+        -1,
+    ]
+    assert (row["water_dist"], row["water_col_sign"]) == (4, 1)
+    assert (row["tree_dist"], row["tree_row_sign"]) == (3, -1)
+    row = _row("craftax", _put(s, "craftax", (1, 1), BlockType.ICE_SHRUB.value))
+    assert row["tree_dist"] == 2
+
+
+def test_walkable_excludes_water_lava_creatures_and_unlit_tiles() -> None:
+    s = _put(_grass_world("craftax"), "craftax", (0, -1), BlockType.WATER.value)
+    s = _put(s, "craftax", (0, 1), BlockType.LAVA.value)
+    s = _mob(s, "melee_mobs", (-1, 0))
+    r, c = np.asarray(s.player_position) + np.array([1, 0])
+    s = s.replace(light_map=s.light_map.at[0, r, c].set(0.0), player_direction=4)
+    row = _row("craftax", s)
+    walk = [row[f"walkable_{d}"] for d in ("left", "right", "up", "down")]
+    assert walk == [0, 0, 0, 0]
+    assert row["facing_block"] == BlockType.INVALID.value  # unlit: unknown block
+    assert row["melee_count"] == 1  # the creature, not the block, blocks "up"
+
+
+def test_craftax_creatures_counts_nearest_and_facing() -> None:
+    s = _mob(_grass_world("craftax"), "melee_mobs", (-1, 0))
+    s = _mob(_mob(s, "passive_mobs", (3, 3)), "ranged_mobs", (-4, -5))
+    row = _row("craftax", s.replace(player_direction=3))
+    counts = [row[f"{k}_count"] for k in ("melee", "passive", "ranged", "projectile")]
+    assert counts == [1, 1, 1, 0]
+    hostile = [row[f"hostile_{p}"] for p in ("dist", "row_sign", "col_sign")]
+    assert hostile == [1, -1, 0]
+    assert (row["hostile_adjacent"], row["passive_dist"]) == (1, 6)
+    assert CREATURES[int(row["facing_creature"])] == "melee"
