@@ -16,13 +16,14 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 73 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 388 | [[analysis]] |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. |  |  | 149 |  |
-| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, reproduction, statistics, combo pair. |  |  | 218 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, reproduction, statistics, combo pair. |  |  | 277 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. |  |  | 611 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. |  |  | 394 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. |  |  | 173 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? |  |  | 226 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. |  |  | 560 |  |
-| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the statistics protocol: IQM and probability of improvement. |  |  | 33 |  |
+| [[src/wut_murl_craftax/evaluation/stability.py]] | Learning stability of one run (drawdowns, drops, collapse) and tuning sensitivity. |  |  | 231 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 267 | [[evaluation]] |
 | [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 18 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals. |  |  | 139 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
@@ -73,7 +74,6 @@ parent: "[[wut_murl_craftax]]"
 - [[src/wut_murl_craftax/__init__.py]]
 - [[src/wut_murl_craftax/config.py]]
 - [[src/wut_murl_craftax/evaluation/select_pair.py]]
-- [[src/wut_murl_craftax/evaluation/stats.py]]
 - [[src/wut_murl_craftax/orchestration/finals.py]]
 - [[src/wut_murl_craftax/training/count_bonus.py]]
 - [[src/wut_murl_craftax/training/dyna_q.py]]
