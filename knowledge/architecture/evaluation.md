@@ -13,6 +13,7 @@ related-code:
   - "[[src/wut_murl_craftax/evaluation/episode_metrics.py]]"
   - "[[src/wut_murl_craftax/evaluation/reproduction.py]]"
   - "[[src/wut_murl_craftax/evaluation/stats.py]]"
+  - "[[src/wut_murl_craftax/evaluation/stability.py]]"
 ---
 # evaluation
 
@@ -30,6 +31,8 @@ related-code:
 - `t_ci(scores) -> Interval`: t-based 95% interval (1B, three seeds).
 - `holm(p_values)`, `mann_whitney_holm(comparisons, alpha=0.05) -> DataFrame` (`u`, `p`, `p_holm`, `reject`): one Holm family per mapping.
 - `step_grid(budget)`, `curve_band(curves, grid, statistic="mean"|"iqm") -> DataFrame` (`env_steps`, `estimate`, `lo`, `hi`): learning curves on the common grid with a bootstrap band.
+- `smoothed(curve)`, `drawdowns(c)`, `drops(c) -> [(start, stop)]`, `collapsed(c)`, `recovery_times(c, steps)`, `dispersion(c)`: learning stability of one per-update score curve (`c` is the smoothed curve; indices are updates).
+- `config_scores(tuning_table)`, `robust_share(scores)`, `sensitivity(tuning_table) -> DataFrame`: config score `r_c`, robust share and `S_h` per hyperparameter with its noise floor; the table is the `runs` rows of one method's tuning phase (`config_hash`, `final_score`, `config_json`).
 
 ## Modules
 
@@ -40,6 +43,7 @@ One line each; signatures and details: [[Modules]].
 - `episode_metrics`: online score and achievement metrics of training episodes, read from step events.
 - `reproduction`: does a control's final score match the published one (`band`, CLI)?
 - `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`.
+- `stability`: drawdown, drop, collapse and recovery of a run's curve; config scores and hyperparameter sensitivity of a tuning grid ([[2026-10-20-craftax-evaluation-and-metrics]] "Learning stability").
 
 ## Data flow
 
@@ -49,6 +53,8 @@ One line each; signatures and details: [[Modules]].
 ## Invariants
 
 - Statistics take one score per run; `stratified_bootstrap_ci` never mixes strata, and a bootstrap seed fixes its draws. A mapping given to `mann_whitney_holm` is one Holm family. No test is run at 1B (three seeds cannot reach 0.05; [[2026-10-20-craftax-evaluation-and-metrics]] "Statistics protocol").
+- `smoothed` is a centred rolling median over 1% of the updates; a drop is a drawdown of at least 0.2 lasting at least 2% of the updates; recovery is `inf` when the drawdown never falls below 0.05. Drawdowns are NaN while the running max is below 1% score and never count.
+- Hyperparameters of `sensitivity` are the `config_json` keys constant within a `config_hash` and varying across them, so seeds drop out; a table with no varying key gives an empty result.
 - `curve_band` is NaN where some seed has no data (before its first update or past its last logging gap), never extrapolated.
 - Events are computed from the pre-reset next state, so a done step keeps its unlocks ([[Experiment decisions]]).
 - Importing a table module never starts the JAX backends.
@@ -59,4 +65,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]]
+- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]]
