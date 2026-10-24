@@ -48,7 +48,7 @@ START_HEALTH = 9.0
 """Health at the start of an episode in both games."""
 STALL_STEPS, CLOSE_HEALTH, CLOSE_STEPS, DEATH_WINDOW = 300, 2.0, 50, 20
 """Stall gap; close-call health and the steps the episode must go on; cause window."""
-_TOL = 1e-3
+TOL = 1e-3
 """Slack on health summed from float deltas (Craftax armour scales damage)."""
 _COUNTS = (
     ("episodes", 1), ("steps", 1), ("kills", len(CREATURES)), ("passive_kills", 1),
@@ -176,7 +176,7 @@ def _close_calls(
     One opens when health falls to `CLOSE_HEALTH` and counts once the episode has gone
     on `CLOSE_STEPS` more steps; a new fall while one is open joins it.
     """
-    low = CLOSE_HEALTH + _TOL
+    low = CLOSE_HEALTH + TOL
     confirmed = (acc.close_at >= 0) & (length - acc.close_at >= CLOSE_STEPS)
     entered = (health <= low) & (acc.health > low)
     open_at = jnp.where(confirmed, -1, acc.close_at)
@@ -242,9 +242,9 @@ def _ending(total: EpisodeAcc, ev: StepEvents) -> jax.Array:
     cause is the largest loss of the window, lava first, unknown without a loss.
     """
     lava = ev.damage_source == LAVA
-    died = (total.health <= _TOL) | lava
+    died = (total.health <= TOL) | lava
     largest = jnp.argmax(total.win_sum, -1)
-    cause = jnp.where(total.win_sum.max(-1) > _TOL, largest, UNKNOWN)
+    cause = jnp.where(total.win_sum.max(-1) > TOL, largest, UNKNOWN)
     cause = jnp.where(lava, LAVA, cause)
     floors = jnp.arange(len(FLOORS)) <= total.floor[:, None]
     died_col = died[:, None]
@@ -406,7 +406,7 @@ def score_pct(ret: Any, max_reward: float) -> Any:
     return ret / max_reward * 100
 
 
-def _creatures(game: Game, classes: Sequence[str]) -> list[tuple[int, str]]:
+def creatures(game: Game, classes: Sequence[str]) -> list[tuple[int, str]]:
     """(``CREATURES`` index, name) of ``classes`` in ``game`` (Classic: type 0)."""
     return [
         (i, name)
@@ -420,7 +420,7 @@ def _causes(game: Game) -> list[tuple[int, str]]:
 
     Hits come from melee mobs and projectiles (a ranged mob's shot is its projectile).
     """
-    hits = {name for _, name in _creatures(game, ("melee", "projectile"))}
+    hits = {name for _, name in creatures(game, ("melee", "projectile"))}
     keep = hits | {"lava", "unknown", *NEEDS}
     return [(i, c) for i, c in enumerate(CAUSES) if c in keep]
 
@@ -441,10 +441,10 @@ def metric_keys(game: Game) -> tuple[str, ...]:
         "train/stalls_per_episode",
         *(f"train/survival/{s}_{k}" for s in STATS for k in ("low", "zero")),
         "train/close_calls",
-        *(f"train/kills/{n}" for _, n in _creatures(game, ("melee", "ranged"))),
+        *(f"train/kills/{n}" for _, n in creatures(game, ("melee", "ranged"))),
         "train/kills/passive",
         "train/kills_per_1k",
-        *(f"train/kills_per_1k/{n}" for _, n in _creatures(game, ("melee", "ranged"))),
+        *(f"train/kills_per_1k/{n}" for _, n in creatures(game, ("melee", "ranged"))),
         "train/kills_per_1k/passive",
         "train/damage_dealt",
         "train/damage_taken",
@@ -497,7 +497,7 @@ def _at(game: Game) -> dict[str, int]:
 def _per_episode(v: Any, game: Game) -> dict[str, Any]:
     """Episode means and % of episodes (death causes: % of deaths)."""
     n, deaths, ret = v("episodes"), v("death"), v("return")
-    hostile = _creatures(game, ("melee", "ranged"))
+    hostile = creatures(game, ("melee", "ranged"))
     floors = len(FLOORS) if game == "craftax" else 1
     return {
         "train/ach_per_episode": v("ach_count") / n,
@@ -530,7 +530,7 @@ def _per_step(v: Any, game: Game) -> dict[str, Any]:
     steps, actions = v("steps"), action_names(game)
     hist = np.array([v(f"actions/{i}") for i in range(len(actions))])
     p = hist / hist.sum()
-    hostile = sum(v(f"kills/{i}") for i, _ in _creatures(game, ("melee", "ranged")))
+    hostile = sum(v(f"kills/{i}") for i, _ in creatures(game, ("melee", "ranged")))
     return {
         **{
             f"train/survival/{s}_low": v(f"low/{i}") / steps
@@ -543,7 +543,7 @@ def _per_step(v: Any, game: Game) -> dict[str, Any]:
         "train/kills_per_1k": hostile * 1000 / steps,
         **{
             f"train/kills_per_1k/{name}": v(f"kills/{i}") * 1000 / steps
-            for i, name in _creatures(game, ("melee", "ranged"))
+            for i, name in creatures(game, ("melee", "ranged"))
         },
         "train/kills_per_1k/passive": v("passive_kills") * 1000 / steps,
         **{f"train/action/{a}": p[i] for i, a in enumerate(actions)},

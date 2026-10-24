@@ -119,6 +119,20 @@ def test_the_update_runs_under_jit_and_clips_the_view_at_the_map_edge() -> None:
     assert (np.asarray(got) >= 0).sum() == 5 * 7
 
 
+def test_an_invalid_padded_step_leaves_seen_unchanged() -> None:
+    seen = init_seen(craftax((24, 24)), "craftax")
+    later = craftax((24, 40), 5)
+    kept = update_seen(seen, later, "craftax", jnp.bool_(False))
+    np.testing.assert_array_equal(kept, seen)
+    batch = jax.vmap(update_seen, (0, 0, None, 0))(
+        jnp.stack([seen, seen]),
+        jax.tree.map(lambda x: jnp.stack([x, x]), later),
+        "craftax",
+        jnp.array([True, False]),
+    )
+    assert (batch[0] >= 0).sum() > (batch[1] >= 0).sum() == 99
+
+
 def test_real_start_states_see_the_whole_view(
     craftax_start: Any, classic_start: Any
 ) -> None:

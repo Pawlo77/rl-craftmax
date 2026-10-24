@@ -4,7 +4,7 @@
 (``eval/<mode>/<update>.npz``, `stored_records`) and, when a replay rebuilt it, its
 `Trace` (`trace_of`). Steps count actions: an unlock in action ``t`` (0-based) has
 unlock step ``t + 1``, the frame that first shows it; stall and fight bounds are frames
-too. Resources, wasted crafts and the stats at a stall's start need the trace and are
+too. Resources, wasted crafts and stats at stalls and refills need the trace and are
 None (NaN in `EpisodeRecord.row`) without it. Rules shared with the online metrics
 come from `episode_metrics`. Definitions: "In-game metric families" of the evaluation
 plan.
@@ -20,7 +20,6 @@ import jax
 import numpy as np
 
 from .episode_metrics import (
-    _TOL,
     CAUSES,
     CLOSE_HEALTH,
     CLOSE_STEPS,
@@ -29,7 +28,8 @@ from .episode_metrics import (
     STALL_STEPS,
     START_HEALTH,
     STATS,
-    _creatures,
+    TOL,
+    creatures,
     score_pct,
 )
 from .events import DAMAGE_SOURCES, LAVA, UNKNOWN, StepEvents
@@ -95,7 +95,8 @@ class Stall(NamedTuple):
     ended_by: str
     """The achievement unlocked at ``end`` (the lowest ``.value`` of several); ""."""
     actions: np.ndarray
-    """Histogram of the actions inside the stall."""
+    """Histogram of the actions inside the stall, forced steps excepted
+    (`action_names` order)."""
     intrinsics: np.ndarray | None
     """Health, food, drink, energy at ``start``; None without a trace."""
     inventory: np.ndarray | None
@@ -189,6 +190,13 @@ class EpisodeRecord:
     use_ratio: float
     wasted_crafts: int | None
     """Crafts that raised no owned level, plus tables placed beside a table."""
+    need_counts: np.ndarray
+    need_gaps: np.ndarray
+    """Per `STATS`: eats, drinks, sleep starts and the mean steps between consecutive
+    ones (NaN with fewer than 2)."""
+    need_levels: np.ndarray | None
+    """Mean food before an eat, drink before a drink, energy before a sleep start;
+    None without a trace."""
 
     @property
     def n_achievements(self) -> int:
@@ -209,10 +217,15 @@ class EpisodeRecord:
         return {names[a]: int(self.unlock_steps[a]) for a in _ids(self.game).milestones}
 
     def row(self) -> dict[str, Any]:
-        """The eval-episode table columns (identity columns excepted), plain values."""
+        """The eval-episode table columns (identity columns excepted).
+
+        Plain Python values, except ``unlock_step/*`` (``np.int32``, the contract
+        dtype); replay-only columns are floats, NaN without a trace.
+        """
         g, res = self.game, resources(self.game)
+        levels = np.full(3, math.nan) if self.need_levels is None else self.need_levels
         names, missing = achievement_names(g), np.full(len(res), math.nan)
-        hostile = _creatures(g, _HOSTILE)
+        hostile = creatures(g, _HOSTILE)
         adv = [a.lower() for a in ADVANCED_ACTIONS] if g == "craftax" else []
         return {
             "length": self.length,
@@ -224,7 +237,10 @@ class EpisodeRecord:
             "tech_depth": self.tech_depth,
             "n_achievements": self.n_achievements,
             **_cols("ach", names, self.unlock_steps >= 0),
-            **_cols("unlock_step", names, self.unlock_steps),
+            **{
+                f"unlock_step/{a}": np.int32(u)
+                for a, u in zip(names, self.unlock_steps, strict=True)
+            },
             "stalls": [_plain(s) for s in self.stalls],
             "n_stalls": len(self.stalls),
             "max_stall": max((s.length for s in self.stalls), default=0),
@@ -246,16 +262,21 @@ class EpisodeRecord:
             "noop_share": self.noop_share,
             "forced_share": self.forced_share,
             **_cols(
-                "gathered", res, missing if self.gathered is None else self.gathered
+                "gathered",
+                res,
+                missing if self.gathered is None else 1.0 * self.gathered,
             ),
-            **_cols("used", res, missing if self.used is None else self.used),
+            **_cols("used", res, missing if self.used is None else 1.0 * self.used),
             "use_ratio": self.use_ratio,
             "steps_per_achievement": self.steps_per_achievement,
             "wasted_crafts": math.nan
             if self.wasted_crafts is None
-            else self.wasted_crafts,
+            else float(self.wasted_crafts),
             "wood_to_diamond": self.wood_to_diamond,
             **_cols("adv", adv, self.adv),
+            **_cols("survival/count", STATS, self.need_counts),
+            **_cols("survival/gap", STATS, self.need_gaps),
+            **_cols("survival/level", STATS, levels),
             **{f"split/{m}": u for m, u in self.splits.items()},
         }
 
@@ -284,7 +305,7 @@ def _death(ev: StepEvents, health: np.ndarray) -> tuple[str, str]:
     0 (unknown if none), the rest of a step's loss by its ``damage_source``; lava wins.
     """
     lava = ev.damage_source[-1] == LAVA
-    if health[-1] > _TOL and not lava:
+    if health[-1] > TOL and not lava:
         return "timeout", ""
     if lava:
         return "death", "lava"
@@ -300,7 +321,7 @@ def _death(ev: StepEvents, health: np.ndarray) -> tuple[str, str]:
     loss = np.bincount(
         np.concatenate([needs, hits]), np.concatenate([drain, rest]), len(CAUSES)
     )
-    return "death", CAUSES[int(loss.argmax()) if loss.max() > _TOL else UNKNOWN]
+    return "death", CAUSES[int(loss.argmax()) if loss.max() > TOL else UNKNOWN]
 
 
 def _stalls(
@@ -322,7 +343,9 @@ def _stalls(
                 int(ev.floor[a - 1]) if a else 0,
                 "unlock" if len(got) else end_type,
                 names[got[0]] if len(got) else "",
-                np.bincount(actions[a:b], minlength=len(action_names(game))),
+                np.bincount(
+                    actions[a:b][~ev.forced[a:b]], minlength=len(action_names(game))
+                ),
                 None if trace is None else trace.intrinsics[a],
                 None if trace is None else trace.inventory[a],
             )
@@ -352,7 +375,7 @@ def _close_calls(health: np.ndarray) -> tuple[int, int]:
     One opens when health falls to `CLOSE_HEALTH` and counts once the episode goes on
     `CLOSE_STEPS` more steps; a fall while one is open joins it.
     """
-    low = CLOSE_HEALTH + _TOL
+    low = CLOSE_HEALTH + TOL
     prev = np.r_[START_HEALTH, health[:-1]]
     opened, at = [], -1
     for length in np.flatnonzero((health <= low) & (prev > low)) + 1:
@@ -362,7 +385,7 @@ def _close_calls(health: np.ndarray) -> tuple[int, int]:
         at = int(length) if at < 0 else at
     if at >= 0 and len(health) - at >= CLOSE_STEPS:
         opened.append(at)
-    back = sum(bool((health[s:] >= RECOVER_HEALTH - _TOL).any()) for s in opened)
+    back = sum(bool((health[s:] >= RECOVER_HEALTH - TOL).any()) for s in opened)
     return len(opened), back
 
 
@@ -410,13 +433,34 @@ def _crafting(trace: Trace | None, actions: np.ndarray, game: Game) -> dict[str,
     }
 
 
+def _needs(ev: StepEvents, trace: Trace | None) -> dict[str, Any]:
+    """Survival timing per `STATS` from the eat, drink and sleep-start events."""
+    marks = np.stack([ev.ate, ev.drank, ev.slept])
+    counts = marks.sum(1)
+    gaps = [
+        np.diff(np.flatnonzero(m)).mean() if c > 1 else math.nan
+        for m, c in zip(marks, counts, strict=True)
+    ]
+    levels = None
+    if trace is not None:  # the stat in the state before the step that refilled it
+        before = np.asarray(trace.intrinsics, np.float64)[:-1, 1:]
+        levels = np.array([
+            before[m, k].mean() if m.any() else math.nan for k, m in enumerate(marks)
+        ])
+    return {
+        "need_counts": counts,
+        "need_gaps": np.array(gaps, float),
+        "need_levels": levels,
+    }
+
+
 def episode_record(
     events: StepEvents, actions: Any, trace: Trace | None = None, *, game: Game
 ) -> EpisodeRecord:
     """The record of one episode from its ``n`` steps of events and actions.
 
-    ``trace`` (`trace_of` of the replayed states) adds resources, wasted crafts and
-    the stats at a stall's start.
+    ``trace`` (`trace_of` of the replayed states) adds resources, wasted crafts, the
+    stats at a stall's start and the stat levels at eats, drinks and sleeps.
     """
     ev = jax.tree.map(np.asarray, events)
     actions = np.asarray(actions, np.int64)
@@ -457,6 +501,7 @@ def episode_record(
         wood_to_diamond=int(diamond - wood) if diamond >= 0 and wood >= 0 else -1,
         **_action_usage(ev, actions, game),
         **_crafting(trace, actions, game),
+        **_needs(ev, trace),
     )
 
 

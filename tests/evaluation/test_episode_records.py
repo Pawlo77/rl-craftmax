@@ -104,13 +104,14 @@ def test_a_400_step_gap_ended_by_an_unlock_is_one_escaped_stall() -> None:
     ev["floor"][9:] = 1
     actions = np.full(600, Action.DO.value)
     actions[200:210] = Action.LEFT.value
+    ev["forced"][205:210] = True  # asleep: the game played NOOP instead
     rec = record(ev, actions)
     assert len(rec.stalls) == 1
     s = rec.stalls[0]
     assert (s.start, s.end, s.length, s.floor) == (10, 410, 400, 1)
     assert (s.ending, s.ended_by) == ("unlock", "place_table")
-    assert s.actions[Action.LEFT.value] == 10
-    assert s.actions.sum() == 400
+    assert s.actions[Action.LEFT.value] == 5
+    assert s.actions.sum() == 395
     assert s.intrinsics is None  # stats at the start need the replayed trace
 
 
@@ -146,7 +147,7 @@ def test_speedrun_splits_are_the_unlock_steps() -> None:
 
 def test_fights_bridge_gaps_under_5_steps() -> None:
     ev = quiet(100)
-    for a, b in ((10, 15), (18, 21), (40, 43), (47, 50)):  # gaps of 2 and 4 steps
+    for a, b in ((10, 15), (18, 21), (40, 43), (47, 50)):  # gaps of 3 and 4 steps
         ev["hostiles_on_screen"][a:b] = 3
         ev["hostiles_close"][a:b] = 1
     ev["hostiles_on_screen"][19] = 4
@@ -272,6 +273,8 @@ def test_the_row_has_the_contract_columns_and_survives_json() -> None:
         assert key in row, key
     assert np.isnan(row["gathered/wood"])  # no trace: left to the replay
     assert row["ach/collect_wood"] is True
+    assert isinstance(row["unlock_step/collect_wood"], np.int32)
+    assert np.isnan(row["survival/level/food"])
     stall = json.loads(json.dumps(row["stalls"]))[0]
     assert {"start", "end", "length", "floor", "ending", "ended_by"} <= set(stall)
 
@@ -389,3 +392,34 @@ def test_trace_of_gives_classic_tool_levels(classic_start: Any) -> None:
     assert tr.inventory.shape == (1, 6)
     assert tr.levels.tolist() == [[2, 0]]
     assert tr.floor.tolist() == [0]
+
+
+def test_survival_timing_counts_refills_their_gaps_and_the_stat_before() -> None:
+    ev = quiet(100)
+    ev["ate"][[10, 40, 90]] = True
+    ev["drank"][50] = True
+    ev["slept"][[20, 30]] = True
+    intrinsics = np.full((101, 4), 9.0, np.float32)
+    intrinsics[[10, 40, 90], 1] = [3, 5, 1]  # food before each meal
+    intrinsics[50, 2] = 2
+    intrinsics[[20, 30], 3] = [1, 4]
+    trace = Trace(
+        position=np.zeros((101, 2), np.int32),
+        floor=np.zeros(101, np.int32),
+        intrinsics=intrinsics,
+        inventory=np.zeros((101, 8), np.int32),
+        levels=np.zeros((101, 9), np.int32),
+        table_near=np.zeros(101, bool),
+    )
+    row = record(ev, trace=trace).row()
+    assert [row[f"survival/count/{s}"] for s in ("food", "drink", "energy")] == [
+        3,
+        1,
+        2,
+    ]
+    assert row["survival/gap/food"] == 40  # (30 + 50) / 2
+    assert np.isnan(row["survival/gap/drink"])
+    assert row["survival/gap/energy"] == 10
+    assert row["survival/level/food"] == 3
+    assert row["survival/level/drink"] == 2
+    assert row["survival/level/energy"] == 2.5

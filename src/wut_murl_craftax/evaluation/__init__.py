@@ -154,6 +154,7 @@ _EXPORTS: dict[str, str] = {
     "combo_text": "select_pair",
     "config_scores": "stability",
     "controls_of": "select_pair",
+    "coverage_summary": "coverage",
     "curve_band": "stats",
     "dispersion": "stability",
     "drawdowns": "stability",
@@ -167,6 +168,7 @@ _EXPORTS: dict[str, str] = {
     "game_of": "milestones",
     "holm": "stats",
     "init_acc": "episode_metrics",
+    "init_seen": "coverage",
     "iqm": "stats",
     "ladder": "milestones",
     "mann_whitney_holm": "stats",
@@ -196,13 +198,11 @@ _EXPORTS: dict[str, str] = {
     "t_ci": "stats",
     "trace_of": "episode_records",
     "update_metrics": "episode_metrics",
+    "update_seen": "coverage",
     "update_summary": "episode_metrics",
     "update_sums": "episode_metrics",
     "window_metrics": "episode_metrics",
     "write_combo": "select_pair",
-    "coverage_summary": "coverage",
-    "init_seen": "coverage",
-    "update_seen": "coverage",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""

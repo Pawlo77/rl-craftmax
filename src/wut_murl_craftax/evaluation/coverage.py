@@ -21,14 +21,20 @@ VISIBLE_LIGHT = 0.05
 """A tile with ``light_map`` at most this is dark (Craftax renderer threshold)."""
 
 
-def update_seen(seen: jax.Array, s2: Any, game: Game) -> jax.Array:
-    """``seen`` with the lit tiles of ``s2``'s view stamped by ``s2.timestep``."""
+def update_seen(
+    seen: jax.Array, s2: Any, game: Game, valid: jax.Array | bool = True
+) -> jax.Array:
+    """``seen`` with the lit tiles of ``s2``'s view stamped by ``s2.timestep``.
+
+    ``valid`` False leaves ``seen`` as it is: a padded scan past an episode's end
+    (a done seed keeps its final state) passes ``t < length``.
+    """
     rows, cols = constants(game).OBS_DIM
     level = 0 if game == "classic" else s2.player_level
     p = s2.player_position
     r = jnp.arange(seen.shape[1])[:, None]
     c = jnp.arange(seen.shape[2])[None, :]
-    view = (jnp.abs(r - p[0]) <= rows // 2) & (jnp.abs(c - p[1]) <= cols // 2)
+    view = (jnp.abs(r - p[0]) <= rows // 2) & (jnp.abs(c - p[1]) <= cols // 2) & valid
     if game == "craftax":
         view &= s2.light_map[level] > VISIBLE_LIGHT
     floor = seen[level]
