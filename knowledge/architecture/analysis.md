@@ -12,13 +12,14 @@ related-code:
   - "[[src/wut_murl_craftax/analysis/literature.py]]"
   - "[[src/wut_murl_craftax/analysis/obstacles.py]]"
   - "[[src/wut_murl_craftax/analysis/hard.py]]"
+  - "[[src/wut_murl_craftax/analysis/cases.py]]"
 ---
 # analysis
 
 ## Responsibility
 
 - Phase 4 analysis of finished runs: load the exported tables, per-method training analysis, obstacles, cases ([[2026-10-20-craftax-training-analysis]]) and the method comparison ([[2026-10-20-craftax-comparison-and-results]]).
-- Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors and the hard-scenario summaries.
+- Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors, the hard-scenario summaries and the case finder and export.
 
 ## Public surface
 
@@ -40,6 +41,10 @@ related-code:
 - `death_causes(episodes, mode=)`: cause-of-death shares per unit, as one row set per eval checkpoint (`scope` `checkpoint`) and one over each run's own last checkpoint (`scope` `final`); a death with an empty cause is `not recorded` (the real `unknown` cause stays apart); a set without deaths has one `(no deaths)` row with NaN share.
 - `stall_table(episodes, mode=, final=True)`: one row per stall (frames, floor, `ending`, `ended_by`, `started_by`); `stall_stats(episodes, mode=, n=, final=)`: per unit stalls per episode (interval over seeds), median length, escape rate and `start_floor/<f>` counts; `stall_starts(table)`: where stalls start (floor, unlock); `stall_ccdf(table)`: the length CCDF.
 - `plot_floor_reach`, `plot_achievement_status`, `plot_death_causes`, `plot_stall_lengths` (table, `out_dir`) -> the PNG path (`floor_reach.png`, `achievement_status.png`, `death_causes_over_training.png`, `stall_lengths.png`), dark style of `visualisation.charts`; one budget per plot, a unit per line or panel.
+- `find_cases(frames, method, budget, config_ref="tuned", mode="stochastic")`: the case episodes of one unit as `cases.csv` rows (`CASE_COLUMNS`: contracts section 4, then `env_steps`, `length`, `detail`); kinds `stall`, `deep_floor`, `rare_unlock`, `death`; `id` `<budget>-<method>-<kind>-<n>`, an ablation `<budget>-<method>-<config_ref>-<kind>-<n>`.
+- `export_case(case, out_dir, run=None, *, tracking_uri=, root="outputs", overlay_kw=)`: replays one case and returns it with `rollout`, `master`, `gif` and `overlay` filled (paths relative to `root`); `run` is an `EvalRun` (shared compiles), a run directory, or looked up by `run_dirs`.
+- `describe_case(case, run=None, *, tracking_uri=)`: the write-up facts of a case from one replay: floor, stats and inventory at `start` and `peak`, action counts in the window and the episode, coverage gained per floor, the 50 actions before the peak, combat damage, close calls and lowest health in the window.
+- `write_cases(cases, root)`: `analysis/<budget>/cases.csv` (all methods of the budget) and `analysis/<budget>/<method>/cases.csv`; `run_dirs(run_ids, tracking_uri)`: artifact directories from a SQLite store, read-only.
 
 ## Modules
 
@@ -49,6 +54,7 @@ One line each; signatures and details: [[Modules]].
 - `literature`: the published scores of blocks A, A2 and D of [[Existing Implementations]] and the like-for-like block of each of our score kinds.
 - `obstacles`: the 10 shared and 23 method obstacle detectors, their registry and the obstacles table.
 - `hard`: floor reach, achievement status, cause of death and stall summaries per unit, and their plots; the comparison figures (F9) import the death and stall functions.
+- `cases`: case episodes per unit from the `hard` tables, their replay export (rollout, master, GIF, internals clip) and their facts.
 
 ## Data flow
 
@@ -69,6 +75,8 @@ One line each; signatures and details: [[Modules]].
 | `eval_inventory` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | replay |
 | `eval_inventory` | `steps` | int | episode steps | replay |
 | `eval_inventory` | `capped_steps` | int | steps with at least one material at or above its `progress_key.CAPS` cap | replay |
+- Cases replay eval files through [[visualisation]] (`as_rollout`, `render_master`, `cuts.gif`, `render_overlay`, `stored_episode`) and read state facts with `episode_records.trace_of` and `coverage.update_seen`.
+- Case files (`export_case`, `out_dir` = `outputs/analysis/<budget>/<method>/`): `rollouts/case-<id>.npz`, `masters/case-<id>.mkv` (whole episode, frame = step), `gifs/<id>.gif`, stall `overlays/<id>.mp4`; the rollout is copied to `outputs/visualisation/runs/case-<id>.npz` (flat, for the video `runs/*.npz` glob), and that copy is the `rollout` column. A master's stem equals its rollout's, as `cuts.cut_kept` looks masters up.
 - Out: `outputs/analysis/<budget>/`, `outputs/results/`, MLflow experiment `analysis`.
 
 ## Invariants
@@ -90,6 +98,9 @@ One line each; signatures and details: [[Modules]].
 - The `hard` summaries group by (`method`, `config_ref`, `budget`) themselves, so tuned and ablation runs in one frame stay apart (R77); intervals are `stats.stratified_bootstrap_ci` over seeds (one run per seed, 10,000 resamples), skipped only when every seed has the same value.
 - `hard` reads only the event stream (`max_floor`, `ach/*`, `unlock_step/*`, `cause_of_death`, stall frames); the replay-only fields (`gathered/*`, `used/*`, `coverage/*`, `survival/level/*`, a stall's `intrinsics` and `inventory`) are never read, so a missing replay never becomes 0. Undefined values are NaN or a status: a checkpoint without deaths has a NaN share, a unit without stalls NaN median length and escape rate, a missing training series `train_seeds` NaN and status `never in eval` (never asserted as `never`, R78).
 - Final checkpoint and stochastic mode are the defaults of every `hard` summary (thresholds' basis); an achievement's `seeds_ever` counts both modes and every checkpoint. `ACHIEVEMENTS` floors are home floors checked against the game: mob floors from `FLOOR_MOB_MAPPING`, ore (sapphire, ruby on 2), chest loot on its first floor (bow, chest, potion 1; books, so spells and enchanting, 3), crafting on 0; `started_by` ties break by `.value`. Plots name mode and scope in their title and refuse a table that mixes them; `achievement_status.png` draws `never` (solid cross) and `never in eval` (hollow diamond) apart.
+- Cases are found per (method, `config_ref`), tuned unless an ablation is named (R77), in stochastic final-checkpoint episodes as the plan's thresholds say; earlier stall checkpoints are spread evenly over those with an escaped stall; ties break by fixed columns, so a rerun gives the same table. A deep-floor case on floor 0 peaks at its last unlock (every episode starts on floor 0).
+- Windows: a stall case runs from the stall start to 20 steps after the unlock at 8x; other kinds 150 steps before to 49 after the peak at 1x; a GIF keeps the last 20 s of its window, so it ends with the peak. An export whose master replay diverges from the stored episode raises.
+- `find_cases` and `write_cases` import neither JAX nor MLflow; the replay side imports JAX inside the functions. Exports write only under `out_dir` and `root`, never the store (R85).
 - Instability and collapse pass `stability`'s drawdown floor: 1 point at `ABSOLUTE_BUDGETS`, else `max(0.1, 0.25 x` the run's best smoothed score), named in the evidence (R92).
 - Flat score (bonus distraction, reward hacking, re-trying) is a documented choice: the method plan says "flat (drawdown definition of evaluation-and-metrics)" and evaluation defines only drawdowns, so flat is a gain over the trailing 10% of the budget below 5% of the run's best smoothed score (`FLAT_WINDOW`, `FLAT_GAIN`).
 - Bonus-driven re-trying takes the pair count from the Dyna-Q model graph and the success rate from the eval ends of that pair at the checkpoint: the model stores no success flag.
@@ -97,8 +108,9 @@ One line each; signatures and details: [[Modules]].
 
 ## Known issues
 
+- `export_case` replays a stall case's episode five times: `as_rollout`, the master render and `render_overlay` (its own `EvalRun`, which replays for the observations, the network outputs and the frames); sharing one replay needs an `EvalRun` or episode parameter on `as_rollout` and `render_overlay` ([[visualisation]]).
 - Key aliasing, survival failure despite flags and bonus-driven re-trying need the `skill_ends` replay frame, and hoarding under log2 keys (the tuned count-bonus-pqn-rnn config) the `eval_inventory` frame; until evaluation Task 6 builds them they read `needs replay (evaluation Task 6)`.
 
 ## Tests
 
-- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_hard.py]] (hand-built episode frames: rates, intervals against the shared bootstrap, thresholds, NaN and status cases, units kept apart, the tier table against the game, the plots), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
+- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_hard.py]] (hand-built episode frames: rates, intervals against the shared bootstrap, thresholds, NaN and status cases, units kept apart, the tier table against the game, the plots), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); [[tests/analysis/test_cases.py]] (hand-built episode frames for each case threshold and the table contract; export, GIF cap and facts on the tiny PPO eval run of the visualisation tests); `tests/analysis/conftest.py` (fixtures; adds `tests/visualisation` to the path for that run) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.

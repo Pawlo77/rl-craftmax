@@ -4,6 +4,14 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .cases import (
+        CASE_COLUMNS,
+        describe_case,
+        export_case,
+        find_cases,
+        run_dirs,
+        write_cases,
+    )
     from .hard import (
         ACHIEVEMENTS,
         RARE_RATE,
@@ -116,6 +124,12 @@ _EXPORTS: dict[str, str] = {
     "stall_starts": "hard",
     "stall_stats": "hard",
     "stall_table": "hard",
+    "CASE_COLUMNS": "cases",
+    "describe_case": "cases",
+    "export_case": "cases",
+    "find_cases": "cases",
+    "run_dirs": "cases",
+    "write_cases": "cases",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -124,6 +138,7 @@ __all__ = [
     "ACHIEVEMENTS",
     "ALIASES",
     "BASE_CONTROL",
+    "CASE_COLUMNS",
     "COMPARABLE_BLOCKS",
     "CONTROLS",
     "DETECTORS",
@@ -146,10 +161,13 @@ __all__ = [
     "comparable_rows",
     "count_bonus_detectors",
     "death_causes",
+    "describe_case",
     "detect_all",
     "dyna_detectors",
     "eval_actions",
+    "export_case",
     "final_checkpoint",
+    "find_cases",
     "floor_reach",
     "in_phase",
     "load_literature",
@@ -162,6 +180,7 @@ __all__ = [
     "plot_floor_reach",
     "plot_stall_lengths",
     "repeated_cycle",
+    "run_dirs",
     "select",
     "shared_detectors",
     "sil_detectors",
@@ -172,6 +191,7 @@ __all__ = [
     "stall_table",
     "table_rows",
     "units",
+    "write_cases",
 ]
 
 
