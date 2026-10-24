@@ -7,6 +7,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .dataset import (
         MAX_STATES,
         MEMORY_FEATURES,
+        RECURRENT,
         SKILL_FEATURES,
         SPLITS,
         TEST_SEEDS,
@@ -24,6 +25,7 @@ _EXPORTS: dict[str, str] = {
     "FEATURES": "features",
     "MAX_STATES": "dataset",
     "MEMORY_FEATURES": "dataset",
+    "RECURRENT": "dataset",
     "SKILL_FEATURES": "dataset",
     "SPLITS": "dataset",
     "TEST_SEEDS": "dataset",
@@ -41,6 +43,7 @@ __all__ = [
     "FEATURES",
     "MAX_STATES",
     "MEMORY_FEATURES",
+    "RECURRENT",
     "SKILL_FEATURES",
     "SPLITS",
     "TEST_SEEDS",

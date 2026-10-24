@@ -194,7 +194,7 @@ def ppo_run(tmp_path_factory: pytest.TempPathFactory) -> EvalRun:
 
 
 def _equal(a: Dataset, b: Dataset) -> None:
-    assert a.columns == b.columns
+    assert (a.columns, a.family, a.recurrent) == (b.columns, b.family, b.recurrent)
     for name in ("features", "label", "probs", "episode", "step", "floor"):
         np.testing.assert_array_equal(getattr(a, name), getattr(b, name), name)
 
@@ -219,6 +219,12 @@ def test_two_collections_of_a_network_policy_are_identical(ppo_run: EvalRun) -> 
     np.testing.assert_array_equal(a.label, a.probs.argmax(1))
     assert set(a.episode) == set(SEEDS)
     assert not a.floor.any()  # Classic has one floor
+    assert (a.family, a.recurrent) == ("ppo", False)  # memory proxies unused
+
+
+def test_an_empty_seed_list_is_refused(ppo_run: EvalRun) -> None:
+    with pytest.raises(ValueError, match="at least one seed"):
+        collect(ppo_run, 0, ())
 
 
 def test_probs_and_labels_are_network_outputs_over_each_stochastic_episode(
@@ -242,8 +248,8 @@ def test_probs_and_labels_are_network_outputs_over_each_stochastic_episode(
 
 def test_episodes_keep_at_most_the_cap_sampled_uniformly(counting_run: EvalRun) -> None:
     assert MAX_STATES == 2000
-    full = collect(counting_run, 0, SEEDS, None, _counting_outputs)
-    capped = collect(counting_run, 0, SEEDS, 50, _counting_outputs)
+    full = collect(counting_run, 0, SEEDS, None, _counting_outputs, "ppo-rnn")
+    capped = collect(counting_run, 0, SEEDS, 50, _counting_outputs, "ppo-rnn")
     for seed in SEEDS:
         steps = full.step[full.episode == seed]
         np.testing.assert_array_equal(steps, np.arange(len(steps)))
@@ -264,8 +270,9 @@ def test_a_recurrent_policys_labels_follow_its_carried_state(
     counting_run: EvalRun,
 ) -> None:
     """Outputs run over the whole episode before subsampling, carry threaded."""
-    ds = collect(counting_run, 0, SEEDS, 30, _counting_outputs)
+    ds = collect(counting_run, 0, SEEDS, 30, _counting_outputs, "ppo-rnn")
     np.testing.assert_array_equal(ds.label, ds.step % MOVES)
+    assert ds.recurrent
     np.testing.assert_allclose(ds.probs.max(1), 0.5 + 0.5 / N_ACTIONS, rtol=1e-6)
     ev = _stored_actions(counting_run, SEEDS)
     prev = ds.features[:, ds.columns.index("prev_action")]
@@ -284,9 +291,10 @@ def test_a_recurrent_policys_labels_follow_its_carried_state(
 def test_a_two_level_policy_labels_primitive_actions_with_the_skill_as_features(
     skill_run: EvalRun,
 ) -> None:
-    ds = collect(skill_run, 0, SEEDS, 60, _skill_outputs)
+    ds = collect(skill_run, 0, SEEDS, 60, _skill_outputs, "skills")
     skill = (ds.step // SKILL_LEN) % 2
     np.testing.assert_array_equal(ds.label, np.asarray(SKILL_ACTIONS)[skill])
+    assert (ds.family, ds.recurrent) == ("skills", True)  # an LSTM skill network
     assert ds.columns == (*FEATURES["classic"], *MEMORY_FEATURES, *SKILL_FEATURES)
     assert len(SKILL_FEATURES) == NUM_SKILLS + 1
     one_hot = ds.features[:, -NUM_SKILLS - 1 : -1]
@@ -297,7 +305,7 @@ def test_a_two_level_policy_labels_primitive_actions_with_the_skill_as_features(
 def test_a_stored_eval_file_with_every_seed_is_reused(
     counting_run: EvalRun, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fresh = collect(counting_run, 0, SEEDS, 40, _counting_outputs)
+    fresh = collect(counting_run, 0, SEEDS, 40, _counting_outputs, "ppo-rnn")
     evaluate(counting_run, [0], "stochastic", seeds=SEEDS[::-1])  # rows by seed
 
     def no_rollout(*args: object, **kwargs: object) -> None:
@@ -305,9 +313,11 @@ def test_a_stored_eval_file_with_every_seed_is_reused(
         raise AssertionError(msg)
 
     monkeypatch.setattr(dataset, "rollout_seeds", no_rollout)
-    _equal(collect(counting_run, 0, SEEDS, 40, _counting_outputs), fresh)
+    _equal(collect(counting_run, 0, SEEDS, 40, _counting_outputs, "ppo-rnn"), fresh)
     with pytest.raises(AssertionError, match="rolled out"):
-        collect(counting_run, 0, (SEEDS[0], TEST_SEEDS[0]), 40, _counting_outputs)
+        collect(
+            counting_run, 0, (SEEDS[0], TEST_SEEDS[0]), 40, _counting_outputs, "ppo-rnn"
+        )
 
 
 def test_a_dataset_saves_under_budget_method_run_and_split(
@@ -318,6 +328,6 @@ def test_a_dataset_saves_under_budget_method_run_and_split(
     assert dataset_path("1m", "ppo", "abc123", "test") == Path(
         "outputs/interpretation/1m/ppo/abc123/test.npz"
     )
-    ds = collect(counting_run, 0, SEEDS, 20, _counting_outputs)
+    ds = collect(counting_run, 0, SEEDS, 20, _counting_outputs, "ppo-rnn")
     ds.save(path)
     _equal(Dataset.load(path), ds)

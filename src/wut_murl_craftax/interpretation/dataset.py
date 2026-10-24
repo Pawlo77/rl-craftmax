@@ -19,7 +19,9 @@ from ..training.skills import NUM_SKILLS, SKILLS
 from ..visualisation.eval_rollouts import (
     EVAL_SEEDS,
     EvalRun,
+    Family,
     load_eval,
+    network_family,
     network_outputs,
     replay_episode,
     rollout_seeds,
@@ -47,6 +49,9 @@ MEMORY_FEATURES: tuple[str, ...] = ("prev_action", "steps_since_unlock")
 steps since the last unlock (from the episode start before the first)."""
 SKILL_FEATURES: tuple[str, ...] = (*(f"skill_{s.name}" for s in SKILLS), "skill_steps")
 """Two-level policies: the running skill one-hot and ``extras/steps_in_skill``."""
+RECURRENT: frozenset[Family] = frozenset({"ppo-rnn", "pqn-rnn", "skills"})
+"""Families with a carried hidden state (the skill network is an LSTM): the ones
+whose trees may use `MEMORY_FEATURES`."""
 ROOT = Path("outputs/interpretation")
 _BATCH = len(EVAL_SEEDS)
 """Seeds per fresh rollout; a seed plays the same in any batch."""
@@ -69,6 +74,10 @@ class Dataset(NamedTuple):
     """int32: step in the episode."""
     floor: np.ndarray
     """int8: the ``floor`` feature (0 on Classic)."""
+    family: str
+    """`network_family` of the policy."""
+    recurrent: bool
+    """Whether ``family`` is in `RECURRENT`."""
 
     def save(self, path: Path) -> None:
         """Write a compressed ``.npz``; a file that exists is complete."""
@@ -76,7 +85,12 @@ class Dataset(NamedTuple):
         tmp = path.with_suffix(".tmp")
         with tmp.open("wb") as f:
             arrays = {k: getattr(self, k) for k in _FIELDS}
-            np.savez_compressed(f, columns=np.array(self.columns), **arrays)
+            arrays |= {
+                "columns": np.array(self.columns),
+                "family": np.array(self.family),
+                "recurrent": np.array(self.recurrent),
+            }
+            np.savez_compressed(f, **arrays)
         tmp.replace(path)
 
     @classmethod
@@ -84,7 +98,12 @@ class Dataset(NamedTuple):
         """Read a file written by `save`."""
         with np.load(path) as z:
             arrays = {k: z[k] for k in _FIELDS}
-            return cls(columns=tuple(z["columns"].tolist()), **arrays)
+            return cls(
+                columns=tuple(z["columns"].tolist()),
+                family=str(z["family"]),
+                recurrent=bool(z["recurrent"]),
+                **arrays,
+            )
 
 
 def dataset_path(
@@ -176,13 +195,21 @@ def collect(
     seeds: Sequence[int],
     max_states_per_episode: int | None = MAX_STATES,
     outputs: Outputs = network_outputs,
+    family: Family | None = None,
 ) -> Dataset:
     """States the stochastic policy of ``update`` visits on ``seeds``, labelled.
 
     ``max_states_per_episode`` states are sampled uniformly per episode, seeded by
     its seed (None keeps every state); ``outputs`` is `network_outputs` or a stand-in
-    of its signature (toy policies).
+    of its signature and ``family`` the toy's stand-in for `network_family`.
+
+    Raises:
+        ValueError: If ``seeds`` is empty.
     """
+    if not seeds:
+        msg = "collect needs at least one seed"
+        raise ValueError(msg)
+    family = network_family(run.policy) if family is None else family
     rows = [
         _episode(run, update, p, max_states_per_episode, outputs)
         for p in _played(run, update, seeds)
@@ -192,4 +219,5 @@ def collect(
     columns = (*FEATURES[run.game], *MEMORY_FEATURES)
     if arrays["features"].shape[1] > len(columns):  # the eval extras held the skill
         columns += SKILL_FEATURES
-    return Dataset(columns=columns, **arrays)
+    recurrent = family in RECURRENT
+    return Dataset(columns=columns, family=family, recurrent=recurrent, **arrays)
