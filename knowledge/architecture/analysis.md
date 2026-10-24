@@ -11,13 +11,14 @@ related-code:
   - "[[src/wut_murl_craftax/analysis/load.py]]"
   - "[[src/wut_murl_craftax/analysis/literature.py]]"
   - "[[src/wut_murl_craftax/analysis/obstacles.py]]"
+  - "[[src/wut_murl_craftax/analysis/compare.py]]"
 ---
 # analysis
 
 ## Responsibility
 
 - Phase 4 analysis of finished runs: load the exported tables, per-method training analysis, obstacles, cases ([[2026-10-20-craftax-training-analysis]]) and the method comparison ([[2026-10-20-craftax-comparison-and-results]]).
-- Filled by the training analysis and comparison tasks; so far the loaders, the literature table and the obstacle detectors.
+- Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors and the comparison tables.
 
 ## Public surface
 
@@ -33,6 +34,14 @@ related-code:
 - `DETECTORS` (registry method -> `Detector` list), built from `shared_detectors()`, `count_bonus_detectors()`, `sil_detectors()`, `skill_detectors()`, `dyna_detectors()`; a `Detector` declares `REQUIRED_METRICS`, `BASE_METRICS`, optional `inputs`, informative `budgets` and owner `methods`.
 - `ALIASES`: plan metric name -> stored names in order (contracts section 5; the comparison figures import it).
 - `table_rows(obstacles, budget)`, `obstacles_table(rows)`: the obstacles table with exactly `TABLE_COLUMNS` of the plan template.
+- Comparison tables (`compare`), each a DataFrame with the listed column constant; `n_boot` and `seed` set the bootstrap (protocol: 10,000):
+  - `main_table(frames)` (T1, `main_columns()`): per (benchmark, block, method) of the tuned runs: seeds, mean +- s.e., mean CI, IQM [CI] at 1M or median [CI] and t interval at 1B, final-checkpoint eval means, and per control `poi_<c>`, `poi_lo_<c>`, `poi_hi_<c>`, `p_<c>`, `p_holm_<c>` (1M) or `diff_<c>` with CI (1B); `indicative` marks 1B.
+  - `poi_matrix(frames)` (F3, `POI_COLUMNS`): PoI with CI between every two members of one block at 1M.
+  - `ablation_table(frames)` (`ABLATION_COLUMNS`, R77): each ablation (`simhash`, `single-buffer`, `random-top`, `monte-carlo`, `no-flags`, `kappa0`) against its method's tuned runs: difference of means with CI, and at 1M PoI and Holm p within the block.
+  - `reproduction_gate(frames, published=)` (`GATE_COLUMNS`): per control and benchmark with runs, `pass` or `fail` with gap and `h` of `reproduction.band`, `too few seeds`, or the PQN-RNN 1M reference-code note (`REFERENCE_CODE`); never raises.
+  - `literature_table(frames)` (T2, `LITERATURE_TABLE_COLUMNS`): per comparable (score kind, benchmark) our rows (mean, s.e., CI, gate on training control rows), then the one literature block, with `ours_above`, `ours_within`, `ours_below`.
+  - `stability_table` (T3, `STABILITY_COLUMNS`), `hardware_table` (T4 per profile, `HARDWARE_COLUMNS`, laptop rows carry `CONTEXT_NOTE`), `race_table` (`RACE_COLUMNS`), `game_summary_table` (T6, `GAME_COLUMNS`), `sensitivity_table` (T7 per tuning phase, `SENSITIVITY_TABLE_COLUMNS`).
+  - `block_of(method, combo_pair)`: `skills` for `SKILL_METHODS` (select_pair's) and a combo whose own pair holds one, else `main`; `BLOCKS`.
 - `repeated_cycle(actions)` -> `Cycle(period, start, length)`: the shortest action period repeated over >= 50 steps; `eval_actions(run_dir, run_id, update, mode)` reads an eval file into the `eval_actions` input.
 
 ## Modules
@@ -42,6 +51,7 @@ One line each; signatures and details: [[Modules]].
 - `load`: loaders, schema checks, run selectors and base controls over the export tables of [[evaluation]].
 - `literature`: the published scores of blocks A, A2 and D of [[Existing Implementations]] and the like-for-like block of each of our score kinds.
 - `obstacles`: the 10 shared and 23 method obstacle detectors, their registry and the obstacles table.
+- `compare`: the comparison's result tables (T1-T4, T6, T7, the PoI matrix, the ablation table) and the reproduction gate.
 
 ## Data flow
 
@@ -62,6 +72,7 @@ One line each; signatures and details: [[Modules]].
 | `eval_inventory` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | replay |
 | `eval_inventory` | `steps` | int | episode steps | replay |
 | `eval_inventory` | `capped_steps` | int | steps with at least one material at or above its `progress_key.CAPS` cap | replay |
+- The comparison tables read `runs` (final score, eval scores, hardware columns, `config_json` for combo pairs and sensitivity), `curves` (`train/score_pct`, `first_unlock/*`, `first_unlock_wall/*`), final-checkpoint stochastic `eval_episodes`, `configs/reference/published_scores.yaml` and the literature CSV.
 - Out: `outputs/analysis/<budget>/`, `outputs/results/`, MLflow experiment `analysis`.
 
 ## Invariants
@@ -85,10 +96,17 @@ One line each; signatures and details: [[Modules]].
 - Bonus-driven re-trying takes the pair count from the Dyna-Q model graph and the success rate from the eval ends of that pair at the checkpoint: the model stores no success flag.
 - `DETECTORS` is built on first access (owners of the skill detectors are `select_pair.SKILL_METHODS`); importing `obstacles` imports neither JAX nor MLflow.
 
+- Comparison: every table runs per benchmark and block; the three controls are the reference rows of both blocks and a method never meets one of the other block (PoI matrix, race). IQM, PoI and Mann-Whitney exist at 1M only, with one Holm family per block (T1: block methods x controls; ablations: the block's ablations); 1B rows give mean, median and CIs and are indicative.
+- T1, T2, T3, T4, T6 and the PoI matrix use the tuned runs; ablations appear only in `ablation_table`, each against its own method's tuned runs (R77). T2 shows our training score beside block D (1M) or A (1B) and the stochastic eval beside A2 (1B); never two blocks in one group.
+- The gate skips budgets without runs (R86) and reports instead of raising; T2 carries its status, gap and `h` on the control rows.
+- Race (T6): per method `n` = runs that logged `first_unlock/*` (R78), `k` = runs that unlocked; eligible at k >= n / 2; lowest median wins, wall-clock only within one profile; never-logged methods read NaN wins, not 0. Laptop hardware and timings are context only (R97, two concurrent workers).
+- T3 uses the training analysis's drawdown floor (R92) from `obstacles` constants.
+
 ## Known issues
 
 - Key aliasing, survival failure despite flags and bonus-driven re-trying need the `skill_ends` replay frame, and hoarding under log2 keys (the tuned count-bonus-pqn-rnn config) the `eval_inventory` frame; until evaluation Task 6 builds them they read `needs replay (evaluation Task 6)`.
 
 ## Tests
 
-- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
+- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table);
+- [[tests/analysis/test_compare.py]] (blocks, Holm families per block, 1B rows, PoI matrix, ablations, gate, T2 blocks and CI placement, T3 collapse, T4 profiles, race rule, T6, T7) on `_compare_fixture.py` (in-memory frames: 10 seeds at 1M, 3 at 1B, ablations, a skill-pair combo option) and the shared export; `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
