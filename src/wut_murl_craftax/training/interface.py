@@ -354,7 +354,7 @@ def combo_pair(
     """
     if COMBINE_KEY in config:
         return dict(config[COMBINE_KEY])
-    named = {n: t for n, t in entries.items() if n != "combo"}
+    named = {n: entries[n] for n in entries if n != "combo"}  # never build combo
     hooked = {
         n: m
         for n, t in named.items()

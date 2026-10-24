@@ -326,11 +326,17 @@ COMBO_1M = json.loads(
 """``config.json`` of the 10 combo-1m runs (identical): no ``combine`` block."""
 
 
-def test_the_combo_1m_runs_resolve_to_their_pair_without_combo_yaml() -> None:
+def test_the_combo_1m_runs_resolve_to_their_pair_without_combo_yaml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unread() -> Trainer:
+        msg = "combo.yaml read"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(interface, "_combo", unread)  # METHODS["combo"] now fails
     pair = {"base": "ppo-rnn", "methods": ["count-bonus-ppo-rnn", "sil"]}
-    assert combo_pair(COMBO_1M, interface._ENTRIES) == pair
-    # a registry without "combo": combo.yaml is never read
-    trainer = run_trainer(COMBO_1M, dict(interface._ENTRIES))
+    assert combo_pair(COMBO_1M, METHODS) == pair
+    trainer = run_trainer(COMBO_1M)
     assert isinstance(trainer, PPORNNTrainer)
     assert trainer.method is not None
     assert trainer.method.keys == count_bonus.METHOD.keys | sil.METHOD.keys
