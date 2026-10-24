@@ -12,6 +12,7 @@ writes them to ``outputs/metrics/<run_id>/`` and logs them to the run. CLI: ``py
 """
 
 import argparse
+import functools
 import logging
 import math
 import sqlite3
@@ -28,7 +29,9 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ..analysis.obstacles import INVENTORY_COLUMNS, SKILL_ENDS_COLUMNS
 from ..orchestration.runtime import configure_runtime
+from ..training.progress_key import CAPS
 from .coverage import coverage_summary, init_seen, update_seen
 from .episode_records import Trace, episode_record, trace_of
 from .events import StepEvents
@@ -56,13 +59,24 @@ IDENTITY = (
 the phase export inserts it (`RUN_IDENTITY`)."""
 RUN_IDENTITY = tuple(c for c in IDENTITY if c != "config_ref")
 """Leading columns of the per-run eval tables written here."""
-SKILL_ENDS_COLUMNS = (
-    "run_id", "update", "env_steps", "mode", "eval_seed", "start", "end", "skill",
-    "key", "reason",
+EPISODE_COLUMNS = (
+    *IDENTITY, "length", "return", "score_pct", "end_type", "cause_of_death",
+    "max_floor", "tech_depth", "n_achievements", "ach/", "unlock_step/", "stalls",
+    "n_stalls", "max_stall", "fights", "kills/", "kills/passive", "damage_dealt",
+    "damage_taken", "projectile_damage", "close_calls", "close_calls_recovered",
+    "coverage/", "new_tiles_per_100", "revisit_rate", "unique_positions", "low_share/",
+    "zero_share/", "survival/count/", "survival/gap/", "survival/level/",
+    "action_count/", "action_entropy", "wasted_share", "noop_share", "forced_share",
+    "gathered/", "used/", "use_ratio", "steps_per_achievement", "wasted_crafts",
+    "wood_to_diamond", "adv/", "split/",
 )  # fmt: skip
-"""``skill_ends`` columns (contracts.md section 9); Dyna-Q adds ``pair_count``."""
-INVENTORY_COLUMNS = ("run_id", "update", "mode", "eval_seed", "steps", "capped_steps")
-"""``eval_inventory`` columns (contracts.md section 9)."""
+"""Columns of ``eval_episodes`` in contracts.md section 1 order; a name ending in
+``/`` is a family the game expands (`episode_columns`; ``kills/`` holds the hostile
+creatures, ``kills/passive`` follows them). `SKILL_ENDS_COLUMNS` and
+`INVENTORY_COLUMNS` (section 9) are the training analysis's own constants."""
+HOARD_CAPS = {m: c for m, c in CAPS.items() if c > 1}
+"""Materials whose `progress_key.CAPS` cap is above 1, the ones ``capped_steps``
+counts (R98): holding one sapling, gem, arrow, torch, book or potion is no hoarding."""
 SUMMARY_PREFIXES = ("coverage/", "gathered/", "used/", "survival/level/")
 SUMMARY_COLUMNS = (
     "new_tiles_per_100", "revisit_rate", "unique_positions", "use_ratio",
@@ -105,7 +119,8 @@ class FileReplay(NamedTuple):
     seen: np.ndarray
     """`update_seen` after each seed's last state."""
     capped: list[np.ndarray]
-    """Per seed, whether each state before an action has a material at its cap."""
+    """Per seed, whether each state before an action has a `HOARD_CAPS` material at
+    its cap (`at_cap`)."""
     keys: np.ndarray | None
     """Skill policies: `smdp.top_key` of the observation at each step."""
     reasons: np.ndarray | None
@@ -121,12 +136,12 @@ class Tables(NamedTuple):
     inventory: pd.DataFrame
 
 
-def _capped(s: Any) -> jax.Array:
-    """A material of ``s.inventory`` at or above its `progress_key.CAPS` cap."""
-    from ..training.progress_key import CAPS
-
+def at_cap(s: Any) -> jax.Array:
+    """A `HOARD_CAPS` material of ``s.inventory`` at or above its cap (R98)."""
     inv = s.inventory
-    hits = [jnp.sum(getattr(inv, m)) >= c for m, c in CAPS.items() if hasattr(inv, m)]
+    hits = [
+        jnp.sum(getattr(inv, m)) >= c for m, c in HOARD_CAPS.items() if hasattr(inv, m)
+    ]
     return jnp.any(jnp.stack(hits))
 
 
@@ -155,7 +170,7 @@ class Replayer:
         run = self.run
         obs, st = run.env.reset(keys(seed)[0], run.env_params)  # type: ignore[arg-type]  # traced seed
         s0 = unwrap_state(st)
-        return (obs, st, init_seen(s0, run.game)), (_row(s0, run.game), _capped(s0))
+        return (obs, st, init_seen(s0, run.game)), (_row(s0, run.game), at_cap(s0))
 
     def _skill_end(self, x: tuple[Any, ...]) -> dict[str, jax.Array]:
         """Key at the observation and end reason of the step, as `SMDPPolicy.step`."""
@@ -192,7 +207,7 @@ class Replayer:
             t, a, sk, n = x
             obs2, st2, r, _, ev = run.env_step(st, a, jax.random.fold_in(k_env, t))
             s2 = unwrap_state(st2)
-            out = {"events": ev, "trace": _row(s2, game), "capped": _capped(s2)}
+            out = {"events": ev, "trace": _row(s2, game), "capped": at_cap(s2)}
             if self.skills is not None:
                 out |= self._skill_end((obs, a, r, obs2, sk, n))
             seen = update_seen(seen, s2, game, t < length)  # past the end: unchanged
@@ -371,6 +386,34 @@ def _skill_ends(
     return df
 
 
+@functools.cache
+def episode_columns(game: Game) -> tuple[str, ...]:
+    """`EPISODE_COLUMNS` with each family expanded to the names of ``game``."""
+    from .episode_metrics import STATS, creatures
+    from .episode_records import _HOSTILE, _ids, resources
+    from .milestones import ADVANCED_ACTIONS, FLOORS, achievement_names, action_names
+
+    ach = achievement_names(game)
+    floors = len(FLOORS) if game == "craftax" else 1
+    adv = [a.lower() for a in ADVANCED_ACTIONS] if game == "craftax" else []
+    res, stats = resources(game), (
+        "low_share/", "zero_share/", "survival/count/", "survival/gap/",
+        "survival/level/",
+    )  # fmt: skip
+    names: dict[str, Sequence[str]] = {
+        "ach/": ach,
+        "unlock_step/": ach,
+        "kills/": [c for _, c in creatures(game, _HOSTILE)],
+        "coverage/": [f for f, _ in FLOORS[:floors]],
+        "action_count/": action_names(game),
+        "gathered/": res,
+        "used/": res,
+        "adv/": adv,
+        "split/": [ach[a] for a in _ids(game).milestones],
+    } | dict.fromkeys(stats, STATS)
+    return tuple(f"{c}{n}" for c in EPISODE_COLUMNS for n in names.get(c, [""]))
+
+
 def file_tables(
     rp: Replayer,
     arrays: Mapping[str, np.ndarray],
@@ -385,6 +428,11 @@ def file_tables(
     """
     run = rp.run
     where = f"run {ident.run_id} update {update} mode {mode}"
+    if "extras/skill" in arrays and rp.skills is None:  # a wrapper of the skill policy
+        msg = (
+            f"{where} has extras/skill but {run.method}'s policy is not a skills policy"
+        )
+        raise ReplayMismatchError(msg)
     fr = replay_file(rp, arrays, where)
     actions, steps = np.asarray(arrays["actions"]), run.env_steps(update)
     names = [f.name for f in fields(StepEvents)]
@@ -414,7 +462,15 @@ def file_tables(
     inventory = pd.DataFrame(inv, columns=["eval_seed", "steps", "capped_steps"])
     for k, v in (("run_id", ident.run_id), ("update", update), ("mode", mode)):
         inventory[k] = v
-    return Tables(pd.DataFrame(rows), ends, inventory[list(INVENTORY_COLUMNS)])
+    episodes = pd.DataFrame(rows)
+    order = [
+        c for c in episode_columns(run.game) if c in RUN_IDENTITY or c not in IDENTITY
+    ]
+    if set(order) != set(episodes.columns):
+        odd = set(order) ^ set(episodes.columns)
+        msg = f"eval-episode columns differ from EPISODE_COLUMNS: {sorted(odd)}"
+        raise ValueError(msg)
+    return Tables(episodes[order], ends, inventory[list(INVENTORY_COLUMNS)])
 
 
 def out_paths(out: Path, run_id: str, update: int, mode: str) -> dict[str, Path]:
@@ -472,12 +528,23 @@ def _log(
     files: Iterable[Path],
     metrics: Mapping[str, float],
     step: int,
+    recover: bool,
 ) -> None:
-    """Tables under `TABLES_ARTIFACT`, summaries at ``step`` (checkpoint steps)."""
+    """Tables under `TABLES_ARTIFACT`, summaries at ``step`` (checkpoint steps).
+
+    ``recover`` (a cut earlier call) skips the summaries already logged at ``step``;
+    the artifacts are overwritten.
+    """
     from mlflow.entities import Metric
 
     for f in files:
         client.log_artifact(run_id, str(f), TABLES_ARTIFACT)
+    if recover:
+        metrics = {
+            k: v
+            for k, v in metrics.items()
+            if all(m.step != step for m in client.get_metric_history(run_id, k))
+        }
     now = int(time.time() * 1000)
     client.log_batch(
         run_id, metrics=[Metric(k, v, now, step) for k, v in metrics.items()]
@@ -494,8 +561,9 @@ def process_file(
 ) -> bool:
     """Write the tables of one eval file and log them to the run; False if done.
 
-    Idempotent: existing tables are not recomputed, and a ``.logged`` marker (written
-    after the logging) keeps a rerun from logging twice.
+    Idempotent: existing tables are not recomputed. A ``.logging`` marker is written
+    before the logging and replaced by ``.logged`` after it, so a rerun never logs
+    twice: after a cut it logs only the summaries the store lacks.
     """
     from ..visualisation.eval_rollouts import load_eval
 
@@ -513,15 +581,14 @@ def process_file(
         _write(t.episodes, paths["episodes"])
         episodes = t.episodes
     if client is not None:
+        done = _marker(paths)
+        cut = done.with_suffix(".logging")
+        recover = cut.is_file()
+        cut.write_text(f"{ident.run_id} {update} {mode}\n")
         files = [p for p in paths.values() if p.is_file()]
-        _log(
-            client,
-            ident.run_id,
-            files,
-            summaries(episodes, mode),
-            rp.run.env_steps(update),
-        )
-        _marker(paths).write_text(f"{ident.run_id} {update} {mode}\n")
+        step = rp.run.env_steps(update)
+        _log(client, ident.run_id, files, summaries(episodes, mode), step, recover)
+        cut.replace(done)
     return True
 
 
@@ -631,7 +698,7 @@ def main(argv: list[str] | None = None) -> None:
     a = _parse(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     configure_runtime(host_devices=a.host_devices)  # before JAX starts its backend
-    from ..orchestration.tracking import _resolve_tracking_uri
+    from ..orchestration.tracking import resolve_tracking_uri
     from ..visualisation.eval_rollouts import EvalRun
 
     runs = phase_runs(a.tracking_uri, a.phase)
@@ -647,7 +714,7 @@ def main(argv: list[str] | None = None) -> None:
     if not a.no_log:
         import mlflow
 
-        client = mlflow.MlflowClient(_resolve_tracking_uri(a.tracking_uri))
+        client = mlflow.MlflowClient(resolve_tracking_uri(a.tracking_uri))
     todo = [
         j
         for j in plan_jobs(runs, ups, modes)

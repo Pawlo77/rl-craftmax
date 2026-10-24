@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from wut_murl_craftax.analysis import obstacles
 from wut_murl_craftax.evaluation.coverage import (
     coverage_summary,
     init_seen,
@@ -19,6 +20,9 @@ from wut_murl_craftax.evaluation.coverage import (
 )
 from wut_murl_craftax.evaluation.episode_records import episode_record, trace_of
 from wut_murl_craftax.evaluation.rollout_metrics import (
+    EPISODE_COLUMNS,
+    HOARD_CAPS,
+    IDENTITY,
     INVENTORY_COLUMNS,
     RUN_IDENTITY,
     SKILL_ENDS_COLUMNS,
@@ -26,6 +30,8 @@ from wut_murl_craftax.evaluation.rollout_metrics import (
     Replayer,
     ReplayMismatchError,
     RunRef,
+    at_cap,
+    episode_columns,
     file_tables,
     main,
     out_paths,
@@ -159,6 +165,31 @@ def test_the_skill_key_is_read_at_the_decision_not_after_it(
     assert int(got["key"]) == keys[0]
 
 
+def _family(column: str) -> str:
+    """The `EPISODE_COLUMNS` entry a column belongs to (exact name or family)."""
+    if column in EPISODE_COLUMNS:
+        return column
+    return next(f for f in EPISODE_COLUMNS if f.endswith("/") and column.startswith(f))
+
+
+def test_the_table_columns_are_episode_columns_in_contract_order(
+    tables: Any,
+) -> None:
+    """EPISODE_COLUMNS lists the contract's families in order; files lack config_ref."""
+    want = episode_columns(GAME)
+    assert want[: len(IDENTITY)] == IDENTITY
+    assert list(tables.episodes.columns) == [c for c in want if c != "config_ref"]
+    groups = [
+        f
+        for i, f in enumerate(map(_family, want))
+        if i == 0 or f != _family(want[i - 1])
+    ]
+    present = [f for f in EPISODE_COLUMNS if f in groups]
+    assert groups == present  # each family once, in contract order
+    assert set(EPISODE_COLUMNS) - set(groups) == {"adv/"}  # Classic has no magic
+    assert {"kills/zombie", "kills/skeleton", "kills/passive"} <= set(want)
+
+
 def test_one_row_per_seed_with_the_identity_and_the_replay_fields(
     tables: Any, stochastic: dict[str, np.ndarray]
 ) -> None:
@@ -244,6 +275,30 @@ def test_dyna_rows_get_the_count_of_the_checkpoint_model_graph(
     assert (ends.loc[~same, "pair_count"] == 0).all()
 
 
+def test_only_materials_with_a_cap_above_1_count_as_capped(
+    classic_start: Any, craftax_start: Any
+) -> None:
+    """R98: one sapling, arrow, torch, book, potion or gem is not hoarding."""
+    assert set(HOARD_CAPS) == {"wood", "stone", "coal", "iron", "diamond"}
+
+    def inv(s: Any, **kw: int) -> Any:
+        return s.replace(
+            inventory=s.inventory.replace(**{
+                k: jnp.full_like(getattr(s.inventory, k), v) for k, v in kw.items()
+            })
+        )
+
+    c = classic_start
+    assert not bool(at_cap(inv(c, sapling=1, wood=3, stone=2)))
+    assert bool(at_cap(inv(c, wood=4)))
+    s = craftax_start
+    ones = dict.fromkeys(
+        ("sapling", "sapphire", "ruby", "arrows", "torches", "books"), 1
+    )
+    assert not bool(at_cap(inv(s, potions=1, **ones)))
+    assert bool(at_cap(inv(s, diamond=3)))
+
+
 def test_eval_inventory_counts_the_states_with_a_material_at_its_cap(
     rp: Replayer, stochastic: dict[str, np.ndarray], tables: Any
 ) -> None:
@@ -255,9 +310,23 @@ def test_eval_inventory_counts_the_states_with_a_material_at_its_cap(
         n = int(stochastic["length"][i])
         capped = np.zeros(n + 1, bool)
         for m, cap in CAPS.items():
-            if hasattr(s, m):
+            if hasattr(s, m) and cap > 1:
                 capped |= np.asarray(getattr(s, m)) >= cap
         assert inv["capped_steps"].iloc[i] == capped[:n].sum()
+
+
+def test_the_frame_columns_are_the_analysis_ones() -> None:
+    assert SKILL_ENDS_COLUMNS == obstacles.SKILL_ENDS_COLUMNS
+    assert INVENTORY_COLUMNS == obstacles.INVENTORY_COLUMNS
+
+
+def test_skill_extras_without_a_skills_policy_raise(
+    rp: Replayer, stochastic: dict[str, np.ndarray], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wrapper policy the replayer does not know would silently drop skill_ends."""
+    monkeypatch.setattr(rp, "skills", None)
+    with pytest.raises(ReplayMismatchError, match="extras/skill"):
+        file_tables(rp, stochastic, UPDATE, "stochastic", ID)
 
 
 def _store(tmp_path: Path) -> tuple[str, mlflow.MlflowClient]:
@@ -309,6 +378,26 @@ def test_process_writes_once_logs_once_and_skips_after(
     assert len(client.get_metric_history(run_id, key)) == 1
 
 
+def test_a_logging_cut_after_the_metrics_is_finished_without_duplicates(
+    rp: Replayer, tmp_path: Path
+) -> None:
+    """A crash between the summaries and the done marker leaves a ``.logging`` one."""
+    _, client = _store(tmp_path)
+    exp = client.create_experiment("e", artifact_location=(tmp_path / "art").as_uri())
+    run_id = client.create_run(exp).info.run_id
+    ident, out = Identity(run_id, "1m", 3), tmp_path / "out"
+    process_file(rp, ident, UPDATE, "stochastic", out, client)
+    done = out_paths(out, run_id, UPDATE, "stochastic")["episodes"].with_suffix(
+        ".logged"
+    )
+    done.rename(done.with_suffix(".logging"))  # as if killed before the last write
+    assert process_file(rp, ident, UPDATE, "stochastic", out, client)
+    assert done.is_file()
+    assert not done.with_suffix(".logging").exists()
+    key = "eval/stochastic/revisit_rate"
+    assert len(client.get_metric_history(run_id, key)) == 1
+
+
 def test_phase_runs_select_by_tag_and_the_plan_puts_final_checkpoints_first(
     skill_run: Path, tmp_path: Path
 ) -> None:
@@ -332,7 +421,7 @@ def test_phase_runs_select_by_tag_and_the_plan_puts_final_checkpoints_first(
 
 
 def test_the_cli_processes_a_phase_without_logging_and_resumes(
-    skill_run: Path, tmp_path: Path
+    skill_run: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     uri, client = _store(tmp_path)
     run_id = _run_in_store(client, skill_run, tmp_path, "final-1m", "final-1m")
@@ -344,6 +433,28 @@ def test_the_cli_processes_a_phase_without_logging_and_resumes(
     assert not out_paths(out, run_id, 0, "greedy")["episodes"].exists()
     assert not client.list_artifacts(run_id, "eval_tables")
     assert pd.read_parquet(paths["episodes"])["method"][0] == "smdp-skills"
+    mtimes = {p: p.stat().st_mtime_ns for p in paths.values()}
+    caplog.set_level("INFO")
+    main([*argv, "--updates", "2", "--mode", "greedy", "--no-log"])  # resumed
+    assert "0 files to do" in caplog.text
+    assert {p: p.stat().st_mtime_ns for p in paths.values()} == mtimes
+
+
+def test_the_cli_skips_a_mismatching_file_and_exits_1(
+    skill_run: Path, tmp_path: Path
+) -> None:
+    uri, client = _store(tmp_path)
+    run_id = _run_in_store(client, skill_run, tmp_path, "final-1m", "final-1m")
+    run_dir = Path(client.get_run(run_id).info.artifact_uri.removeprefix("file://"))
+    bad = load_eval(run_dir, UPDATE, greedy=True)
+    bad["events/health_delta"][0, 2] += 1
+    np.savez_compressed(run_dir / "eval" / "greedy" / f"{UPDATE:05d}.npz", **bad)
+    out = tmp_path / "out"
+    argv = ["--run", run_id, "--tracking-uri", uri, "--out", str(out), "--no-log"]
+    with pytest.raises(SystemExit, match=r"1 files failed.*mode greedy seed 10000"):
+        main([*argv, "--updates", "2"])
+    assert out_paths(out, run_id, UPDATE, "stochastic")["episodes"].is_file()
+    assert not out_paths(out, run_id, UPDATE, "greedy")["episodes"].exists()
 
 
 def test_plan_skips_runs_without_eval_files(tmp_path: Path) -> None:
