@@ -41,6 +41,8 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 | [[visualisation]] | gameplay highlights and learning-process videos, GIFs, ffmpeg cuts |
 | [[orchestration]] | fast JAX runtime (compile cache, CPU shards, device roles, textures), run queue, resumable runner, MLflow tracking |
 | [[evaluation]] | game tables, per-step events, online episode metrics, reproduction check |
+| [[analysis]] | Phase 4 training analysis, cases and method comparison |
+| [[interpretation]] | decision-tree distillation and rules of trained policies |
 
 ## Concepts
 

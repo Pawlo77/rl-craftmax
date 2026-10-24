@@ -2707,6 +2707,8 @@ dependencies = [
     { name = "pyarrow" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "tqdm" },
 ]
@@ -2750,6 +2752,8 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=21.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "scikit-learn", specifier = ">=1.9.1" },
+    { name = "scipy", specifier = ">=1.18.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "tqdm", specifier = ">=4.67.0" },
 ]

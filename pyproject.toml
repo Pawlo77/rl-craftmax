@@ -51,6 +51,11 @@ dependencies = [
   "psutil>=7.2.2",
   "python-dotenv>=1.2.2",
   "pyyaml>=6.0.2",
+  # Decision-tree distillation of trained policies (interpretation); already installed via mlflow.
+  "scikit-learn>=1.9.1",
+  # Bootstrap CIs, Mann-Whitney with Holm and t intervals of the method comparison; already
+  # installed via mlflow.
+  "scipy>=1.18.1",
   "seaborn>=0.13.2",
   "tqdm>=4.67.0",
 ]
@@ -134,7 +139,7 @@ no_implicit_reexport = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ['craftax', 'craftax.*', 'optax', 'optax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*', 'pyarrow', 'pyarrow.*']
+module = ['craftax', 'craftax.*', 'optax', 'optax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*', 'pyarrow', 'pyarrow.*', 'scipy', 'scipy.*', 'sklearn', 'sklearn.*']
 ignore_missing_imports = true
 
 [tool.bandit]
