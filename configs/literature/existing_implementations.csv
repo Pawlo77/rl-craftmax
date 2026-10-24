@@ -1,0 +1,30 @@
+block,implementation,note,env,observation,budget,protocol,score_pct,spread,spread_kind,seeds,score_text
+A,[[PPO-GTrXL (Hamon 2024)]],PPO-GTrXL (Hamon 2024),Craftax,Symbolic,1B,n.r.,18.3,,none,n.r. (5 per-seed files in repo),18.3
+A,"[[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]] (h096, repo only)",Auto-Craftax PPO-GRU (Creus Castanyer 2026),Craftax,Symbolic,1B,training-episode return,17.9,,none,2 (h040: 3),"17.9 (h040 without RND: 17.5, sd 1.0)"
+A,[[PQN-RNN (Gallici 2025)]],PQN-RNN (Gallici 2025),Craftax,Symbolic,1B,n.r.,16.0,,none,10,16.0
+A,[[PPO-RNN (Matthews 2024)]],PPO-RNN (Matthews 2024),Craftax,Symbolic,1B,training-episode return,15.3,,none,10,15.3
+A,[[RND (Matthews 2024)]],RND (Matthews 2024),Craftax,Symbolic,1B,training-episode return,12.0,,none,10,"12.0 (code later fixed, PR #5)"
+A,[[PPO (Matthews 2024)]],PPO (Matthews 2024),Craftax,Symbolic,1B,training-episode return,11.9,,none,10,11.9
+A,[[ICM (Matthews 2024)]],ICM (Matthews 2024),Craftax,Symbolic,1B,training-episode return,11.9,,none,10,11.9 (author: paper's ICM results wrong)
+A,[[E3B (Matthews 2024)]],E3B (Matthews 2024),Craftax,Symbolic,1B,training-episode return,11.0,,none,10,11.0
+A,"PPO-LSTM port, rerun ([[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]])",Auto-Craftax PPO-GRU (Creus Castanyer 2026),Craftax,Symbolic,1B,training-episode return,15.0,0.2,sd,3,15.0 (sd 0.2)
+A,"PPO port, rerun ([[Auto-Craftax PPO-GRU (Creus Castanyer 2026)]])",Auto-Craftax PPO-GRU (Creus Castanyer 2026),Craftax,Symbolic,1B,training-episode return,11.9,0.6,sd,3,11.9 (sd 0.6)
+A2,[[PPO-LSTM (Jiralerspong 2026)]],PPO-LSTM (Jiralerspong 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,19.54,0.34,s.e.,10,"19.54 ± 0.34 s.e. (1024 episodes, final checkpoint)"
+A2,"PPO-Hybrid TrXL + S5, unmasked ([[Feasibility Classification (Zabounidis 2026)]])",Feasibility Classification (Zabounidis 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,19.4,,none,4,"19.4 (raw 43.9 ± 0.4 sd; 10,240 stochastic episodes per seed)"
+A2,"[[Feasibility Classification (Zabounidis 2026)]] (Hybrid, masked + KL, learned masks)",Feasibility Classification (Zabounidis 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,19.1,,none,4,19.1 (raw 43.2 ± 1.1 sd)
+A2,"[[Sable Inference Search (Chalumeau 2025)]] (zero-shot, no search)",Sable Inference Search (Chalumeau 2025),Craftax,n.r.,1B,separate evaluation of the trained policy,18.8,,none,n.r.,18.8 (95% CI 18.1-19.5)
+A2,"PPO-GTrXL, rerun ([[PPO-LSTM (Jiralerspong 2026)]])",PPO-LSTM (Jiralerspong 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,17.79,0.82,s.e.,10,17.79 ± 0.82 s.e.
+A2,"PPO-RNN (GRU), rerun ([[Feasibility Classification (Zabounidis 2026)]])",Feasibility Classification (Zabounidis 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,16.2,,none,4,16.2 (raw 36.7 ± 0.1 sd)
+A2,[[SimBa (Lee 2025)]] (PPO + SimBa; protocol of `avg_return` not documented),SimBa (Lee 2025),Craftax,Symbolic,1B,n.r.,12.8,0.2,sd,5,"12.8 (sd 0.2, from repo CSV)"
+A2,"[[RePPO (Nishimori 2026)]] (m = 1.2, no entropy)",RePPO (Nishimori 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,11.87,0.16,sd,5,11.87 (sd 0.16; 100 episodes per seed)
+A2,"PPO + entropy, rerun ([[RePPO (Nishimori 2026)]])",RePPO (Nishimori 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,11.66,0.33,sd,5,11.66 (sd 0.33)
+A2,"RND + entropy, rerun ([[RePPO (Nishimori 2026)]])",RePPO (Nishimori 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,11.68,0.30,sd,5,11.68 (sd 0.30)
+A2,"PPO (MLP), rerun ([[Feasibility Classification (Zabounidis 2026)]])",Feasibility Classification (Zabounidis 2026),Craftax,Symbolic,1B,separate evaluation of the trained policy,11.9,,none,4,11.9 (raw 26.9 ± 0.5 sd)
+A2,"PPO (MLP), rerun ([[SimBa (Lee 2025)]] repo CSV)",SimBa (Lee 2025),Craftax,Symbolic,1B,n.r.,11.4,0.9,sd,5,11.4 (sd 0.9)
+D,[[EASimulus (Peng 2026)]],EASimulus (Peng 2026),Craftax,Symbolic,1M,n.r.,7.23,0.19,sd,5 (repo),"7.23 (sd 0.19, computed from repo per-run file)"
+D,[[Simulus (Cohen 2025)]],Simulus (Cohen 2025),Craftax,Symbolic,1M,mean of 100 test episodes at the end of training,6.59,0.49,sd,5,"6.59 (sd 0.49, computed from repo per-seed file); 100 test episodes"
+D,[[PPO-RNN (Matthews 2024)]],PPO-RNN (Matthews 2024),Craftax,Symbolic,1M,training-episode return,2.3,,none,10,2.3 (third-party rerun: 2.13)
+D,[[RND (Matthews 2024)]],RND (Matthews 2024),Craftax,Symbolic,1M,training-episode return,2.2,,none,10,2.2 (third-party rerun: 2.11)
+D,[[PPO (Matthews 2024)]],PPO (Matthews 2024),Craftax,Symbolic,1M,training-episode return,2.2,,none,10,2.2
+D,[[ICM (Matthews 2024)]],ICM (Matthews 2024),Craftax,Symbolic,1M,training-episode return,2.2,,none,10,"2.2 (author: wrong, buggy commit)"
+D,[[E3B (Matthews 2024)]],E3B (Matthews 2024),Craftax,Symbolic,1M,training-episode return,2.2,,none,10,2.2 (third-party rerun: 1.91)

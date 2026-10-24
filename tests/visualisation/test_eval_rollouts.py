@@ -16,30 +16,42 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from _learning_run import EVAL_SEEDS, TINY, runner_config, tiny_run
+from _method_runs import CLASSIC, CONFIGS, FAMILY_RUNS, UPDATES, method_run
 from craftax.craftax_env import make_craftax_env_from_name
 
 from wut_murl_craftax.evaluation.events import StepEvents
-from wut_murl_craftax.orchestration.queue import RunSpec
+from wut_murl_craftax.orchestration.queue import RunSpec, load_method
 from wut_murl_craftax.orchestration.runtime import device_roles
-from wut_murl_craftax.training import count_bonus, interface, sil
+from wut_murl_craftax.training import count_bonus, interface, ppo_rnn, pqn_rnn, sil
 from wut_murl_craftax.training.checkpoints import save_checkpoint
+from wut_murl_craftax.training.dyna_q import DYNA_KEYS
 from wut_murl_craftax.training.hooks import HookFields, HookMethod
 from wut_murl_craftax.training.interface import METHODS, combo_trainer, run_trainer
 from wut_murl_craftax.training.ppo import PPOPolicy
 from wut_murl_craftax.training.ppo_rnn import PPORNNConfig, make_trainer
 from wut_murl_craftax.training.records import achievement_weights
+from wut_murl_craftax.training.skills import (
+    NUM_SKILLS,
+    PRIMITIVE,
+    SKILL_IDS,
+    step_limit,
+)
+from wut_murl_craftax.visualisation import eval_rollouts
 from wut_murl_craftax.visualisation.eval_rollouts import (
     EVAL_SEEDS as PRODUCTION_SEEDS,
 )
 from wut_murl_craftax.visualisation.eval_rollouts import (
     MODES,
+    Q_FAMILIES,
     EvalRun,
     as_rollout,
     episode_frames,
+    episode_outputs,
     eval_returns,
     evaluate,
     evaluate_spec,
     load_eval,
+    network_family,
     network_outputs,
     replay_episode,
     rollout_seeds,
@@ -496,5 +508,229 @@ def test_pqn_rnn_checkpoints_evaluate_in_both_modes_at_their_epsilon(
     calm = rollout_seeds(run, first | {"eps": np.float32(0.0)}, EVAL_SEEDS, False)
     assert calm is not None
     np.testing.assert_array_equal(calm["actions"], greedy)
-    with pytest.raises(NotImplementedError, match="pqn-rnn"):
-        network_outputs(run, 4, np.zeros((1, 1)), np.zeros(1), np.zeros(1), True)
+    # the network re-runs at the checkpoint's epsilon: 1 at update 0, so uniform
+    for mode, want in (("greedy", greedy[0]), ("stochastic", stochastic[0])):
+        probs, _ = episode_outputs(run, 0, mode, EVAL_SEEDS[0])
+        if mode == "greedy":
+            np.testing.assert_array_equal(probs.argmax(1), want[: len(probs)])
+        else:
+            np.testing.assert_allclose(probs, 1 / probs.shape[1], atol=1e-6)
+
+
+# --- network outputs of every method ------------------------------------------------
+
+N_ACTIONS = 17
+"""Craftax-Classic actions."""
+FAMILIES = {
+    "ppo": "ppo",
+    "ppo-rnn": "ppo-rnn",
+    "count-bonus-ppo-rnn": "ppo-rnn",
+    "sil": "ppo-rnn",
+    "combo": "ppo-rnn",
+    "pqn-rnn": "pqn-rnn",
+    "count-bonus-pqn-rnn": "pqn-rnn",
+    "smdp-skills": "skills",
+    "dyna-q": "skills",
+}
+"""The network family each registry entry's policy re-runs through."""
+
+
+def test_every_registry_entry_has_a_network_family() -> None:
+    """Combo goes through its own pair (`run_trainer`), never the live combo.yaml."""
+    assert set(METHODS) == FAMILIES.keys()
+    key, combo = jax.random.key(0), json.loads(COMBO_1M.read_text())
+    for name, family in FAMILIES.items():
+        hooked = getattr(interface._ENTRIES.get(name), "method", None)
+        own = {} if hooked is None else {k: combo[k] for k in hooked.keys}
+        if name == "dyna-q":  # planning keys have no defaults
+            own = {k: load_method(name).base[k] for k in DYNA_KEYS}
+        cfg = combo if name == "combo" else {"method": name, "env": CLASSIC} | own
+        trainer = run_trainer(cfg)
+        config = {k: v for k, v in cfg.items() if k != "combine"} | {"steps": 4096}
+        state = jax.eval_shape(lambda t=trainer, c=config: t.init(c, key))
+        assert network_family(trainer.policy(state)) == family, name
+    assert {"pqn-rnn", "skills"} == Q_FAMILIES
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("name", FAMILY_RUNS)
+def test_episode_outputs_are_a_distribution_led_by_the_greedy_action(
+    name: str, mode: str
+) -> None:
+    run, u = EvalRun.load(method_run(name)), UPDATES[name]
+    ev = load_eval(run.dir, u, mode == "greedy")
+    for i, seed in enumerate(EVAL_SEEDS):
+        n = int(ev["length"][i])
+        probs, value = episode_outputs(run, u, mode, seed)
+        assert probs.dtype == value.dtype == np.float32
+        assert probs.shape == (n, N_ACTIONS)
+        assert value.shape == (n,)
+        assert (probs >= 0).all()
+        assert np.isfinite(value).all()
+        np.testing.assert_allclose(probs.sum(1), 1.0, atol=1e-5)
+        if mode == "greedy":
+            np.testing.assert_array_equal(probs.argmax(1), ev["actions"][i, :n])
+
+
+def test_episode_outputs_refuse_an_unknown_mode_or_seed() -> None:
+    run = EvalRun.load(method_run("ppo"))
+    with pytest.raises(ValueError, match="mode"):
+        episode_outputs(run, 4, "sampled", EVAL_SEEDS[0])
+    with pytest.raises(ValueError, match="seed 9"):
+        episode_outputs(run, 4, "greedy", 9)
+
+
+def _stepwise(
+    run: EvalRun, step: Any, obs: np.ndarray, extra: np.ndarray | None = None
+) -> list[Any]:
+    """Outputs of ``step(carry, obs, t) -> (carry, out)`` applied one step at a time."""
+    carry, outs = run.policy.init_carry(1), []
+    for t, o in enumerate(obs):
+        x = o if extra is None else np.concatenate([o, extra[t]])
+        carry, out = step(carry, jnp.asarray(x)[None, None], t)
+        outs.append(out)
+    return outs
+
+
+def test_ppo_rnn_outputs_equal_a_live_rollout_of_the_seed() -> None:
+    """The GRU carry is threaded from zeros over the episode, as the policy acts."""
+    run, u, seed = EvalRun.load(method_run("ppo-rnn")), 2, EVAL_SEEDS[0]
+    ep, _ = stored_episode(run, u, seed)
+    params, apply = run.params(u), jax.jit(ppo_rnn.apply_network, static_argnums=0)
+    no_reset = jnp.zeros((1, 1), bool)
+
+    def step(h: jax.Array, x: jax.Array, t: int) -> Any:
+        h, logits, v = apply(run.policy.net, params, h, x, no_reset)
+        return h, (jax.nn.softmax(logits[0, 0]), v[0, 0])
+
+    probs, value = map(np.stack, zip(*_stepwise(run, step, ep.obs), strict=True))
+    got = episode_outputs(run, u, "stochastic", seed)
+    np.testing.assert_allclose(got[0], probs, atol=1e-5)
+    np.testing.assert_allclose(got[1], value, atol=1e-5)
+
+
+def _eps_greedy(q: np.ndarray, eps: float) -> np.ndarray:
+    return eps / q.shape[-1] + (1 - eps) * np.eye(q.shape[-1])[q.argmax(-1)]
+
+
+def _live_q(
+    run: EvalRun, u: int, obs: np.ndarray, actions: np.ndarray, extra: Any = None
+) -> np.ndarray:
+    """Q-values of a live PQN-RNN rollout: the previous action is an input."""
+    variables = run.params(u)["variables"]
+    apply = jax.jit(pqn_rnn.apply_network, static_argnums=0)
+    no_reset = jnp.zeros((1, 1), bool)
+    last = np.r_[pqn_rnn.NO_ACTION, actions[:-1]].astype(np.int32)
+
+    def step(c: Any, x: jax.Array, t: int) -> Any:
+        lstm, q = apply(
+            run.policy.net, variables, c[0], x, no_reset, last[t, None, None]
+        )
+        return (lstm, c[1]), np.asarray(q[0, 0])
+
+    if extra is None:
+        pad = run.policy.net.obs_dim - obs.shape[1]
+        extra = np.zeros((len(obs), pad), obs.dtype)
+    return np.stack(_stepwise(run, step, obs, extra))
+
+
+@pytest.mark.parametrize("u", [0, 2])
+def test_pqn_rnn_outputs_are_max_q_and_epsilon_greedy_at_the_checkpoint(
+    u: int,
+) -> None:
+    run, seed = EvalRun.load(method_run("pqn-rnn")), EVAL_SEEDS[0]
+    ep, actions = stored_episode(run, u, seed)
+    q = _live_q(run, u, ep.obs, actions)
+    eps = float(run.params(u)["eps"])
+    assert (eps == 1.0) if u == 0 else (0.1 < eps < 0.9)
+    probs, value = episode_outputs(run, u, "stochastic", seed)
+    np.testing.assert_allclose(value, q.max(1), atol=1e-5)
+    np.testing.assert_allclose(probs, _eps_greedy(q, eps), atol=1e-5)
+    ep, actions = stored_episode(run, u, seed, greedy=True)
+    probs, _ = episode_outputs(run, u, "greedy", seed)
+    np.testing.assert_array_equal(probs, np.eye(N_ACTIONS)[actions])
+
+
+def _skill_inputs(ev: dict[str, np.ndarray], i: int) -> tuple[np.ndarray, np.ndarray]:
+    n = int(ev["length"][i])
+    return ev["extras/skill"][i, :n], ev["extras/steps_in_skill"][i, :n]
+
+
+def test_the_skill_network_reads_the_stored_skill_and_its_step_fraction() -> None:
+    """Input: observation, skill one-hot, steps / step limit at the run's timeout."""
+    run, u, seed = EvalRun.load(method_run("smdp-skills")), 2, EVAL_SEEDS[0]
+    ev = load_eval(run.dir, u)
+    skill, steps = _skill_inputs(ev, 0)
+    assert ev["extras/skill"].dtype == np.uint8
+    assert ev["extras/steps_in_skill"].dtype == np.uint16
+    assert (steps > 0).any()  # a learned skill ran for more than one step
+    ep, actions = stored_episode(run, u, seed)
+    limit = np.asarray(step_limit(skill.astype(np.int32), 0.5))
+    assert CONFIGS["smdp-skills"]["timeout_mult"] == 0.5
+    frac = (steps / limit).astype(np.float32)[:, None]
+    extra = np.concatenate([np.eye(NUM_SKILLS)[skill], frac], 1).astype(np.float32)
+    q = _live_q(run, u, ep.obs, actions, extra)
+    eps = float(run.params(u)["eps"])
+    probs, value = episode_outputs(run, u, "stochastic", seed)
+    np.testing.assert_allclose(value, q.max(1), atol=1e-5)
+    np.testing.assert_allclose(probs, _eps_greedy(q, eps), atol=1e-5)
+    with pytest.raises(ValueError, match="skill"):
+        network_outputs(run, u, ep.obs, actions, ep.done, False)
+
+
+def test_primitive_skill_steps_are_one_hot_on_the_stored_action() -> None:
+    """``read_book`` and ``level_up`` act with a fixed action, never the network's."""
+    run, u, seed = EvalRun.load(method_run("smdp-skills")), 2, EVAL_SEEDS[0]
+    ev = load_eval(run.dir, u)
+    skill, steps = (x.copy() for x in _skill_inputs(ev, 0))
+    skill[::3], steps[::3] = SKILL_IDS["read_book"], 0
+    skill[1::7] = SKILL_IDS["level_up"]
+    ep, actions = stored_episode(run, u, seed)
+    probs, _ = network_outputs(run, u, ep.obs, actions, ep.done, False, skill, steps)
+    prim = PRIMITIVE[skill]
+    assert prim.any()
+    assert not prim.all()
+    np.testing.assert_array_equal(probs[prim], np.eye(N_ACTIONS)[actions[prim]])
+    assert (probs[~prim].max(1) < 0.9).all()  # epsilon about 0.5 elsewhere
+
+
+def test_network_outputs_load_a_checkpoint_once_for_many_episodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bulk callers (distillation) re-run many episodes of one checkpoint: the skill
+    methods' table is read from disk once, and only the last checkpoint is kept."""
+    run = EvalRun.load(method_run("pqn-rnn"))
+    loads: list[int] = []
+    real = eval_rollouts.load_params
+
+    def spy(run_dir: Path, update: int, template: Any) -> Any:
+        loads.append(update)
+        return real(run_dir, update, template)
+
+    monkeypatch.setattr(eval_rollouts, "load_params", spy)
+    for u in (2, 2, 0, 0, 2):
+        for seed in EVAL_SEEDS:
+            episode_outputs(run, u, "greedy", seed)
+    assert loads == [2, 0, 2]
+
+
+def test_network_outputs_refuse_inputs_shorter_or_longer_than_obs() -> None:
+    run, u, seed = EvalRun.load(method_run("smdp-skills")), 2, EVAL_SEEDS[0]
+    ev = load_eval(run.dir, u)
+    skill, steps = _skill_inputs(ev, 0)
+    ep, actions = stored_episode(run, u, seed)
+    good = {"actions": actions, "dones": ep.done, "skill": skill, "skill_steps": steps}
+    for name in good:
+        bad = good | {name: good[name][:-1]}
+        n = len(ep.obs)
+        with pytest.raises(ValueError, match=f"{name} has {n - 1} steps, obs {n}"):
+            network_outputs(
+                run,
+                u,
+                ep.obs,
+                bad["actions"],
+                bad["dones"],
+                False,
+                bad["skill"],
+                bad["skill_steps"],
+            )

@@ -6,13 +6,20 @@ import jax
 import numpy as np
 import pytest
 from _learning_run import EVAL_SEEDS, TINY, needs_ffmpeg, tiny_run
+from _method_runs import FAMILY_RUNS, UPDATES, method_run
 from craftax.craftax_env import make_craftax_env_from_name
 
 from wut_murl_craftax.training.ppo import make_network, policy_value
 from wut_murl_craftax.visualisation import ffmpeg
-from wut_murl_craftax.visualisation.eval_rollouts import EvalRun, load_eval
+from wut_murl_craftax.visualisation.eval_rollouts import (
+    EvalRun,
+    episode_outputs,
+    load_eval,
+)
 from wut_murl_craftax.visualisation.overlay import (
     _Episode,
+    _header,
+    _Panel,
     block_colors,
     decode_obs,
     discounted_return,
@@ -90,3 +97,46 @@ def test_overlay_is_game_plus_panel_one_frame_per_step(tmp_path: Path) -> None:
     info = ffmpeg.probe(out)["streams"][0]
     assert (info["width"], info["height"]) == (344, 144)
     assert ffmpeg.count_frames(out) == 6
+
+
+VALUE_LABELS = {
+    "ppo": "V(s)",
+    "ppo-rnn": "V(s)",
+    "pqn-rnn": "max Q(s, a)",
+    "smdp-skills": "max Q(s, a)",
+}
+"""The value panel's quantity: the critic, or max Q for value-based methods."""
+
+
+@pytest.mark.parametrize("name", FAMILY_RUNS)
+def test_the_panel_names_the_method_and_its_value(name: str) -> None:
+    run, u, seed = EvalRun.load(method_run(name)), UPDATES[name], EVAL_SEEDS[0]
+    ep = _Episode.load(run, u, seed, 0.99, greedy=True)
+    probs, value = episode_outputs(run, u, "greedy", seed)
+    np.testing.assert_array_equal(ep.probs, probs)
+    np.testing.assert_array_equal(ep.value, value)
+    header = _header(run, u, "greedy", seed)
+    assert header.startswith(f"{name}, checkpoint ")
+    panel = _Panel(run, ep, (200, 144), 0, min(3, ep.n_alive), header)
+    assert [t.get_text() for t in panel.fig.texts] == [header]
+    panel.draw(1)
+    label = VALUE_LABELS[name]
+    assert panel.v_title.get_text().startswith(f"{label} = ")
+    legend = panel.v_line.axes.get_legend()
+    assert f"estimate {label}" in [t.get_text() for t in legend.get_texts()]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("name", FAMILY_RUNS)
+def test_every_network_family_renders_an_overlay(tmp_path: Path, name: str) -> None:
+    out = render_overlay(
+        method_run(name),
+        update=UPDATES[name],
+        steps=(0, 3),
+        fps=5,
+        game_px=144,
+        panel=(200, 144),
+        out=tmp_path / "o.mp4",
+        mode="greedy",
+    )
+    assert ffmpeg.count_frames(out) == 3

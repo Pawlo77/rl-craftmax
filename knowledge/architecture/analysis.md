@@ -9,6 +9,7 @@ updated: 2026-10-24
 related-code:
   - "[[src/wut_murl_craftax/analysis/__init__.py]]"
   - "[[src/wut_murl_craftax/analysis/load.py]]"
+  - "[[src/wut_murl_craftax/analysis/literature.py]]"
   - "[[src/wut_murl_craftax/analysis/obstacles.py]]"
 ---
 # analysis
@@ -16,7 +17,7 @@ related-code:
 ## Responsibility
 
 - Phase 4 analysis of finished runs: load the exported tables, per-method training analysis, obstacles, cases ([[2026-10-20-craftax-training-analysis]]) and the method comparison ([[2026-10-20-craftax-comparison-and-results]]).
-- Filled by the training analysis and comparison tasks; so far the loaders and the obstacle detectors.
+- Filled by the training analysis and comparison tasks; so far the loaders, the literature table and the obstacle detectors.
 
 ## Public surface
 
@@ -25,6 +26,8 @@ related-code:
 - `units(frames)`: each (`method`, `config_ref`) with its own frames.
 - `BASE_CONTROL` (non-combo method -> control), `CONTROLS`, `base_control(row)`, `pair_of(row)`: the control a run is compared with; a combo run's comes from its own pair.
 - `final_checkpoint(episodes, run=None)`: the last checkpoint's eval episodes per run.
+- `load_literature(path=)`: the published rows of blocks A, A2 and D of [[Existing Implementations]] from `configs/literature/existing_implementations.csv` (columns `block, implementation, note, env, observation, budget, protocol, score_pct, spread, spread_kind, seeds, score_text`; `note` is the linked note's file stem; `protocol` is the block's (A: training-episode return, A2: separate evaluation of the trained policy), `n.r.` where the row's source note says the protocol is unstated (PPO-GTrXL, PQN-RNN, SimBa, EASimulus), and per row in block D from the notes). `LITERATURE_CSV` and `LITERATURE_COLUMNS` are the path and the column list.
+- `comparable_rows(score_kind, budget)`: the like-for-like block (`COMPARABLE_BLOCKS`): `("training", "1b")` is A, `("training", "1m")` is D, `("stochastic", "1b")` is A2; any other pair raises `ValueError`.
 - `MissingPhaseError` (a `FileNotFoundError` naming the phases), `SchemaError`, `FINAL_PHASES`, `METRICS_ROOT`, `UNIT_COLUMNS`.
 - `detect_all(frames, method, budget, config_ref="tuned")`: one `Obstacle(name, run, start, end, evidence, status)` per run and detector of `DETECTORS[method]`; `status` is `detected`, `absent`, `not logged`, `needs replay (evaluation Task 6)`, `needs eval actions`, `not applicable` or `uninformative at <budget>`.
 - `DETECTORS` (registry method -> `Detector` list), built from `shared_detectors()`, `count_bonus_detectors()`, `sil_detectors()`, `skill_detectors()`, `dyna_detectors()`; a `Detector` declares `REQUIRED_METRICS`, `BASE_METRICS`, optional `inputs`, informative `budgets` and owner `methods`.
@@ -37,11 +40,12 @@ related-code:
 One line each; signatures and details: [[Modules]].
 
 - `load`: loaders, schema checks, run selectors and base controls over the export tables of [[evaluation]].
+- `literature`: the published scores of blocks A, A2 and D of [[Existing Implementations]] and the like-for-like block of each of our score kinds.
 - `obstacles`: the 10 shared and 23 method obstacle detectors, their registry and the obstacles table.
 
 ## Data flow
 
-- In: the export tables of [[evaluation]] under `outputs/metrics/<phase>/` (`runs`, `curves`, `eval_episodes` parquet; column contract in the Phase 4 contracts); eval files and checkpoints through [[visualisation]].
+- In: the export tables of [[evaluation]] under `outputs/metrics/<phase>/` (`runs`, `curves`, `eval_episodes` parquet; column contract in the Phase 4 contracts); eval files and checkpoints through [[visualisation]]; `configs/literature/existing_implementations.csv` (rows copied from [[Existing Implementations]]).
 - Detectors read `curves` (stored names, `ALIASES`), `eval_episodes`, the base control's tuned runs of the same frames (one pool per method, seed medians; a control has one pool per other control, a combo run its pair base), and the optional frames below.
 - Optional input frames of `detect_all` (a missing one reads `needs eval actions` or `needs replay (evaluation Task 6)`; contracts "Replay inputs for training analysis"):
 
@@ -67,6 +71,10 @@ One line each; signatures and details: [[Modules]].
 - A phase that was not exported (`final-1b`, `combo-1b`) raises `MissingPhaseError` naming it; `skip_missing=True` loads only the phases that exist, and an incomplete export still raises.
 - Parquet-only use imports neither JAX nor MLflow: `CONTROLS`, `BASE_CONTROL` (module attributes built on first access) and `pair_of` import the registry when used; `CONTROLS` never holds combo.
 - Controls come from `select_pair.controls_of` and `SKILL_METHODS`, never copies; a combo run's base control is read from its own `config_json` pair (`combo_pair`), never from combo.yaml.
+- Literature is compared like with like only: training-episode score at 1B with block A, at 1M with block D, stochastic evaluation at 1B with block A2; greedy evaluation and stochastic at 1M have no block and raise. Blocks A3, B, B2, C, C2, C3 and E to I are not in the CSV.
+- The CSV copies the note's cells as written; `spread` is set only when the score cell states an sd or s.e. of the % score itself (a raw-return sd, a CI or an sd of another variant gives `spread_kind` `none`; `score_text` keeps the cell). Nothing is recomputed from figures. After a note edit the test against the note shows which rows drifted.
+- `protocol` follows one rule: the block's protocol, except `n.r.` when the row's source note says it is unstated or undocumented; block D has no heading protocol, so it is read per row from the notes. T2 shows it, because block D's Simulus row is a test-episode score.
+- Every `note` value is the stem of a file in `research/Existing Implementations/`.
 - A detector whose series, base-control series or input frame is missing reports `not logged`, `needs replay (evaluation Task 6)` or `needs eval actions`, never `absent` (R78); `table_rows` counts runs as detected over judged (detected or absent) and lists the others.
 - Thresholds are module constants. Plateau is relative to the run's best score except at `ABSOLUTE_BUDGETS` (1B: 1 point); bonus starvation is `uninformative at 1M` (`STARVATION_BUDGETS`) (R79).
 - `detect_all` judges one (method, `config_ref`) unit per call (R77); combo runs keep the method detectors of their own pair. Base pools are per method, never mixed: a control's exploration failure needs fewer floors than every other control, each named in the evidence.
@@ -83,4 +91,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/analysis/test_load.py]]; [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
+- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
