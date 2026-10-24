@@ -7,36 +7,59 @@ update 4, stochastic, seed 10000 (76 steps) and 10001 (229 steps, wood at 25, wa
 at 116), both deaths.
 """
 
+import importlib.util
 import json
 import sqlite3
 import subprocess
 import sys
-import time
 from contextlib import closing
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+import jax
 import numpy as np
 import pandas as pd
 import pytest
-from _learning_run import needs_ffmpeg, tiny_run
 
 from wut_murl_craftax.analysis.cases import (
     CASE_COLUMNS,
     GIF_SECONDS,
     OVERLAY_STEPS,
+    _close_calls_in,
     describe_case,
     export_case,
     find_cases,
     run_dirs,
     write_cases,
 )
+from wut_murl_craftax.evaluation.coverage import init_seen, update_seen
+from wut_murl_craftax.evaluation.episode_metrics import CLOSE_HEALTH, CLOSE_STEPS
 from wut_murl_craftax.evaluation.episode_records import stored_records
 from wut_murl_craftax.evaluation.milestones import action_names
 from wut_murl_craftax.visualisation import ffmpeg
-from wut_murl_craftax.visualisation.eval_rollouts import EvalRun, load_eval
+from wut_murl_craftax.visualisation.eval_rollouts import (
+    EvalRun,
+    load_eval,
+    stored_episode,
+)
 from wut_murl_craftax.visualisation.rollout import Rollout, replay
 
+
+def _visualisation_helper(name: str) -> ModuleType:
+    """A ``tests/visualisation`` helper module, loaded once by path (no sys.path)."""
+    if name not in sys.modules:
+        path = Path(__file__).parents[1] / "visualisation" / f"{name}.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        assert spec is not None
+        assert spec.loader is not None
+        sys.modules[name] = module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+_learning_run = _visualisation_helper("_learning_run")
+needs_ffmpeg, tiny_run = _learning_run.needs_ffmpeg, _learning_run.tiny_run
 CRAFTAX = "Craftax-Symbolic-v1"
 NAMES = (
     "collect_wood", "place_table", "collect_diamond", "enter_dungeon",
@@ -158,6 +181,13 @@ def test_the_longest_stall_of_three_earlier_checkpoints_follows() -> None:
     assert stalls["update"].tolist() == [FINAL, 10, 30, 40]
     assert (stalls["peak"] - stalls["start"]).tolist() == [400, 400, 402, 403]
     assert stalls["id"].tolist() == [f"1m-ppo-rnn-stall-{n}" for n in range(1, 5)]
+    # early checkpoints read in k steps, never "0.0M"
+    assert [c.split(" after ")[1].split(" steps")[0] for c in stalls["caption"]] == [
+        "1M",
+        "200k",
+        "600k",
+        "800k",
+    ]
 
 
 def test_deep_floor_cases_are_the_three_deepest_ties_by_achievements() -> None:
@@ -288,6 +318,10 @@ def test_write_cases_writes_the_budget_table_and_one_per_method(
     assert len(table) == 2 * len(cases)
     mine = pd.read_csv(paths[1], keep_default_na=False)
     assert set(mine["method"]) == {"ppo-rnn"}
+    # a later call for one method replaces its rows and keeps the others
+    write_cases(cases.iloc[:1], tmp_path)
+    table = pd.read_csv(budget, keep_default_na=False)
+    assert table["method"].value_counts().to_dict() == {"ppo-rnn": 1, "sil": len(cases)}
 
 
 def test_run_dirs_read_artifact_locations_from_the_store(tmp_path: Path) -> None:
@@ -377,6 +411,14 @@ def test_a_gif_lasts_at_most_20_seconds_and_ends_at_the_window_end(
     assert ffmpeg.duration(gif) <= GIF_SECONDS
     assert ffmpeg.count_frames(gif) == GIF_SECONDS * 10
     assert row["overlay"] == ""  # internals clips are for stall cases only
+    assert not (tmp_path / "out" / "overlays").exists()
+
+
+def test_an_export_outside_the_root_is_refused(run: EvalRun, tmp_path: Path) -> None:
+    case = fixture_case("death", 10001, 0, 229, 229)
+    with pytest.raises(ValueError, match="is not in the subpath"):
+        export_case(case, tmp_path / "out", run, root=tmp_path / "outputs")
+    assert not (tmp_path / "out").exists()  # refused before any work
 
 
 def test_describe_case_gives_the_facts_at_the_start_and_the_peak(
@@ -397,14 +439,42 @@ def test_describe_case_gives_the_facts_at_the_start_and_the_peak(
     actions = ev["actions"][0, : ev["length"][0]]
     names = action_names("classic")
     assert facts["last_actions"] == [names[a] for a in actions[:13]]
-    assert sum(facts["actions"]["window"].values()) <= 13
-    assert sum(facts["actions"]["episode"].values()) <= len(actions)
+    free = ~ev["events/forced"][0, : len(actions)]
+    assert sum(facts["actions"]["window"].values()) == free[:13].sum()
+    assert sum(facts["actions"]["episode"].values()) == free.sum()
     damage = ev["events/combat_damage"][0, :13].sum(dtype=np.float64)
-    assert facts["damage_taken"] == pytest.approx(damage)
+    assert facts["combat_damage"] == pytest.approx(damage)
     assert facts["close_calls"] == 0
-    gained = facts["coverage_gained"]
-    assert set(gained) == {"overworld"}
-    assert 0 < gained["overworld"] < 1
+    # tiles seen by frame 13 and not by frame 0, from update_seen run directly
+    states = stored_episode(run, 4, 10000)[0].states
+    seen = init_seen(jax.tree.map(lambda x: x[0], states), "classic")
+    first = np.asarray(seen) >= 0
+    for t in range(1, 14):
+        seen = update_seen(seen, jax.tree.map(lambda x, t=t: x[t], states), "classic")
+    gained = (np.asarray(seen) >= 0) & ~first
+    assert facts["coverage_gained"] == {"overworld": pytest.approx(gained[0].mean())}
+    assert gained.any()
+
+
+def test_close_calls_follow_the_record_rule() -> None:
+    # health after each action; a fall to 2 shows on frame 10
+    fall = np.r_[np.full(8, 9.0), 5.0, 2.0]
+    died = np.r_[fall, np.full(19, 2.0), 0.0]  # dies 21 steps later
+    lived = np.r_[fall, np.full(190, 6.0)]
+    assert _close_calls_in(died, 0, len(died)) == 0
+    assert _close_calls_in(lived, 0, len(lived)) == 1
+    assert _close_calls_in(lived, 10, 10) == 1  # a fall exactly at the start frame
+    assert (_close_calls_in(lived, 0, 9), _close_calls_in(lived, 11, 200)) == (0, 0)
+    # a second fall within CLOSE_STEPS of the first joins it
+    again = np.r_[fall, 6.0, 2.0, np.full(CLOSE_STEPS + 5, 6.0)]
+    assert _close_calls_in(again, 0, len(again)) == 1
+
+
+def test_a_death_cases_fatal_fall_is_no_close_call(run: EvalRun) -> None:
+    facts = describe_case(fixture_case("death", 10001, 0, 229, 229), run)
+    record = stored_records(load_eval(run.dir, 4), "classic")[1]
+    assert facts["min_health"] <= CLOSE_HEALTH  # the fatal fall is in the window
+    assert facts["close_calls"] == record.close_calls == 0
 
 
 def test_describe_case_counts_the_window_of_a_stall_only(run: EvalRun) -> None:
@@ -461,18 +531,13 @@ def fixture_frames(run_dir: Path) -> dict[str, pd.DataFrame]:
 @needs_ffmpeg
 def test_a_case_found_on_a_run_exports_with_its_files(tmp_path: Path) -> None:
     run_dir = tiny_run()
-    t0 = time.perf_counter()
     cases = find_cases(fixture_frames(run_dir), "ppo", "1m")
-    found = time.perf_counter() - t0
     assert set(cases["game"]) == {"classic"}
     assert {"deep_floor", "death"} <= set(cases["kind"])
     case = cases.iloc[0]
-    t0 = time.perf_counter()
     row = export_case(
         case, tmp_path / "analysis" / "1m" / "ppo", run_dir, root=tmp_path
     )
-    exported = time.perf_counter() - t0
-    print(f"find {found:.2f} s, export {exported:.2f} s")
     for key in ("rollout", "master", "gif"):
         assert (tmp_path / row[key]).is_file()
     assert row["id"] == case["id"]

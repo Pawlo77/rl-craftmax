@@ -59,7 +59,7 @@ INVENTORY = "eval_inventory"
 `INVENTORY_COLUMNS`."""
 INVENTORY_COLUMNS = ("run_id", "update", "mode", "eval_seed", "steps", "capped_steps")
 """Columns of `INVENTORY`: episode steps, and steps with a material at its
-`progress_key.CAPS` cap."""
+`progress_key.CAPS` cap, counting only materials whose cap is above 1 (R98)."""
 REPLAY = (SKILL_ENDS, INVENTORY)
 INPUTS = (ACTIONS, *REPLAY)
 """Optional frames `detect_all` passes on to the detectors."""

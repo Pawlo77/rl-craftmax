@@ -16,6 +16,7 @@ import json
 import logging
 import shutil
 import sqlite3
+import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import closing
 from pathlib import Path
@@ -32,6 +33,7 @@ from .hard import (
     achievement_status,
     death_causes,
     stall_table,
+    steps_text,
 )
 from .load import Frames, select
 
@@ -199,7 +201,7 @@ def _row(pick: _Pick, n: int, run: pd.Series, ref: str) -> dict[str, Any]:
     who, stem = (
         (method, method) if ref == "tuned" else (f"{method} ({ref})", f"{method}-{ref}")
     )
-    steps, seed = f"{int(ep['env_steps']) / 1e6:.1f}M", int(ep["eval_seed"])
+    steps, seed = steps_text(int(ep["env_steps"])), int(ep["eval_seed"])
     return {
         "id": f"{ep['budget']}-{stem}-{kind}-{n}",
         "method": method,
@@ -267,18 +269,27 @@ def find_cases(
 
 
 def write_cases(cases: pd.DataFrame, root: Path = OUTPUTS) -> list[Path]:
-    """``analysis/<budget>/cases.csv`` and its per-method copies under ``root``.
+    """``analysis/<budget>/cases.csv`` and the per-method copies under ``root``.
 
-    ``cases`` must hold every method of a budget: the budget table is rewritten whole.
+    The budget table keeps the rows of the methods ``cases`` does not hold, so a
+    per-method loop builds it up; the passed methods' rows are replaced.
     """
     paths = []
     for budget, b in cases.groupby("budget", sort=True):
-        base = root / "analysis" / str(budget)
-        groups = [(base, b), *((base / str(m), g) for m, g in b.groupby("method"))]
-        for folder, rows in groups:
-            folder.mkdir(parents=True, exist_ok=True)
-            rows[list(CASE_COLUMNS)].to_csv(folder / "cases.csv", index=False)
-            paths.append(folder / "cases.csv")
+        table = root / "analysis" / str(budget) / "cases.csv"
+        old = (
+            pd.read_csv(table, keep_default_na=False) if table.is_file() else b.iloc[:0]
+        )
+        kept = old[~old["method"].isin(b["method"])]
+        merged = pd.concat([kept, b[list(CASE_COLUMNS)]], ignore_index=True)
+        groups = [(table, merged.sort_values("method", kind="stable"))]
+        groups += [
+            (table.parent / str(m) / "cases.csv", g) for m, g in b.groupby("method")
+        ]
+        for path, rows in groups:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            rows[list(CASE_COLUMNS)].to_csv(path, index=False)
+            paths.append(path)
     return paths
 
 
@@ -348,8 +359,12 @@ def _gif_row(case: Mapping[str, Any], fps: int) -> dict[str, str]:
 
 
 def _rel(path: Path, root: Path) -> str:
-    """``path`` relative to ``root`` when inside it, else as given."""
-    return str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+    """``path`` relative to ``root`` (the contract's file columns).
+
+    Raises:
+        ValueError: If ``path`` is outside ``root``.
+    """
+    return str(path.relative_to(root))
 
 
 def export_case(
@@ -377,7 +392,8 @@ def export_case(
         relative to ``root``; ``overlay`` stays "" for other kinds.
 
     Raises:
-        ValueError: If the master's replay diverges from the stored episode.
+        ValueError: If the master's replay diverges from the stored episode, or
+            ``out_dir`` is outside ``root``.
     """
     # imported here: replay and rendering pull in JAX (module docstring)
     from ..visualisation import cuts, overlay
@@ -385,14 +401,17 @@ def export_case(
     from ..visualisation.render import render_master
     from ..visualisation.rollout import DEFAULT_RUNS
 
-    opened = _open(case, run, tracking_uri)
     cid, update, seed = str(case["id"]), int(case["update"]), int(case["seed"])
-    rollout = as_rollout(opened, update, seed, case["mode"] == "greedy")
     paths = {
         "rollout": root / DEFAULT_RUNS.relative_to(OUTPUTS) / f"case-{cid}.npz",
         "master": out_dir / "masters" / f"case-{cid}.mkv",
         "gif": out_dir / "gifs" / f"{cid}.gif",
     }
+    if case["kind"] == "stall":
+        paths["overlay"] = out_dir / "overlays" / f"{cid}.mp4"
+    files = {k: _rel(p, root) for k, p in paths.items()}  # raises before any work
+    opened = _open(case, run, tracking_uri)
+    rollout = as_rollout(opened, update, seed, case["mode"] == "greedy")
     kept = rollout.save(out_dir / "rollouts" / f"case-{cid}.npz")
     paths["rollout"].parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(kept, paths["rollout"])
@@ -400,20 +419,20 @@ def export_case(
         msg = f"case {cid}: the replay diverged from the stored episode"
         raise ValueError(msg)
     cuts.gif(_gif_row(case, cuts.FPS_MASTER), paths["master"], paths["gif"])
-    if case["kind"] == "stall":
+    if "overlay" in paths:
         peak = int(case["peak"])
-        paths["overlay"] = out_dir / "overlays" / f"{cid}.mp4"
-        overlay.render_overlay(
-            opened.dir,
-            update,
-            seed,
-            (max(0, peak - OVERLAY_STEPS), peak),
-            out=paths["overlay"],
-            mode=case["mode"],
-            **(overlay_kw or {}),
-        )
-        shutil.rmtree(paths["overlay"].with_suffix(""))  # its intermediate streams
-    files = {k: _rel(p, root) for k, p in paths.items()}
+        paths["overlay"].parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp:  # its work files stay in tmp
+            clip = overlay.render_overlay(
+                opened.dir,
+                update,
+                seed,
+                (max(0, peak - OVERLAY_STEPS), peak),
+                out=Path(tmp) / f"{cid}.mp4",
+                mode=case["mode"],
+                **(overlay_kw or {}),
+            )
+            shutil.move(clip, paths["overlay"])
     return {**dict(case), "overlay": "", **files}
 
 
@@ -464,13 +483,21 @@ def _histogram(
     return {names[a]: int(k) for a, k in enumerate(counts) if k}
 
 
-def _close_calls(health: np.ndarray, low: float, gap: int) -> int:
-    """Falls of ``health`` to ``low``; one within ``gap`` steps of the last joins it."""
-    count, opened = 0, -gap
-    for f in np.flatnonzero((health[1:] <= low) & (health[:-1] > low)) + 1:
-        if f - opened >= gap:
-            count, opened = count + 1, int(f)
-    return count
+def _close_calls_in(health: np.ndarray, a: int, p: int) -> int:
+    """Close calls of the episode (`episode_records` rule) opening at frames ``a..p``.
+
+    ``health`` is per action (frame ``t + 1``). Openings depend only on the falls
+    before them, and one counts once ``CLOSE_STEPS`` more steps follow, so the rule
+    on a prefix ending ``CLOSE_STEPS`` after frame ``x`` counts the openings up to
+    ``x``; the window is the difference of two such prefixes.
+    """
+    # the record's own rule, not a copy: counts match the exported close_calls
+    from ..evaluation.episode_metrics import CLOSE_STEPS
+    from ..evaluation.episode_records import _close_calls
+
+    n = len(health)
+    upto = [_close_calls(health[: min(x + CLOSE_STEPS, n)])[0] for x in (a - 1, p)]
+    return upto[1] - upto[0]
 
 
 def describe_case(
@@ -487,13 +514,15 @@ def describe_case(
     the unlock); ``actions``: counts of the steps not forced in the window and in the
     episode; ``coverage_gained``: per floor visited in the window, the share of its
     tiles first seen inside it (`evaluation.coverage`); ``last_actions``: the
-    `LAST_ACTIONS` actions before the peak; ``damage_taken`` (combat), ``close_calls``
-    (falls of health to `CLOSE_HEALTH`, a fall within `CLOSE_STEPS` of an open one
-    joining it) and ``min_health`` inside the window. ``run`` as in `export_case`.
+    `LAST_ACTIONS` actions before the peak; ``combat_damage`` (needs drain and
+    potions excluded, as the record's ``damage_taken``), ``close_calls`` (the
+    `episode_records` rule: opened at a frame of the window, with `CLOSE_STEPS` more
+    steps in the episode) and ``min_health`` inside the window. ``run`` as in
+    `export_case`.
     """
     import jax  # JAX: see the module docstring
 
-    from ..evaluation.episode_metrics import CLOSE_HEALTH, CLOSE_STEPS, TOL
+    from ..evaluation.episode_metrics import START_HEALTH
     from ..evaluation.episode_records import resources, trace_of
     from ..evaluation.milestones import action_names
     from ..visualisation.eval_rollouts import CHUNK_STEPS, stored_episode
@@ -504,11 +533,11 @@ def describe_case(
     game, states = opened.game, jax.device_get(ep.states)
     trace, names = trace_of(states, game), action_names(game)
     a, p = int(case["start"]), int(case["peak"])
-    forced = np.asarray(ep.events.forced, bool)
     at = {"start": a, "peak": p}
     seen = _seen(states, game, CHUNK_STEPS)
     gained = (seen > a) & (seen <= p)
-    health = np.asarray(trace.intrinsics[a : p + 1, 0], np.float64)
+    events = jax.tree.map(np.asarray, ep.events)
+    health = START_HEALTH + np.cumsum(events.health_delta, dtype=np.float64)
     return {
         **{
             k: _plain(case[k])
@@ -526,19 +555,17 @@ def describe_case(
             for w, i in at.items()
         },
         "actions": {
-            "window": _histogram(actions[a:p], forced[a:p], names),
-            "episode": _histogram(actions, forced, names),
+            "window": _histogram(actions[a:p], events.forced[a:p], names),
+            "episode": _histogram(actions, events.forced, names),
         },
         "coverage_gained": {
             FLOORS[f][0]: float(gained[f].mean())
             for f in np.unique(trace.floor[a : p + 1])
         },
         "last_actions": [names[x] for x in actions[max(0, p - LAST_ACTIONS) : p]],
-        "damage_taken": float(
-            np.asarray(ep.events.combat_damage)[a:p].sum(dtype=np.float64)
-        ),
-        "close_calls": _close_calls(health, CLOSE_HEALTH + TOL, CLOSE_STEPS),
-        "min_health": float(health.min()),
+        "combat_damage": float(events.combat_damage[a:p].sum(dtype=np.float64)),
+        "close_calls": _close_calls_in(health, a, p),
+        "min_health": float(trace.intrinsics[a : p + 1, 0].min()),
     }
 
 
