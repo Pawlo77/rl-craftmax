@@ -312,6 +312,19 @@ def test_a_1b_phase_maps_its_own_hashes_by_the_same_rule() -> None:
     assert ("ppo", "e06ac6db") not in refs
 
 
+def test_an_entry_led_by_an_ablation_is_refused(tmp_path: Path) -> None:
+    phase = tmp_path / "final-1m.yaml"
+    text = (PHASES_DIR / "final-1m.yaml").read_text()
+    phase.write_text(
+        text.replace(
+            "sil: {configs: [tuned, {ref: tuned, set: {layout: single}}]}",
+            "sil: {configs: [{ref: tuned, set: {layout: single}}, tuned]}",
+        )
+    )
+    with pytest.raises(ValueError, match="sil starts with"):
+        config_refs(phase)
+
+
 def test_an_ablation_without_a_name_is_refused(tmp_path: Path) -> None:
     phase = tmp_path / "final-1m.yaml"
     text = (PHASES_DIR / "final-1m.yaml").read_text()
@@ -515,8 +528,10 @@ def test_every_parquet_file_has_a_csv_copy_with_json_list_columns(
     exported: Exported,
 ) -> None:
     phase = exported.out / "final-1m"
-    parquets = sorted(p.stem for p in phase.glob("*.parquet"))
-    assert parquets == sorted(p.stem for p in phase.glob("*.csv"))
+    parquets = {p.stem for p in phase.glob("*.parquet")}
+    assert parquets - {"curves"} == {p.stem for p in phase.glob("*.csv")}
+    assert not (phase / "curves.csv").exists()  # R104: gzipped
+
     ep = _episodes(exported)
     csv = pd.read_csv(phase / "eval_episodes.csv")
     assert list(csv.columns) == list(ep.columns)
@@ -531,8 +546,8 @@ def test_every_parquet_file_has_a_csv_copy_with_json_list_columns(
     assert csv["fights"].map(json.loads).map(len).sum() == ep["fights"].map(len).sum()
     runs = pd.read_csv(phase / "runs.csv")
     assert runs["run_id"].tolist() == _runs(exported).index.tolist()
-    curves = pd.read_csv(phase / "curves.csv")
-    assert len(curves) == len(pd.read_parquet(phase / "curves.parquet"))
+    curves = pd.read_csv(phase / "curves.csv.gz")
+    pd.testing.assert_frame_equal(curves, pd.read_parquet(phase / "curves.parquet"))
 
 
 def test_the_analysis_loaders_read_the_export(exported: Exported) -> None:
@@ -579,7 +594,7 @@ def test_the_export_is_logged_as_artifacts_of_one_analysis_run_per_phase(
     (run,) = _analysis_runs(client, "export-final-1m")
     assert run.info.run_id == first
     names = {a.path for a in client.list_artifacts(first)}
-    assert names == {p.name for p in folder.iterdir()}
+    assert names == {p.name for p in folder.glob("*.parquet")}  # R104
     tags = run.data.tags
     assert tags["analysis/kind"] == "export"
     assert tags["analysis/phases"] == "final-1m"
@@ -589,23 +604,48 @@ def test_the_export_is_logged_as_artifacts_of_one_analysis_run_per_phase(
     # a rerun reuses the run and replaces its artifacts
     smaller = tmp_path / "again"
     shutil.copytree(folder, smaller)
-    (smaller / "curves.csv").unlink()
+    (smaller / "eval_inventory.parquet").unlink()
     assert log_export(smaller, "final-1m", uri) == first
     assert len(_analysis_runs(client, "export-final-1m")) == 1
-    assert {a.path for a in client.list_artifacts(first)} == names - {"curves.csv"}
+    gone = {"eval_inventory.parquet"}
+    assert {a.path for a in client.list_artifacts(first)} == names - gone
+    assert client.get_run(first).info.status == "FINISHED"
 
 
-def test_the_csv_copies_can_be_left_out_of_the_logging(
+def test_a_failed_relogging_keeps_the_old_artifacts(
+    store: Store, exported: Exported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "mlruns.db"
+    shutil.copy(store.path, db)
+    uri, client = f"sqlite:///{db}", mlflow.MlflowClient(f"sqlite:///{db}")
+    folder = exported.out / "final-1m"
+    run_id = log_export(folder, "final-1m", uri)
+    names = {a.path for a in client.list_artifacts(run_id)}
+    smaller = tmp_path / "again"
+    shutil.copytree(folder, smaller)
+    (smaller / "eval_inventory.parquet").unlink()
+
+    def broken(*args: Any, **kw: Any) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    monkeypatch.setattr(mlflow.MlflowClient, "log_artifact", broken)
+    with pytest.raises(OSError, match="disk full"):
+        log_export(smaller, "final-1m", uri)
+    assert {a.path for a in client.list_artifacts(run_id)} == names
+
+
+def test_the_csv_copies_are_logged_only_on_request(
     store: Store, exported: Exported, tmp_path: Path
 ) -> None:
     db = tmp_path / "mlruns.db"
     shutil.copy(store.path, db)
     uri = f"sqlite:///{db}"
     folder = exported.out / "final-1m"
-    run_id = log_export(folder, "final-1m", uri, csv=False)
+    run_id = log_export(folder, "final-1m", uri, csv=True)
     logged = {a.path for a in mlflow.MlflowClient(uri).list_artifacts(run_id)}
-    assert logged == {p.name for p in folder.glob("*.parquet")}
-    assert any(folder.glob("*.csv"))
+    assert logged == {p.name for p in folder.iterdir()}
+    assert "curves.csv.gz" in logged
 
 
 def test_cli_exports_a_phase_without_logging(store: Store, tmp_path: Path) -> None:
@@ -614,11 +654,10 @@ def test_cli_exports_a_phase_without_logging(store: Store, tmp_path: Path) -> No
         "--phase", "tune-coarse", "--out", str(out), "--tracking-uri", store.uri,
         "--replay-root", str(tmp_path / "none"), "--no-log",
     ])  # fmt: skip
-    assert {p.name for p in out.iterdir()} >= {
-        f"{t}.{x}"
-        for t in ("runs", "curves", "eval_episodes")
-        for x in ("parquet", "csv")
-    }
+    assert {p.name for p in out.iterdir()} == {
+        "runs.parquet", "runs.csv", "curves.parquet", "curves.csv.gz",
+        "eval_episodes.parquet", "eval_episodes.csv",
+    }  # fmt: skip
     exp = mlflow.MlflowClient(store.uri).get_experiment_by_name(ANALYSIS_EXPERIMENT)
     assert exp is None
 
@@ -631,8 +670,133 @@ def test_cli_logs_by_default(store: Store, tmp_path: Path) -> None:
         "--phase", "tune-coarse", "--out", str(tmp_path / "out"), "--tracking-uri", uri,
         "--replay-root", str(tmp_path / "none"),
     ])  # fmt: skip
-    (run,) = _analysis_runs(mlflow.MlflowClient(uri), "export-tune-coarse")
+    client = mlflow.MlflowClient(uri)
+    (run,) = _analysis_runs(client, "export-tune-coarse")
     assert run.data.tags["analysis/phases"] == "tune-coarse"
+    logged = {a.path for a in client.list_artifacts(run.info.run_id)}
+    assert logged == {"runs.parquet", "curves.parquet", "eval_episodes.parquet"}
+
+
+def test_cli_refuses_a_partial_export_into_the_phase_folder(
+    store: Store, tmp_path: Path
+) -> None:
+    rid = _final(store)[0].run_id
+    with pytest.raises(SystemExit):
+        export.main([
+            "--phase", "final-1m", "--tracking-uri", store.uri, "--no-log",
+            "--run", rid,
+        ])  # fmt: skip
+
+
+def test_a_run_name_that_matches_no_run_of_the_phase_is_named(
+    store: Store, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="nope"):
+        export_phase(
+            "final-1m", tmp_path / "out", tracking_uri=store.uri, runs=["nope"]
+        )
+    part = export_phase(
+        "final-1m", tmp_path / "out", tracking_uri=store.uri,
+        runs=[_final(store)[0].name],
+    )  # fmt: skip
+    assert len(pd.read_parquet(part["runs"])) == 1
+
+
+# --- atomic per phase ----------------------------------------------------------------
+
+
+def _old_export(store: Store, tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
+    out = tmp_path / "final-1m"
+    export_phase("final-1m", out, tracking_uri=store.uri, runs=[_final(store)[0].name])
+    return out, {p.name: p.read_bytes() for p in out.iterdir()}
+
+
+def test_a_failure_mid_write_leaves_the_previous_export_intact(
+    store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out, before = _old_export(store, tmp_path)
+    real = export.write_table
+
+    def fail_on_episodes(table: Any, folder: Path, stem: str) -> None:
+        if stem == "eval_episodes":
+            msg = "no space left on device"
+            raise OSError(msg)
+        real(table, folder, stem)
+
+    monkeypatch.setattr(export, "write_table", fail_on_episodes)
+    with pytest.raises(OSError, match="no space"):
+        export_phase("final-1m", out, tracking_uri=store.uri)
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before
+    assert load_phase(out)["runs"]["run_id"].tolist() == [_final(store)[0].run_id]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["final-1m"]  # no leftovers
+
+
+def test_an_export_left_aside_by_a_crash_between_the_moves_is_restored(
+    store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out, before = _old_export(store, tmp_path)
+    out.rename(out.with_name("final-1m.previous"))  # as if killed between the moves
+
+    def fail(*args: Any) -> None:
+        msg = "no space left on device"
+        raise OSError(msg)
+
+    monkeypatch.setattr(export, "write_table", fail)
+    with pytest.raises(OSError, match="no space"):
+        export_phase("final-1m", out, tracking_uri=store.uri)
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["final-1m"]
+
+
+def test_a_bad_run_fails_before_any_work(
+    store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out, before = _old_export(store, tmp_path)
+    db = tmp_path / "bad.db"
+    shutil.copy(store.path, db)
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "update tags set value = 'abcdef12' where key = 'config_hash' "
+            "and run_uuid = ?",
+            (_final(store)[-1].run_id,),
+        )
+    called = []
+    monkeypatch.setattr(export, "run_curves", lambda *a: called.append(a))
+    with pytest.raises(ValueError, match="abcdef12"):
+        export_phase("final-1m", out, tracking_uri=f"sqlite:///{db}")
+    assert not called
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before
+
+
+def test_a_run_without_its_seed_tag_is_refused(store: Store, tmp_path: Path) -> None:
+    db = tmp_path / "mlruns.db"
+    shutil.copy(store.path, db)
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "delete from tags where key = 'seed' and run_uuid = ?",
+            (_final(store)[0].run_id,),
+        )
+    with pytest.raises(ValueError, match="seed"):
+        export_phase("tune-coarse", tmp_path / "out", tracking_uri=f"sqlite:///{db}")
+
+
+def test_a_stored_record_without_a_non_replay_column_is_refused(
+    store: Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = export.stored_records
+
+    class Short:
+        def __init__(self, rec: Any) -> None:
+            self.rec = rec
+
+        def row(self) -> dict[str, Any]:
+            return {k: v for k, v in self.rec.row().items() if k != "max_floor"}
+
+    monkeypatch.setattr(
+        export, "stored_records", lambda *a: [Short(r) for r in real(*a)]
+    )
+    with pytest.raises(ValueError, match="max_floor"):
+        export_phase("tune-coarse", tmp_path / "out", tracking_uri=store.uri)
 
 
 def test_the_store_is_read_only_during_the_export(store: Store, tmp_path: Path) -> None:

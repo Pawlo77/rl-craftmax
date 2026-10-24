@@ -1,27 +1,24 @@
 """Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``.
 
 `export_phase` reads the store read-only by ``run_uuid`` plus the runs' artifacts and
-writes ``<out_dir>/<table>.parquet`` with a CSV copy each (contracts.md section 1).
+writes ``<out_dir>/<table>.parquet`` with a CSV copy each, the curves one gzipped
+(contracts.md section 1, R104); the folder is staged and swapped in as a whole.
 Membership is the ``phases`` tag (R77); ``config_ref`` comes from `config_refs` in a
 final or combo phase, else it is the hash. Eval files take their replay table (EV6)
 when it exists, else their stored records with the replay-only columns null.
-`log_export` logs the folder to run ``export-<phase>`` of experiment ``analysis``.
-CLI: ``python -m wut_murl_craftax.evaluation.export --phase P --tracking-uri URI``.
+`log_export` logs the parquet files to run ``export-<phase>`` in ``analysis`` (CLI).
 @see [[2026-10-20-craftax-evaluation-and-metrics]]
 @tested-by [[tests/evaluation/test_export.py]]
 """
 
 import argparse
-import contextlib
 import json
 import logging
 import shutil
-import sqlite3
 import time
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import parse_qs
 
 import mlflow
 import numpy as np
@@ -40,16 +37,18 @@ from ..orchestration.tracking import (
 )
 from ..training.checkpoints import load_index
 from .episode_records import stored_records
-from .hardware import SYSTEM_HI, SYSTEM_LO, hardware_summary
+from .hardware import SYSTEM_HI, SYSTEM_LO, hardware_summary, open_store
 from .milestones import Game, game_of
 from .rollout_metrics import (
     IDENTITY,
     MODES,
     OUT_ROOT,
     RUN_IDENTITY,
+    RunRef,
     arrow_table,
     episode_columns,
     out_paths,
+    phase_runs,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,14 +56,19 @@ logger = logging.getLogger(__name__)
 ANALYSIS_EXPERIMENT = "analysis"
 """Experiment of the analysis runs (contracts.md section 8)."""
 DEFAULT_URI = "sqlite:///mlruns.db"
-STORE_TIMEOUT_S = 300.0
-"""SQLite busy timeout of the store reads; ``?timeout=`` in the URI overrides it."""
 TABLES = ("runs", "curves", "eval_episodes")
 """The export tables, by file stem."""
 REPLAY_FRAMES = {"skill_ends": "skill_ends", "inventory": "eval_inventory"}
 """Replay file kind (`out_paths` key) -> phase table stem (contracts.md section 9)."""
 REF_PHASES = ("final-", "combo-")
 """Phases whose ``config_ref`` comes from the phase file; elsewhere it is the hash."""
+TUNED_ITEMS = ("tuned", "combined", "base")
+"""Names the first ``configs`` item of an entry may have; it plays the tuned role:
+``combined`` is the combo phases' one config and ``base`` the 1B controls' config."""
+RUN_TAGS = ("phases", "method", "budget", "seed", "config_hash")
+"""Runner tags every exported run must carry."""
+STAGING, PREVIOUS = ".staging", ".previous"
+"""Suffixes of the folder an export is built in and of the export it replaces."""
 
 
 def _overrides(registry: str, **kw: Any) -> tuple[str, frozenset[tuple[str, Any]]]:
@@ -84,6 +88,9 @@ ABLATIONS = {
 """(registry, ``set`` of a phase-file item) -> its ``config_ref`` (contracts.md)."""
 _NULL_TYPES = {"unique_positions": pa.int64()}
 """Arrow type of a replay-only column a stored record lacks; float64 otherwise."""
+REPLAY_ONLY = ("new_tiles_per_100", "revisit_rate", "unique_positions")
+"""With the ``coverage/*`` family: the columns only a replay fills (`coverage_summary`);
+a stored record leaves them null."""
 _EVAL_KEYS = {
     f"eval_{mode}_{what}": f"eval/{mode}/{key}"
     for mode in MODES
@@ -101,26 +108,16 @@ _CURVES_SCHEMA = pa.schema([
 ])
 
 
-class PhaseRun(NamedTuple):
-    """A run of the store with the tags and facts the export needs."""
-
-    run_id: str
-    name: str
-    status: str
-    experiment: str
-    dir: Path
-    tags: dict[str, str]
-
-
 def config_refs(phase_file: Path) -> dict[tuple[str, str], str]:
     """(registry, ``config_hash``) -> ``config_ref`` of a final or combo phase file.
 
-    The first ``configs`` item of an entry is ``tuned``; every other item is named by
-    its ``set`` in `ABLATIONS`.
+    The first ``configs`` item of an entry, a name in `TUNED_ITEMS`, is ``tuned``;
+    every other item is named by its ``set`` in `ABLATIONS`.
 
     Raises:
-        ValueError: If an item's ``set`` has no name, or an entry expands to another
-            number of configs than it lists.
+        ValueError: If the first item is not a `TUNED_ITEMS` name, an item's ``set``
+            has no name, or an entry expands to another number of configs than it
+            lists.
     """
     raw = yaml.safe_load(phase_file.read_text(encoding="utf-8"))
     found: dict[str, list[str]] = {}
@@ -137,6 +134,9 @@ def config_refs(phase_file: Path) -> dict[tuple[str, str], str]:
                 f"but expands to {len(hashes)}"
             )
             raise ValueError(msg)
+        if items[0] not in TUNED_ITEMS:  # an ablation must never become `tuned`
+            msg = f"{phase_file.name}: {registry} starts with {items[0]!r}, not tuned"
+            raise ValueError(msg)
         out[registry, hashes[0]] = "tuned"
         for item, config_hash in zip(items[1:], hashes[1:], strict=True):
             sets = item.get("set", {}) if isinstance(item, dict) else {}
@@ -147,56 +147,7 @@ def config_refs(phase_file: Path) -> dict[tuple[str, str], str]:
     return out
 
 
-def _split_uri(tracking_uri: str) -> tuple[str, float]:
-    """``sqlite:///`` URI without its query, and its ``timeout`` (s, default 300).
-
-    Raises:
-        ValueError: For another kind of store.
-    """
-    base, _, query = tracking_uri.partition("?")
-    if not base.startswith("sqlite:///"):
-        msg = f"expected a sqlite:/// tracking URI, got {tracking_uri}"
-        raise ValueError(msg)
-    timeout = parse_qs(query).get("timeout", [str(STORE_TIMEOUT_S)])[0]
-    return base, float(timeout)
-
-
-@contextlib.contextmanager
-def _connect(tracking_uri: str) -> Generator[sqlite3.Connection]:
-    """A short-lived read-only connection to the store of a ``sqlite:///`` URI.
-
-    The store runs in rollback-journal mode, so a read blocks the writers' commits
-    while it lasts (R103): callers open one per run and fetch every row at once.
-    """
-    base, timeout = _split_uri(tracking_uri)
-    path = Path(base.removeprefix("sqlite:///")).expanduser().resolve()
-    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=timeout)
-    try:
-        yield con
-    finally:
-        con.close()
-
-
-def phase_runs(con: sqlite3.Connection, phase: str) -> list[PhaseRun]:
-    """Active runs whose ``phases`` tag lists ``phase``, by name (R77)."""
-    tags: dict[str, dict[str, str]] = {}
-    for rid, key, value in con.execute(
-        "SELECT run_uuid, key, value FROM tags"
-    ).fetchall():
-        tags.setdefault(rid, {})[key] = value
-    rows = con.execute(
-        "SELECT r.run_uuid, r.name, r.status, e.name, r.artifact_uri FROM runs r "
-        "JOIN experiments e ON e.experiment_id = r.experiment_id "
-        "WHERE r.lifecycle_stage = 'active' ORDER BY r.name"
-    ).fetchall()
-    return [
-        PhaseRun(rid, name, status, exp, artifact_path(uri), tags.get(rid, {}))
-        for rid, name, status, exp, uri in rows
-        if phase in tags.get(rid, {}).get("phases", "").split(",")
-    ]
-
-
-def run_curves(con: sqlite3.Connection, run_id: str) -> pd.DataFrame:
+def run_curves(con: Any, run_id: str) -> pd.DataFrame:
     """Every stored series of a run but ``system/*``, long.
 
     A re-logged step (a resume) keeps its latest value; a NaN point stays NaN.
@@ -210,9 +161,17 @@ def run_curves(con: sqlite3.Connection, run_id: str) -> pd.DataFrame:
     return df[CURVES_COLUMNS].astype({"env_steps": "int64"}).reset_index(drop=True)
 
 
-def _config_ref(run: PhaseRun, phase: str, refs: Mapping[tuple[str, str], str]) -> str:
-    """``config_ref`` of a run in ``phase``; the hash outside final and combo phases."""
-    method, config_hash = run.tags.get("method", ""), run.tags.get("config_hash", "")
+def _config_ref(run: RunRef, phase: str, refs: Mapping[tuple[str, str], str]) -> str:
+    """``config_ref`` of a run in ``phase``; the hash outside final and combo phases.
+
+    Raises:
+        ValueError: If a `RUN_TAGS` tag is missing, or a final or combo run's hash is
+            not one of the phase file's configs.
+    """
+    if missing := [k for k in RUN_TAGS if not run.tags.get(k)]:
+        msg = f"run {run.name} lacks the tags {', '.join(missing)}"
+        raise ValueError(msg)
+    method, config_hash = run.method, run.tags["config_hash"]
     if not phase.startswith(REF_PHASES):
         return config_hash
     if (ref := refs.get((method, config_hash))) is None:
@@ -225,8 +184,8 @@ def _config_ref(run: PhaseRun, phase: str, refs: Mapping[tuple[str, str], str]) 
 
 
 def run_row(
-    con: sqlite3.Connection,
-    run: PhaseRun,
+    con: Any,
+    run: RunRef,
     phase: str,
     ref: str,
     curves: pd.DataFrame,
@@ -251,11 +210,11 @@ def run_row(
         "run_name": run.name,
         "experiment": run.experiment,
         "phase": phase,
-        "phases": t.get("phases", ""),
-        "method": t.get("method", ""),
-        "budget": t.get("budget", ""),
-        "config_hash": t.get("config_hash", ""),
-        "seed": int(t.get("seed", -1)),
+        "phases": t["phases"],
+        "method": run.method,
+        "budget": run.budget,
+        "config_hash": t["config_hash"],
+        "seed": run.seed,
         "config_ref": ref,
         # tag `best` marks a tuning winner; it means nothing in a final phase
         "best": t.get("best") == "true" and not phase.startswith(REF_PHASES),
@@ -279,6 +238,12 @@ def _stored_table(
         for seed, rec in zip(arrays["seeds"], stored_records(arrays, game), strict=True)
     ]
     df = pd.DataFrame(rows)
+    gaps = [c for c in order if c not in df.columns]
+    if odd := [
+        c for c in gaps if not c.startswith("coverage/") and c not in REPLAY_ONLY
+    ]:
+        msg = f"{path}: stored records lack the columns {odd}"
+        raise ValueError(msg)
     t = arrow_table(df[[c for c in order if c in df.columns]])
     n = len(df)
     return pa.table({
@@ -305,18 +270,17 @@ class RunTables(NamedTuple):
     """`REPLAY_FRAMES` key -> the replay files found."""
 
 
-def run_episodes(run: PhaseRun, ref: str, game: Game, replay_root: Path) -> RunTables:
+def run_episodes(run: RunRef, ref: str, game: Game, replay_root: Path) -> RunTables:
     """Every eval file of a run as eval-episode rows with ``config_ref`` inserted."""
     order = [c for c in episode_columns(game) if c in RUN_IDENTITY or c not in IDENTITY]
     steps = {e["update"]: e["env_steps"] for e in load_index(run.dir)}
-    t = run.tags
     out = RunTables([], {k: [] for k in REPLAY_FRAMES})
     for mode in MODES:
         for path in sorted((run.dir / "eval" / mode).glob("*.npz")):
             update = int(path.stem)
             head = {
-                "run_id": run.run_id, "method": t.get("method", ""),
-                "budget": t.get("budget", ""), "seed": int(t.get("seed", -1)),
+                "run_id": run.run_id, "method": run.method,
+                "budget": run.budget, "seed": run.seed,
                 "update": update, "env_steps": steps[update], "mode": mode,
             }  # fmt: skip
             replay = out_paths(replay_root, run.run_id, update, mode)
@@ -354,69 +318,68 @@ def _json_lists(table: pa.Table) -> pa.Table:
     return table
 
 
-def _replace(tmp: Path) -> None:
-    """Move a finished ``<name>.tmp`` file over ``<name>``."""
-    tmp.replace(tmp.with_suffix(""))
-
-
 def write_table(table: pa.Table, out_dir: Path, stem: str) -> None:
-    """``<stem>.parquet`` and its CSV copy, each written to a temp file then moved."""
-    parquet, csv = out_dir / f"{stem}.parquet.tmp", out_dir / f"{stem}.csv.tmp"
-    pq.write_table(table, parquet)
-    pacsv.write_csv(_json_lists(table), csv)
-    _replace(parquet)
-    _replace(csv)
+    """``<stem>.parquet`` and its CSV copy (list columns as JSON) in ``out_dir``."""
+    pq.write_table(table, out_dir / f"{stem}.parquet")
+    pacsv.write_csv(_json_lists(table), out_dir / f"{stem}.csv")
 
 
 def _game(config_json: str) -> Game:
     return game_of(str(json.loads(config_json).get("env", "")))
 
 
-def export_phase(
-    phase: str,
-    out_dir: Path,
-    *,
-    tracking_uri: str = DEFAULT_URI,
-    replay_root: Path = OUT_ROOT,
-    phases_dir: Path = PHASES_DIR,
-    runs: Sequence[str] | None = None,
-) -> dict[str, Path]:
-    """Write the export tables of ``phase`` to ``out_dir``; return them by stem.
-
-    ``runs`` (ids or names) restricts the export to those runs of the phase, for a
-    partial look; a phase export lists them all. Curves stream to disk run by run.
+def _select(phase: str, tracking_uri: str, runs: Sequence[str] | None) -> list[RunRef]:
+    """The runs of ``phase``, or those of them named in ``runs``.
 
     Raises:
-        ValueError: If no run lists the phase, a final or combo run's hash is not one
-            of the phase file's configs, or a replay table disagrees with its run.
+        ValueError: If no run lists the phase, or a name in ``runs`` matches none.
     """
-    refs = (
-        config_refs(phases_dir / f"{phase}.yaml")
-        if phase.startswith(REF_PHASES)
-        else {}
-    )
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows, episodes = [], []
-    replay: dict[str, list[pa.Table]] = {k: [] for k in REPLAY_FRAMES}
-    curves_tmp = out_dir / "curves.parquet.tmp", out_dir / "curves.csv.tmp"
-    t0 = time.time()
-    with _connect(tracking_uri) as con:
-        todo = [
-            r
-            for r in phase_runs(con, phase)
-            if runs is None or {r.run_id, r.name} & set(runs)
-        ]
+    todo = phase_runs(tracking_uri, [phase])
     if not todo:
         msg = f"no run of the store lists phase {phase!r} in its `phases` tag"
         raise ValueError(msg)
+    if runs is None:
+        return todo
+    if unknown := set(runs) - {k for r in todo for k in (r.run_id, r.name)}:
+        msg = f"no run of phase {phase} is {', '.join(sorted(unknown))}"
+        raise ValueError(msg)
+    return [r for r in todo if {r.run_id, r.name} & set(runs)]
+
+
+def _swap(stage: Path, out_dir: Path) -> None:
+    """Move ``stage`` to ``out_dir``; the old export stays until the move succeeded."""
+    previous = out_dir.with_name(out_dir.name + PREVIOUS)
+    shutil.rmtree(previous, ignore_errors=True)
+    if out_dir.exists():
+        out_dir.rename(previous)
+    try:
+        stage.rename(out_dir)
+    except BaseException:
+        if previous.exists():
+            previous.rename(out_dir)
+        raise
+    shutil.rmtree(previous, ignore_errors=True)
+
+
+def _build(
+    phase: str,
+    todo: Sequence[tuple[RunRef, str]],
+    stage: Path,
+    tracking_uri: str,
+    replay_root: Path,
+) -> dict[str, pa.Table]:
+    """Stream the curves into ``stage``; return the other tables of the phase."""
+    rows, episodes = [], []
+    replay: dict[str, list[pa.Table]] = {k: [] for k in REPLAY_FRAMES}
+    t0 = time.time()
     with (
-        pq.ParquetWriter(curves_tmp[0], _CURVES_SCHEMA) as parquet,
-        pacsv.CSVWriter(curves_tmp[1], _CURVES_SCHEMA) as csv,
+        pq.ParquetWriter(stage / "curves.parquet", _CURVES_SCHEMA) as parquet,
+        pa.CompressedOutputStream(stage / "curves.csv.gz", "gzip") as gz,
+        pacsv.CSVWriter(gz, _CURVES_SCHEMA) as csv,
     ):
-        for k, run in enumerate(todo, 1):
-            ref = _config_ref(run, phase, refs)
+        for k, (run, ref) in enumerate(todo, 1):
             config_json = (run.dir / "config.json").read_text(encoding="utf-8")
-            with _connect(tracking_uri) as con:  # one short connection per run (R103)
+            with open_store(tracking_uri) as con:  # one short connection per run, R103
                 curves = run_curves(con, run.run_id)
                 row = run_row(con, run, phase, ref, curves, config_json)
             rows.append(row)
@@ -431,41 +394,91 @@ def export_phase(
                 logger.info(
                     "%s: %d/%d runs (%.0fs)", phase, k, len(todo), time.time() - t0
                 )
-    for tmp in curves_tmp:
-        _replace(tmp)
     runs_df = pd.DataFrame(rows)
     extra = [c for c in runs_df.columns if c not in RUNS_COLUMNS]
-    write_table(
-        pa.Table.from_pandas(runs_df[RUNS_COLUMNS + extra], preserve_index=False),
-        out_dir,
-        "runs",
-    )
-    write_table(pa.concat_tables(episodes), out_dir, "eval_episodes")
-    written = {t: out_dir / f"{t}.parquet" for t in TABLES}
+    out = {
+        "runs": pa.Table.from_pandas(
+            runs_df[RUNS_COLUMNS + extra], preserve_index=False
+        ),
+        "eval_episodes": pa.concat_tables(episodes),
+    }
     for kind, stem in REPLAY_FRAMES.items():
-        for old in (out_dir / f"{stem}.parquet", out_dir / f"{stem}.csv"):
-            old.unlink(missing_ok=True)  # a rerun never keeps a stale replay frame
         if replay[kind]:
-            frame = pa.concat_tables(replay[kind], promote_options="default")
-            write_table(frame, out_dir, stem)
-            written[stem] = out_dir / f"{stem}.parquet"
+            out[stem] = pa.concat_tables(replay[kind], promote_options="default")
+    return out
+
+
+def export_phase(
+    phase: str,
+    out_dir: Path,
+    *,
+    tracking_uri: str = DEFAULT_URI,
+    replay_root: Path = OUT_ROOT,
+    phases_dir: Path = PHASES_DIR,
+    runs: Sequence[str] | None = None,
+) -> dict[str, Path]:
+    """Write the export tables of ``phase`` to ``out_dir``; return them by stem.
+
+    Every run's tags and ``config_ref`` are checked before any work. The tables are
+    built in ``<out_dir>.staging`` (curves streamed run by run), which then replaces
+    ``out_dir`` as a whole: a failure leaves the previous export as it was and
+    removes the staging folder. ``runs`` (ids or names) restricts the export to those
+    runs of the phase, for a partial look in another folder.
+
+    Raises:
+        ValueError: If no run lists the phase, a name of ``runs`` matches none, a
+            run lacks a `RUN_TAGS` tag, a final or combo run's hash is not one of the
+            phase file's configs, or a replay table disagrees with its run.
+    """
+    refs = (
+        config_refs(phases_dir / f"{phase}.yaml")
+        if phase.startswith(REF_PHASES)
+        else {}
+    )
+    todo = [
+        (r, _config_ref(r, phase, refs)) for r in _select(phase, tracking_uri, runs)
+    ]
+    t0 = time.time()
+    previous = out_dir.with_name(out_dir.name + PREVIOUS)
+    if previous.exists() and not out_dir.exists():  # killed between the two moves
+        previous.rename(out_dir)
+    stage = out_dir.with_name(out_dir.name + STAGING)
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True)
+    try:
+        tables = _build(phase, todo, stage, tracking_uri, replay_root)
+        for stem, table in tables.items():
+            write_table(table, stage, stem)
+        _swap(stage, out_dir)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
     logger.info(
         "%s: exported %d runs to %s (%.0fs)",
         phase,
-        len(rows),
+        len(todo),
         out_dir,
         time.time() - t0,
     )
-    return written
+    return {stem: out_dir / f"{stem}.parquet" for stem in ("curves", *tables)}
 
 
-def log_export(folder: Path, phase: str, tracking_uri: str, *, csv: bool = True) -> str:
-    """Log ``folder`` as the artifacts of run ``export-<phase>``; return its id.
+def log_export(
+    folder: Path, phase: str, tracking_uri: str, *, csv: bool = False
+) -> str:
+    """Log the export in ``folder`` as the artifacts of run ``export-<phase>``.
 
     The run lives in experiment `ANALYSIS_EXPERIMENT` and carries ``analysis/*`` tags
-    only (loaders select training runs by ``phases``, ``method`` ...). A rerun reuses
-    the run of that name and replaces its artifacts. ``csv`` False logs the parquet
-    files only: the CSV copies of a tuning phase's curves take gigabytes.
+    only (loaders select training runs by ``phases``, ``method`` ...). Only the
+    parquet files are logged unless ``csv`` (R104: the CSV copies take gigabytes). A
+    rerun reuses the run of that name: it is RUNNING while the new files are logged,
+    and the artifacts the new export lacks are deleted only after that succeeded.
+
+    Returns:
+        The run id.
+
+    Raises:
+        OSError: If an old artifact cannot be deleted.
     """
     base, _, query = tracking_uri.partition("?")
     resolved = resolve_tracking_uri(base)
@@ -482,9 +495,8 @@ def log_export(folder: Path, phase: str, tracking_uri: str, *, csv: bool = True)
         [exp.experiment_id], filter_string=f"attributes.run_name = '{name}'"
     )
     if found:
-        run_id, old = found[0].info.run_id, found[0].info.artifact_uri
-        if old:  # never rmtree a path made from an empty URI
-            shutil.rmtree(artifact_path(old), ignore_errors=True)
+        run_id = found[0].info.run_id
+        client.update_run(run_id, status="RUNNING")
     else:
         run_id = client.create_run(exp.experiment_id, run_name=name).info.run_id
     budgets = sorted(
@@ -496,11 +508,19 @@ def log_export(folder: Path, phase: str, tracking_uri: str, *, csv: bool = True)
         ("analysis/budget", ",".join(budgets)),
     ):
         client.set_tag(run_id, key, value)
-    if csv:
-        client.log_artifacts(run_id, str(folder))
-    else:
-        for path in sorted(folder.glob("*.parquet")):
-            client.log_artifact(run_id, str(path))
+    globs = ("*.parquet", "*.csv", "*.csv.gz") if csv else ("*.parquet",)
+    files = sorted(p for g in globs for p in folder.glob(g))
+    for path in files:
+        client.log_artifact(run_id, str(path))
+    if found and (uri_of := client.get_run(run_id).info.artifact_uri):
+        keep = {p.name for p in files}
+        for old in artifact_path(uri_of).iterdir():
+            if old.name in keep:
+                continue
+            if old.is_dir():  # both raise if they cannot delete
+                shutil.rmtree(old)
+            else:
+                old.unlink()
     client.set_terminated(run_id)
     return str(run_id)
 
@@ -508,27 +528,38 @@ def log_export(folder: Path, phase: str, tracking_uri: str, *, csv: bool = True)
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     p.add_argument("--phase", required=True, help="value of the runs' phases tag")
-    p.add_argument("--out", type=Path, help="default outputs/metrics/<phase>")
+    p.add_argument(
+        "--out",
+        type=Path,
+        help="default outputs/metrics/<phase>, relative to the working directory: "
+        "run from the main checkout",
+    )
     p.add_argument(
         "--tracking-uri",
         required=True,
         help="sqlite:/// store, read-only; ?timeout=<s> sets the busy timeout",
     )
     p.add_argument(
-        "--replay-root", type=Path, default=OUT_ROOT, help="EV6 per-run tables"
+        "--replay-root",
+        type=Path,
+        default=OUT_ROOT,
+        help="EV6 per-run tables (default outputs/metrics, relative to the working "
+        "directory)",
     )
     p.add_argument("--no-log", action="store_true", help="write the tables only")
     p.add_argument(
-        "--log-parquet-only",
+        "--log-csv",
         action="store_true",
-        help="log the parquet files but not their CSV copies (disk space)",
+        help="log the CSV copies too (default: parquet only, R104)",
     )
     p.add_argument(
-        "--run", action="append", help="restrict to a run id or name (with --no-log)"
+        "--run",
+        action="append",
+        help="restrict to a run id or name (needs --no-log and --out)",
     )
     a = p.parse_args(argv)
-    if a.run and not a.no_log:
-        p.error("--run exports part of a phase: pass --no-log")
+    if a.run and not (a.no_log and a.out):
+        p.error("--run exports part of a phase: pass --no-log and --out")
     return a
 
 
@@ -541,7 +572,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         a.phase, out, tracking_uri=a.tracking_uri, replay_root=a.replay_root, runs=a.run
     )
     if not a.no_log:
-        run_id = log_export(out, a.phase, a.tracking_uri, csv=not a.log_parquet_only)
+        run_id = log_export(out, a.phase, a.tracking_uri, csv=a.log_csv)
         logger.info("logged %s to run %s", out, run_id)
 
 

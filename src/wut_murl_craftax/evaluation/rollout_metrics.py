@@ -15,11 +15,11 @@ import argparse
 import functools
 import logging
 import math
-import sqlite3
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import fields
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import jax
@@ -35,6 +35,7 @@ from ..training.progress_key import CAPS
 from .coverage import coverage_summary, init_seen, update_seen
 from .episode_records import Trace, episode_record, trace_of
 from .events import StepEvents
+from .hardware import open_store
 from .milestones import Game
 
 if TYPE_CHECKING:  # the CLI splits the CPU first; these imports start JAX's backend
@@ -601,47 +602,52 @@ class RunRef(NamedTuple):
     budget: str
     seed: int
     dir: Path
-
-
-def _db(tracking_uri: str) -> Path:
-    """The SQLite file of a ``sqlite:///`` URI.
-
-    Raises:
-        ValueError: For another kind of store.
-    """
-    if not tracking_uri.startswith("sqlite:///"):
-        msg = f"expected a sqlite:/// tracking URI, got {tracking_uri}"
-        raise ValueError(msg)
-    return Path(tracking_uri.removeprefix("sqlite:///"))
+    status: str = ""
+    """MLflow status."""
+    experiment: str = ""
+    """Name of the run's experiment (its first phase; context only, R77)."""
+    tags: Mapping[str, str] = MappingProxyType({})
+    """Every tag of the run."""
 
 
 def phase_runs(tracking_uri: str, phases: Sequence[str] | None) -> list[RunRef]:
     """Active runs whose tag ``phases`` holds one of ``phases`` (all if None), by name.
 
-    Reads the store read-only (tag membership, never the experiment name, R77).
+    Reads the store read-only in one short connection (tag membership, never the
+    experiment name, R77; short reads, R103). A missing ``seed`` tag reads -1.
     """
     from ..orchestration.tracking import artifact_path
 
-    sql = """
-        select r.run_uuid, r.name, r.artifact_uri,
-               max(case when t.key = 'phases' then t.value end),
-               max(case when t.key = 'method' then t.value end),
-               max(case when t.key = 'budget' then t.value end),
-               max(case when t.key = 'seed' then t.value end)
-        from runs r join tags t on t.run_uuid = r.run_uuid
-        where r.lifecycle_stage = 'active'
-        group by r.run_uuid order by r.name
-    """
-    with sqlite3.connect(f"file:{_db(tracking_uri)}?mode=ro", uri=True) as db:
-        rows = db.execute(sql).fetchall()
+    with open_store(tracking_uri) as con:
+        rows = con.execute("SELECT run_uuid, key, value FROM tags").fetchall()
+        runs = con.execute(
+            "SELECT r.run_uuid, r.name, r.status, e.name, r.artifact_uri FROM runs r "
+            "JOIN experiments e ON e.experiment_id = r.experiment_id "
+            "WHERE r.lifecycle_stage = 'active' ORDER BY r.name"
+        ).fetchall()
+    tags: dict[str, dict[str, str]] = {}
+    for rid, key, value in rows:
+        tags.setdefault(rid, {})[key] = value
     wanted = set(phases or ())
-    return [
-        RunRef(
-            rid, name, method or "", budget or "", int(seed or -1), artifact_path(uri)
+    out = []
+    for rid, name, status, exp, uri in runs:
+        t = tags.get(rid, {})
+        if wanted and not wanted & set(t.get("phases", "").split(",")):
+            continue
+        out.append(
+            RunRef(
+                rid,
+                name,
+                t.get("method", ""),
+                t.get("budget", ""),
+                int(t.get("seed", -1)),
+                artifact_path(uri),
+                status,
+                exp,
+                t,
+            )
         )
-        for rid, name, uri, tag, method, budget, seed in rows
-        if not wanted or wanted & set((tag or "").split(","))
-    ]
+    return out
 
 
 def _updates(ref: RunRef, mode: str) -> list[int]:
