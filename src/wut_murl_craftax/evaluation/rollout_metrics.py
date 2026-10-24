@@ -483,7 +483,7 @@ def out_paths(out: Path, run_id: str, update: int, mode: str) -> dict[str, Path]
     }
 
 
-def _arrow(df: pd.DataFrame) -> pa.Table:
+def arrow_table(df: pd.DataFrame) -> pa.Table:
     """``df`` as an Arrow table with the fixed types of `_TYPES` and `_TEXT`."""
     typed = {k: v for k, v in (_TYPES | _TEXT).items() if k in df.columns}
     t = pa.Table.from_pandas(df.drop(columns=list(typed)), preserve_index=False)
@@ -497,7 +497,7 @@ def _write(df: pd.DataFrame, path: Path) -> None:
     """Write ``df`` to ``path`` atomically: a file that exists is complete."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    pq.write_table(_arrow(df), tmp)
+    pq.write_table(arrow_table(df), tmp)
     tmp.replace(path)
 
 
