@@ -59,7 +59,7 @@ INVENTORY = "eval_inventory"
 `INVENTORY_COLUMNS`."""
 INVENTORY_COLUMNS = ("run_id", "update", "mode", "eval_seed", "steps", "capped_steps")
 """Columns of `INVENTORY`: episode steps, and steps with a material at its
-`progress_key.CAPS` cap."""
+`progress_key.CAPS` cap, counting only materials whose cap is above 1 (R98)."""
 REPLAY = (SKILL_ENDS, INVENTORY)
 INPUTS = (ACTIONS, *REPLAY)
 """Optional frames `detect_all` passes on to the detectors."""
@@ -514,12 +514,19 @@ def eval_actions(
 # --- shared detectors -------------------------------------------------------------
 
 
-def _floor(d: RunData, c: np.ndarray) -> float:
-    """Drawdown floor of the run (R92): 1 point at `ABSOLUTE_BUDGETS`, else relative."""
-    if str(d.run["budget"]) in ABSOLUTE_BUDGETS:
+def drawdown_floor(budget: str, c: np.ndarray) -> float:
+    """Drawdown floor of a smoothed score curve (R92), shared with comparison T3.
+
+    1 point at `ABSOLUTE_BUDGETS`, else ``max(0.1, 0.25 x`` the curve's best score).
+    """
+    if budget in ABSOLUTE_BUDGETS:
         return MIN_MAX
     best = float(np.nanmax(c)) if np.isfinite(c).any() else 0.0
     return max(DRAWDOWN_FLOOR_MIN, DRAWDOWN_FLOOR_SHARE * best)
+
+
+def _floor(d: RunData, c: np.ndarray) -> float:
+    return drawdown_floor(str(d.run["budget"]), c)
 
 
 def _instability(d: RunData) -> Hit | None:

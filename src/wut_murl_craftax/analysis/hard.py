@@ -627,7 +627,8 @@ def _legend(fig: Figure, handles: Sequence[Artist], **kw: Any) -> None:
         text.set_color(charts.INK2)
 
 
-def _steps_text(steps: float) -> str:
+def steps_text(steps: float) -> str:
+    """Env steps as ``1.5M``, ``820k`` or ``40``, for titles, ticks and captions."""
     for scale, unit in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
         if steps >= scale:
             return f"{steps / scale:.3g}{unit}"
@@ -810,7 +811,7 @@ def plot_death_causes(table: pd.DataFrame, out_dir: Path) -> Path:
                 color=colors[cause], width=0.8,
             )  # fmt: skip
             bottom += shares[cause].to_numpy()
-        ticks = [_steps_text(s) for s in steps]
+        ticks = [steps_text(s) for s in steps]
         ax.set_xticks(range(len(steps)), ticks, rotation=60, ha="right")
         ax.set_ylim(0, 100)
         ax.set_xlabel("env steps")

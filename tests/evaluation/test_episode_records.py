@@ -394,6 +394,20 @@ def test_trace_of_gives_classic_tool_levels(classic_start: Any) -> None:
     assert tr.floor.tolist() == [0]
 
 
+@pytest.mark.parametrize("game", ["craftax", "classic"])
+def test_trace_of_runs_under_jit_with_jnp_as_with_numpy(
+    game: str, craftax_start: Any, classic_start: Any
+) -> None:
+    """A replay scan builds its trace rows in jit; they equal the numpy trace."""
+    s = craftax_start if game == "craftax" else classic_start
+    moved = s.replace(player_position=jnp.asarray([0, 1], jnp.int32))  # map edge
+    states = jax.tree.map(lambda a, b: np.concatenate([a, b]), _rows(s), _rows(moved))
+    want = trace_of(states, game)
+    got = jax.jit(lambda x: trace_of(x, game, xp=jnp))(states)
+    for w, g in zip(want, got, strict=True):
+        np.testing.assert_array_equal(np.asarray(g), w)  # dtypes: jax has no int64
+
+
 def test_survival_timing_counts_refills_their_gaps_and_the_stat_before() -> None:
     ev = quiet(100)
     ev["ate"][[10, 40, 90]] = True

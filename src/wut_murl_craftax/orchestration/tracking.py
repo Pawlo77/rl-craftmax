@@ -36,7 +36,7 @@ def _refuse_repo_store(local_path: Path) -> None:
         raise RuntimeError(msg)
 
 
-def _resolve_tracking_uri(tracking_uri: str) -> str:
+def resolve_tracking_uri(tracking_uri: str) -> str:
     """Resolve local tracking URIs to an absolute path when needed.
 
     Raises:
@@ -71,6 +71,10 @@ def _resolve_tracking_uri(tracking_uri: str) -> str:
     _refuse_repo_store(resolved_path)
     resolved_path.mkdir(parents=True, exist_ok=True)
     return str(resolved_path)
+
+
+_resolve_tracking_uri = resolve_tracking_uri
+"""The name the orchestration modules import (kept so they need no edit)."""
 
 
 def _artifact_location(tracking_uri: str, experiment: str) -> str | None:

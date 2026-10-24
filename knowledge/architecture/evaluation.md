@@ -13,6 +13,7 @@ related-code:
   - "[[src/wut_murl_craftax/evaluation/episode_metrics.py]]"
   - "[[src/wut_murl_craftax/evaluation/episode_records.py]]"
   - "[[src/wut_murl_craftax/evaluation/coverage.py]]"
+  - "[[src/wut_murl_craftax/evaluation/rollout_metrics.py]]"
   - "[[src/wut_murl_craftax/evaluation/reproduction.py]]"
   - "[[src/wut_murl_craftax/evaluation/stats.py]]"
   - "[[src/wut_murl_craftax/evaluation/stability.py]]"
@@ -22,14 +23,15 @@ related-code:
 
 ## Responsibility
 
-- Define what a Craftax step and episode are worth: game tables, per-step events, online episode metrics, the reproduction check ([[2026-10-20-craftax-evaluation-and-metrics]]).
+- Define what a Craftax step and episode are worth: game tables, per-step events, online episode metrics, the offline replay of eval files, the reproduction check ([[2026-10-20-craftax-evaluation-and-metrics]]).
 
 ## Public surface
 
 - `step_events(game, s, action, s2) -> StepEvents`: pure, runs under `jit` and `vmap`; `Game`, `game_of`, `achievement_names`.
 - `init_acc`, `episode_step`, `update_summary`, `score_pct`: online accumulation of episode metrics.
-- `episode_record(events, actions, trace=None, *, game) -> EpisodeRecord`: one eval episode from its stored `StepEvents` and actions; `EpisodeRecord.row()` gives its eval-episode table columns (identity columns excepted), with nested `Stall` and `Fight` lists. `stored_records(npz arrays, game)` records every seed of an eval file without replay; `trace_of(states, game) -> Trace` reads the replayed states the trace-only fields need.
+- `episode_record(events, actions, trace=None, *, game) -> EpisodeRecord`: one eval episode from its stored `StepEvents` and actions; `EpisodeRecord.row()` gives its eval-episode table columns (identity columns excepted), with nested `Stall` and `Fight` lists. `stored_records(npz arrays, game)` records every seed of an eval file without replay; `trace_of(states, game, xp=np) -> Trace` reads the replayed states the trace-only fields need (`xp=jnp` under `jit`).
 - `init_seen(s0, game)`, `update_seen(seen, s2, game, valid=True)` (pure, `jit`, `vmap`; `valid` False skips a padded step), `coverage_summary(seen, positions, floors)`: exploration coverage per floor, new tiles per 100 steps, revisit rate and unique positions of one episode.
+- `Replayer(run)`, `replay_file(rp, arrays) -> FileReplay`: every seed of an eval file replayed together and checked against the file (`ReplayMismatchError`). `file_tables(rp, arrays, update, mode, Identity) -> Tables` gives the eval-episode rows in `episode_columns(game)` order (`EPISODE_COLUMNS`, the contracts.md section 1 order with families expanded; the per-run rows lack `config_ref`), `skill_ends` (`analysis.obstacles.SKILL_ENDS_COLUMNS`, Dyna-Q adds `pair_count` from `pair_counts`) and `eval_inventory` (`obstacles.INVENTORY_COLUMNS`; `at_cap` over `HOARD_CAPS`) of contracts.md sections 1 and 9. `process_file` writes them to `out_paths(out, run_id, update, mode)` and logs them; `phase_runs(tracking_uri, phases)`, `plan_jobs(runs, updates, modes)`, `pending` and the CLI (`python -m wut_murl_craftax.evaluation.rollout_metrics --phase P --tracking-uri URI [--updates all|final|u,...] [--mode both] [--no-log]`) run a phase.
 - `band`, `Reproduction`: the reproduction check.
 - `iqm`, `mean_se`, `probability_of_improvement`, `seed_spread`: point estimates over the seeds of one stratum; `Interval` is `(estimate, lo, hi)`.
 - `stratified_bootstrap_ci(scores_by_stratum, statistic, n=10_000, seed=0) -> Interval`: percentile 95% interval, seeds resampled inside each stratum; `statistic` takes the resampled arrays by stratum key (IQM of the pool, or a probability of improvement between two strata).
@@ -50,6 +52,7 @@ One line each; signatures and details: [[Modules]].
 - `episode_metrics`: online score and achievement metrics of training episodes, read from step events.
 - `episode_records`: per-episode records of eval episodes (end, cause, stalls, fights, splits, combat, needs and survival timing, actions, resources, wasted crafts).
 - `coverage`: tiles seen per floor (first-seen step per tile), new tiles and revisits of an episode.
+- `rollout_metrics`: offline replay of the stored eval files (EV6): records with the trace, coverage, the training-analysis frames `skill_ends` and `eval_inventory`, their files, MLflow logging and the phase CLI.
 - `reproduction`: does a control's final score match the published one (`band`, CLI)?
 - `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`.
 - `stability`: drawdown, drop, collapse and recovery of a run's curve; config scores and hyperparameter sensitivity of a tuning grid ([[2026-10-20-craftax-evaluation-and-metrics]] "Learning stability").
@@ -60,6 +63,7 @@ One line each; signatures and details: [[Modules]].
 - In: states from the env wrappers of [[training]] and from replays of [[visualisation]].
 - Out: `StepEvents` per step (training metrics, `eval/<mode>/<update>.npz`), per-update summaries, reproduction verdicts tagged on MLflow runs.
 - Eval files -> `stored_records` (no replay); replayed states -> `trace_of` -> `episode_record(..., trace)` adds resources, wasted crafts and stall-start stats; `update_seen` scanned over the replayed states -> `coverage_summary` with the trace's positions and floors.
+- `rollout_metrics`: `mlruns/<exp>/<run_id>/artifacts/eval/<mode>/<update>.npz` (+ `eval/dyna_model_graph.parquet`) -> replay in jitted 256-step scans of `EvalRun.env_step` ([[visualisation]] `eval_rollouts`), 64 seeds vmapped and split over the CPU devices -> `outputs/metrics/<run_id>/{eval,skill_ends,inventory}_<update>_<mode>.parquet` -> the run's `eval_tables/` artifacts and `eval/<mode>/<column>` episode means of the replay-only columns at step = the checkpoint's env steps. EV10 concatenates the `eval_*` files of a phase into `eval_episodes` and inserts `config_ref`.
 
 ## Invariants
 
@@ -74,12 +78,17 @@ One line each; signatures and details: [[Modules]].
 - Stall action histograms skip forced steps, as the episode histogram does. Survival timing (`survival/count|gap|level/<stat>`) pairs food with eats, drink with drinks and energy with sleep starts; gaps come from the stored events, levels (the stat in the state before) need the trace.
 - Record rules shared with training (cause window, stall gap, close calls, action shares) follow `episode_metrics`; a test checks the record against `episode_step` on one stream.
 - Events are computed from the pre-reset next state, so a done step keeps its unlocks ([[Experiment decisions]]).
+- A replay must reproduce the stored events of every seed exactly up to its `length`, and end a skill (`skill_step` on the replayed observations, as `SMDPPolicy.step`) exactly before each stored `steps_in_skill == 0`; otherwise `ReplayMismatchError` names run, update, mode and seed and the CLI skips that file (exit status 1 at the end). Past its length a seed keeps stepping in the batch, but `update_seen` gets `valid` False and its rows are cut.
+- A skill runs from the frame of its decision to the next decision (or the episode end, reason `episode_end`); `key` is `smdp.top_key` of the decision observation; the other reasons are the `skill_step` reason of the step before the next decision. `capped_steps` counts the states before each action with a material at its `progress_key.CAPS` cap, only for materials whose cap is above 1 (`HOARD_CAPS`: wood, stone, coal, iron, diamond; R98: one sapling, gem, arrow, torch, book or potion is no hoarding).
+- The per-run eval tables leave out `config_ref`: it depends on the exported phase. `stalls` and `fights` have fixed Arrow types, so files with no stall concatenate.
+- Resumable and idempotent: the eval table is written last (atomic writes); a `.logging` marker before the MLflow logging becomes `.logged` after it, and a rerun after a cut logs only the summaries the store lacks at that step. The CLI skips what exists and loads a run only for pending files. Final checkpoints of every run come first.
+- A file with `extras/skill` whose run policy is not an `SMDPPolicy` raises `ReplayMismatchError` instead of silently dropping `skill_ends`. The eval table must hold exactly the `episode_columns` set, or `file_tables` raises.
 - Hardware: one run per call, read-only SQL by `run_uuid` (never a scan of `metrics`); a series the store lacks is NaN, never 0 (the laptop store has no power, GPU or eval-time series and no `profile` tag, so `gpu_util_*`, `peak_device_mem_mb`, `energy_j`, `steps_per_joule` and `eval_s` are all "n.m." there; `eval_s` and `peak_device_mb` are names the runner may log, `eval_s` is a placeholder no runner code logs yet). `peak_device_mem_mb` is the largest of the runner's `peak_device_mb` and the sampled GPU memory series. `profile` comes from the `learner_device` tag (`MetalDevice` laptop, `cuda`/`CudaDevice` cuda, else unknown) and runs are compared inside one profile only.
 - `train/wall_s` is cumulative across resume segments (the runner restores it), so the wall-clock is its last value; a re-logged update keeps its latest value, and a `wall_s` that runs backwards raises. MLflow's step of those points is the env steps. Steady SPS runs from the point at 10 times the first point's steps (update 10 at 1M, a window of updates at 1B) to the last. Compile time is the stored `compile_s`, else the first point's `wall_s` minus its steps at the median per-step time (they agree on the final-1m runs checked).
 - Energy is the trapezoid integral over the sample timestamps (the sysmetrics step counts samples, not time) of every `system/gpu_*_power_usage_watts` series; an interval above 10 times the median one is a resume gap and is skipped, so a resumed run's energy is a lower bound. It covers logged GPU power only (no CPU or system power).
 - Context only (R97): every laptop run trained with 2 queue workers, fresh `final-1m` runs included, so laptop wall-clock, SPS and compile time, and the machine-wide `cpu_util_*` and `peak_host_mem_mb`, are context, never a clean comparison. `peak_rss_mb` is the peak of the whole worker process (several runs of a worker share it). Reports say "two concurrent workers" beside them.
 - `reused_from_tuning` is True for a run whose `phases` tag lists `tune-coarse` or `tune-fine` (38 of the 140 `final-1m` runs, including the 26 without online families). It only separates reused from freshly trained runs; it says nothing about which timings are clean. Reused runs were in fact faster than fresh ones of the same method.
-- Importing a table module never starts the JAX backends.
+- Importing a table module never starts the JAX backends; `rollout_metrics` imports the replay modules inside functions, so the CLI can split the CPU (`--host-devices`) first.
 
 ## Known issues
 
@@ -88,4 +97,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]], [[tests/evaluation/test_hardware.py]]
+- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]], [[tests/evaluation/test_hardware.py]], [[tests/evaluation/test_rollout_metrics.py]]
