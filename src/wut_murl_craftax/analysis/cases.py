@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import parse_qs
 
 import numpy as np
 import pandas as pd
@@ -44,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 OUTPUTS = Path("outputs")
 """Root that the file columns of a case are relative to."""
+STORE_TIMEOUT_S = 300.0
+"""SQLite busy timeout of `run_dirs` when the URI names none (R103)."""
 EVAL_MODE = "stochastic"
 """Eval mode the cases are searched in (the thresholds' basis)."""
 TOP_STALLS, EARLIER_CHECKPOINTS, DEEP_CASES, TOP_CAUSES = 5, 3, 3, 3
@@ -296,7 +299,9 @@ def write_cases(cases: pd.DataFrame, root: Path = OUTPUTS) -> list[Path]:
 def run_dirs(run_ids: Iterable[str], tracking_uri: str) -> dict[str, Path]:
     """Artifact directory of each run (``mlruns/<exp>/<run_id>/artifacts``).
 
-    Reads the ``runs`` table of a SQLite store read-only (R85).
+    Reads the ``runs`` table of a SQLite store read-only (R85) in one short query, so
+    no read transaction outlives the call (R103). ``?timeout=<s>`` in the URI sets the
+    busy timeout (default `STORE_TIMEOUT_S`); the query is not part of the file name.
 
     Raises:
         ValueError: If the store is not a SQLite file.
@@ -305,14 +310,18 @@ def run_dirs(run_ids: Iterable[str], tracking_uri: str) -> dict[str, Path]:
     # imported here: tracking pulls in the experiment config and reproducibility code
     from ..orchestration.tracking import artifact_path
 
-    if not tracking_uri.startswith("sqlite:///"):
+    base, _, query = tracking_uri.partition("?")
+    if not base.startswith("sqlite:///"):
         msg = f"run_dirs reads a sqlite:/// store, got {tracking_uri}"
         raise ValueError(msg)
+    timeout = parse_qs(query).get("timeout", [str(STORE_TIMEOUT_S)])[0]
     ids = list(dict.fromkeys(run_ids))
-    db = tracking_uri.removeprefix("sqlite:///")
-    query = "select run_uuid, artifact_uri from runs where run_uuid in ({})"
-    with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as con:
-        found = dict(con.execute(query.format(",".join("?" * len(ids))), ids))
+    db = base.removeprefix("sqlite:///")
+    sql = "select run_uuid, artifact_uri from runs where run_uuid in ({})"
+    with closing(
+        sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=float(timeout))
+    ) as con:
+        found = dict(con.execute(sql.format(",".join("?" * len(ids))), ids).fetchall())
     if missing := [r for r in ids if r not in found]:
         msg = f"runs not in the store: {', '.join(missing)}"
         raise KeyError(msg)

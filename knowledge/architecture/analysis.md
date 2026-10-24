@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, analysis]
 created: 2026-10-24
-updated: 2026-10-24
+updated: 2026-10-25
 related-code:
   - "[[src/wut_murl_craftax/analysis/__init__.py]]"
   - "[[src/wut_murl_craftax/analysis/cases.py]]"
@@ -14,6 +14,7 @@ related-code:
   - "[[src/wut_murl_craftax/analysis/literature.py]]"
   - "[[src/wut_murl_craftax/analysis/load.py]]"
   - "[[src/wut_murl_craftax/analysis/obstacles.py]]"
+  - "[[src/wut_murl_craftax/analysis/training.py]]"
 ---
 # analysis
 
@@ -22,6 +23,7 @@ related-code:
 - Phase 4 analysis of finished runs: load the exported tables, per-method training analysis, obstacles, cases ([[2026-10-20-craftax-training-analysis]]) and the method comparison ([[2026-10-20-craftax-comparison-and-results]]).
 - Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors, the hard-scenario summaries and the comparison tables.
 - Training-analysis cases (TA3): the case finder, its replay export and the case facts.
+- Training-analysis CLI (TA5): runs the hard summaries, obstacle detectors and cases of every (budget, method) and logs them to MLflow.
 
 ## Public surface
 
@@ -56,6 +58,8 @@ related-code:
 - `find_cases(frames, method, budget, config_ref="tuned", mode="stochastic")`: the case episodes of one unit as `cases.csv` rows (`CASE_COLUMNS`: contracts section 4, then `env_steps`, `length`, `detail`); kinds `stall`, `deep_floor`, `rare_unlock`, `death`; `id` `<budget>-<method>-<kind>-<n>`, an ablation `<budget>-<method>-<config_ref>-<kind>-<n>`.
 - `export_case(case, out_dir, run=None, *, tracking_uri=, root="outputs", overlay_kw=)`: replays one case and returns it with `rollout`, `master`, `gif` and `overlay` filled (paths relative to `root`); `run` is an `EvalRun` (shared compiles), a run directory, or looked up by `run_dirs`.
 - `describe_case(case, run=None, *, tracking_uri=)`: the write-up facts of a case from one replay: floor, stats and inventory at `start` and `peak`, action counts in the window and the episode, coverage gained per floor, the 50 actions before the peak, `combat_damage`, `close_calls` (the `episode_records` rule, so a whole-episode window equals the record's column) and lowest health in the window.
+- `python -m wut_murl_craftax.analysis.training --phases final-1m combo-1m [final-1b combo-1b] --method all|<names> --out outputs/analysis --tracking-uri sqlite:///<db>?timeout=300 [--metrics-root outputs/metrics] [--skip-missing] [--force] [--no-log] [--log-no-masters]` = `analyse_training(frames, methods=, out=, tracking_uri=, metrics_root=, phases=, log=, force=, log_skip=)` -> `TrainingSummary(done, skipped, failed)`: per budget and method the folder `<out>/<budget>/<method>/` and MLflow run `training-analysis-<budget>-<method>` (experiment `ANALYSIS_EXPERIMENT` = `analysis`).
+- `replay_frames(runs, finals, root)`: the optional `skill_ends` and `eval_inventory` frames of the runs from `<root>/<run_id>/{skill_ends,inventory}_<update>_stochastic.parquet` (contract section 10); a run counts only when its final checkpoint has the file.
 - `write_cases(cases, root)`: `analysis/<budget>/cases.csv` (the passed methods' rows replaced, the others kept) and `analysis/<budget>/<method>/cases.csv`; `run_dirs(run_ids, tracking_uri)`: artifact directories from a SQLite store, read-only.
 
 ## Modules
@@ -67,6 +71,7 @@ One line each; signatures and details: [[Modules]].
 - `hard`: floor reach, achievement status, cause of death and stall summaries per unit, and their plots; the comparison figures (F9) import the death and stall functions.
 - `literature`: the published scores of blocks A, A2 and D of [[Existing Implementations]] and the like-for-like block of each of our score kinds.
 - `load`: loaders, schema checks, run selectors and base controls over the export tables of [[evaluation]].
+- `training`: the CLI of the training analysis: files per (budget, method), the detector inputs from eval and replay files, MLflow logging, resume.
 - `obstacles`: the 10 shared and 23 method obstacle detectors, their registry and the obstacles table.
 
 ## Data flow
@@ -88,6 +93,7 @@ One line each; signatures and details: [[Modules]].
 | `eval_inventory` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | replay |
 | `eval_inventory` | `steps` | int | episode steps | replay |
 | `eval_inventory` | `capped_steps` | int | steps with at least one material at or above its `progress_key.CAPS` cap | replay |
+- The training CLI reads the export tables of the phases (`load_phases`, all of them, so the base controls stay in view), then per budget and method: `hard` tables and plots of all its units, `detect_all` per unit with the optional inputs of that unit's runs (`eval_actions` of the final stochastic eval file, found through `run_dirs`; `replay_frames`), `find_cases` per unit, then `export_case` and `describe_case` per case with one `EvalRun` per run. Folder `<out>/<budget>/<method>/`: `hard/*.csv` (`floor_reach`, `achievement_status`, `death_causes`, `stalls`, `stall_stats`, `stall_starts`, `stall_ccdf`), `plots/*.png`, `obstacles.md` (a section and table per unit, tuned first) and `obstacles.csv` (a row per run and detector), `cases.csv`, `cases/<id>.json` (`describe_case` facts), `rollouts/`, `masters/`, `gifs/`, `overlays/`, markers `.complete` and `.logged`; the budget table `<out>/<budget>/cases.csv` and the flat `outputs/visualisation/runs/case-<id>.npz` as in contracts section 4.
 - Cases replay eval files through [[visualisation]] (`as_rollout`, `render_master`, `cuts.gif`, `render_overlay`, `stored_episode`) and read state facts with `episode_records.trace_of` and `coverage.update_seen`.
 - Case files (`export_case`, `out_dir` = `outputs/analysis/<budget>/<method>/`): `rollouts/case-<id>.npz`, `masters/case-<id>.mkv` (whole episode, frame = step), `gifs/<id>.gif`, stall `overlays/<id>.mp4`; the rollout is copied to `outputs/visualisation/runs/case-<id>.npz` (flat, for the video `runs/*.npz` glob), and that copy is the `rollout` column. A `cases.csv` consumer takes the 16 px master from the `master` column, or uses `Path(rollout).stem` with `--masters-dir`; a row's `rollout` path is never passed to `cuts.cut_kept` as is (it expects a stem).
 - The comparison tables read `runs` (final score, eval scores, hardware columns, `config_json` for combo pairs and sensitivity), `curves` (`train/score_pct`, `first_unlock/*`, `first_unlock_wall/*`), final-checkpoint stochastic `eval_episodes`, `configs/reference/published_scores.yaml` and the literature CSV.
@@ -129,6 +135,13 @@ One line each; signatures and details: [[Modules]].
 - T3 uses `obstacles.drawdown_floor` (R92), the detectors' own rule.
 - Tuning optimism (R101, R102) compares the tuning mean only with fresh final seeds: reused seeds are the very runs the selection saw, so including them would shrink the winner's curse.
 
+- The training CLI keeps units apart (R77): tables and plots take all units of a method (one `config_ref` per line or panel), `detect_all` and `find_cases` run per unit, and `write_cases` gets all units of the method in one call (it merges by method only). `--out` must end in `analysis`: case files are relative to its parent (`outputs/`).
+- Optional detector inputs never fail a run: a run without eval actions or replay files gets the detectors' "needs ..." status. `skill_ends` and `eval_inventory` rows of a run are used only when its final checkpoint has them (the detectors read the frame's last checkpoint), and only stochastic ones are read.
+- A method folder is complete when `.complete` exists (written after every case replayed) and logged when `.logged` exists (the MLflow run id). A rerun skips complete methods, logs the unlogged ones and redoes the rest; `--force` empties the folder and the method's flat `case-<id>.npz` files first. A failed case leaves the other cases and methods done, withholds `.complete` and exits 1.
+- Logging: experiment `analysis` (get-or-create), run `training-analysis-<budget>-<method>` reused by name with its artifacts replaced (`--log-no-masters` leaves `masters/` out: a case is about 6 MB of master video, 9 MB of GIF, 1 MB of overlay); tags `analysis/kind=training`, `analysis/phases`, `analysis/budget`, `analysis/method` only (loaders select training runs by `phases`, `method`, `budget`, `seed`, `config_hash`).
+- Store (R85, R103): `run_dirs` is one short read-only query per method that closes at once; `?timeout=<s>` in the URI is the busy timeout (default 300 s), stripped for the file name and kept for MLflow's SQLAlchemy URI. The CLI writes the store only through MLflow logging.
+- Importing `training` imports neither JAX nor MLflow (`_open_run` and the logging import them when used).
+
 ## Known issues
 
 - `export_case` replays a stall case's episode five times: `as_rollout`, the master render and `render_overlay` (its own `EvalRun`, which replays for the observations, the network outputs and the frames); sharing one replay needs an `EvalRun` or episode parameter on `as_rollout` and `render_overlay` ([[visualisation]]).
@@ -137,4 +150,5 @@ One line each; signatures and details: [[Modules]].
 ## Tests
 
 - [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_compare.py]] (blocks, Holm families per block, 1B rows and Welch intervals, PoI matrix, ablations, the gate and its published config, T2 blocks, CI kind and protocol match, T3 collapse, T4 profiles, the race rule with censored seeds, T6, T7, tuning optimism) on `_compare_fixture.py` (in-memory frames: 10 seeds at 1M, 3 at 1B, the six ablations, tuning-reused seeds, a skill-pair combo option) and the shared export, [[tests/analysis/test_hard.py]] (hand-built episode frames: rates, intervals against the shared bootstrap, thresholds, NaN and status cases, units kept apart, the tier table against the game, the plots), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
+- [[tests/analysis/test_training_cli.py]] (TA5): the CLI on the synthetic export of the four final phases with the case replay stubbed (folders per method and budget, units kept apart, one cases table per method, phase handling, MLflow runs and tags, resume, `--force`, failed cases, eval-action and replay inputs reaching the detectors, the `?timeout=` store read) and, on the tiny PPO eval run, the real replay path writing a case folder.
 - [[tests/analysis/test_cases.py]] (TA3): hand-built episode frames for each case threshold and the table contract; export, GIF cap and facts on the tiny PPO eval run of the visualisation tests (`_learning_run`, loaded by path, no `sys.path` change); the close-call rule on synthetic health.

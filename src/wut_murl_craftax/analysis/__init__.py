@@ -99,6 +99,12 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         skill_detectors,
         table_rows,
     )
+    from .training import (
+        ANALYSIS_EXPERIMENT,
+        TrainingSummary,
+        analyse_training,
+        replay_frames,
+    )
 
 _EXPORTS: dict[str, str] = {
     "BASE_CONTROL": "load",
@@ -184,6 +190,10 @@ _EXPORTS: dict[str, str] = {
     "stability_table": "compare",
     "TUNING_OPTIMISM_COLUMNS": "compare",
     "tuning_optimism": "compare",
+    "ANALYSIS_EXPERIMENT": "training",
+    "TrainingSummary": "training",
+    "analyse_training": "training",
+    "replay_frames": "training",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -192,6 +202,7 @@ __all__ = [
     "ABLATION_COLUMNS",
     "ACHIEVEMENTS",
     "ALIASES",
+    "ANALYSIS_EXPERIMENT",
     "BASE_CONTROL",
     "BLOCKS",
     "CASE_COLUMNS",
@@ -222,8 +233,10 @@ __all__ = [
     "MissingPhaseError",
     "Obstacle",
     "SchemaError",
+    "TrainingSummary",
     "ablation_table",
     "achievement_status",
+    "analyse_training",
     "base_control",
     "block_of",
     "comparable_rows",
@@ -256,6 +269,7 @@ __all__ = [
     "poi_matrix",
     "race_table",
     "repeated_cycle",
+    "replay_frames",
     "reproduction_gate",
     "run_dirs",
     "select",
