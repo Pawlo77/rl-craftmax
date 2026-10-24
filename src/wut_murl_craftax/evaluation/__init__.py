@@ -4,6 +4,7 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .coverage import coverage_summary, init_seen, update_seen
     from .episode_metrics import (
         ADDED_FIELDS,
         CAUSES,
@@ -199,6 +200,9 @@ _EXPORTS: dict[str, str] = {
     "update_sums": "episode_metrics",
     "window_metrics": "episode_metrics",
     "write_combo": "select_pair",
+    "coverage_summary": "coverage",
+    "init_seen": "coverage",
+    "update_seen": "coverage",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -248,6 +252,7 @@ __all__ = [
     "combo_text",
     "config_scores",
     "controls_of",
+    "coverage_summary",
     "curve_band",
     "dispersion",
     "drawdowns",
@@ -261,6 +266,7 @@ __all__ = [
     "game_of",
     "holm",
     "init_acc",
+    "init_seen",
     "iqm",
     "ladder",
     "mann_whitney_holm",
@@ -290,6 +296,7 @@ __all__ = [
     "t_ci",
     "trace_of",
     "update_metrics",
+    "update_seen",
     "update_summary",
     "update_sums",
     "window_metrics",
