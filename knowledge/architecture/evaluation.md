@@ -16,6 +16,7 @@ related-code:
   - "[[src/wut_murl_craftax/evaluation/reproduction.py]]"
   - "[[src/wut_murl_craftax/evaluation/stats.py]]"
   - "[[src/wut_murl_craftax/evaluation/stability.py]]"
+  - "[[src/wut_murl_craftax/evaluation/hardware.py]]"
 ---
 # evaluation
 
@@ -38,6 +39,7 @@ related-code:
 - `curve_band(curves, grid, statistic="mean"|"iqm") -> DataFrame` (`env_steps`, `estimate`, `lo`, `hi`): learning curves on the common grid with a bootstrap band.
 - `smoothed(curve)`, `drawdowns(c)`, `drops(c) -> [(start, stop)]`, `collapsed(c)`, `recovery_times(c, steps)`, `dispersion(c)`: learning stability of one per-update score curve (`c` is the smoothed curve; indices are updates).
 - `config_scores(tuning_table)`, `robust_share(scores)`, `sensitivity(tuning_table) -> DataFrame`: config score `r_c`, robust share and `S_h` per hyperparameter with its noise floor; the table is the `runs` rows of one method's tuning phase (`config_hash`, `final_score`, `config_json`).
+- `hardware_summary(store, run_id, *, budget=None) -> dict`: hardware metrics of one run read from the SQLite store (path, `sqlite:///` URI or connection), keys `profile`, `device_kind`, `actor_device`, `learner_device`, `shared_machine`, `wall_clock_s`, `steady_sps`, `overall_sps`, `compile_s`, `eval_s`, `cpu_util_mean|p95`, `gpu_util_mean|p95`, `peak_rss_mb`, `peak_host_mem_mb`, `peak_device_mem_mb`, `energy_j`, `steps_per_joule`; NaN is "not measured". `profile_of(learner_device)`, `shared_machine(phases)`, `show_metric(value)` ("n.m." for NaN), `system_keys(store, run_id)`, `HARDWARE_KEYS` (stored names per profile and metric), `NOT_MEASURED`. CLI: `python -m wut_murl_craftax.evaluation.hardware --run <id> [--list-keys] [--tracking-uri ...]`.
 
 ## Modules
 
@@ -51,6 +53,7 @@ One line each; signatures and details: [[Modules]].
 - `reproduction`: does a control's final score match the published one (`band`, CLI)?
 - `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`.
 - `stability`: drawdown, drop, collapse and recovery of a run's curve; config scores and hyperparameter sensitivity of a tuning grid ([[2026-10-20-craftax-evaluation-and-metrics]] "Learning stability").
+- `hardware`: wall-clock, SPS, compile time, utilisation, memory and energy of a run from its stored series ([[2026-10-20-craftax-evaluation-and-metrics]] "Hardware usage").
 
 ## Data flow
 
@@ -71,6 +74,10 @@ One line each; signatures and details: [[Modules]].
 - Stall action histograms skip forced steps, as the episode histogram does. Survival timing (`survival/count|gap|level/<stat>`) pairs food with eats, drink with drinks and energy with sleep starts; gaps come from the stored events, levels (the stat in the state before) need the trace.
 - Record rules shared with training (cause window, stall gap, close calls, action shares) follow `episode_metrics`; a test checks the record against `episode_step` on one stream.
 - Events are computed from the pre-reset next state, so a done step keeps its unlocks ([[Experiment decisions]]).
+- Hardware: one run per call, read-only SQL by `run_uuid` (never a scan of `metrics`); a series the store lacks is NaN, never 0 (the laptop store has no power, GPU or eval-time series and no `profile` tag, so `gpu_util_*`, `peak_device_mem_mb`, `energy_j`, `steps_per_joule` and `eval_s` are all "n.m." there). `profile` comes from the `learner_device` tag (`MetalDevice` laptop, `cuda`/`CudaDevice` cuda, else unknown) and runs are compared inside one profile only.
+- `train/wall_s` is cumulative across resume segments (the runner restores it), so the wall-clock is its last value; a re-logged update keeps its latest value, and a `wall_s` that runs backwards raises. MLflow's step of those points is the env steps. Steady SPS runs from the point at 10 times the first point's steps (update 10 at 1M, a window of updates at 1B) to the last. Compile time is the stored `compile_s`, else the first point's `wall_s` minus its steps at the median per-step time (they agree on the final-1m runs checked).
+- Energy is the trapezoid integral over the sample timestamps (the sysmetrics step counts samples, not time) of every `system/gpu_*_power_usage_watts` series; an interval above 10 times the median one is a resume gap and is skipped, so a resumed run's energy is a lower bound. It covers logged GPU power only (no CPU or system power).
+- `shared_machine` is True for a run whose `phases` tag lists `tune-coarse` or `tune-fine`: the runs reused from tuning (38 of the 140 `final-1m` runs, including the 26 reused ones without online families) trained beside a second queue worker, so their wall-clock and SPS are confounded. Tables keep them in a flagged column; they are never silently mixed with the fresh runs.
 - Importing a table module never starts the JAX backends.
 
 ## Known issues
@@ -79,4 +86,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]]
+- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]], [[tests/evaluation/test_hardware.py]]
