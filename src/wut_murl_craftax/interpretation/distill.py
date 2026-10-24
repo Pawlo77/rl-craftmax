@@ -18,7 +18,7 @@ from sklearn.tree import DecisionTreeClassifier
 from .dataset import MEMORY_FEATURES, SKILL_FEATURES, Dataset
 
 type Row = dict[str, Any]
-"""One tree of the curve: kind, size, leaves, depth, top1, expected, val_top1."""
+"""One tree of the curve (see `fidelity_curve`)."""
 
 LEAF_GRID: tuple[int, ...] = tuple(2**k for k in range(1, 13))
 """``max_leaf_nodes`` of the size grid: 2, 4, ..., 4096."""
@@ -41,7 +41,7 @@ class FittedTree(NamedTuple):
     columns: tuple[str, ...]
     """Feature names in the order the model reads them; datasets are matched by name."""
     val_top1: float
-    """Top-1 fidelity on the validation states (tree-size choice)."""
+    """Top-1 fidelity on the validation states; reported, no size is selected by it."""
 
     @property
     def leaves(self) -> int:
@@ -64,10 +64,14 @@ def feature_columns(
     (default True) drops the current-skill columns of two-level policies.
 
     Raises:
-        ValueError: If ``memory`` is True on a policy that is not recurrent.
+        ValueError: If ``memory`` is True on a policy that is not recurrent, or
+            ``skill`` is True on a dataset without skill columns.
     """
     if memory and not ds.recurrent:
         msg = f"memory proxies need a recurrent policy, not {ds.family!r}"
+        raise ValueError(msg)
+    if skill and not set(SKILL_FEATURES) <= set(ds.columns):
+        msg = "skill columns need a two-level policy"
         raise ValueError(msg)
     drop: set[str] = set()
     if not (ds.recurrent if memory is None else memory):
@@ -152,7 +156,12 @@ def fidelity(tree: FittedTree, test: Dataset) -> dict[str, float]:
 
 
 def fidelity_curve(trees: Sequence[FittedTree], test: Dataset) -> list[Row]:
-    """One row per tree: kind, size, leaves, depth, top1, expected and val_top1."""
+    """One row per tree: kind, size, leaves, depth, top1, expected and val_top1.
+
+    ``memory`` and ``skill`` say whether the tree reads memory-proxy or
+    current-skill columns, so the fits of one recurrent policy stay apart.
+    """
+    memory, skill = set(MEMORY_FEATURES), set(SKILL_FEATURES)
     return [
         {
             "kind": t.kind,
@@ -161,6 +170,8 @@ def fidelity_curve(trees: Sequence[FittedTree], test: Dataset) -> list[Row]:
             "depth": t.depth,
             **fidelity(t, test),
             "val_top1": t.val_top1,
+            "memory": bool(memory & set(t.columns)),
+            "skill": bool(skill & set(t.columns)),
         }
         for t in trees
     ]

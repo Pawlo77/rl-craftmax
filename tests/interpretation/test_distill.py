@@ -163,9 +163,10 @@ def test_fitting_is_identical_across_worker_counts(
     again = fit_grid(splits[0], splits[1], workers=3)
     for a, b in zip(trees, again, strict=True):
         assert (a.kind, a.size, a.columns) == (b.kind, b.size, b.columns)
-        np.testing.assert_array_equal(
-            a.model.predict(splits[2].features), b.model.predict(splits[2].features)
-        )
+        for field in ("feature", "threshold", "n_node_samples"):
+            np.testing.assert_array_equal(
+                getattr(a.model.tree_, field), getattr(b.model.tree_, field), field
+            )
 
 
 def test_memory_proxies_only_for_recurrent_policies() -> None:
@@ -190,6 +191,38 @@ def test_skill_columns_follow_the_dataset_and_can_be_dropped() -> None:
     )
     plain = _dataset(0)
     assert feature_columns(plain) == plain.columns
+    with pytest.raises(ValueError, match="skill"):
+        feature_columns(plain, skill=True)
+
+
+def test_a_tree_splits_on_a_skill_column_and_the_curve_says_so() -> None:
+    extra = (*MEMORY_FEATURES, *SKILL_FEATURES)
+    name = SKILL_FEATURES[0]
+
+    def make(seed: int) -> Dataset:
+        ds = _dataset(seed, extra=extra, recurrent=True)
+        feats = ds.features.copy()
+        feats[:, ds.columns.index(name)] = np.random.default_rng(seed).integers(
+            0, 2, STATES
+        )
+        return ds._replace(
+            features=feats, label=feats[:, ds.columns.index(name)].astype(np.int8)
+        )
+
+    train, val, test = make(0), make(1), make(2)
+    both = fit_grid(train, val)
+    stump = both[0]
+    assert stump.model.tree_.feature[0] == stump.columns.index(name)
+    assert fidelity(stump, test)["top1"] == 1.0
+    without = fit_grid(train, val, skill=False)
+    assert fidelity(without[0], test)["top1"] < 1.0
+
+    def flags(trees: list[FittedTree]) -> set[tuple[bool, bool]]:
+        return {(r["memory"], r["skill"]) for r in fidelity_curve(trees, test)}
+
+    assert flags(both) == {(True, True)}
+    assert flags(without) == {(True, False)}
+    assert flags(fit_grid(train, val, memory=False, skill=False)) == {(False, False)}
 
 
 def test_memory_columns_are_used_by_recurrent_trees_only() -> None:

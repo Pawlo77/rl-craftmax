@@ -31,7 +31,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 267 | [[evaluation]] |
 | [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 94 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/dataset.py]] | Distillation datasets: named features and network labels at stochastic-policy states. |  |  | 223 | [[interpretation]] |
-| [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 183 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 271 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals. |  |  | 139 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
