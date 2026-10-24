@@ -8,17 +8,18 @@ created: 2026-10-24
 updated: 2026-10-24
 related-code:
   - "[[src/wut_murl_craftax/analysis/__init__.py]]"
-  - "[[src/wut_murl_craftax/analysis/load.py]]"
-  - "[[src/wut_murl_craftax/analysis/literature.py]]"
-  - "[[src/wut_murl_craftax/analysis/obstacles.py]]"
   - "[[src/wut_murl_craftax/analysis/compare.py]]"
+  - "[[src/wut_murl_craftax/analysis/hard.py]]"
+  - "[[src/wut_murl_craftax/analysis/literature.py]]"
+  - "[[src/wut_murl_craftax/analysis/load.py]]"
+  - "[[src/wut_murl_craftax/analysis/obstacles.py]]"
 ---
 # analysis
 
 ## Responsibility
 
 - Phase 4 analysis of finished runs: load the exported tables, per-method training analysis, obstacles, cases ([[2026-10-20-craftax-training-analysis]]) and the method comparison ([[2026-10-20-craftax-comparison-and-results]]).
-- Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors and the comparison tables.
+- Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors, the hard-scenario summaries and the comparison tables.
 
 ## Public surface
 
@@ -43,15 +44,21 @@ related-code:
   - `stability_table` (T3, `STABILITY_COLUMNS`), `hardware_table` (T4 per profile, `HARDWARE_COLUMNS`, laptop rows carry `CONTEXT_NOTE`), `race_table` (`RACE_COLUMNS`), `game_summary_table` (T6, `GAME_COLUMNS`), `sensitivity_table` (T7 per tuning phase, `SENSITIVITY_TABLE_COLUMNS`).
   - `block_of(method, combo_pair)`: `skills` for `SKILL_METHODS` (select_pair's) and a combo whose own pair holds one, else `main`; `BLOCKS`.
 - `repeated_cycle(actions)` -> `Cycle(period, start, length)`: the shortest action period repeated over >= 50 steps; `eval_actions(run_dir, run_id, update, mode)` reads an eval file into the `eval_actions` input.
+- `floor_reach(episodes, mode="stochastic", n=10000, floors=9)`: per unit and floor, the share of final eval episodes with `max_floor >= f` (`rate`, the mean over seeds of each seed's share, fractions) with the bootstrap interval `lo`, `hi` over seeds, `reached_seeds` and `status` (`never`, `rare` below `RARE_RATE` = 5%, `common`); every summary records its basis in `mode` and, where it has one, `scope` (`final` = each run's last checkpoint, `all`, `checkpoint`).
+- `achievement_status(episodes, curves=None, mode=)`: per unit and achievement, `final_rate`, `best_rate` and `best_update` over the checkpoints, `seeds_ever` of `n_seeds` (any eval, or training given `curves`), `eval_seeds`, `train_seeds`, `train_logged` and `status` (`never`, `never in eval`, `rare`, `common`), in tier, floor, value order. `ACHIEVEMENTS` (name -> `Achievement(tier, floor)`, value order) is the tier and floor table.
+- `death_causes(episodes, mode=)`: cause-of-death shares per unit, as one row set per eval checkpoint (`scope` `checkpoint`) and one over each run's own last checkpoint (`scope` `final`); a death with an empty cause is `not recorded` (the real `unknown` cause stays apart); a set without deaths has one `(no deaths)` row with NaN share.
+- `stall_table(episodes, mode=, final=True)`: one row per stall (frames, floor, `ending`, `ended_by`, `started_by`); `stall_stats(episodes, mode=, n=, final=)`: per unit stalls per episode (interval over seeds), median length, escape rate and `start_floor/<f>` counts; `stall_starts(table)`: where stalls start (floor, unlock); `stall_ccdf(table)`: the length CCDF.
+- `plot_floor_reach`, `plot_achievement_status`, `plot_death_causes`, `plot_stall_lengths` (table, `out_dir`) -> the PNG path (`floor_reach.png`, `achievement_status.png`, `death_causes_over_training.png`, `stall_lengths.png`), dark style of `visualisation.charts`; one budget per plot, a unit per line or panel.
 
 ## Modules
 
 One line each; signatures and details: [[Modules]].
 
-- `load`: loaders, schema checks, run selectors and base controls over the export tables of [[evaluation]].
-- `literature`: the published scores of blocks A, A2 and D of [[Existing Implementations]] and the like-for-like block of each of our score kinds.
-- `obstacles`: the 10 shared and 23 method obstacle detectors, their registry and the obstacles table.
 - `compare`: the comparison's result tables (T1-T4, T6, T7, the PoI matrix, the ablation table) and the reproduction gate.
+- `hard`: floor reach, achievement status, cause of death and stall summaries per unit, and their plots; the comparison figures (F9) import the death and stall functions.
+- `literature`: the published scores of blocks A, A2 and D of [[Existing Implementations]] and the like-for-like block of each of our score kinds.
+- `load`: loaders, schema checks, run selectors and base controls over the export tables of [[evaluation]].
+- `obstacles`: the 10 shared and 23 method obstacle detectors, their registry and the obstacles table.
 
 ## Data flow
 
@@ -91,6 +98,9 @@ One line each; signatures and details: [[Modules]].
 - `detect_all` judges one (method, `config_ref`) unit per call (R77); combo runs keep the method detectors of their own pair. Base pools are per method, never mixed: a control's exploration failure needs fewer floors than every other control, each named in the evidence.
 - A base run that never logged a series (`first_unlock/*` in the reused runs) is left out of the base median, never counted as never unlocked; the evidence gives the runs used and left out (R78).
 - Per-skill stats are required one by one (`smdp/skill/*/<stat>`, each deep skill's `chosen_share`), so one missing stat reads `not logged`.
+- The `hard` summaries group by (`method`, `config_ref`, `budget`) themselves, so tuned and ablation runs in one frame stay apart (R77); intervals are `stats.stratified_bootstrap_ci` over seeds (one run per seed, 10,000 resamples), skipped only when every seed has the same value.
+- `hard` reads only the event stream (`max_floor`, `ach/*`, `unlock_step/*`, `cause_of_death`, stall frames); the replay-only fields (`gathered/*`, `used/*`, `coverage/*`, `survival/level/*`, a stall's `intrinsics` and `inventory`) are never read, so a missing replay never becomes 0. Undefined values are NaN or a status: a checkpoint without deaths has a NaN share, a unit without stalls NaN median length and escape rate, a missing training series `train_seeds` NaN and status `never in eval` (never asserted as `never`, R78).
+- Final checkpoint and stochastic mode are the defaults of every `hard` summary (thresholds' basis); an achievement's `seeds_ever` counts both modes and every checkpoint. `ACHIEVEMENTS` floors are home floors checked against the game: mob floors from `FLOOR_MOB_MAPPING`, ore (sapphire, ruby on 2), chest loot on its first floor (bow, chest, potion 1; books, so spells and enchanting, 3), crafting on 0; `started_by` ties break by `.value`. Plots name mode and scope in their title and refuse a table that mixes them; `achievement_status.png` draws `never` (solid cross) and `never in eval` (hollow diamond) apart.
 - Instability and collapse pass `stability`'s drawdown floor: 1 point at `ABSOLUTE_BUDGETS`, else `max(0.1, 0.25 x` the run's best smoothed score), named in the evidence (R92).
 - Flat score (bonus distraction, reward hacking, re-trying) is a documented choice: the method plan says "flat (drawdown definition of evaluation-and-metrics)" and evaluation defines only drawdowns, so flat is a gain over the trailing 10% of the budget below 5% of the run's best smoothed score (`FLAT_WINDOW`, `FLAT_GAIN`).
 - Bonus-driven re-trying takes the pair count from the Dyna-Q model graph and the success rate from the eval ends of that pair at the checkpoint: the model stores no success flag.
@@ -108,5 +118,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table);
-- [[tests/analysis/test_compare.py]] (blocks, Holm families per block, 1B rows, PoI matrix, ablations, gate, T2 blocks and CI placement, T3 collapse, T4 profiles, race rule, T6, T7) on `_compare_fixture.py` (in-memory frames: 10 seeds at 1M, 3 at 1B, ablations, a skill-pair combo option) and the shared export; `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.
+- [[tests/analysis/test_load.py]], [[tests/analysis/test_literature.py]] (the CSV against its source note and the block mapping), [[tests/analysis/test_compare.py]] (blocks, Holm families per block, 1B rows, PoI matrix, ablations, gate, T2 blocks and CI placement, T3 collapse, T4 profiles, race rule, T6, T7) on `_compare_fixture.py` (in-memory frames: 10 seeds at 1M, 3 at 1B, ablations, a skill-pair combo option) and the shared export, [[tests/analysis/test_hard.py]] (hand-built episode frames: rates, intervals against the shared bootstrap, thresholds, NaN and status cases, units kept apart, the tier table against the game, the plots), [[tests/analysis/test_obstacles.py]] (a firing and a quiet synthetic run per detector, not-logged and needs-replay statuses, the cycle check, the table); `tests/analysis/conftest.py` (fixtures) and `_analysis_export.py` (its builder) write a synthetic export of every registry method, two ablations and a combo run, for the other analysis tests.

@@ -13,8 +13,9 @@ parent: "[[wut_murl_craftax]]"
 | Module | Summary | Domain | See | Lines | Architecture note |
 |---|---|---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. |  |  | 3 |  |
-| [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 211 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 255 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 884 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 852 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 388 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/obstacles.py]] | Obstacle detectors of the training analysis, their registry and the obstacles table. |  | [[2026-10-20-craftax-training-analysis]] | 1514 | [[analysis]] |
@@ -30,7 +31,9 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. |  |  | 560 |  |
 | [[src/wut_murl_craftax/evaluation/stability.py]] | Learning stability of one run (drawdowns, drops, collapse) and tuning sensitivity. |  |  | 239 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 267 | [[evaluation]] |
-| [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 26 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 94 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/dataset.py]] | Distillation datasets: named features and network labels at stochastic-policy states. |  |  | 223 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 271 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals. |  |  | 139 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
