@@ -5,6 +5,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from ..evaluation.select_pair import SKILL_METHODS  # compare re-exports it
+    from .cases import (
+        CASE_COLUMNS,
+        describe_case,
+        export_case,
+        find_cases,
+        run_dirs,
+        write_cases,
+    )
     from .compare import (
         ABLATION_COLUMNS,
         BLOCKS,
@@ -158,6 +166,12 @@ _EXPORTS: dict[str, str] = {
     "stall_starts": "hard",
     "stall_stats": "hard",
     "stall_table": "hard",
+    "CASE_COLUMNS": "cases",
+    "describe_case": "cases",
+    "export_case": "cases",
+    "find_cases": "cases",
+    "run_dirs": "cases",
+    "write_cases": "cases",
     "ABLATION_COLUMNS": "compare",
     "BLOCKS": "compare",
     "GAME_COLUMNS": "compare",
@@ -204,6 +218,7 @@ __all__ = [
     "ALIASES",
     "BASE_CONTROL",
     "BLOCKS",
+    "CASE_COLUMNS",
     "COMPARABLE_BLOCKS",
     "CONTROLS",
     "DETECTORS",
@@ -240,11 +255,14 @@ __all__ = [
     "comparable_rows",
     "count_bonus_detectors",
     "death_causes",
+    "describe_case",
     "detect_all",
     "drawdown_floor",
     "dyna_detectors",
     "eval_actions",
+    "export_case",
     "final_checkpoint",
+    "find_cases",
     "floor_reach",
     "game_summary_table",
     "hardware_table",
@@ -273,6 +291,7 @@ __all__ = [
     "race_table",
     "repeated_cycle",
     "reproduction_gate",
+    "run_dirs",
     "run_stability",
     "select",
     "sensitivity_table",
@@ -287,6 +306,7 @@ __all__ = [
     "table_rows",
     "tuning_optimism",
     "units",
+    "write_cases",
 ]
 
 

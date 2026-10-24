@@ -375,10 +375,18 @@ def test_unknown_run_is_refused(add_run: AddRun) -> None:
 
 def test_the_store_is_opened_read_only(add_run: AddRun) -> None:
     with (
-        hardware._open(store_of(add_run)) as con,
+        hardware.open_store(store_of(add_run)) as con,
         pytest.raises(sqlite3.OperationalError),
     ):
         con.execute("create table x (a)")
+
+
+def test_a_busy_timeout_in_the_uri_is_not_part_of_the_path(add_run: AddRun) -> None:
+    rid = add_run({**LAPTOP}, train(1, 20, steady))
+    uri = f"sqlite:///{store_of(add_run)}?timeout=7"
+    with hardware.open_store(uri) as con:
+        assert con.execute("select 1 from runs where run_uuid = ?", (rid,)).fetchall()
+    assert hardware_summary(uri, rid)["wall_clock_s"] == pytest.approx(steady(20))
 
 
 def test_store_may_be_given_as_a_tracking_uri(add_run: AddRun) -> None:

@@ -29,9 +29,19 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         fit_grid,
     )
     from .features import CREATURES, FEATURES, featurize
+    from .tree_policy import (
+        CLOSED_LOOP_LEAVES,
+        ClosedLoop,
+        TreeCarry,
+        TreePolicy,
+        closed_loop,
+        tree_rollouts,
+    )
 
 _EXPORTS: dict[str, str] = {
+    "CLOSED_LOOP_LEAVES": "tree_policy",
     "CREATURES": "features",
+    "ClosedLoop": "tree_policy",
     "DEPTH_GRID": "distill",
     "Dataset": "dataset",
     "FEATURES": "features",
@@ -45,7 +55,10 @@ _EXPORTS: dict[str, str] = {
     "SPLITS": "dataset",
     "TEST_SEEDS": "dataset",
     "TRAIN_SEEDS": "dataset",
+    "TreeCarry": "tree_policy",
+    "TreePolicy": "tree_policy",
     "VAL_SEEDS": "dataset",
+    "closed_loop": "tree_policy",
     "collect": "dataset",
     "complexity": "distill",
     "dataset_path": "dataset",
@@ -54,11 +67,13 @@ _EXPORTS: dict[str, str] = {
     "fidelity": "distill",
     "fidelity_curve": "distill",
     "fit_grid": "distill",
+    "tree_rollouts": "tree_policy",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
 
 __all__ = [
+    "CLOSED_LOOP_LEAVES",
     "CREATURES",
     "DEPTH_GRID",
     "FEATURES",
@@ -72,8 +87,12 @@ __all__ = [
     "TEST_SEEDS",
     "TRAIN_SEEDS",
     "VAL_SEEDS",
+    "ClosedLoop",
     "Dataset",
     "FittedTree",
+    "TreeCarry",
+    "TreePolicy",
+    "closed_loop",
     "collect",
     "complexity",
     "dataset_path",
@@ -82,6 +101,7 @@ __all__ = [
     "fidelity",
     "fidelity_curve",
     "fit_grid",
+    "tree_rollouts",
 ]
 
 
