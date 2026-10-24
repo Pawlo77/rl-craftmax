@@ -15,9 +15,12 @@ from _compare_fixture import (
     NOT_LOGGED,
     SEEDS,
     SKILL_PAIR,
+    TUNE_FINE,
+    TUNING_SEEDS,
     episodes_frame,
     make_frames,
 )
+from scipy import stats as sps
 
 from wut_murl_craftax.analysis import compare
 from wut_murl_craftax.analysis.compare import (
@@ -28,9 +31,11 @@ from wut_murl_craftax.analysis.compare import (
     HARDWARE_COLUMNS,
     LITERATURE_TABLE_COLUMNS,
     POI_COLUMNS,
+    RACE_COLUMNS,
     SENSITIVITY_TABLE_COLUMNS,
     SKILL_METHODS,
     STABILITY_COLUMNS,
+    TUNING_OPTIMISM_COLUMNS,
     ablation_table,
     block_of,
     game_summary_table,
@@ -43,6 +48,7 @@ from wut_murl_craftax.analysis.compare import (
     reproduction_gate,
     sensitivity_table,
     stability_table,
+    tuning_optimism,
 )
 from wut_murl_craftax.analysis.literature import COMPARABLE_BLOCKS
 from wut_murl_craftax.analysis.load import CONTROLS, load_phases
@@ -53,10 +59,32 @@ from wut_murl_craftax.evaluation.stability import (
     robust_share,
     sensitivity,
 )
-from wut_murl_craftax.evaluation.stats import holm, seed_spread
+from wut_murl_craftax.evaluation.stats import (
+    holm,
+    seed_spread,
+    stratified_bootstrap_ci,
+    t_ci,
+)
 
 N_BOOT = 200
 """Bootstrap resamples in tests (the protocol's 10,000 only slow them down)."""
+
+
+def _fixture_hash(control: str, budget: str) -> str:
+    """The fixture's tuned config hash stands in for the published one."""
+    return f"{control}/tuned"
+
+
+def _scores_of(
+    frames: dict[str, pd.DataFrame], method: str, budget: str, ref: str = "tuned"
+) -> np.ndarray:
+    runs = frames["runs"]
+    keep = (
+        (runs["method"] == method)
+        & (runs["budget"] == budget)
+        & (runs["config_ref"] == ref)
+    )
+    return runs.loc[keep, "final_score"].to_numpy(dtype=float)
 
 
 @pytest.fixture(scope="module")
@@ -176,7 +204,9 @@ def test_t1_holm_families_are_the_1m_pairs_of_one_block(
     assert controls[[f"p_holm_{c}" for c in CONTROLS]].isna().all().all()
 
 
-def test_t1_1b_rows_are_indicative(table: pd.DataFrame) -> None:
+def test_t1_1b_rows_are_indicative(
+    frames: dict[str, pd.DataFrame], table: pd.DataFrame
+) -> None:
     one_b = table[table["benchmark"] == "1b"]
     assert one_b["indicative"].all()
     assert not table.loc[table["benchmark"] == "1m", "indicative"].any()
@@ -188,6 +218,14 @@ def test_t1_1b_rows_are_indicative(table: pd.DataFrame) -> None:
     assert one_b[absent].isna().all().all()
     methods = one_b[one_b["role"] == "method"]
     assert methods[[f"diff_{c}" for c in CONTROLS]].notna().all().all()
+    sil = methods[methods["method"] == "sil"].iloc[0]
+    x, y = _scores_of(frames, "sil", "1b"), _scores_of(frames, "ppo", "1b")
+    welch = sps.ttest_ind(x, y, equal_var=False).confidence_interval()
+    assert sil["diff_ppo"] == pytest.approx(x.mean() - y.mean())
+    assert (sil["diff_lo_ppo"], sil["diff_hi_ppo"]) == pytest.approx((
+        welch.low,
+        welch.high,
+    ))
 
 
 def test_t1_poi_against_itself_is_empty(table: pd.DataFrame) -> None:
@@ -222,7 +260,18 @@ def test_poi_matrix_has_no_cross_block_cell(
 def test_ablation_table_compares_each_ablation_with_its_tuned_config(
     frames: dict[str, pd.DataFrame],
 ) -> None:
-    t = ablation_table(frames, n_boot=N_BOOT)
+    tuning = (
+        frames["runs"]
+        .head(3)
+        .assign(
+            run_id=lambda r: "tuning-" + r["run_id"],
+            phase="tune-coarse",
+            phases="tune-coarse",
+            config_ref="0badc0de",  # a tuning config hash: no ablation
+        )
+    )
+    with_tuning = {**frames, "runs": pd.concat([frames["runs"], tuning])}
+    t = ablation_table(with_tuning, n_boot=N_BOOT)
     assert list(t.columns) == ABLATION_COLUMNS
     assert set(zip(t["method"], t["config_ref"], strict=True)) == set(ABLATIONS)
     assert len(t) == 2 * len(ABLATIONS)
@@ -251,7 +300,7 @@ def _published(tmp_path: Path, runs: pd.DataFrame) -> Path:
     ref = {
         "ppo": {
             "1m": {"score": float(mean["ppo"]) + 3, "s_pub": 0.1},
-            "1b": {"score": 11.9},
+            "1b": {"score": 11.9, "s_pub": 0.91},
         },
         "ppo-rnn": {
             "1m": {"score": float(mean["ppo-rnn"]), "s_pub": 0.1},
@@ -259,7 +308,6 @@ def _published(tmp_path: Path, runs: pd.DataFrame) -> Path:
         },
         "pqn-rnn": {"1b": {"score": 16.0, "s_pub": 1.31}},
     }
-    ref["ppo"]["1b"]["s_pub"] = 0.91
     path = tmp_path / "published.yaml"
     path.write_text(yaml.safe_dump(ref))
     return path
@@ -267,7 +315,9 @@ def _published(tmp_path: Path, runs: pd.DataFrame) -> Path:
 
 def test_gate_passes_fails_and_notes_without_raising(tmp_path: Path) -> None:
     frames = make_frames(("1m",))
-    gate = reproduction_gate(frames, _published(tmp_path, frames["runs"]))
+    gate = reproduction_gate(
+        frames, _published(tmp_path, frames["runs"]), published_hash=_fixture_hash
+    )
     assert list(gate.columns) == GATE_COLUMNS
     assert gate["benchmark"].unique().tolist() == ["1m"]  # no 1B runs: band skipped
     row = gate.set_index("control")
@@ -289,7 +339,28 @@ def test_gate_passes_fails_and_notes_without_raising(tmp_path: Path) -> None:
     assert pqn["check"] == "reference code"
     assert pqn["status"] == "pass"
     assert "1.509" in pqn["note"]
+    assert "tune-coarse, 3 seeds" in pqn["note"]
     assert math.isnan(pqn["h"])
+
+
+def test_gate_reads_only_the_published_config(tmp_path: Path) -> None:
+    frames = make_frames(("1m",))
+    published = _published(tmp_path, frames["runs"])
+    gate = reproduction_gate(
+        frames, published, published_hash=lambda c, b: f"{c}/other"
+    ).set_index("control")
+    assert gate.loc["ppo", "status"] == "published config not run"
+    assert gate.loc["ppo", "seeds"] == 0
+    assert compare._published_hash("ppo", "1m") == "e06ac6db"  # contracts.md tuned
+    assert compare._published_hash("ppo-rnn", "1m") == "b3ce95c4"
+
+
+def test_gate_names_a_missing_spread(tmp_path: Path) -> None:
+    frames = make_frames(("1m",))
+    path = tmp_path / "published.yaml"
+    path.write_text(yaml.safe_dump({"ppo": {"1m": {"score": 2.1, "s_pub": None}}}))
+    gate = reproduction_gate(frames, path, published_hash=_fixture_hash)
+    assert gate.set_index("control").loc["ppo", "status"] == "no published spread"
 
 
 def test_gate_reads_1b_and_survives_a_single_seed(tmp_path: Path) -> None:
@@ -297,7 +368,9 @@ def test_gate_reads_1b_and_survives_a_single_seed(tmp_path: Path) -> None:
     runs = frames["runs"]
     lone = (runs["method"] == "pqn-rnn") & (runs["budget"] == "1b") & (runs["seed"] > 0)
     frames["runs"] = runs[~lone]
-    gate = reproduction_gate(frames, _published(tmp_path, runs))
+    gate = reproduction_gate(
+        frames, _published(tmp_path, runs), published_hash=_fixture_hash
+    )
     one_b = gate[gate["benchmark"] == "1b"].set_index("control")
     assert one_b.loc["pqn-rnn", "status"] == "too few seeds"
     assert one_b.loc["ppo-rnn", "status"] in {"pass", "fail"}
@@ -311,7 +384,10 @@ def test_t2_never_mixes_literature_blocks(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     t = literature_table(
-        frames, published=_published(tmp_path, frames["runs"]), n_boot=N_BOOT
+        frames,
+        published=_published(tmp_path, frames["runs"]),
+        published_hash=_fixture_hash,
+        n_boot=N_BOOT,
     )
     assert list(t.columns) == LITERATURE_TABLE_COLUMNS
     groups = t.groupby(["score_kind", "benchmark"])
@@ -331,11 +407,22 @@ def test_t2_places_our_ci_against_each_published_value(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     t = literature_table(
-        frames, published=_published(tmp_path, frames["runs"]), n_boot=N_BOOT
+        frames,
+        published=_published(tmp_path, frames["runs"]),
+        published_hash=_fixture_hash,
+        n_boot=N_BOOT,
     )
     for _, rows in t.groupby(["score_kind", "benchmark"]):
         ours = rows[rows["source"] == "ours"].drop_duplicates("name")
-        for lit in rows[rows["source"] == "literature"].itertuples():
+        published_rows = rows[rows["source"] == "literature"]
+        ours_protocol = ours["protocol"].iloc[0]
+        other = published_rows[published_rows["protocol"] != ours_protocol]
+        assert other["protocol_match"].eq("different protocol").all()
+        verdicts = other[["ours_above", "ours_within", "ours_below"]]
+        assert verdicts.eq("").all().all()
+        same = published_rows[published_rows["protocol"] == ours_protocol]
+        assert same["protocol_match"].eq("same").all()
+        for lit in same.itertuples():
             v = lit.score_pct
             for col, mask in (
                 ("ours_above", ours["ci_lo"] > v),
@@ -344,6 +431,18 @@ def test_t2_places_our_ci_against_each_published_value(
             ):
                 listed = [s for s in getattr(lit, col).split(", ") if s]
                 assert listed == ours.loc[mask, "name"].tolist()
+    assert (t["protocol_match"] == "same").any()
+    ours = t[t["source"] == "ours"]
+    ours = ours.set_index(["score_kind", "benchmark", "name"]).sort_index()
+    x = _scores_of(frames, "sil", "1b")
+    t_lo, t_hi = t_ci(x.tolist())[1:]
+    row = ours.loc[("training", "1b", "sil")].iloc[0]
+    assert (row["ci_lo"], row["ci_hi"]) == pytest.approx((t_lo, t_hi))
+    x = _scores_of(frames, "sil", "1m")
+    boot = stratified_bootstrap_ci({"x": x.tolist()}, lambda d: d["x"].mean(), N_BOOT)
+    row = ours.loc[("training", "1m", "sil")].iloc[0]
+    assert (row["ci_lo"], row["ci_hi"]) == pytest.approx((boot.lo, boot.hi))
+    assert t["indicative"].eq(t["benchmark"] == "1b").all()
     training = t[(t["score_kind"] == "training") & (t["source"] == "ours")]
     gated = training[training["role"] == "control"]
     assert gated["gate"].isin({"pass", "fail", "too few seeds"}).all()
@@ -398,18 +497,21 @@ def test_t4_is_per_profile_with_the_context_note(
 # --- T6 ----------------------------------------------------------------------------
 
 
-def _race_frames() -> dict[str, pd.DataFrame]:
-    """Three main-block methods of 3 seeds racing to collect_wood.
+def _race_frames(
+    first: dict[str, list[float | None]] | None = None,
+    wall: dict[str, float] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Main-block methods racing to collect_wood; every seed unlocks place_table at 5.
 
-    count-bonus-ppo-rnn: 2 of 3 unlock (median 100); sil: 1 of 3 (50, too few);
-    count-bonus-pqn-rnn: 3 of 3 (median 200). Wall-clock reverses the order.
+    Default: count-bonus-ppo-rnn 2 of 3 unlock (lower median over all 3: 120); sil 1 of
+    3 (too few); count-bonus-pqn-rnn 3 of 3 (median 200). Wall-clock reverses the order.
     """
-    first = {
+    first = first or {
         "count-bonus-ppo-rnn": [100.0, 120.0, None],
         "sil": [50.0, None, None],
         "count-bonus-pqn-rnn": [180.0, 200.0, 220.0],
     }
-    wall = {"count-bonus-ppo-rnn": 9.0, "sil": 1.0, "count-bonus-pqn-rnn": 2.0}
+    wall = wall or {"count-bonus-ppo-rnn": 9.0, "sil": 1.0, "count-bonus-pqn-rnn": 2.0}
     runs, curves = [], []
     for method, steps in first.items():
         for seed, step in enumerate(steps):
@@ -424,7 +526,7 @@ def _race_frames() -> dict[str, pd.DataFrame]:
                 "config_json": "{}",
             })
             names = ["first_unlock/place_table", "first_unlock_wall/place_table"]
-            values = [5.0, 5.0]  # every seed unlocks place_table early
+            values = [5.0, 5.0]
             if step is not None:
                 names += ["first_unlock/collect_wood", "first_unlock_wall/collect_wood"]
                 values += [step, wall[method] + seed]
@@ -446,18 +548,40 @@ def _race_frames() -> dict[str, pd.DataFrame]:
 
 def test_race_winner_is_the_lowest_median_of_half_the_seeds() -> None:
     race = race_table(_race_frames())
+    assert list(race.columns) == RACE_COLUMNS
     wood = race[race["achievement"] == "collect_wood"].set_index("method")
     assert wood.loc["sil", "k"] == 1
     assert not wood.loc["sil", "eligible"]
-    assert wood.loc["count-bonus-ppo-rnn", "median_steps"] == pytest.approx(110.0)
+    # lower median over all n logged seeds, a never-unlocked seed counting +inf
+    assert wood.loc["count-bonus-ppo-rnn", "median_steps"] == pytest.approx(120.0)
+    assert wood.loc["sil", "median_steps"] == math.inf
     assert wood["winner_steps"].to_dict() == {
         "count-bonus-ppo-rnn": True,
         "sil": False,
         "count-bonus-pqn-rnn": False,
     }
     assert wood.loc["count-bonus-pqn-rnn", "winner_wall"]
+    assert race["wall_note"].eq(CONTEXT_NOTE).all()  # laptop wall-clock (R97)
     table = race[race["achievement"] == "place_table"]
     assert table["winner_steps"].all()  # a tie: every tied method wins
+
+
+def test_half_the_seeds_fast_loses_to_all_seeds_slower() -> None:
+    # sil: 5 of 10 unlock fast (median of the unlockers 30, lower median over 10: 500);
+    # count-bonus-pqn-rnn: all 10 at 100-190 (lower median 140)
+    sil = [10.0, 20.0, 30.0, 40.0, 500.0, *[None] * 5]
+    pqn = [100.0 + 10 * i for i in range(10)]
+    race = race_table(
+        _race_frames(
+            {"sil": sil, "count-bonus-pqn-rnn": pqn},
+            {"sil": 1.0, "count-bonus-pqn-rnn": 1.0},
+        )
+    )
+    wood = race[race["achievement"] == "collect_wood"].set_index("method")
+    assert wood.loc["sil", "eligible"]
+    assert wood.loc["sil", "median_steps"] == pytest.approx(500.0)
+    assert wood.loc["count-bonus-pqn-rnn", "median_steps"] == pytest.approx(140.0)
+    assert wood["winner_steps"].to_dict() == {"sil": False, "count-bonus-pqn-rnn": True}
 
 
 def test_t6_one_row_per_method_with_race_wins_and_headlines() -> None:
@@ -467,6 +591,8 @@ def test_t6_one_row_per_method_with_race_wins_and_headlines() -> None:
     assert row.loc["count-bonus-ppo-rnn", "race_wins_steps"] == 2  # wood + table tie
     assert row.loc["sil", "race_wins_steps"] == 1
     assert row.loc["count-bonus-pqn-rnn", "race_wins_wall"] == 2
+    assert t["wall_note"].eq(CONTEXT_NOTE).all()
+    assert not t["indicative"].any()
     assert row.loc["sil", "top_death_cause"] == "starvation"
     assert row.loc["sil", "top_death_share"] == pytest.approx(1.0)
     assert row.loc["sil", "deepest_floor"] == 1
@@ -493,6 +619,37 @@ def test_t6_reports_not_logged_race_as_missing(
     assert smdp["top_death_cause"] == "zombie"
 
 
+def test_t6_top_death_cause_weights_seeds_equally() -> None:
+    # pooled, zombie has 4 of 6 deaths; per seed, starvation has 2 of 3 runs
+    causes = {"a": ["zombie"] * 4, "b": ["starvation"], "c": ["starvation"]}
+    eps = pd.DataFrame([
+        {
+            "run_id": run,
+            "end_type": "death",
+            "cause_of_death": cause,
+            "max_floor": 0,
+            "wasted_share": 0.1,
+        }
+        for run, deaths in causes.items()
+        for cause in deaths
+    ])
+    out = compare._game_headlines(eps)
+    assert out["top_death_cause"] == "starvation"
+    assert out["top_death_share"] == pytest.approx(2 / 3)
+
+
+def test_1b_rows_are_marked_indicative_in_every_table(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    for t in (
+        stability_table(frames),
+        hardware_table(frames),
+        game_summary_table(frames),
+    ):
+        assert t["indicative"].eq(t["benchmark"] == "1b").all()
+        assert t["indicative"].any()
+
+
 # --- T7 ----------------------------------------------------------------------------
 
 
@@ -511,7 +668,7 @@ def _tuning_runs() -> pd.DataFrame:
                 "config_hash": f"h{i}",
                 "config_ref": f"h{i}",
                 "seed": seed,
-                "best": i == 3,
+                "best": i == 3 and seed == 0,
                 "profile": "laptop",
                 "final_score": score,
                 "config_json": f'{{"lr": {lr}, "clip": {clip}, "seed": {seed}}}',
@@ -538,3 +695,34 @@ def test_t7_reports_the_most_sensitive_hyperparameters() -> None:
     assert row["best_config"] == "h3"
     assert row["selected_config"] == "h3"
     assert row["robust_share"] == pytest.approx(robust_share(config_scores(runs)))
+
+
+def test_t7_refuses_a_tuning_phase_without_its_best_tag() -> None:
+    runs = _tuning_runs().assign(best=False)  # e.g. runs read from a final phase
+    with pytest.raises(ValueError, match="best"):
+        sensitivity_table({"runs": runs})
+
+
+def test_tuning_optimism_sets_the_tuning_mean_beside_the_final_one(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    t = tuning_optimism(frames)
+    assert list(t.columns) == TUNING_OPTIMISM_COLUMNS
+    assert set(t["benchmark"]) == {"1m"}
+    row = t.drop_duplicates("method").set_index("method")
+    for method in TUNE_FINE:
+        x = _scores_of(frames, method, "1m")
+        assert row.loc[method, "tuning_phase"] == "tune-fine"
+        assert row.loc[method, "tuning_seeds"] == TUNING_SEEDS
+        assert row.loc[method, "tuning_mean"] == pytest.approx(x[:TUNING_SEEDS].mean())
+        assert row.loc[method, "final_seeds"] == SEEDS["1m"]
+        assert row.loc[method, "final_mean"] == pytest.approx(x.mean())
+        assert row.loc[method, "optimism"] == pytest.approx(
+            x[:TUNING_SEEDS].mean() - x.mean()
+        )
+    assert row.loc["ppo", "tuning_phase"] == "tune-coarse"  # no tune-fine run
+    assert math.isnan(row.loc["combo", "tuning_mean"])  # never tuned
+    assert row.loc["combo", "tuning_phase"] == ""
+    for block in ("main", "skills"):
+        mine = t[(t["block"] == block) & (t["role"] == "control")]
+        assert mine["method"].tolist() == list(CONTROLS)

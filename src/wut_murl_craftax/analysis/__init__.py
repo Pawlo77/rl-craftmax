@@ -16,6 +16,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         RACE_COLUMNS,
         SENSITIVITY_TABLE_COLUMNS,
         STABILITY_COLUMNS,
+        TUNING_OPTIMISM_COLUMNS,
         ablation_table,
         block_of,
         game_summary_table,
@@ -28,6 +29,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         reproduction_gate,
         sensitivity_table,
         stability_table,
+        tuning_optimism,
     )
     from .hard import (
         ACHIEVEMENTS,
@@ -79,6 +81,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         Obstacle,
         count_bonus_detectors,
         detect_all,
+        drawdown_floor,
         dyna_detectors,
         eval_actions,
         obstacles_table,
@@ -127,6 +130,7 @@ _EXPORTS: dict[str, str] = {
     "sil_detectors": "obstacles",
     "skill_detectors": "obstacles",
     "table_rows": "obstacles",
+    "drawdown_floor": "obstacles",
     "ACHIEVEMENTS": "hard",
     "RARE_RATE": "hard",
     "Achievement": "hard",
@@ -164,6 +168,8 @@ _EXPORTS: dict[str, str] = {
     "reproduction_gate": "compare",
     "sensitivity_table": "compare",
     "stability_table": "compare",
+    "TUNING_OPTIMISM_COLUMNS": "compare",
+    "tuning_optimism": "compare",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
@@ -192,6 +198,7 @@ __all__ = [
     "SKILL_METHODS",
     "STABILITY_COLUMNS",
     "TABLE_COLUMNS",
+    "TUNING_OPTIMISM_COLUMNS",
     "UNIT_COLUMNS",
     "Achievement",
     "Cycle",
@@ -208,6 +215,7 @@ __all__ = [
     "count_bonus_detectors",
     "death_causes",
     "detect_all",
+    "drawdown_floor",
     "dyna_detectors",
     "eval_actions",
     "final_checkpoint",
@@ -242,6 +250,7 @@ __all__ = [
     "stall_stats",
     "stall_table",
     "table_rows",
+    "tuning_optimism",
     "units",
 ]
 

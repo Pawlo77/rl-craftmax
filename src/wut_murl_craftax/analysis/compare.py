@@ -11,6 +11,7 @@ per block) exist at 1M only; 1B rows give mean and median with CIs (indicative).
 @tested-by [[tests/analysis/test_compare.py]]
 """
 
+import functools
 import itertools
 import re
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
@@ -20,12 +21,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
+from scipy import stats as sps
 
 from ..evaluation.hardware import TUNING_PHASES, reused_from_tuning
-from ..evaluation.reproduction import PUBLISHED_SCORES, band
+from ..evaluation.reproduction import (
+    PUBLISHED_SCORES,
+    band,
+    published_config_hashes,
+)
 from ..evaluation.select_pair import COMBO, SKILL_METHODS
 from ..evaluation.stability import (
-    MIN_MAX,
     collapsed,
     config_scores,
     drawdowns,
@@ -36,6 +41,7 @@ from ..evaluation.stability import (
 )
 from ..evaluation.stats import (
     BOOTSTRAP_N,
+    CI_LEVEL,
     Interval,
     iqm,
     mann_whitney_holm,
@@ -45,15 +51,18 @@ from ..evaluation.stats import (
     stratified_bootstrap_ci,
     t_ci,
 )
+from ..orchestration.queue import METHODS_DIR
 from . import load as _load
 from .literature import COMPARABLE_BLOCKS, comparable_rows
-from .load import Frames, base_control, final_checkpoint, in_phase, pair_of
-from .obstacles import (
-    ABSOLUTE_BUDGETS,
-    DRAWDOWN_FLOOR_MIN,
-    DRAWDOWN_FLOOR_SHARE,
-    SCORE,
+from .load import (
+    FINAL_PHASES,
+    Frames,
+    base_control,
+    final_checkpoint,
+    in_phase,
+    pair_of,
 )
+from .obstacles import SCORE, drawdown_floor
 
 MAIN, SKILLS = "main", "skills"
 BLOCKS = (MAIN, SKILLS)
@@ -71,7 +80,7 @@ PROTOCOLS = {
 REFERENCE_CODE = {
     ("pqn-rnn", "1m"): (
         "no published 1M value; reference-code comparison passed "
-        "(original 1.509, ours 1.27, band 1.005)"
+        "(original 1.509, ours 1.27 in tune-coarse, 3 seeds; band 1.005)"
     ),
 }
 """Gate rows settled by a reference-code run instead of a published value."""
@@ -96,13 +105,15 @@ GATE_COLUMNS = [
     "status", "check", "note",
 ]  # fmt: skip
 LITERATURE_TABLE_COLUMNS = [
-    "score_kind", "benchmark", "block", "source", "role", "name", "note", "protocol",
+    "score_kind", "benchmark", "indicative", "block", "source", "role", "name",
+    "note", "protocol",
     "seeds", "score_pct", "ci_lo", "ci_hi", "spread", "spread_kind", "gate", "gap",
-    "h", "ours_above", "ours_within", "ours_below",
+    "h", "protocol_match", "ours_above", "ours_within", "ours_below",
 ]  # fmt: skip
-"""T2: ``block`` is ours (main, skills) or the literature block (A, A2, D)."""
+"""T2: ``block`` is ours (main, skills) or the literature block (A, A2, D); the
+``ours_*`` verdicts exist only for rows of our protocol (``protocol_match``)."""
 STABILITY_COLUMNS = [
-    *_HEAD, "seeds", "sd", "cv", "curve_runs", "max_drawdown_median",
+    *_HEAD, "indicative", "seeds", "sd", "cv", "curve_runs", "max_drawdown_median",
     "runs_with_drops", "runs_with_collapse",
 ]  # fmt: skip
 HARDWARE_METRICS = (
@@ -112,18 +123,23 @@ HARDWARE_METRICS = (
 )  # fmt: skip
 """Medians over runs; NaN is "n.m." (`hardware.show_metric`)."""
 HARDWARE_COLUMNS = [
-    "benchmark", "profile", "block", "method", "role", "runs", "reused_runs",
+    "benchmark", "profile", "block", "method", "role", "indicative", "runs",
+    "reused_runs",
     *HARDWARE_METRICS, "note",
 ]  # fmt: skip
 RACE_COLUMNS = [
     *_HEAD, "achievement", "profile", "n", "k", "eligible", "median_steps",
-    "median_wall", "winner_steps", "winner_wall",
+    "median_wall", "winner_steps", "winner_wall", "wall_note",
 ]  # fmt: skip
+"""Medians are lower medians over the ``n`` logged runs, +inf for a never-unlocked one;
+``wall_note`` is `CONTEXT_NOTE` for laptop wall-clock (R97)."""
 GAME_COLUMNS = [
-    *_HEAD, "race_wins_steps", "race_wins_wall", "deepest_floor",
-    "deepest_floor_share", "top_death_cause", "top_death_share", "coverage",
-    "wasted_share", "adoption",
+    *_HEAD, "indicative", "race_wins_steps", "race_wins_wall", "wall_note",
+    "deepest_floor", "deepest_floor_share", "top_death_cause", "top_death_share",
+    "coverage", "wasted_share", "adoption",
 ]  # fmt: skip
+_HEADLINES = GAME_COLUMNS[8:]
+"""T6 columns read from the eval episodes."""
 SENSITIVITY_TABLE_COLUMNS = [
     "phase", *_HEAD, "configs", "runs", "best_config", "best_mean",
     "selected_config", "robust_share", "noise_floor", "top1", "top1_s",
@@ -131,6 +147,14 @@ SENSITIVITY_TABLE_COLUMNS = [
 ]  # fmt: skip
 """T7 per tuning phase; ``best_config`` has the top mean, ``selected_config`` the tag
 ``best``."""
+TUNING_OPTIMISM_COLUMNS = [
+    *_HEAD, "config_hash", "tuning_phase", "tuning_seeds", "tuning_mean",
+    "final_seeds", "final_mean", "optimism",
+]  # fmt: skip
+"""R101: the tuned config's tuning mean (3 seeds) beside its final mean (10 seeds);
+``optimism`` is tuning minus final (the winner's curse of selection)."""
+TUNING_ORDER = ("tune-fine", "tune-coarse")
+"""Tuning phase of the tuning mean: the fine phase when it ran the tuned config."""
 _UNLOCK, _UNLOCK_WALL = "first_unlock/", "first_unlock_wall/"
 _FIRSTS_COLUMNS = ["run_id", "achievement", "steps", "wall", "method", "profile"]
 MIXED = "mixed"
@@ -221,6 +245,15 @@ def _diff(x: np.ndarray, y: np.ndarray, n_boot: int, seed: int) -> Interval:
     )
 
 
+def _welch(x: np.ndarray, y: np.ndarray) -> Interval:
+    """Difference of means with its Welch t interval (3 seeds resample too coarsely)."""
+    diff = float(x.mean() - y.mean())
+    if min(len(x), len(y)) < 2:
+        return Interval(diff, _NAN, _NAN)
+    ci = sps.ttest_ind(x, y, equal_var=False).confidence_interval(CI_LEVEL)
+    return Interval(diff, float(ci.low), float(ci.high))
+
+
 def _summary(x: np.ndarray, budget: str, n_boot: int, seed: int) -> dict[str, float]:
     """`SUMMARY_COLUMNS` of one unit's scores."""
     out = dict.fromkeys(SUMMARY_COLUMNS, _NAN)
@@ -301,7 +334,7 @@ def _versus(
                 p = tests.get((method, c), (_NAN, _NAN))
                 values[:5] = [*_poi(x, y, n_boot, seed), *p]
             else:
-                values[5:] = _diff(x, y, n_boot, seed)
+                values[5:] = _welch(x, y)
         out |= {f"{q}_{c}": v for q, v in zip(_VERSUS, values, strict=True)}
     return out
 
@@ -314,7 +347,8 @@ def main_table(
     Final score (training-episode, 2% rule) per seed: mean +- s.e., and with 95% CIs
     the mean and IQM (1M) or the mean, median and t interval (1B); the final-checkpoint
     eval means; against each control the PoI with CI and Holm p (1M, one Holm family per
-    block; control rows get PoI only) or the difference of means with CI (1B).
+    block; control rows get PoI only) or the difference of means with its Welch t
+    interval (1B).
     """
     rows = []
     for budget, runs in _budgets(_tuned(frames["runs"])):
@@ -383,7 +417,9 @@ def _ablation_row(
     if tuned is None:
         return out
     out["tuned_seeds"], out["tuned_mean"] = len(tuned), float(tuned.mean())
-    out["diff"], out["diff_lo"], out["diff_hi"] = _diff(x, tuned, n_boot, seed)
+    out["diff"], out["diff_lo"], out["diff_hi"] = (
+        _diff(x, tuned, n_boot, seed) if sig else _welch(x, tuned)
+    )
     if sig:
         out["tuned_iqm"] = iqm(tuned)
         out["poi_tuned"], out["poi_tuned_lo"], out["poi_tuned_hi"] = _poi(
@@ -398,11 +434,14 @@ def ablation_table(
 ) -> pd.DataFrame:
     """R77: each ablation (method, ``config_ref``) against its method's tuned runs.
 
-    The difference of means (ablation minus tuned) with CI at every budget; at 1M also
-    IQM, PoI against tuned and Mann-Whitney with Holm over the ablations of one block.
+    Only runs of a final phase count (a tuning config is no ablation). The difference
+    of means (ablation minus tuned) with a bootstrap CI at 1M (Welch t at 1B); at 1M
+    also IQM, PoI against tuned and Mann-Whitney with Holm over one block's ablations.
     """
     rows = []
-    for budget, runs in _budgets(frames["runs"]):
+    every = frames["runs"]
+    final = np.logical_or.reduce([in_phase(every, p) for p in FINAL_PHASES])
+    for budget, runs in _budgets(every[final]):
         tuned = _scores(_tuned(runs))
         units = {
             (str(m), str(r)): g
@@ -446,51 +485,67 @@ def _gate(
     """Gate columns of one control and benchmark (see `reproduction_gate`)."""
     out: dict[str, Any] = {
         "seeds": len(x),
-        "mean": float(x.mean()),
+        "mean": float(x.mean()) if len(x) else _NAN,
         **dict.fromkeys(("published", "s_pub", "gap", "h"), _NAN),
         "status": "no published value",
         "check": "",
         "note": "",
     }
-    if entry is None or entry.get("s_pub") is None:
+    if entry is None:
         if reference:
             out |= {"status": "pass", "check": "reference code", "note": reference}
         return out
-    out |= {"published": float(entry["score"]), "s_pub": float(entry["s_pub"])}
-    out |= {"gap": out["mean"] - out["published"], "check": "band"}
+    out["published"] = float(entry["score"])
+    if entry.get("s_pub") is None:
+        return out | {"status": "no published spread"}
+    out |= {"s_pub": float(entry["s_pub"]), "check": "band"}
+    if not len(x):
+        return out | {"status": "published config not run"}
+    out["gap"] = out["mean"] - out["published"]
     if len(x) < 2:  # band() needs a standard error
         return out | {"status": "too few seeds"}
     h, passed = band(x.tolist(), out["published"], out["s_pub"])
     return out | {"h": h, "status": "pass" if passed else "fail"}
 
 
-def reproduction_gate(
-    frames: Frames, published: Path = PUBLISHED_SCORES
-) -> pd.DataFrame:
-    """Each control's tuned final score against its published value, per benchmark.
+@functools.cache
+def _published_hash(control: str, budget: str) -> str:
+    """Config hash of a control's published config at ``budget``."""
+    return published_config_hashes(control, budget, METHODS_DIR)[control]
 
-    ``pass`` or ``fail`` with gap (our mean minus published) and the half-width ``h`` of
-    `reproduction.band`; ``too few seeds`` under 2, a `REFERENCE_CODE` note where no
-    value is published. Budgets without runs have no row (R86). It never raises on a
-    fail: the comparison continues with our control as the base.
+
+def reproduction_gate(
+    frames: Frames,
+    published: Path = PUBLISHED_SCORES,
+    *,
+    published_hash: Callable[[str, str], str] = _published_hash,
+) -> pd.DataFrame:
+    """Each control's final score against its published value, per benchmark.
+
+    The runs are those of the published config (``published_hash``, by default
+    `reproduction.published_config_hashes`; ``published config not run`` without
+    them). ``pass`` or ``fail`` with gap (our mean minus published) and the half-width
+    ``h`` of `reproduction.band`; ``too few seeds`` under 2, ``no published spread``
+    without ``s_pub``, a `REFERENCE_CODE` note where no value is published (its row
+    reads the tuned runs). Budgets without runs have no row (R86). It never raises on
+    a fail: the comparison continues with our control as the base.
     """
     ref = yaml.safe_load(published.read_text(encoding="utf-8")) or {}
     rows = []
-    for budget, runs in _budgets(_tuned(frames["runs"])):
-        scores = _scores(runs)
-        rows += [
-            {
-                "control": c,
-                "benchmark": budget,
-                **_gate(
-                    scores[c],
-                    (ref.get(c) or {}).get(budget),
-                    REFERENCE_CODE.get((c, budget)),
-                ),
-            }
-            for c in _load.CONTROLS
-            if c in scores
-        ]
+    for budget, runs in _budgets(frames["runs"]):
+        for c in _load.CONTROLS:
+            mine = runs[runs["method"] == c]
+            if mine.empty:
+                continue
+            entry = (ref.get(c) or {}).get(budget)
+            ours = (
+                mine[mine["config_hash"] == published_hash(c, budget)]
+                if entry is not None
+                else _tuned(mine)
+            )
+            x = ours["final_score"].to_numpy(dtype=float)
+            gate = _gate(x, entry, REFERENCE_CODE.get((c, budget)))
+            rows.append({"control": c, "benchmark": budget, **gate})
     return pd.DataFrame(rows, columns=GATE_COLUMNS)
 
 
@@ -510,12 +565,13 @@ def _our_ci(x: np.ndarray, budget: str, n_boot: int, seed: int) -> tuple[float, 
 
 
 def _literature_row(lit: Any, ours: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """One published row and where our CIs lie against its value."""
+    """One published row and, if it is of our protocol, where our CIs lie against it."""
     v = lit.score_pct
     named = {r["name"]: r for r in ours}.values()  # a control's two rows are equal
+    same = lit.protocol == ours[0]["protocol"]
 
     def which(test: Callable[[dict[str, Any]], bool]) -> str:
-        return ", ".join(r["name"] for r in named if test(r))
+        return ", ".join(r["name"] for r in named if same and test(r))
 
     return {
         "block": lit.block,
@@ -533,6 +589,7 @@ def _literature_row(lit: Any, ours: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "gate": "",
         "gap": _NAN,
         "h": _NAN,
+        "protocol_match": "same" if same else "different protocol",
         "ours_above": which(lambda r: r["ci_lo"] > v),
         "ours_within": which(lambda r: r["ci_lo"] <= v <= r["ci_hi"]),
         "ours_below": which(lambda r: r["ci_hi"] < v),
@@ -571,7 +628,9 @@ def _our_rows(
             "gate": "" if g is None else g["status"],
             "gap": _NAN if g is None else g["gap"],
             "h": _NAN if g is None else g["h"],
-            **dict.fromkeys(("ours_above", "ours_within", "ours_below"), ""),
+            **dict.fromkeys(
+                ("protocol_match", "ours_above", "ours_within", "ours_below"), ""
+            ),
         })
     return rows
 
@@ -580,6 +639,7 @@ def literature_table(
     frames: Frames,
     *,
     published: Path = PUBLISHED_SCORES,
+    published_hash: Callable[[str, str], str] = _published_hash,
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
 ) -> pd.DataFrame:
@@ -587,10 +647,13 @@ def literature_table(
 
     Our rows: mean with s.e. and 95% CI; control rows of the training kind carry the
     `reproduction_gate` (status, gap, h). Literature rows keep note, protocol, seeds and
-    spread kind as copied (wikilinks unwrapped); ``ours_above``, ``ours_within`` and
-    ``ours_below`` name our methods whose CI lies above, holds or lies below the value.
+    spread kind as copied (wikilinks unwrapped). For a row of our protocol,
+    ``ours_above``, ``ours_within`` and ``ours_below`` name our methods whose CI lies
+    above, holds or lies below the value; other rows read ``different protocol`` in
+    ``protocol_match`` and give no verdict. 1B groups are ``indicative``.
     """
-    gate = reproduction_gate(frames, published).set_index(["control", "benchmark"])
+    gate = reproduction_gate(frames, published, published_hash=published_hash)
+    gate = gate.set_index(["control", "benchmark"])
     rows = []
     for budget, runs in _budgets(_tuned(frames["runs"])):
         for kind, at in COMPARABLE_BLOCKS:
@@ -601,22 +664,19 @@ def literature_table(
                 _literature_row(r, ours)
                 for r in comparable_rows(kind, budget).itertuples()
             ]
-            rows += [{"score_kind": kind, "benchmark": budget, **r} for r in ours + lit]
+            head = {
+                "score_kind": kind,
+                "benchmark": budget,
+                "indicative": budget not in SIGNIFICANCE_BUDGETS,
+            }
+            rows += [head | r for r in ours + lit]
     return pd.DataFrame(rows, columns=LITERATURE_TABLE_COLUMNS)
-
-
-def _drawdown_floor(c: np.ndarray, budget: str) -> float:
-    """R92 as in the training analysis: 1 point at 1B, else ``max(0.1, 0.25 best)``."""
-    if budget in ABSOLUTE_BUDGETS:
-        return MIN_MAX
-    best = float(np.nanmax(c)) if np.isfinite(c).any() else 0.0
-    return max(DRAWDOWN_FLOOR_MIN, DRAWDOWN_FLOOR_SHARE * best)
 
 
 def _curve_stability(curve: np.ndarray, budget: str) -> tuple[float, bool, bool]:
     """Deepest drawdown (NaN below the floor), any drop, collapse of one score curve."""
     c = smoothed(curve)
-    floor = _drawdown_floor(c, budget)
+    floor = drawdown_floor(budget, c)
     d = drawdowns(c, floor)
     deepest = float(np.nanmax(d)) if np.isfinite(d).any() else _NAN
     return deepest, bool(drops(c, floor=floor)), collapsed(c, floor)
@@ -626,8 +686,8 @@ def stability_table(frames: Frames) -> pd.DataFrame:
     """T3: seed sd and CV of the final score; per-run drawdowns, drops and collapses.
 
     Curves are ``train/score_pct`` per update, smoothed as `stability.smoothed`, with
-    the drawdown floor of the training analysis (R92); a run without the curve is left
-    out of the curve columns (``curve_runs`` counts the rest).
+    `obstacles.drawdown_floor` (R92); a run without the curve is left out of the curve
+    columns (``curve_runs`` counts the rest).
     """
     curves = frames["curves"]
     score = curves[curves["metric"] == SCORE[0]].sort_values(["run_id", "env_steps"])
@@ -647,6 +707,7 @@ def stability_table(frames: Frames) -> pd.DataFrame:
                 "block": block,
                 "method": method,
                 "role": role,
+                "indicative": budget not in SIGNIFICANCE_BUDGETS,
                 "seeds": len(g),
                 "sd": spread["sd"],
                 "cv": spread["cv"],
@@ -675,6 +736,7 @@ def hardware_table(frames: Frames) -> pd.DataFrame:
                     "block": block,
                     "method": method,
                     "role": role,
+                    "indicative": budget not in SIGNIFICANCE_BUDGETS,
                     "runs": len(g),
                     "reused_runs": sum(map(reused_from_tuning, g["phases"])),
                     **g[list(HARDWARE_METRICS)].median().to_dict(),
@@ -715,36 +777,48 @@ def _first_unlocks(curves: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
+def _lower_median(v: pd.Series) -> float:
+    return float(np.sort(v.to_numpy())[(len(v) - 1) // 2])
+
+
 def _race_block(firsts: pd.DataFrame, names: Sequence[str]) -> pd.DataFrame:
     """`race_table` rows of one block's methods (no rows for a never-logged method)."""
     mine = firsts[firsts["method"].isin(names)]
-    n = mine.groupby("method")["run_id"].nunique()
-    profiles = mine.groupby("method")["profile"].agg(
+    if mine.empty:
+        return pd.DataFrame(columns=[c for c in RACE_COLUMNS if c not in _HEAD[:2]])
+    runs = mine.drop_duplicates("run_id").set_index("run_id")
+    method = runs["method"]
+    achievements = sorted(set(mine["achievement"]))
+
+    def wide(column: str) -> pd.DataFrame:
+        """Run x achievement, +inf where the run never unlocked it."""
+        table = mine.pivot_table(
+            index="run_id", columns="achievement", values=column, aggfunc="first"
+        )
+        return table.reindex(index=runs.index, columns=achievements).fillna(np.inf)
+
+    steps, wall = wide("steps"), wide("wall")
+    stats = pd.DataFrame({
+        "k": np.isfinite(steps).groupby(method).sum().stack(),
+        "median_steps": steps.groupby(method).agg(_lower_median).stack(),
+        "median_wall": wall.groupby(method).agg(_lower_median).stack(),
+    }).reset_index()
+    stats["n"] = stats["method"].map(method.value_counts())
+    profiles = runs.groupby("method")["profile"].agg(
         lambda p: p.iloc[0] if p.nunique() == 1 else MIXED
     )
-    stats = (
-        mine
-        .dropna(subset=["steps"])
-        .groupby(["achievement", "method"])
-        .agg(
-            k=("run_id", "nunique"),
-            median_steps=("steps", "median"),
-            median_wall=("wall", "median"),
-        )
-        .reset_index()
-    )
-    stats["n"] = stats["method"].map(n)
     stats["profile"] = stats["method"].map(profiles)
     stats["eligible"] = 2 * stats["k"] >= stats["n"]
     ok = stats[stats["eligible"]]
     best = stats["achievement"].map(ok.groupby("achievement")["median_steps"].min())
     stats["winner_steps"] = stats["eligible"] & (stats["median_steps"] == best)
-    timed = ok[ok["profile"] != MIXED]
+    timed = ok[(ok["profile"] != MIXED) & np.isfinite(ok["median_wall"])]
     fastest = timed.groupby(["achievement", "profile"])["median_wall"].min()
     key = pd.MultiIndex.from_frame(stats[["achievement", "profile"]])
     stats["winner_wall"] = stats["eligible"] & (
         stats["median_wall"].to_numpy() == fastest.reindex(key).to_numpy()
     )
+    stats["wall_note"] = np.where(stats["profile"] == LAPTOP, CONTEXT_NOTE, "")
     order = {m: i for i, m in enumerate(names)}
     return stats.sort_values(
         ["achievement", "method"],
@@ -756,10 +830,12 @@ def race_table(frames: Frames) -> pd.DataFrame:
     """First-unlock race per benchmark, block and achievement (metrics-plan rule).
 
     ``n`` counts a method's tuned runs that logged ``first_unlock/*`` (a run without
-    the family is left out, R78) and ``k`` those that unlocked the achievement; medians
-    run over those k. Eligible at k >= n / 2; the eligible method(s) with the lowest
-    median win in env steps and, among methods of one profile, in wall-clock. Methods
-    race only inside their block.
+    the family is left out, R78) and ``k`` those that unlocked the achievement. Medians
+    are lower medians over all n runs, +inf for a run that never unlocked it (as
+    `obstacles`' base medians), so a method is ranked on its slow seeds too. Eligible at
+    k >= n / 2 (then the median is finite); the eligible method(s) with the lowest
+    median win in env steps and, among methods of one profile, in wall-clock, whose
+    laptop rows carry `CONTEXT_NOTE` (R97). Methods race only inside their block.
     """
     parts = []
     for budget, runs in _budgets(_tuned(frames["runs"])):
@@ -777,7 +853,7 @@ def race_table(frames: Frames) -> pd.DataFrame:
 
 def _game_headlines(eps: pd.DataFrame) -> dict[str, Any]:
     """T6 columns from one unit's final stochastic eval episodes (see the table)."""
-    out: dict[str, Any] = dict.fromkeys(GAME_COLUMNS[6:], _NAN)
+    out: dict[str, Any] = dict.fromkeys(_HEADLINES, _NAN)
     out["top_death_cause"] = ""
     if eps.empty:
         return out
@@ -787,11 +863,13 @@ def _game_headlines(eps: pd.DataFrame) -> dict[str, Any]:
     out["deepest_floor_share"] = (
         (eps["max_floor"] == deepest).groupby(run).mean().mean()
     )
-    deaths = eps.loc[eps["end_type"] == "death", "cause_of_death"]
+    deaths = eps[eps["end_type"] == "death"]
     if len(deaths):
-        counts = deaths.value_counts()
-        top = min(counts.index, key=lambda c: (-counts[c], c))
-        out["top_death_cause"], out["top_death_share"] = top, counts[top] / len(deaths)
+        share = pd.crosstab(
+            deaths["run_id"], deaths["cause_of_death"], normalize="index"
+        ).mean()
+        top = min(share.index, key=lambda c: (-share[c], c))
+        out["top_death_cause"], out["top_death_share"] = top, float(share[top])
     coverage = [c for c in eps if c.startswith("coverage/")]
     if coverage:
         out["coverage"] = eps[coverage].mean(axis=1).groupby(run).median().median()
@@ -805,16 +883,19 @@ def game_summary_table(frames: Frames) -> pd.DataFrame:
     """T6: one row per (benchmark, block, method) of the tuned runs.
 
     Race wins count the achievements a method wins in its block (`race_table`); NaN
-    when no run of it logged ``first_unlock/*`` (R78). The rest reads the final
-    checkpoint's stochastic eval episodes, each seed weighted equally: deepest floor and
-    the share of episodes reaching it, the most common cause of death and its share of
-    deaths, coverage (mean over visited floors) and wasted share (medians of seed
-    medians), adoption (share of episodes using a mechanic, mean over mechanics).
+    when no run of it logged ``first_unlock/*`` (R78); ``wall_note`` is the race's R97
+    note. The rest reads the final checkpoint's stochastic eval episodes, each seed
+    weighted equally: deepest floor and the share of episodes reaching it, the cause of
+    death with the largest mean per-seed share of deaths (seeds with a death), coverage
+    (mean over visited floors) and wasted share (medians of seed medians), adoption
+    (share of episodes using a mechanic, mean over mechanics).
     """
     race = race_table(frames)
-    wins = race.groupby(["benchmark", "block", "method"])[
-        ["winner_steps", "winner_wall"]
-    ].sum()
+    wins = race.groupby(["benchmark", "block", "method"]).agg(
+        winner_steps=("winner_steps", "sum"),
+        winner_wall=("winner_wall", "sum"),
+        wall_note=("wall_note", "first"),
+    )
     episodes = frames["eval_episodes"]
     final = final_checkpoint(episodes[episodes["mode"] == "stochastic"])
     rows = []
@@ -828,8 +909,10 @@ def game_summary_table(frames: Frames) -> pd.DataFrame:
                 "block": block,
                 "method": method,
                 "role": role,
+                "indicative": budget not in SIGNIFICANCE_BUDGETS,
                 "race_wins_steps": _NAN if won is None else won["winner_steps"],
                 "race_wins_wall": _NAN if won is None else won["winner_wall"],
+                "wall_note": "" if won is None else won["wall_note"],
                 **_game_headlines(final[final["run_id"].isin(ids)]),
             })
     return pd.DataFrame(rows, columns=GAME_COLUMNS)
@@ -865,13 +948,25 @@ def sensitivity_table(frames: Frames) -> pd.DataFrame:
 
     Configs and runs tried, the config with the top mean and the one tagged ``best``,
     robust share, the noise floor and the two most sensitive hyperparameters with
-    ``S_h`` (`stability.sensitivity`; hyperparameters from ``config_json``). Load the
-    tuning phases on their own: a run read from a final phase has ``best`` False.
+    ``S_h`` (`stability.sensitivity`; hyperparameters from ``config_json``). A method
+    tuned in another phase has an empty ``selected_config``.
+
+    Raises:
+        ValueError: If no run of a tuning phase is tagged ``best``: the frames were not
+            loaded from the tuning phases on their own (a final phase gives ``best``
+            False).
     """
     runs = frames["runs"]
     rows = []
     for phase in sorted(TUNING_PHASES):
-        for budget, tuning in _budgets(runs[in_phase(runs, phase)]):
+        phase_runs = runs[in_phase(runs, phase)]
+        if len(phase_runs) and not phase_runs["best"].astype(bool).any():
+            msg = (
+                f"no {phase} run is tagged best: load the tuning phases on their own "
+                "(a run read from a final phase has best False)"
+            )
+            raise ValueError(msg)
+        for budget, tuning in _budgets(phase_runs):
             for block, method, role in _members(tuning):
                 rows.append({
                     "phase": phase,
@@ -882,3 +977,51 @@ def sensitivity_table(frames: Frames) -> pd.DataFrame:
                     **_sensitivity_row(tuning[tuning["method"] == method]),
                 })
     return pd.DataFrame(rows, columns=SENSITIVITY_TABLE_COLUMNS)
+
+
+def _tuning_runs(
+    runs: pd.DataFrame, method: str, config_hash: str
+) -> tuple[str, pd.DataFrame]:
+    """The first phase of `TUNING_ORDER` that ran ``config_hash`` and its runs of it."""
+    mine = runs[(runs["method"] == method) & (runs["config_hash"] == config_hash)]
+    for phase in TUNING_ORDER:
+        if (found := mine[in_phase(mine, phase)]).size:
+            return phase, found
+    return "", mine.iloc[:0]
+
+
+def tuning_optimism(frames: Frames) -> pd.DataFrame:
+    """R101: per tuned unit, its tuning mean beside its final mean and their difference.
+
+    The tuning mean is over the tuned config's runs (by ``config_hash``) of tune-fine,
+    else tune-coarse (3 seeds; reused into the final, so it is a subset of it); the
+    final mean is over all its final runs (10 at 1M). ``optimism`` = tuning - final: the
+    selection's winner's curse. A unit never tuned (combo) has NaN and no phase; a
+    budget without any tuning run (1B) has no rows.
+    """
+    rows: list[dict[str, Any]] = []
+    every = frames["runs"]
+    for budget, runs in _budgets(_tuned(every)):
+        mine = []
+        for block, method, role in _members(runs):
+            final = runs[runs["method"] == method]
+            config = str(final["config_hash"].iloc[0])
+            phase, tuning = _tuning_runs(
+                every[every["budget"] == budget], method, config
+            )
+            mean = float(tuning["final_score"].mean()) if len(tuning) else _NAN
+            mine.append({
+                "benchmark": budget,
+                "block": block,
+                "method": method,
+                "role": role,
+                "config_hash": config,
+                "tuning_phase": phase,
+                "tuning_seeds": len(tuning),
+                "tuning_mean": mean,
+                "final_seeds": len(final),
+                "final_mean": float(final["final_score"].mean()),
+                "optimism": mean - float(final["final_score"].mean()),
+            })
+        rows += mine if any(r["tuning_phase"] for r in mine) else []
+    return pd.DataFrame(rows, columns=TUNING_OPTIMISM_COLUMNS)
