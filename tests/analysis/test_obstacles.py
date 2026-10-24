@@ -38,6 +38,7 @@ from wut_murl_craftax.analysis.obstacles import (
     Obstacle,
     count_bonus_detectors,
     detect_all,
+    drawdown_floor,
     dyna_detectors,
     eval_actions,
     obstacles_table,
@@ -1037,6 +1038,19 @@ def test_instability_at_1b_keeps_the_one_point_floor() -> None:
     o = result(frames, "ppo-rnn", "Instability", "1b")
     assert o.status == DETECTED
     assert "floor 1" in o.evidence
+
+
+@pytest.mark.parametrize(
+    ("budget", "curve", "floor"),
+    [
+        ("1m", [0.2, 0.8, np.nan], 0.2),  # 0.25 x the best score
+        ("1m", [0.1, 0.2], 0.1),  # never below 0.1
+        ("1m", [np.nan, np.nan], 0.1),  # no score: the minimum
+        ("1b", [0.2, 0.8], 1.0),  # absolute budgets keep 1 point
+    ],
+)
+def test_drawdown_floor(budget: str, curve: list[float], floor: float) -> None:
+    assert drawdown_floor(budget, np.array(curve)) == pytest.approx(floor)
 
 
 def test_a_base_run_without_first_unlocks_is_left_out_of_the_median() -> None:
