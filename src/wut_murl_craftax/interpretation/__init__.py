@@ -17,12 +17,27 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         collect,
         dataset_path,
     )
+    from .distill import (
+        DEPTH_GRID,
+        LEAF_GRID,
+        LEVELS,
+        FittedTree,
+        complexity,
+        feature_columns,
+        fidelity,
+        fidelity_curve,
+        fit_grid,
+    )
     from .features import CREATURES, FEATURES, featurize
 
 _EXPORTS: dict[str, str] = {
     "CREATURES": "features",
+    "DEPTH_GRID": "distill",
     "Dataset": "dataset",
     "FEATURES": "features",
+    "FittedTree": "distill",
+    "LEAF_GRID": "distill",
+    "LEVELS": "distill",
     "MAX_STATES": "dataset",
     "MEMORY_FEATURES": "dataset",
     "RECURRENT": "dataset",
@@ -32,15 +47,23 @@ _EXPORTS: dict[str, str] = {
     "TRAIN_SEEDS": "dataset",
     "VAL_SEEDS": "dataset",
     "collect": "dataset",
+    "complexity": "distill",
     "dataset_path": "dataset",
+    "feature_columns": "distill",
     "featurize": "features",
+    "fidelity": "distill",
+    "fidelity_curve": "distill",
+    "fit_grid": "distill",
 }
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
 
 __all__ = [
     "CREATURES",
+    "DEPTH_GRID",
     "FEATURES",
+    "LEAF_GRID",
+    "LEVELS",
     "MAX_STATES",
     "MEMORY_FEATURES",
     "RECURRENT",
@@ -50,9 +73,15 @@ __all__ = [
     "TRAIN_SEEDS",
     "VAL_SEEDS",
     "Dataset",
+    "FittedTree",
     "collect",
+    "complexity",
     "dataset_path",
+    "feature_columns",
     "featurize",
+    "fidelity",
+    "fidelity_curve",
+    "fit_grid",
 ]
 
 
