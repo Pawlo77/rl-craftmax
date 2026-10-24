@@ -599,6 +599,15 @@ def test_the_store_is_read_through_short_queries_with_the_query_stripped(
     assert not (tmp_path / "mlruns.db?timeout=300").exists()
 
 
+def test_the_store_is_opened_read_only_also_with_a_query(tmp_path: Path) -> None:
+    from wut_murl_craftax.analysis.cases import run_dirs
+
+    db = tmp_path / "missing.db"
+    with pytest.raises(sqlite3.OperationalError):
+        run_dirs(["a1"], f"sqlite:///{db}?timeout=300")
+    assert not db.exists()  # a read never creates the store
+
+
 def test_the_cli_refuses_an_out_folder_not_named_analysis(
     metrics: Path, fake_replay: Replay, store: str, tmp_path: Path
 ) -> None:
