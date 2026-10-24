@@ -21,7 +21,8 @@ from wut_murl_craftax.orchestration.queue import (
     load_method,
     resolve_config,
 )
-from wut_murl_craftax.training import count_bonus, sil
+from wut_murl_craftax.orchestration.runner import Trainer
+from wut_murl_craftax.training import count_bonus, interface, sil
 from wut_murl_craftax.training.checkpoints import load_state, save_state
 from wut_murl_craftax.training.dyna_q import DynaTrainer
 from wut_murl_craftax.training.hooks import (
@@ -31,8 +32,14 @@ from wut_murl_craftax.training.hooks import (
     SplitState,
     resolve,
 )
-from wut_murl_craftax.training.interface import METHODS, combine, combo_trainer
-from wut_murl_craftax.training.ppo_rnn import PPORNNTrainer
+from wut_murl_craftax.training.interface import (
+    METHODS,
+    combine,
+    combo_pair,
+    combo_trainer,
+    run_trainer,
+)
+from wut_murl_craftax.training.ppo_rnn import PPORNNConfig, PPORNNTrainer, make_trainer
 
 REPO = Path(__file__).resolve().parents[2]
 SPEC = HookSpec(4, 1345, 17, 22, 256)
@@ -307,6 +314,63 @@ def test_the_combo_phases_run_the_combined_config(
         (phase, "Craftax-Symbolic-v1", "log_spaced")
     }
     assert {s.config["envs"] for s in specs} == {envs}
+    assert all(s.combine == load_method("combo").combine for s in specs)
+
+
+# --- the pair of a saved combo run (ruling R80a) ------------------------------------
+
+
+COMBO_1M = json.loads(
+    (Path(__file__).parent / "fixtures/combo-1m-config.json").read_text()
+)
+"""``config.json`` of the 10 combo-1m runs (identical): no ``combine`` block."""
+
+
+def test_the_combo_1m_runs_resolve_to_their_pair_without_combo_yaml() -> None:
+    pair = {"base": "ppo-rnn", "methods": ["count-bonus-ppo-rnn", "sil"]}
+    assert combo_pair(COMBO_1M, interface._ENTRIES) == pair
+    # a registry without "combo": combo.yaml is never read
+    trainer = run_trainer(COMBO_1M, dict(interface._ENTRIES))
+    assert isinstance(trainer, PPORNNTrainer)
+    assert trainer.method is not None
+    assert trainer.method.keys == count_bonus.METHOD.keys | sil.METHOD.keys
+
+
+def _toy_entries() -> dict[str, Trainer]:
+    """A control and hook methods a, b, c on it; b2 is b under another name."""
+    b = _method("b")
+    hooked = {"a": _method("a"), "b": b, "b2": b, "c": _method("c")}
+    return {"ctl": make_trainer(PPORNNConfig())} | {
+        n: make_trainer(PPORNNConfig(), method=m) for n, m in hooked.items()
+    }
+
+
+TOY = {"method": "combo", "a_r": 2.0, "b_k": 3}
+
+
+def test_a_recorded_pair_wins_over_inference() -> None:
+    recorded = {"base": "ctl", "methods": ["a", "b2"]}
+    assert combo_pair(TOY | {"combine": recorded}, _toy_entries()) == recorded
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (TOY, "2 registry pairs fit"),  # b and b2 have the same keys
+        ({"method": "combo", "a_r": 2.0}, "0 registry pairs fit"),
+        ({"method": "combo", "a_r": 2.0, "c_k": 1, "zz": 1}, "0 registry pairs fit"),
+    ],
+)
+def test_a_key_set_without_exactly_one_pair_fails_loudly(
+    config: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        combo_pair(config, _toy_entries())
+
+
+def test_inference_picks_the_one_pair_whose_keys_fit() -> None:
+    config = {"method": "combo", "a_r": 2.0, "c_k": 1}
+    assert combo_pair(config, _toy_entries()) == {"base": "ctl", "methods": ["a", "c"]}
 
 
 # --- on Craftax-Classic against the PPO-RNN control ------------------------------

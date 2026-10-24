@@ -35,10 +35,10 @@ from ..orchestration import (
     import_craftax,
     shard_envs,
 )
-from ..orchestration.queue import RunSpec
+from ..orchestration.queue import COMBINE_KEY, CONFIG_ARTIFACT, RunSpec
 from ..orchestration.runner import Trainer
 from ..training.checkpoints import CheckpointEntry, load_index, load_params
-from ..training.interface import METHODS, Policy
+from ..training.interface import Policy, run_trainer
 from ..training.ppo import PPOPolicy, make_env, policy_value
 from ..training.records import achievement_weights, is_classic
 from ..training.wrappers import unwrap_state
@@ -105,16 +105,18 @@ class EvalRun:
     def load(
         cls, run_dir: Path, methods: Mapping[str, Trainer] | None = None
     ) -> "EvalRun":
-        """Open ``run_dir`` with ``methods[cfg["method"]]`` (`METHODS`).
+        """Open ``run_dir`` with ``methods[cfg["method"]]`` (`METHODS`, `run_trainer`).
 
         The trainer is set up from ``config.json`` as the runner trained it: the
-        method's own keys build its hooks, its ``env_wrapper_fn`` wraps the env.
+        method's own keys build its hooks, its ``env_wrapper_fn`` wraps the env; a
+        combo run gets its own pair, not the live combo.yaml's.
         """
         run_dir = Path(run_dir)
-        cfg = json.loads((run_dir / "config.json").read_text())
-        trainer = (METHODS if methods is None else methods)[cfg["method"]]
+        cfg = json.loads((run_dir / CONFIG_ARTIFACT).read_text())
+        trainer = run_trainer(cfg, methods)
         index = load_index(run_dir)
-        config = {**cfg, "steps": max((e["env_steps"] for e in index), default=0)}
+        steps = max((e["env_steps"] for e in index), default=0)
+        config = {k: v for k, v in cfg.items() if k != COMBINE_KEY} | {"steps": steps}
         import_craftax()  # not inside the trace below: Craftax would keep its tracers
         # shapes only: acting needs the params structure, not an env batch or values
         state = jax.eval_shape(lambda: trainer.init(config, jax.random.key(0)))

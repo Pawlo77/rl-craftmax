@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
-from dataclasses import fields
+from dataclasses import fields, make_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +23,10 @@ from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runtime import device_roles
 from wut_murl_craftax.training import interface
 from wut_murl_craftax.training.checkpoints import save_checkpoint
-from wut_murl_craftax.training.interface import METHODS
+from wut_murl_craftax.training.hooks import HookFields, HookMethod
+from wut_murl_craftax.training.interface import METHODS, combo_trainer
 from wut_murl_craftax.training.ppo import PPOPolicy
+from wut_murl_craftax.training.ppo_rnn import PPORNNConfig, make_trainer
 from wut_murl_craftax.training.records import achievement_weights
 from wut_murl_craftax.visualisation.eval_rollouts import (
     EVAL_SEEDS as PRODUCTION_SEEDS,
@@ -215,6 +217,41 @@ def test_load_opens_any_registry_entry_and_threads_its_carry(
     assert ppo.method == "ppo"
     assert isinstance(ppo.policy, PPOPolicy)
     assert str(load_eval(ppo.dir, 0)["method"]) == "ppo"
+
+
+COMBO_1M = Path(__file__).parents[1] / "training/fixtures/combo-1m-config.json"
+"""``config.json`` of the combo-1m runs: count-bonus-ppo-rnn + sil, no ``combine``."""
+
+
+@pytest.mark.parametrize("recorded", [False, True])
+def test_a_combo_run_loads_its_own_pair_after_combo_yaml_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: bool
+) -> None:
+    """Ruling R80a: the pair comes from config.json (recorded, else its keys)."""
+    cfg = json.loads(COMBO_1M.read_text())
+    if recorded:
+        cfg["combine"] = {"base": "ppo-rnn", "methods": ["count-bonus-ppo-rnn", "sil"]}
+    run = tmp_path / "combo"
+    run.mkdir()
+    (run / "config.json").write_text(json.dumps(cfg))
+    # combo.yaml now names another pair: sil + a toy hook method with key toy_k
+    toy = HookMethod(
+        make_dataclass("ToyConfig", [("toy_k", int, 1)], frozen=True),
+        lambda c, b: HookFields(),
+    )
+    monkeypatch.setitem(
+        interface._ENTRIES, "toy", make_trainer(PPORNNConfig(), method=toy)
+    )
+    combo = (COMBO_1M.parents[3] / "configs/methods/combo.yaml").read_text()
+    pair = "methods: [count-bonus-ppo-rnn, sil]"
+    assert pair in combo
+    (tmp_path / "combo.yaml").write_text(combo.replace(pair, "methods: [sil, toy]"))
+    monkeypatch.setattr(
+        interface, "_combo", lambda: combo_trainer(interface._ENTRIES, tmp_path)
+    )
+    loaded = EvalRun.load(run)
+    assert loaded.cfg == cfg
+    assert loaded.method == "combo"
 
 
 def test_each_step_gets_the_reward_and_done_of_the_step_before(

@@ -63,7 +63,11 @@ TAG_FAIL_ERROR = "fail/error"
 TAG_BEST = "best"
 """Run tag set by `mark_tuned`: ``true`` on the tuned config's tuning runs."""
 CONFIG_ARTIFACT = "config.json"
-"""Run artifact holding the run's `RunSpec.config`."""
+"""Run artifact holding the run's `RunSpec.config` (plus `COMBINE_KEY` for a combo)."""
+COMBINE_KEY = "combine"
+"""``config.json`` key of a combination run's pair ``{base, methods}``
+(`RunSpec.combine`); loaders build its trainer from it, never from the live combo.yaml
+(ruling R80a)."""
 COARSE_PHASE = "tune-coarse"
 TUNING_PHASES = (COARSE_PHASE, "tune-fine")
 """Phases whose runs are the 1M tuning runs `mark_tuned` may tag."""
@@ -156,6 +160,9 @@ class RunSpec:
     eval_mode: EvalMode
     abort: dict[str, Any] | None = None
     """The method's ``abort`` block (flag rules for the runner), not hashed."""
+    combine: dict[str, Any] | None = None
+    """The method's ``combine`` block (`Method.combine`), not hashed: saved in
+    ``config.json`` under `COMBINE_KEY`."""
 
     @property
     def name(self) -> str:
@@ -610,6 +617,7 @@ def _entry_specs(
                 path.stem,
                 raw["eval"],
                 method.abort_rules(registry, raw["budget"]),
+                method.combine,
             )
             for seed in _seed_list(seeds, f"{where} config {ref}")
         ]
@@ -1051,7 +1059,9 @@ def mark_tuned(
         )
     base = resolve_config(method, registry, budget, methods_dir=methods_dir)
     block = {
-        k: v for k, v in cfg.items() if k != "method" and base.get(k, _MISSING) != v
+        k: v
+        for k, v in cfg.items()
+        if k not in ("method", COMBINE_KEY) and base.get(k, _MISSING) != v
     }
     variant = method.variant(registry)
     tuned = block if variant is None else {**(method.tuned or {}), variant: block}

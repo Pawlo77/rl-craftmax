@@ -4,20 +4,22 @@ A hook method registers its base's trainer with a `HookMethod`, for example
 ``make_ppo_rnn_trainer(PPORNNConfig(), method=HookMethod(CountBonusConfig, hooks))``:
 each run config's method keys build its hooks, the other keys configure the base.
 `combine` composes two hook methods on one control; the ``combo`` entry, the pair that
-``configs/methods/combo.yaml`` names, is built on first use. The runner imports this
+``configs/methods/combo.yaml`` names, is built on first use; a saved run rebuilds its
+own pair (`run_trainer`, never combo.yaml). The runner imports this
 module after ``configure_runtime``, so it and the trainers may import Craftax (which
 starts the JAX backends) at module top.
 """
 
 import dataclasses
 import functools
+import itertools
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 import jax
 
-from ..orchestration.queue import METHODS_DIR, load_method
+from ..orchestration.queue import COMBINE_KEY, METHODS_DIR, load_method
 from ..orchestration.runner import Trainer
 from . import count_bonus, sil
 from .dyna_q import DynaTrainer
@@ -281,10 +283,37 @@ def combine(a: HookMethod[Any], b: HookMethod[Any]) -> HookMethod[Any]:
     )
 
 
+def pair_trainer(
+    entries: Mapping[str, Trainer], spec: Mapping[str, Any], where: str = "combo.yaml"
+) -> Trainer:
+    """`combine` of the pair ``spec`` (``{base, methods}``) names, on its control.
+
+    Raises:
+        TypeError: If a named entry is not a hook method (`HOOKS_ONLY`).
+        ValueError: If ``spec`` names an unknown entry, or a method is not built on
+            the named control.
+    """
+    if unknown := sorted({spec["base"], *spec["methods"]} - entries.keys()):
+        msg = f"{where} names unknown registry entries {unknown}"
+        raise ValueError(msg)
+    base = entries[spec["base"]]
+    pair: list[HookMethod[Any]] = []
+    for name in spec["methods"]:
+        method = getattr(entries[name], "method", None)
+        if not isinstance(method, HookMethod):
+            msg = f"{where}: {name} is not a hook method: {HOOKS_ONLY}"
+            raise TypeError(msg)
+        if type(entries[name]) is not type(base):
+            msg = f"{where}: {name} is not built on {spec['base']}"
+            raise ValueError(msg)
+        pair.append(method)
+    return cast(Trainer, dataclasses.replace(cast(Any, base), method=combine(*pair)))
+
+
 def combo_trainer(
     entries: Mapping[str, Trainer], methods_dir: Path = METHODS_DIR
 ) -> Trainer:
-    """The ``combo`` entry: `combine` of the pair ``combo.yaml`` names, on its control.
+    """The ``combo`` entry: `pair_trainer` of the pair ``combo.yaml`` names.
 
     The pair comes from ``methods_dir`` (the registry's: the shipped configs), so a
     queue run with another ``--methods-dir`` must name the same pair there.
@@ -298,21 +327,69 @@ def combo_trainer(
     if spec is None:
         msg = "combo.yaml has no `combine` block naming the pair"
         raise ValueError(msg)
-    if unknown := sorted({spec["base"], *spec["methods"]} - entries.keys()):
-        msg = f"combo.yaml names unknown registry entries {unknown}"
+    return pair_trainer(entries, spec)
+
+
+def _fits(entries: Mapping[str, Trainer], spec: dict[str, Any], config: Any) -> bool:
+    """Does the pair's trainer accept every key of ``config``?"""
+    try:
+        cast(Any, pair_trainer(entries, spec)).config(config)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def combo_pair(
+    config: Mapping[str, Any], entries: Mapping[str, Trainer]
+) -> dict[str, Any]:
+    """The ``{base, methods}`` of a saved combo run config (ruling R80a).
+
+    Its `COMBINE_KEY` block when recorded; else the one pair of hook entries on one
+    control that each set a key of ``config`` and whose trainer accepts all of them.
+    An inferred pair is in registry-name order: the order of the method states, which
+    acting and evaluation never read.
+
+    Raises:
+        ValueError: If no pair or more than one fits.
+    """
+    if COMBINE_KEY in config:
+        return dict(config[COMBINE_KEY])
+    named = {n: t for n, t in entries.items() if n != "combo"}
+    hooked = {
+        n: m
+        for n, t in named.items()
+        if isinstance(m := getattr(t, "method", None), HookMethod)
+    }
+    controls = [n for n in named if n not in hooked]
+    fits = [
+        spec
+        for a, b in itertools.combinations(sorted(hooked), 2)
+        if config.keys() & hooked[a].keys and config.keys() & hooked[b].keys
+        for spec in ({"base": c, "methods": [a, b]} for c in controls)
+        if _fits(named, spec, config)
+    ]
+    if len(fits) != 1:
+        msg = (
+            f"{len(fits)} registry pairs fit the combo config {sorted(config)}: "
+            f"{fits}; record its `{COMBINE_KEY}` block"
+        )
         raise ValueError(msg)
-    base = entries[spec["base"]]
-    pair: list[HookMethod[Any]] = []
-    for name in spec["methods"]:
-        method = getattr(entries[name], "method", None)
-        if not isinstance(method, HookMethod):
-            msg = f"combo.yaml: {name} is not a hook method: {HOOKS_ONLY}"
-            raise TypeError(msg)
-        if type(entries[name]) is not type(base):
-            msg = f"combo.yaml: {name} is not built on {spec['base']}"
-            raise ValueError(msg)
-        pair.append(method)
-    return cast(Trainer, dataclasses.replace(cast(Any, base), method=combine(*pair)))
+    return fits[0]
+
+
+def run_trainer(
+    config: Mapping[str, Any], methods: Mapping[str, Trainer] | None = None
+) -> Trainer:
+    """The trainer of a saved run's ``config.json``: ``methods[config["method"]]``.
+
+    A ``combo`` run gets the pair it trained with (`combo_pair`), never the live
+    combo.yaml; ``methods`` defaults to `METHODS`.
+    """
+    methods = METHODS if methods is None else methods
+    if config["method"] != "combo":
+        return methods[config["method"]]
+    entries = {n: methods[n] for n in methods if n != "combo"}
+    return pair_trainer(entries, combo_pair(config, entries), "config.json")
 
 
 _ENTRIES: dict[str, Trainer] = {

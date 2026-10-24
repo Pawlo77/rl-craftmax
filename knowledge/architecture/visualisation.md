@@ -5,7 +5,7 @@ domain: visualisation
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, visualisation]
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-24
 related-code:
   - "[[src/wut_murl_craftax/visualisation/__init__.py]]"
   - "[[src/wut_murl_craftax/visualisation/ffmpeg.py]]"
@@ -54,6 +54,7 @@ flowchart LR
 - Replay is deterministic: frames rendered from a rollout file are bit-identical to the original run's.
 - The keep/drop CSV is the only source of truth for what gets cut.
 - The only HTML is the one static review template.
+- `EvalRun.load` builds the trainer with `run_trainer`: a combo run replays the pair it trained with, whatever combo.yaml names now.
 
 ## Known issues
 

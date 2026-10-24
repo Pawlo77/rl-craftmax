@@ -80,6 +80,7 @@ from .abort import (
 )
 from .profiles import Profile, load_profile
 from .queue import (
+    COMBINE_KEY,
     CONFIG_ARTIFACT,
     EXPERIMENT_CONFIG,
     SCORE_METRIC,
@@ -947,7 +948,8 @@ def _train_to_score(
     roles = device_roles()
     mlflow.set_tags(run_tags(roles))  # where it trains now, not where it began
     mlflow.set_tags(_code_tags(spec.name, found.data.tags if found else {}))
-    (out / CONFIG_ARTIFACT).write_text(json.dumps(spec.config, indent=1))
+    pair = {} if spec.combine is None else {COMBINE_KEY: spec.combine}
+    (out / CONFIG_ARTIFACT).write_text(json.dumps(spec.config | pair, indent=1))
     log = _train(trainer, spec, out, profile, roles, stop)
     if log is None or stop.signum is not None:
         return False

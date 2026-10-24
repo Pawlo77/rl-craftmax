@@ -372,6 +372,19 @@ def test_init_gets_the_budget_steps_outside_the_saved_config(store: Store) -> No
     assert config == spec.config
 
 
+def test_a_combo_run_records_its_pair_in_config_json_only(store: Store) -> None:
+    """The pair goes to ``config.json`` (ruling R80a), never to the trainer or hash."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    pair = {"base": "ppo-rnn", "methods": ["count-bonus-ppo-rnn", "sil"]}
+    spec = dataclasses.replace(spec, combine=pair)
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    config = json.loads((store.run_dir(spec.name) / queue.CONFIG_ARTIFACT).read_text())
+    assert config == spec.config | {queue.COMBINE_KEY: pair}
+    assert queue.COMBINE_KEY not in spec.config
+    assert trainer.init_steps == [spec.steps]
+
+
 def test_the_tracker_comes_from_experiment_yaml_named_after_the_phase(
     store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:

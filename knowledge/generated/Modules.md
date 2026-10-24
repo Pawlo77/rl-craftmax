@@ -27,20 +27,20 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. | 186 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/finals.py]] | The dyna-q kappa ablation of final-1m, set once dyna-q is marked tuned. | 144 |  |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. | 63 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 1417 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. | 1427 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. | 240 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 1317 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. | 1319 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. | 187 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. | 481 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. | 249 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. | 202 | [[orchestration]] |
-| [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. | 372 | [[training]] |
+| [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. | 386 | [[training]] |
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. | 255 | [[training]] |
 | [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. | 350 |  |
 | [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. | 929 |  |
 | [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. | 393 | [[training]] |
-| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 360 | [[training]] |
+| [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. | 437 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. | 735 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. | 804 | [[training]] |
 | [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. | 1075 | [[training]] |
@@ -54,7 +54,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Matplotlib frames for the learning-process charts: dark theme, colours, smoothing. | 64 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/curves.py]] | Animated training curves: % of max reward, achievements unlocked, success rates. | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/cuts.py]] | Cuts from the reviewed CSV: clips, cards, 3-min (16:9, Short) and 12-min cuts, GIFs. | 410 | [[visualisation]] |
-| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. | 561 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. | 563 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/ffmpeg.py]] | Typed ffmpeg/ffprobe wrappers: argument lists only, never a shell string. | 452 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/grid.py]] | Checkpoint comparison grid: one eval seed played by four checkpoints, 2x2, synced. | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/highlights.py]] | Highlight detection: features -> events -> scored windows -> ranked candidates. | 336 | [[visualisation]] |

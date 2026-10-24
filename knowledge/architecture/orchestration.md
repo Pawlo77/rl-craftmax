@@ -5,7 +5,7 @@ domain: orchestration
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, orchestration]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-24
 related-code:
   - "[[src/wut_murl_craftax/orchestration/__init__.py]]"
   - "[[src/wut_murl_craftax/orchestration/runtime.py]]"
@@ -44,7 +44,7 @@ One line each; signatures and details: [[Modules]].
 
 - `runtime`: compile cache, device roles, CPU env shards, `select_platforms`, `import_craftax`, texture caches.
 - `profiles`: machine profiles (`configs/profiles/<name>.yaml`): host devices, role mode, memory limit, save cadence; no hyperparameters.
-- `queue`: run identity (`<registry>-<budget>-<hash8>-s<seed>`), `RunSpec`, expansion of method and phase YAML files.
+- `queue`: run identity (`<registry>-<budget>-<hash8>-s<seed>`), `RunSpec`, expansion of method and phase YAML files; a combo spec carries its unhashed `combine` pair, which the runner saves in `config.json`.
 - `runner`: resumable training, evaluation and MLflow logging of every `RunSpec` of a worker; the `Trainer` protocol.
 - `abort`: non-finite-loss aborts (opt-in method metrics via `abort.finite`) and flag rules.
 - `store`: phase status and the merge of node MLflow stores.
