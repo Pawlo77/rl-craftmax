@@ -21,10 +21,10 @@ from craftax.craftax_env import make_craftax_env_from_name
 from wut_murl_craftax.evaluation.events import StepEvents
 from wut_murl_craftax.orchestration.queue import RunSpec
 from wut_murl_craftax.orchestration.runtime import device_roles
-from wut_murl_craftax.training import interface
+from wut_murl_craftax.training import count_bonus, interface, sil
 from wut_murl_craftax.training.checkpoints import save_checkpoint
 from wut_murl_craftax.training.hooks import HookFields, HookMethod
-from wut_murl_craftax.training.interface import METHODS, combo_trainer
+from wut_murl_craftax.training.interface import METHODS, combo_trainer, run_trainer
 from wut_murl_craftax.training.ppo import PPOPolicy
 from wut_murl_craftax.training.ppo_rnn import PPORNNConfig, make_trainer
 from wut_murl_craftax.training.records import achievement_weights
@@ -242,13 +242,19 @@ def test_a_combo_run_loads_its_own_pair_after_combo_yaml_changes(
     monkeypatch.setitem(
         interface._ENTRIES, "toy", make_trainer(PPORNNConfig(), method=toy)
     )
-    combo = (COMBO_1M.parents[3] / "configs/methods/combo.yaml").read_text()
-    pair = "methods: [count-bonus-ppo-rnn, sil]"
-    assert pair in combo
-    (tmp_path / "combo.yaml").write_text(combo.replace(pair, "methods: [sil, toy]"))
+    (tmp_path / "combo.yaml").write_text(
+        "combine: {base: ppo-rnn, methods: [sil, toy]}\n"
+        "base: {base_from: ppo-rnn.tuned}\n"
+        "grid: {coarse: [{name: combined}], fine: null}\n"
+        "tuned: null\n"
+    )
     monkeypatch.setattr(
         interface, "_combo", lambda: combo_trainer(interface._ENTRIES, tmp_path)
     )
+    pairs = {"live": METHODS["combo"], "built": run_trainer(cfg)}
+    hooked = {k: getattr(t, "method", None) for k, t in pairs.items()}
+    assert hooked["live"].keys == sil.METHOD.keys | {"toy_k"}  # pair Y is the live one
+    assert hooked["built"].keys == count_bonus.METHOD.keys | sil.METHOD.keys  # pair X
     loaded = EvalRun.load(run)
     assert loaded.cfg == cfg
     assert loaded.method == "combo"
