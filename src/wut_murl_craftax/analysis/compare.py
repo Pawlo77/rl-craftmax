@@ -77,6 +77,8 @@ PROTOCOLS = {
     "stochastic": "separate evaluation of the trained policy",
 }
 """Our protocol per score kind, worded as the literature table's ``protocol``."""
+NOT_REPORTED = "protocol not reported"
+"""T2 ``protocol_match`` of a literature row whose protocol is ``n.r.``."""
 REFERENCE_CODE = {
     ("pqn-rnn", "1m"): (
         "no published 1M value; reference-code comparison passed "
@@ -149,10 +151,13 @@ SENSITIVITY_TABLE_COLUMNS = [
 ``best``."""
 TUNING_OPTIMISM_COLUMNS = [
     *_HEAD, "config_hash", "tuning_phase", "tuning_seeds", "tuning_mean",
-    "final_seeds", "final_mean", "optimism",
+    "final_seeds", "fresh_seeds", "fresh_mean", "optimism", "optimism_note",
 ]  # fmt: skip
-"""R101: the tuned config's tuning mean (3 seeds) beside its final mean (10 seeds);
-``optimism`` is tuning minus final (the winner's curse of selection)."""
+"""R101, R102: the tuned config's tuning mean (3 seeds) beside the mean of its fresh
+final seeds (not reused from tuning); ``optimism`` is tuning minus fresh, or NaN with
+an ``n/a`` note."""
+MIN_FRESH = 5
+"""Fresh final seeds below which the optimism reads n/a (R102)."""
 TUNING_ORDER = ("tune-fine", "tune-coarse")
 """Tuning phase of the tuning mean: the fine phase when it ran the tuned config."""
 _UNLOCK, _UNLOCK_WALL = "first_unlock/", "first_unlock_wall/"
@@ -564,11 +569,15 @@ def _our_ci(x: np.ndarray, budget: str, n_boot: int, seed: int) -> tuple[float, 
     return lo, hi
 
 
-def _literature_row(lit: Any, ours: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def _literature_row(
+    lit: Any, ours: Sequence[dict[str, Any]], kind: str
+) -> dict[str, Any]:
     """One published row and, if it is of our protocol, where our CIs lie against it."""
     v = lit.score_pct
     named = {r["name"]: r for r in ours}.values()  # a control's two rows are equal
-    same = lit.protocol == ours[0]["protocol"]
+    same = lit.protocol == PROTOCOLS[kind]
+    match = "same" if same else "different protocol"
+    match = NOT_REPORTED if lit.protocol == "n.r." else match
 
     def which(test: Callable[[dict[str, Any]], bool]) -> str:
         return ", ".join(r["name"] for r in named if same and test(r))
@@ -589,7 +598,7 @@ def _literature_row(lit: Any, ours: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "gate": "",
         "gap": _NAN,
         "h": _NAN,
-        "protocol_match": "same" if same else "different protocol",
+        "protocol_match": match,
         "ours_above": which(lambda r: r["ci_lo"] > v),
         "ours_within": which(lambda r: r["ci_lo"] <= v <= r["ci_hi"]),
         "ours_below": which(lambda r: r["ci_hi"] < v),
@@ -649,8 +658,9 @@ def literature_table(
     `reproduction_gate` (status, gap, h). Literature rows keep note, protocol, seeds and
     spread kind as copied (wikilinks unwrapped). For a row of our protocol,
     ``ours_above``, ``ours_within`` and ``ours_below`` name our methods whose CI lies
-    above, holds or lies below the value; other rows read ``different protocol`` in
-    ``protocol_match`` and give no verdict. 1B groups are ``indicative``.
+    above, holds or lies below the value; other rows read ``different protocol`` (or
+    `NOT_REPORTED` for ``n.r.``) in ``protocol_match`` and give no verdict. 1B groups
+    are ``indicative``.
     """
     gate = reproduction_gate(frames, published, published_hash=published_hash)
     gate = gate.set_index(["control", "benchmark"])
@@ -661,7 +671,7 @@ def literature_table(
                 continue
             ours = _our_rows(kind, runs, budget, gate, n_boot, seed)
             lit = [
-                _literature_row(r, ours)
+                _literature_row(r, ours, kind)
                 for r in comparable_rows(kind, budget).itertuples()
             ]
             head = {
@@ -990,13 +1000,36 @@ def _tuning_runs(
     return "", mine.iloc[:0]
 
 
+def _optimism(tuning: pd.DataFrame, final: pd.DataFrame) -> dict[str, Any]:
+    """Columns from ``tuning_mean`` on; fresh seeds were not reused from tuning."""
+    fresh = final[~final["phases"].map(reused_from_tuning)]
+    tuned = float(tuning["final_score"].mean()) if len(tuning) else _NAN
+    out: dict[str, Any] = {
+        "tuning_mean": tuned,
+        "final_seeds": len(final),
+        "fresh_seeds": len(fresh),
+        "fresh_mean": float(fresh["final_score"].mean()) if len(fresh) else _NAN,
+        "optimism": _NAN,
+        "optimism_note": "",
+    }
+    if tuning.empty:
+        return out | {"optimism_note": "n/a: never tuned"}
+    if fresh.empty:
+        return out | {"optimism_note": "n/a: selected on all its final seeds"}
+    if len(fresh) < MIN_FRESH:
+        return out | {"optimism_note": f"n/a: fewer than {MIN_FRESH} fresh seeds"}
+    return out | {"optimism": tuned - out["fresh_mean"]}
+
+
 def tuning_optimism(frames: Frames) -> pd.DataFrame:
-    """R101: per tuned unit, its tuning mean beside its final mean and their difference.
+    """R101, R102: per tuned unit, its tuning mean beside its fresh final mean.
 
     The tuning mean is over the tuned config's runs (by ``config_hash``) of tune-fine,
-    else tune-coarse (3 seeds; reused into the final, so it is a subset of it); the
-    final mean is over all its final runs (10 at 1M). ``optimism`` = tuning - final: the
-    selection's winner's curse. A unit never tuned (combo) has NaN and no phase; a
+    else tune-coarse (3 seeds). Final seeds reused from tuning (`reused_from_tuning`)
+    are left out of the comparison: ``fresh_mean`` is over the others and ``optimism``
+    = tuning - fresh, the selection's winner's curse. With no fresh seed (a config
+    selected on all its final seeds, as the controls) or fewer than `MIN_FRESH`, or a
+    unit never tuned (combo), ``optimism`` is NaN and ``optimism_note`` says why. A
     budget without any tuning run (1B) has no rows.
     """
     rows: list[dict[str, Any]] = []
@@ -1009,7 +1042,6 @@ def tuning_optimism(frames: Frames) -> pd.DataFrame:
             phase, tuning = _tuning_runs(
                 every[every["budget"] == budget], method, config
             )
-            mean = float(tuning["final_score"].mean()) if len(tuning) else _NAN
             mine.append({
                 "benchmark": budget,
                 "block": block,
@@ -1018,10 +1050,7 @@ def tuning_optimism(frames: Frames) -> pd.DataFrame:
                 "config_hash": config,
                 "tuning_phase": phase,
                 "tuning_seeds": len(tuning),
-                "tuning_mean": mean,
-                "final_seeds": len(final),
-                "final_mean": float(final["final_score"].mean()),
-                "optimism": mean - float(final["final_score"].mean()),
+                **_optimism(tuning, final),
             })
         rows += mine if any(r["tuning_phase"] for r in mine) else []
     return pd.DataFrame(rows, columns=TUNING_OPTIMISM_COLUMNS)

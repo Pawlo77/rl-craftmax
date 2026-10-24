@@ -51,6 +51,9 @@ tune-coarse."""
 TUNE_FINE = ("sil", "smdp-skills")
 """Methods whose tuned 1M seeds below `TUNING_SEEDS` are reused from tune-fine."""
 TUNING_SEEDS = 3
+RERUN_IN_FINE = "ppo"
+"""Its seeds below `TUNING_SEEDS` are in tune-fine too, though it was selected on all 10
+in tune-coarse (the store's ppo: an artefact R102 must not read as optimism)."""
 EVAL_SEEDS = 4
 CAUSE = {"smdp-skills": "zombie"}
 """Cause of death of every death; others die of ``starvation``."""
@@ -82,10 +85,13 @@ def runs_frame(
                 score = scale * (
                     LEVEL[method] - ABLATION_COST * (ref != "tuned")
                 ) + rng.normal(0, NOISE * scale)
+                tags = tuning
+                if method == RERUN_IN_FINE and tuning and seed < TUNING_SEEDS:
+                    tags = f"{tuning},tune-fine"
                 rows.append({
                     "run_id": f"{method}-{ref}-{budget}-{seed}",
                     "phase": phase,
-                    "phases": f"{tuning},{phase}"
+                    "phases": f"{tags},{phase}"
                     if tuning and (seed < TUNING_SEEDS or method in NOT_LOGGED)
                     else phase,
                     "method": method,

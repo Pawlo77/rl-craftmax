@@ -47,9 +47,9 @@ related-code:
   - `poi_matrix(frames)` (F3, `POI_COLUMNS`): PoI with CI between every two members of one block at 1M.
   - `ablation_table(frames)` (`ABLATION_COLUMNS`, R77): each ablation of a final phase (`simhash`, `single-buffer`, `random-top`, `monte-carlo`, `no-flags`, `kappa0`) against its method's tuned runs: difference of means with a bootstrap CI (1M) or Welch t interval (1B), and at 1M PoI and Holm p within the block.
   - `reproduction_gate(frames, published=, published_hash=)` (`GATE_COLUMNS`): per control and benchmark with runs, over the runs of the published config hash (`reproduction.published_config_hashes`): `pass` or `fail` with gap and `h` of `reproduction.band`, `too few seeds`, `no published spread`, `published config not run`, or the PQN-RNN 1M reference-code note (`REFERENCE_CODE`); never raises.
-  - `literature_table(frames)` (T2, `LITERATURE_TABLE_COLUMNS`): per comparable (score kind, benchmark) our rows (mean, s.e., CI, gate on training control rows), then the one literature block; `ours_above`, `ours_within`, `ours_below` only on rows of our protocol (`protocol_match`), `indicative` on 1B groups.
+  - `literature_table(frames)` (T2, `LITERATURE_TABLE_COLUMNS`): per comparable (score kind, benchmark) our rows (mean, s.e., CI, gate on training control rows), then the one literature block; `ours_above`, `ours_within`, `ours_below` only on rows of our protocol (`protocol_match`: `same`, `different protocol`, or `protocol not reported` for `n.r.`), `indicative` on 1B groups.
   - `stability_table` (T3, `STABILITY_COLUMNS`), `hardware_table` (T4 per profile, `HARDWARE_COLUMNS`, laptop rows carry `CONTEXT_NOTE`), `race_table` (`RACE_COLUMNS`, `wall_note`), `game_summary_table` (T6, `GAME_COLUMNS`, `wall_note`), `sensitivity_table` (T7 per tuning phase, `SENSITIVITY_TABLE_COLUMNS`; raises when no run of a phase is tagged `best`); T2, T3, T4 and T6 carry `indicative`.
-  - `tuning_optimism(frames)` (`TUNING_OPTIMISM_COLUMNS`, R101): per tuned unit the 3-seed tuning mean of its config hash (tune-fine, else tune-coarse, `TUNING_ORDER`), the final mean (10 seeds at 1M) and `optimism` = tuning - final.
+  - `tuning_optimism(frames)` (`TUNING_OPTIMISM_COLUMNS`, R101, R102): per tuned unit the 3-seed tuning mean of its config hash (tune-fine, else tune-coarse, `TUNING_ORDER`), the mean of its fresh final seeds (not reused from tuning, `fresh_seeds`) and `optimism` = tuning - fresh; NaN with an `n/a` `optimism_note` when the config was selected on all its final seeds (the controls), has fewer than `MIN_FRESH` = 5 fresh seeds or was never tuned.
   - `block_of(method, combo_pair)`: `skills` for `SKILL_METHODS` (select_pair's) and a combo whose own pair holds one, else `main`; `BLOCKS`.
 
 ## Modules
@@ -114,7 +114,7 @@ One line each; signatures and details: [[Modules]].
 - Race (T6): per method `n` = runs that logged `first_unlock/*` (R78), `k` = runs that unlocked; medians are lower medians over all n runs with +inf for a never-unlocked run (as the obstacles base medians); eligible at k >= n / 2; lowest median wins, wall-clock only within one profile; never-logged methods read NaN wins, not 0. Laptop wall-clock (race, T4) is context only and says so in `wall_note` or `note` (R97, two concurrent workers).
 - T6 weights seeds equally, the top cause of death included (mean per-seed share of deaths).
 - T3 uses `obstacles.drawdown_floor` (R92), the detectors' own rule.
-- Tuning optimism (R101) sets the tuned config's tuning-phase mean beside its final mean; the tuning seeds are a subset of the final ones (reused runs).
+- Tuning optimism (R101, R102) compares the tuning mean only with fresh final seeds: reused seeds are the very runs the selection saw, so including them would shrink the winner's curse.
 
 ## Known issues
 

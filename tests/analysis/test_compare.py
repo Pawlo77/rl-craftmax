@@ -417,7 +417,11 @@ def test_t2_places_our_ci_against_each_published_value(
         published_rows = rows[rows["source"] == "literature"]
         ours_protocol = ours["protocol"].iloc[0]
         other = published_rows[published_rows["protocol"] != ours_protocol]
-        assert other["protocol_match"].eq("different protocol").all()
+        assert (
+            other["protocol_match"]
+            .isin({"different protocol", "protocol not reported"})
+            .all()
+        )
         verdicts = other[["ours_above", "ours_within", "ours_below"]]
         assert verdicts.eq("").all().all()
         same = published_rows[published_rows["protocol"] == ours_protocol]
@@ -703,26 +707,71 @@ def test_t7_refuses_a_tuning_phase_without_its_best_tag() -> None:
         sensitivity_table({"runs": runs})
 
 
-def test_tuning_optimism_sets_the_tuning_mean_beside_the_final_one(
+def test_tuning_optimism_compares_with_fresh_seeds_only(
     frames: dict[str, pd.DataFrame],
 ) -> None:
     t = tuning_optimism(frames)
     assert list(t.columns) == TUNING_OPTIMISM_COLUMNS
     assert set(t["benchmark"]) == {"1m"}
     row = t.drop_duplicates("method").set_index("method")
+    fresh = slice(TUNING_SEEDS, None)  # seeds not reused from tuning
     for method in TUNE_FINE:
         x = _scores_of(frames, method, "1m")
         assert row.loc[method, "tuning_phase"] == "tune-fine"
         assert row.loc[method, "tuning_seeds"] == TUNING_SEEDS
         assert row.loc[method, "tuning_mean"] == pytest.approx(x[:TUNING_SEEDS].mean())
         assert row.loc[method, "final_seeds"] == SEEDS["1m"]
-        assert row.loc[method, "final_mean"] == pytest.approx(x.mean())
+        assert row.loc[method, "fresh_seeds"] == SEEDS["1m"] - TUNING_SEEDS
+        assert row.loc[method, "fresh_mean"] == pytest.approx(x[fresh].mean())
         assert row.loc[method, "optimism"] == pytest.approx(
-            x[:TUNING_SEEDS].mean() - x.mean()
+            x[:TUNING_SEEDS].mean() - x[fresh].mean()
         )
-    assert row.loc["ppo", "tuning_phase"] == "tune-coarse"  # no tune-fine run
+        assert row.loc[method, "optimism_note"] == ""
+    # ppo's 3 tune-fine seeds are part of the 10 it was selected on: no optimism
+    ppo = row.loc["ppo"]
+    assert ppo["tuning_phase"] == "tune-fine"
+    assert ppo["fresh_seeds"] == 0
+    assert math.isnan(ppo["optimism"])
+    assert ppo["optimism_note"] == "n/a: selected on all its final seeds"
     assert math.isnan(row.loc["combo", "tuning_mean"])  # never tuned
     assert row.loc["combo", "tuning_phase"] == ""
+    assert row.loc["combo", "optimism_note"] == "n/a: never tuned"
     for block in ("main", "skills"):
         mine = t[(t["block"] == block) & (t["role"] == "control")]
         assert mine["method"].tolist() == list(CONTROLS)
+
+
+def test_tuning_optimism_needs_five_fresh_seeds(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    runs = frames["runs"].copy()
+    reused = (runs["method"] == "dyna-q") & (runs["config_ref"] == "tuned")
+    reused &= (runs["budget"] == "1m") & (runs["seed"] < 6)
+    runs.loc[reused, "phases"] = "tune-fine,final-1m"
+    row = tuning_optimism({**frames, "runs": runs}).set_index("method").loc["dyna-q"]
+    assert row["fresh_seeds"] == 4
+    assert math.isnan(row["optimism"])
+    assert row["optimism_note"] == "n/a: fewer than 5 fresh seeds"
+
+
+def test_t2_reads_a_budget_of_controls_only(tmp_path: Path) -> None:
+    frames = make_frames(("1m",))
+    runs = frames["runs"]
+    frames["runs"] = runs[runs["method"].isin(CONTROLS)]
+    t = literature_table(
+        frames,
+        published=_published(tmp_path, runs),
+        published_hash=_fixture_hash,
+        n_boot=N_BOOT,
+    )
+    assert (t["source"] == "ours").sum() == 0  # no block holds a method of its own
+    published_rows = t[t["source"] == "literature"]
+    assert len(published_rows)
+    unknown = published_rows["protocol"] == "n.r."
+    assert unknown.any()
+    assert (
+        published_rows.loc[unknown, "protocol_match"].eq("protocol not reported").all()
+    )
+    known = published_rows.loc[~unknown, "protocol_match"]
+    assert known.isin({"same", "different protocol"}).all()
+    assert (known == "same").any()
