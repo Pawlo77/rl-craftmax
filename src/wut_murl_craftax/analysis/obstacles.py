@@ -11,6 +11,8 @@ tuned and ablation runs apart (R77).
 @see [[2026-10-20-craftax-training-analysis]]
 """
 
+import fnmatch
+import functools
 import json
 import math
 from collections import Counter
@@ -22,7 +24,14 @@ from typing import Any, NamedTuple
 import numpy as np
 import pandas as pd
 
-from ..evaluation.stability import COLLAPSE_DEPTH, collapsed, drawdowns, drops, smoothed
+from ..evaluation.stability import (
+    COLLAPSE_DEPTH,
+    MIN_MAX,
+    collapsed,
+    drawdowns,
+    drops,
+    smoothed,
+)
 from . import load
 from .load import Frames, final_checkpoint, pair_of, select
 
@@ -38,12 +47,19 @@ ACTIONS = "eval_actions"
 (an int array; `eval_actions` reads it from an eval file)."""
 SKILL_ENDS = "skill_ends"
 """Optional replay frame (evaluation Task 6): one row per finished skill in an eval
-episode, ``run_id update env_steps mode eval_seed start end skill key reason``
-(`skills.REASONS` names), and for Dyna-Q ``pair_count pair_success`` of the model's
-(key, skill) pair at that checkpoint."""
+episode; columns and types in `SKILL_ENDS_COLUMNS` and the module note."""
+SKILL_ENDS_COLUMNS = (
+    "run_id", "update", "env_steps", "mode", "eval_seed", "start", "end", "skill",
+    "key", "reason",
+)  # fmt: skip
+"""Columns of `SKILL_ENDS`; Dyna-Q rows add ``pair_count`` from the checkpoint's
+``eval/dyna_model_graph.parquet``."""
 INVENTORY = "eval_inventory"
-"""Optional replay frame (evaluation Task 6): one row per eval episode, ``run_id update
-mode eval_seed steps capped_steps`` (steps with a material at its recipe cap)."""
+"""Optional replay frame (evaluation Task 6): one row per eval episode; columns in
+`INVENTORY_COLUMNS`."""
+INVENTORY_COLUMNS = ("run_id", "update", "mode", "eval_seed", "steps", "capped_steps")
+"""Columns of `INVENTORY`: episode steps, and steps with a material at its
+`progress_key.CAPS` cap."""
 REPLAY = (SKILL_ENDS, INVENTORY)
 INPUTS = (ACTIONS, *REPLAY)
 """Optional frames `detect_all` passes on to the detectors."""
@@ -91,6 +107,9 @@ NEEDS_CAUSES = ("starvation", "dehydration", "exhaustion")
 
 ABSOLUTE_BUDGETS = ("1b",)
 """Budgets whose scores are large enough for the plan's absolute point thresholds."""
+DRAWDOWN_FLOOR_MIN, DRAWDOWN_FLOOR_SHARE = 0.1, 0.25
+"""Drawdown floor outside `ABSOLUTE_BUDGETS` (R92): ``max(0.1, 0.25 x`` the run's best
+smoothed score); at those budgets it is `stability.MIN_MAX` (1 point)."""
 PLATEAU_AT = 0.5
 PLATEAU_POINTS = 1.0
 PLATEAU_SHARE = 0.1
@@ -146,16 +165,19 @@ SKILL_HIGH, SKILL_LOW = 0.2, 0.05
 """Skill interference: ``success_rate`` (a fraction) from >= high to < low."""
 TIMEOUT_SHARE, TIMEOUT_FRAC = 0.5, 0.1
 DEEP_SKILLS, DEEP_MIN = ("collect_diamond", "descend", "make_iron_pickaxe"), 100
-"""Deep-skill starvation: chosen fewer than ``DEEP_MIN`` times in the run (the curves
-cannot tell ``descend`` from floor 1 apart, so every descend counts)."""
+"""Deep-skill starvation: chosen fewer than ``DEEP_MIN`` times in the run, an absolute
+count at every budget (R92); the curves cannot tell ``descend`` from floor 1 apart,
+so every descend counts."""
 FLAG_DEATH_STEPS, FLAG_DEATH_SHARE = 100, 0.3
 ALIAS_SHARE = 0.4
 AGREEMENT_MIN = 0.9
 GAP_RATIO, GAP_FRAC = 2.0, 0.1
 STALE_DROP, STALE_WINDOW = 0.2, 0.1
 RETRY_COUNT, RETRY_SUCCESS, RETRY_RISE = 1000, 0.9, 0.1
-"""Bonus-driven re-trying: decisions on pairs with count > 1000 and success > 0.9,
-their share rising by ``RETRY_RISE`` from mid budget to the end, the score flat."""
+"""Bonus-driven re-trying: decisions on pairs with model count > 1000 and success
+> 0.9, their share rising by ``RETRY_RISE`` from mid budget to the end, the score
+flat. The model keeps no success flag, so success is the eval share of the pair's
+ends at that checkpoint."""
 PLAN_TD_MIN, PLAN_TD_FRAC = 1e-3, 0.2
 TABLE_COLUMNS = (
     "Obstacle",
@@ -170,7 +192,8 @@ TABLE_COLUMNS = (
 """Columns of the obstacles table template."""
 
 type Group = tuple[str, ...]
-"""Aliases of one input, first logged wins; a single ``prefix/`` is a family."""
+"""Aliases of one input, first logged wins; ``prefix/`` is a family and a name with
+``*`` a pattern (any match counts as logged)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +234,8 @@ class RunData:
     """Stored metric -> values indexed by env steps (seed medians for a pool)."""
     episodes: pd.DataFrame
     budget_steps: int
-    base: "RunData | None" = None
+    bases: tuple["RunData", ...] = ()
+    """Base control pools, one per method (a control has the other controls)."""
     members: tuple["RunData", ...] = ()
     """The runs of a pool, for per-run statistics; empty for one run."""
     inputs: Mapping[str, pd.DataFrame] = field(default_factory=dict)
@@ -221,6 +245,8 @@ class RunData:
         return any(
             any(k.startswith(g) for k in self.curves)
             if g.endswith("/")
+            else bool(fnmatch.filter(self.curves, g))
+            if "*" in g
             else g in self.curves
             for g in group
         )
@@ -281,12 +307,17 @@ class Detector:
                 self.name, run, None, None, f"not logged: {', '.join(gaps)}", NOT_LOGGED
             )
         if self.BASE_METRICS is not None:
-            if d.base is None:
+            if not d.bases:
                 return Obstacle(
                     self.name, run, None, None, "no base control runs", NOT_LOGGED
                 )
-            if gaps := [g[0] for g in self.BASE_METRICS if not d.base.logged(g)]:
-                text = f"base control {d.base.run['method']} lacks {', '.join(gaps)}"
+            if gaps := [
+                f"{b.run['method']} lacks {g[0]}"
+                for b in d.bases
+                for g in self.BASE_METRICS
+                if not b.logged(g)
+            ]:
+                text = f"base control {'; '.join(gaps)}"
                 return Obstacle(self.name, run, None, None, text, NOT_LOGGED)
         if gaps := [i for i in self.inputs if i not in d.inputs]:
             status = NEEDS_REPLAY if set(gaps) & set(REPLAY) else NEEDS_ACTIONS
@@ -389,11 +420,17 @@ def _first_unlocks(d: RunData) -> dict[str, float]:
     return {n: float(s.index.min()) for n, s in fu.items() if n in BASIC_ACHIEVEMENTS}
 
 
-def _base_unlocks(base: RunData) -> dict[str, float]:
-    """Median over the base runs of each basic first unlock (inf: a run never did)."""
-    runs = [_first_unlocks(m) for m in base.members or (base,)]
+def _base_unlocks(base: RunData) -> tuple[dict[str, float], int, int]:
+    """Median over the base runs of each basic first unlock, the runs used, all runs.
+
+    A run that never logged ``first_unlock/*`` is not logged and left out (R78); a
+    logged run that never unlocked a name counts as inf for it.
+    """
+    members = base.members or (base,)
+    runs = [_first_unlocks(m) for m in members if m.logged(("first_unlock/",))]
     names = set().union(*runs)
-    return {n: float(np.median([r.get(n, np.inf) for r in runs])) for n in names}
+    medians = {n: float(np.median([r.get(n, np.inf) for r in runs])) for n in names}
+    return medians, len(runs), len(members)
 
 
 def _max_floor(d: RunData) -> float:
@@ -402,11 +439,11 @@ def _max_floor(d: RunData) -> float:
 
 
 def _base(d: RunData) -> RunData:
-    """The base control pool, which `Detector` checked before the rule runs."""
-    if d.base is None:
-        msg = f"run {d.run['run_id']} has no base control pool"
+    """The one base control pool of a method run, checked by `Detector` first."""
+    if len(d.bases) != 1:
+        msg = f"run {d.run['run_id']} has {len(d.bases)} base pools, not one"
         raise ValueError(msg)
-    return d.base
+    return d.bases[0]
 
 
 def _final_step(d: RunData) -> int | None:
@@ -457,7 +494,12 @@ def repeated_cycle(
 def eval_actions(
     run_dir: Path, run_id: str, update: int, mode: str = EVAL_MODE
 ) -> pd.DataFrame:
-    """The `ACTIONS` rows of ``<run_dir>/eval/<mode>/<update:05d>.npz``, unpadded."""
+    """The `ACTIONS` rows of one eval file, unpadded.
+
+    ``run_dir`` is the run's artifacts directory
+    (``mlruns/<experiment>/<run_id>/artifacts``); the file is
+    ``<run_dir>/eval/<mode>/<update:05d>.npz``.
+    """
     with np.load(Path(run_dir) / "eval" / mode / f"{update:05d}.npz") as z:
         seeds, actions, length = z["seeds"], z["actions"], z["length"]
     return pd.DataFrame({
@@ -472,29 +514,39 @@ def eval_actions(
 # --- shared detectors -------------------------------------------------------------
 
 
+def _floor(d: RunData, c: np.ndarray) -> float:
+    """Drawdown floor of the run (R92): 1 point at `ABSOLUTE_BUDGETS`, else relative."""
+    if str(d.run["budget"]) in ABSOLUTE_BUDGETS:
+        return MIN_MAX
+    best = float(np.nanmax(c)) if np.isfinite(c).any() else 0.0
+    return max(DRAWDOWN_FLOOR_MIN, DRAWDOWN_FLOOR_SHARE * best)
+
+
 def _instability(d: RunData) -> Hit | None:
     s = d.series(SCORE)
     c = smoothed(s.to_numpy(dtype=float))
-    if not (found := drops(c)):
+    floor = _floor(d, c)
+    if not (found := drops(c, floor=floor)):
         return None
-    depth = np.nanmax(drawdowns(c))
+    depth = np.nanmax(drawdowns(c, floor))
     steps = s.index.to_numpy()
     a, b = found[0]
-    return Hit(
-        int(steps[a]),
-        int(steps[b - 1]),
-        f"{len(found)} drops, deepest drawdown {depth:.2f}",
-    )
+    text = f"{len(found)} drops, deepest drawdown {depth:.2f} (floor {floor:.2g})"
+    return Hit(int(steps[a]), int(steps[b - 1]), text)
 
 
 def _collapse(d: RunData) -> Hit | None:
     s = d.series(SCORE)
     c = smoothed(s.to_numpy(dtype=float))
-    if not collapsed(c):
+    floor = _floor(d, c)
+    if not collapsed(c, floor):
         return None
-    dd = drawdowns(c)
+    dd = drawdowns(c, floor)
     start = int(s.index[np.flatnonzero(dd >= COLLAPSE_DEPTH)[0]])
-    text = f"drawdown {np.nanmax(dd):.2f}, final {c[-1]:.2f} of best {np.nanmax(c):.2f}"
+    text = (
+        f"drawdown {np.nanmax(dd):.2f}, final {c[-1]:.2f} of best "
+        f"{np.nanmax(c):.2f} (floor {floor:.2g})"
+    )
     return Hit(start, int(s.index[-1]), text)
 
 
@@ -558,12 +610,13 @@ def _numerical_failure(d: RunData) -> Hit | None:
     return Hit(bad[0][0], bad[-1][0], "; ".join(t for _, t in bad))
 
 
-def _aux_suspicion(d: RunData) -> str | None:
-    """Why reward hacking is suspected, before the cycle check."""
+def _aux_suspicion(d: RunData) -> tuple[str, int] | None:
+    """Why reward hacking is suspected and from which env step, before the cycles."""
     share = d.series(("train/ach_reward_share",))
     other = 1 - _late_mean(share, d.budget_steps, 0.5)
     if other > AUX_SHARE:
-        return f"non-achievement share of return {other:.0%} in the second half"
+        why = f"non-achievement share of return {other:.0%} in the second half"
+        return why, int(0.5 * d.budget_steps)
     for name in AUX_REWARD:
         if name in d.curves:
             aux = d.curves[name]
@@ -574,31 +627,34 @@ def _aux_suspicion(d: RunData) -> str | None:
                 aux, rising & _flat(d, steps), AUX_RISE_FRAC * d.budget_steps
             )
             if found:
-                return f"{name} rising while the score is flat from {_fmt(found[0][0])}"
+                return f"{name} rising while the score is flat", found[0][0]
     return None
 
 
 def _reward_hacking(d: RunData) -> Hit | None:
-    if (why := _aux_suspicion(d)) is None:
+    if (suspect := _aux_suspicion(d)) is None:
         return None
+    why, start = suspect
+    text = f"{why} from {_fmt(start)}"
     if ACTIONS not in d.inputs:
         return Hit(
-            None, None, f"{why}; unconfirmed without eval actions", NEEDS_ACTIONS
+            start, None, f"{text}; unconfirmed without eval actions", NEEDS_ACTIONS
         )
     found, n = _cycles(d)
     if len(found) < CYCLE_SHARE * n or not found:
         return None
-    end = _final_step(d)
-    return Hit(end, end, f"{why}; {_cycle_text(found, n)}")
+    return Hit(start, _final_step(d), f"{text}; {_cycle_text(found, n)}")
 
 
 def _exploration_failure(d: RunData) -> Hit | None:
-    base_run = _base(d)
     last = max(float(s.index.max()) for s in d.family("first_unlock/").values())
-    floors, base = _max_floor(d), _max_floor(base_run)
-    if last >= EXPLORE_LATE * d.budget_steps or floors >= base:
+    floors = _max_floor(d)
+    # a control is compared with each other control on its own, never a mixed pool
+    bases = {str(b.run["method"]): _max_floor(b) for b in d.bases}
+    if last >= EXPLORE_LATE * d.budget_steps or floors >= min(bases.values()):
         return None
-    text = f"last first unlock {_fmt(last)}; deepest floor {floors:g}, base {base:g}"
+    vs = ", ".join(f"{m} {f:g}" for m, f in bases.items())
+    text = f"last first unlock {_fmt(last)}; deepest floor {floors:g} vs {vs}"
     return Hit(int(last), d.budget_steps, text)
 
 
@@ -708,7 +764,7 @@ def _bonus_starvation(d: RunData) -> Hit | None:
 
 def _race_slowdown(d: RunData) -> Hit | None:
     base_run = _base(d)
-    run, base = _first_unlocks(d), _base_unlocks(base_run)
+    run, (base, used, total) = _first_unlocks(d), _base_unlocks(base_run)
     slow = {
         n: run.get(n, math.inf) / b
         for n, b in base.items()
@@ -725,19 +781,22 @@ def _race_slowdown(d: RunData) -> Hit | None:
     return Hit(
         int(min(starts)),
         int(max(starts)),
-        f"first unlocks later than the base control's: {text}",
+        f"first unlocks later than the base control's: {text} "
+        f"(base median over {used} of {total} runs; {total - used} not logged)",
     )
 
 
 def _q_overestimation(d: RunData) -> Hit | None:
-    q = d.series(ALIASES["Q values"])
-    largest = float(d.episodes["return"].max())
+    q = d.series(ALIASES["Q values"]).abs()
+    largest = float(d.episodes["return"].abs().max())
     if RETURN[0] in d.curves:
-        largest = max(largest, float(d.curves[RETURN[0]].max()))
+        largest = max(largest, float(d.curves[RETURN[0]].abs().max()))
     over = q[q > Q_RATIO * largest]
     if over.empty:
         return None
-    text = f"pqn/q_max_mean up to {q.max():.3g} > {Q_RATIO:g} x return {largest:.3g}"
+    text = (
+        f"|pqn/q_max_mean| up to {q.max():.3g} > {Q_RATIO:g} x |return| {largest:.3g}"
+    )
     return Hit(int(over.index[0]), int(over.index[-1]), text)
 
 
@@ -939,9 +998,12 @@ def sil_detectors() -> list[Detector]:
 
 # --- smdp-skills and dyna-q ------------------------------------------------------
 
-_SKILL_OWNERS = ("smdp-skills", "dyna-q")
-"""`select_pair.SKILL_METHODS`, repeated so that this module imports without MLflow."""
 SKILL_PREFIX = "smdp/skill/"
+
+
+def _stat_group(stat: str) -> Group:
+    """The required-metric pattern of one per-skill stat."""
+    return (f"{SKILL_PREFIX}*/{stat}",)
 
 
 def _stat(d: RunData, stat: str) -> dict[str, pd.Series]:
@@ -1039,8 +1101,6 @@ def _deep_skill_starvation(d: RunData) -> Hit | None:
     decisions = _at(dpe, eps.index.to_numpy()) * eps.to_numpy()
     counts = {
         n: float(np.nansum(_at(chosen[n], eps.index.to_numpy()) * decisions))
-        if n in chosen
-        else 0.0
         for n in DEEP_SKILLS
     }
     low = {n: c for n, c in counts.items() if c < DEEP_MIN}
@@ -1115,19 +1175,35 @@ def _blind_skill_test(d: RunData) -> Hit | None:
 
 def skill_detectors() -> list[Detector]:
     """The eight detectors of the skill methods (smdp-skills; Dyna-Q has them too)."""
-    fam = ((SKILL_PREFIX,),)
-    m = _SKILL_OWNERS
+    # imported here: select_pair pulls in MLflow and the orchestration code
+    from ..evaluation.select_pair import SKILL_METHODS
+
+    m = SKILL_METHODS
+    success, chosen = _stat_group("success_rate"), _stat_group("chosen_share")
+    fallback = tuple((f"{SKILL_PREFIX}{s}/chosen_share",) for s in FALLBACK_SKILLS)
+    deep = tuple((f"{SKILL_PREFIX}{s}/chosen_share",) for s in DEEP_SKILLS)
+    counts = (("smdp/decisions_per_episode",), ("train/n_episodes",))
     return [
-        Detector("Stuck top level", _stuck_top_level, fam, methods=m),
+        Detector("Stuck top level", _stuck_top_level, (success, chosen), methods=m),
         Detector(
-            "Fallback collapse", _fallback_collapse, (*fam, ("smdp/eps",)), methods=m
+            "Fallback collapse",
+            _fallback_collapse,
+            (*fallback, ("smdp/eps",)),
+            methods=m,
         ),
-        Detector("Skill interference", _skill_interference, fam, methods=m),
-        Detector("Timeout dominance", _timeout_dominance, fam, methods=m),
+        Detector(
+            "Skill interference", _skill_interference, (success, chosen), methods=m
+        ),
+        Detector(
+            "Timeout dominance",
+            _timeout_dominance,
+            (_stat_group("end/timeout"),),
+            methods=m,
+        ),
         Detector(
             "Deep-skill starvation",
             _deep_skill_starvation,
-            (*fam, ("smdp/decisions_per_episode",), ("train/n_episodes",)),
+            (*deep, *counts),
             methods=m,
         ),
         Detector(
@@ -1137,7 +1213,12 @@ def skill_detectors() -> list[Detector]:
             methods=m,
         ),
         Detector("Key aliasing", _key_aliasing, inputs=(SKILL_ENDS,), methods=m),
-        Detector("Blind skill test", _blind_skill_test, fam, methods=m),
+        Detector(
+            "Blind skill test",
+            _blind_skill_test,
+            (_stat_group("test_agreement"),),
+            methods=m,
+        ),
     ]
 
 
@@ -1179,7 +1260,10 @@ def _retrying(d: RunData) -> Hit | None:
         return Hit(None, None, f"no {SKILL_ENDS}", NEEDS_REPLAY)
     e = d.inputs[SKILL_ENDS]
     e = e[e["mode"] == EVAL_MODE]
-    sat = (e["pair_count"] > RETRY_COUNT) & (e["pair_success"] > RETRY_SUCCESS)
+    if "pair_count" not in e:
+        return Hit(None, None, f"no pair_count in {SKILL_ENDS}", NEEDS_REPLAY)
+    ok = (e["reason"] == "success").groupby([e["env_steps"], e["skill"], e["key"]])
+    sat = (e["pair_count"] > RETRY_COUNT) & (ok.transform("mean") > RETRY_SUCCESS)
     share = sat.groupby(e["env_steps"]).mean()
     later = share[share.index >= PLATEAU_AT * d.budget_steps]
     if len(later) < 2:
@@ -1222,6 +1306,7 @@ def dyna_detectors() -> list[Detector]:
     ]
 
 
+@functools.cache
 def _registry() -> dict[str, list[Detector]]:
     shared, count = shared_detectors(), count_bonus_detectors()
     sil, skill, dyna = sil_detectors(), skill_detectors(), dyna_detectors()
@@ -1239,9 +1324,18 @@ def _registry() -> dict[str, list[Detector]]:
     }
 
 
-DETECTORS: dict[str, list[Detector]] = _registry()
+DETECTORS: dict[str, list[Detector]]
 """Registry method -> its detectors: the shared ones, then the method's; ``combo``
-holds every method detector and a combo run keeps those of its own pair."""
+holds every method detector and a combo run keeps those of its own pair. Built on
+first access (the skill owners come from `select_pair.SKILL_METHODS`)."""
+
+
+def __getattr__(name: str) -> object:
+    """Build `DETECTORS` on first access."""
+    if name == "DETECTORS":
+        return _registry()
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 # --- running them -----------------------------------------------------------------
@@ -1271,9 +1365,9 @@ class _Builder:
             for k in INPUTS
             if k in frames
         }
-        self.pools: dict[tuple[str, ...], RunData | None] = {}
+        self.pools: dict[str, RunData | None] = {}
 
-    def run(self, row: pd.Series, base: RunData | None = None) -> RunData:
+    def run(self, row: pd.Series, bases: tuple[RunData, ...] = ()) -> RunData:
         rid = row["run_id"]
         empty = self.frames["curves"].iloc[:0]
         return RunData(
@@ -1281,41 +1375,38 @@ class _Builder:
             _series(self.curves.get(rid, empty)),
             self.episodes.get(rid, self.frames["eval_episodes"].iloc[:0]),
             self.steps,
-            base,
+            bases,
             inputs={k: v[rid] for k, v in self.inputs.items() if rid in v},
         )
 
-    def pool(self, methods: tuple[str, ...]) -> RunData | None:
-        """The tuned runs of ``methods`` pooled: seed-median curves, all episodes."""
-        if methods not in self.pools:
+    def pool(self, method: str) -> RunData | None:
+        """The tuned runs of ``method`` pooled: seed-median curves, all episodes."""
+        if method not in self.pools:
             sel = select(
-                self.frames,
-                method=list(methods),
-                config_ref="tuned",
-                budget=self.budget,
+                self.frames, method=method, config_ref="tuned", budget=self.budget
             )
             rows = [r for _, r in sel["runs"].iterrows()]
             members = tuple(self.run(r) for r in rows)
             if not members:
-                self.pools[methods] = None
+                self.pools[method] = None
             else:
                 med = (
                     sel["curves"]
                     .groupby(["metric", "env_steps"], sort=False)["value"]
                     .median()
                 )
-                self.pools[methods] = RunData(
+                self.pools[method] = RunData(
                     rows[0],
                     _series(med.reset_index()),
                     sel["eval_episodes"],
                     self.steps,
                     members=members,
                 )
-        return self.pools[methods]
+        return self.pools[method]
 
 
 def _base_methods(row: pd.Series) -> tuple[str, ...]:
-    """The methods of a run's base control pool; a control's are the other controls."""
+    """The methods of a run's base control pools; a control's are the other controls."""
     if row["method"] in load.CONTROLS:
         return tuple(c for c in load.CONTROLS if c != row["method"])
     return (load.base_control(row),)
@@ -1333,7 +1424,7 @@ def detect_all(
     Raises:
         KeyError: If ``method`` has no detectors or ``budget`` is unknown.
     """
-    detectors = DETECTORS[method]
+    detectors = _registry()[method]
     runs = frames["runs"]
     mine = select({"runs": runs}, method=method, config_ref=config_ref, budget=budget)
     rows = [r for _, r in mine["runs"].iterrows()]
@@ -1349,7 +1440,8 @@ def detect_all(
     build = _Builder({k: v[v["run_id"].isin(ids)] for k, v in frames.items()}, budget)
     out = []
     for row, base in zip(rows, bases, strict=True):
-        d = build.run(row, build.pool(base))
+        pools = (build.pool(m) for m in base)
+        d = build.run(row, tuple(p for p in pools if p is not None))
         owners = set((pair_of(row) or {}).get("methods", [method]))
         out += [
             det(d) for det in detectors if not det.methods or owners & set(det.methods)

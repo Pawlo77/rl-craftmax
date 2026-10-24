@@ -5,7 +5,10 @@ seeds; a control's are the other controls), every series healthy unless overridd
 and the optional inputs (eval actions and the replay frames of evaluation Task 6).
 """
 
+import fnmatch
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -240,7 +243,6 @@ def _skill_ends(
                     "key": 1000 * s + i,
                     "reason": "success",
                     "pair_count": 10,
-                    "pair_success": 0.5,
                 })
             rows.append({**rows[-1], "start": 70, "end": 100, "reason": "low_stat"})
     frame = pd.DataFrame(rows)
@@ -256,6 +258,8 @@ def world(
     final: dict[str, Any] | None = None,
     every: dict[str, Any] | None = None,
     base_episodes: dict[str, Any] | None = None,
+    base_by: dict[tuple[str, int], dict[str, Series]] | None = None,
+    base_episodes_by: dict[str, dict[str, Any]] | None = None,
     config: dict[str, Any] | None = None,
     cycle: bool = False,
     skill_ends: Callable[..., Any] | None = None,
@@ -269,8 +273,18 @@ def world(
     else:
         bases = [COMBO_PAIR["base"] if method == "combo" else BASE_CONTROL[method]]
     specs = [(method, 0, run or {}, final or {}, every or {}, config or {})]
+    by, eps_by = base_by or {}, base_episodes_by or {}
     specs += [
-        (b, s, base or {}, {}, base_episodes or {}, {}) for b in bases for s in (0, 1)
+        (
+            b,
+            s,
+            (base or {}) | by.get((b, s), {}),
+            {},
+            (base_episodes or {}) | eps_by.get(b, {}),
+            {},
+        )
+        for b in bases
+        for s in (0, 1)
     ]
     runs, curves, episodes, actions, ends, inv = [], [], [], [], [], []
     for m, seed, over, fin, ev, cfg in specs:
@@ -384,7 +398,8 @@ def test_detector_counts_and_registry() -> None:
 def test_constants_match_the_game_tables() -> None:
     assert achievement_names("craftax")[:25] == BASIC_ACHIEVEMENTS
     assert NEEDS_CAUSES == NEEDS
-    assert ob._SKILL_OWNERS == SKILL_METHODS
+    for d in skill_detectors():
+        assert d.methods == SKILL_METHODS
     assert ALIASES["policy entropy"] == ("ppo/entropy", "train/entropy")
     assert ALIASES["sil/sample_age"][0] == "sil/sample_age_max"
     assert ALIASES["sil/insert_overflow"] == ("sil/overflow",)
@@ -644,7 +659,6 @@ FIRES: list[tuple[str, str, dict[str, Any]]] = [
             "run": {"train/score_pct": _flat_after(40)},
             "skill_ends": lambda f: f.assign(
                 pair_count=np.where(f["update"] == UPDATES[-1], 5000, 10),
-                pair_success=np.where(f["update"] == UPDATES[-1], 0.95, 0.5),
             ),
         },
     ),
@@ -733,7 +747,7 @@ def test_detector_fires(method: str, name: str, kw: dict[str, Any]) -> None:
             "dyna-q",
             "Bonus-driven re-trying",
             {
-                "skill_ends": lambda f: f.assign(pair_count=5000, pair_success=0.95),
+                "skill_ends": lambda f: f.assign(pair_count=5000),
                 "run": {"train/score_pct": _flat_after(40)},
             },
         ),
@@ -824,21 +838,32 @@ def test_retrying_does_not_apply_without_the_bonus() -> None:
 # --- not logged ---------------------------------------------------------------------
 
 
+def _matches(key: str, group: tuple[str, ...]) -> bool:
+    """Whether a stored key is a name, family member or pattern match of ``group``."""
+    return any(
+        key.startswith(g)
+        if g.endswith("/")
+        else fnmatch.fnmatchcase(key, g)
+        if "*" in g
+        else key == g
+        for g in group
+    )
+
+
 def _not_logged_cases() -> list[tuple[str, str, tuple[str, ...]]]:
+    """Every required group of every (method, detector) the healthy run logs."""
     cases = []
     for method in sorted(METHODS):
         healthy = _healthy(method)
         for d in DETECTORS[method]:
-            if not d.REQUIRED_METRICS or (method == "combo" and not _in_pair(d)):
+            if method == "combo" and not _in_pair(d):
                 continue
-            group = d.REQUIRED_METRICS[0]
-            if not any(
-                k.startswith(g) if g.endswith("/") else k == g
-                for k in healthy
-                for g in group
-            ):
-                continue  # not logged in the healthy run (PQN explained variance)
-            cases.append((method, d.name, group))
+            # a group the healthy run lacks is not logged already (PQN EV)
+            cases += [
+                (method, d.name, g)
+                for g in d.REQUIRED_METRICS
+                if any(_matches(k, g) for k in healthy)
+            ]
     return cases
 
 
@@ -846,11 +871,7 @@ def _not_logged_cases() -> list[tuple[str, str, tuple[str, ...]]]:
 def test_a_missing_series_is_not_logged(
     method: str, name: str, group: tuple[str, ...]
 ) -> None:
-    drop = {
-        k: None
-        for k in _healthy(method)
-        if any(k.startswith(g) if g.endswith("/") else k == g for g in group)
-    }
+    drop = {k: None for k in _healthy(method) if _matches(k, group)}
     o = result(world(method, run=drop), method, name)
     assert o.status == NOT_LOGGED
     assert o.status != ABSENT
@@ -987,3 +1008,95 @@ def test_detect_all_runs_on_the_synthetic_export(export_root: Path) -> None:
         tuned = runs[(runs["method"] == method) & (runs["config_ref"] == "tuned")]
         assert {o.run for o in found} == set(tuned["run_id"])
         assert {o.status for o in found} <= known | {"uninformative at 1M"}
+
+
+# --- review fixes: drawdown floor, base pools ------------------------------------
+
+LOW_DIP = DIP * 0.4
+"""The instability dip on a run peaking near 0.8%, below the 1-point floor."""
+
+
+def test_instability_at_1m_uses_a_relative_floor() -> None:
+    o = result(
+        world("ppo-rnn", run={"train/score_pct": LOW_DIP}), "ppo-rnn", "Instability"
+    )
+    assert o.status == DETECTED
+    assert "floor 0.2" in o.evidence  # 0.25 x the best smoothed score of 0.8
+    low_fall = FALL * 0.4
+    o = result(
+        world("ppo-rnn", run={"train/score_pct": low_fall}), "ppo-rnn", "Collapse"
+    )
+    assert o.status == DETECTED
+    assert "floor" in o.evidence
+
+
+def test_instability_at_1b_keeps_the_one_point_floor() -> None:
+    frames = world("ppo-rnn", "1b", run={"train/score_pct": LOW_DIP})
+    assert result(frames, "ppo-rnn", "Instability", "1b").status == ABSENT
+    frames = world("ppo-rnn", "1b", run={"train/score_pct": DIP})
+    o = result(frames, "ppo-rnn", "Instability", "1b")
+    assert o.status == DETECTED
+    assert "floor 1" in o.evidence
+
+
+def test_a_base_run_without_first_unlocks_is_left_out_of_the_median() -> None:
+    # seed 1 of the PPO-RNN base is a reused run without first_unlock/* (R78)
+    unlogged = {"first_unlock/collect_wood": None, "first_unlock/place_table": None}
+    frames = world(
+        "count-bonus-ppo-rnn",
+        run={"first_unlock/collect_wood": {0.1: 100_000.0}},
+        base_by={("ppo-rnn", 1): unlogged},
+    )
+    o = result(frames, "count-bonus-ppo-rnn", "Early-race slowdown")
+    assert o.status == DETECTED, o
+    assert "collect_wood x10" in o.evidence
+    assert "over 1 of 2 runs; 1 not logged" in o.evidence
+
+
+def test_a_control_is_compared_with_each_other_control() -> None:
+    early = {"run": EARLY_UNLOCK, "final": {"max_floor": 0}, "every": {"max_floor": 0}}
+    mixed = world("ppo-rnn", **early, base_episodes_by={"pqn-rnn": {"max_floor": 0}})
+    assert result(mixed, "ppo-rnn", "Exploration failure").status == ABSENT
+    o = result(world("ppo-rnn", **early), "ppo-rnn", "Exploration failure")
+    assert o.status == DETECTED
+    assert "vs ppo 1, pqn-rnn 1" in o.evidence
+
+
+def test_reward_hacking_starts_where_the_aux_reward_rises() -> None:
+    kw = {
+        "run": {
+            "train/score_pct": _flat_after(30),
+            "count/r_int_mean": _ramp(0.01, 0.5),
+        },
+        "cycle": True,
+    }
+    o = result(
+        world("count-bonus-ppo-rnn", **kw), "count-bonus-ppo-rnn", "Reward hacking"
+    )
+    assert o.start is not None
+    assert 300_000 <= o.start <= 400_000  # the score is flat from 30% of the budget
+    assert o.end == SCALE["1m"]
+
+
+def test_q_overestimation_compares_magnitudes() -> None:
+    frames = world("count-bonus-pqn-rnn", run={"pqn/q_max_mean": _const(-30.0)})
+    o = result(frames, "count-bonus-pqn-rnn", "Q overestimation")
+    assert o.status == DETECTED
+
+
+def test_a_missing_deep_skill_is_not_logged() -> None:
+    drop = {"smdp/skill/descend/chosen_share": None}
+    o = result(world("smdp-skills", run=drop), "smdp-skills", "Deep-skill starvation")
+    assert o.status == NOT_LOGGED
+    assert "descend" in o.evidence
+
+
+def test_importing_the_module_loads_no_mlflow() -> None:
+    code = (
+        "import sys, wut_murl_craftax.analysis.obstacles; "
+        "print('mlflow' in sys.modules, 'jax' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.split() == ["False", "False"]

@@ -42,7 +42,22 @@ One line each; signatures and details: [[Modules]].
 ## Data flow
 
 - In: the export tables of [[evaluation]] under `outputs/metrics/<phase>/` (`runs`, `curves`, `eval_episodes` parquet; column contract in the Phase 4 contracts); eval files and checkpoints through [[visualisation]].
-- Detectors read `curves` (stored names, `ALIASES`), `eval_episodes`, the base control's tuned runs of the same frames (seed medians; a control's are the other controls, a combo run's its pair base), and optional frames: `eval_actions` (eval files), `skill_ends` and `eval_inventory` (offline replay, evaluation Task 6).
+- Detectors read `curves` (stored names, `ALIASES`), `eval_episodes`, the base control's tuned runs of the same frames (one pool per method, seed medians; a control has one pool per other control, a combo run its pair base), and the optional frames below.
+- Optional input frames of `detect_all` (a missing one reads `needs eval actions` or `needs replay (evaluation Task 6)`; contracts "Replay inputs for training analysis"):
+
+| Frame | Column | Type | Meaning | Source |
+|---|---|---|---|---|
+| `eval_actions` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | `eval_actions(run_dir, ...)` from `eval/<mode>/<update>.npz` |
+| `eval_actions` | `actions` | int array | the episode's actions, padding cut at `length` | eval file |
+| `skill_ends` | `run_id`, `update`, `env_steps`, `mode`, `eval_seed` | str, int, int64, str, int | the eval episode and checkpoint | replay |
+| `skill_ends` | `start`, `end` | int | episode steps where the skill started and ended | replay |
+| `skill_ends` | `skill` | str | `skills.SKILLS` name | eval `extras/skill` |
+| `skill_ends` | `key` | int64 | `smdp.top_key` table row at the decision (`low_flags` as the run's config) | replay |
+| `skill_ends` | `reason` | str | `skills.REASONS` name of the end (`success`, `failure`, `timeout`, `episode_end`, `floor_change`, `low_stat`) | replay |
+| `skill_ends` | `pair_count` | int | Dyna-Q only: real outcomes of (`key`, `skill`) in the checkpoint's model, `count` of `eval/dyna_model_graph.parquet` (0 if absent) | model graph of the checkpoint |
+| `eval_inventory` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | replay |
+| `eval_inventory` | `steps` | int | episode steps | replay |
+| `eval_inventory` | `capped_steps` | int | steps with at least one material at or above its `progress_key.CAPS` cap | replay |
 - Out: `outputs/analysis/<budget>/`, `outputs/results/`, MLflow experiment `analysis`.
 
 ## Invariants
@@ -54,12 +69,17 @@ One line each; signatures and details: [[Modules]].
 - Controls come from `select_pair.controls_of` and `SKILL_METHODS`, never copies; a combo run's base control is read from its own `config_json` pair (`combo_pair`), never from combo.yaml.
 - A detector whose series, base-control series or input frame is missing reports `not logged`, `needs replay (evaluation Task 6)` or `needs eval actions`, never `absent` (R78); `table_rows` counts runs as detected over judged (detected or absent) and lists the others.
 - Thresholds are module constants. Plateau is relative to the run's best score except at `ABSOLUTE_BUDGETS` (1B: 1 point); bonus starvation is `uninformative at 1M` (`STARVATION_BUDGETS`) (R79).
-- `detect_all` judges one (method, `config_ref`) unit per call (R77); combo runs keep the method detectors of their own pair; importing `obstacles` imports neither JAX nor MLflow, so it repeats `SKILL_METHODS` as `_SKILL_OWNERS` (a test pins them equal).
+- `detect_all` judges one (method, `config_ref`) unit per call (R77); combo runs keep the method detectors of their own pair. Base pools are per method, never mixed: a control's exploration failure needs fewer floors than every other control, each named in the evidence.
+- A base run that never logged a series (`first_unlock/*` in the reused runs) is left out of the base median, never counted as never unlocked; the evidence gives the runs used and left out (R78).
+- Per-skill stats are required one by one (`smdp/skill/*/<stat>`, each deep skill's `chosen_share`), so one missing stat reads `not logged`.
+- Instability and collapse pass `stability`'s drawdown floor: 1 point at `ABSOLUTE_BUDGETS`, else `max(0.1, 0.25 x` the run's best smoothed score), named in the evidence (R92).
+- Flat score (bonus distraction, reward hacking, re-trying) is a documented choice: the method plan says "flat (drawdown definition of evaluation-and-metrics)" and evaluation defines only drawdowns, so flat is a gain over the trailing 10% of the budget below 5% of the run's best smoothed score (`FLAT_WINDOW`, `FLAT_GAIN`).
+- Bonus-driven re-trying takes the pair count from the Dyna-Q model graph and the success rate from the eval ends of that pair at the checkpoint: the model stores no success flag.
+- `DETECTORS` is built on first access (owners of the skill detectors are `select_pair.SKILL_METHODS`); importing `obstacles` imports neither JAX nor MLflow.
 
 ## Known issues
 
-- Key aliasing, survival failure despite flags and bonus-driven re-trying need the `skill_ends` replay frame, and hoarding under log2 keys the `eval_inventory` frame; until evaluation Task 6 builds them they read `needs replay (evaluation Task 6)`.
-- `stability.drawdowns` is undefined below a 1% running max, so instability and collapse see only the part of a 1M run above 1% score.
+- Key aliasing, survival failure despite flags and bonus-driven re-trying need the `skill_ends` replay frame, and hoarding under log2 keys (the tuned count-bonus-pqn-rnn config) the `eval_inventory` frame; until evaluation Task 6 builds them they read `needs replay (evaluation Task 6)`.
 
 ## Tests
 
