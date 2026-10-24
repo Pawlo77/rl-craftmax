@@ -19,6 +19,41 @@ SERIES = ("#3987e5", "#d95926", "#199e70", "#c98500")
 """Categorical slots 1-4 for checkpoints, validated for colour-vision deficiency."""
 SEQ = ("#1a1a19", "#104281", "#1c5cab", "#3987e5", "#86b6ef", "#cde2fb")
 """One-hue blue ramp for magnitudes, starting at the surface colour."""
+SURFACE_LIGHT = "#ffffff"
+"""Chart background of the report theme."""
+INK_LIGHT = "#1a1a19"
+"""Primary text and highlighted lines of the report theme."""
+INK2_LIGHT = "#4a4944"
+"""Secondary text of the report theme."""
+MUTED_LIGHT = "#6b6a64"
+"""Axes, tick labels and reference lines of the report theme."""
+GRID_LIGHT = "#e6e5df"
+"""Gridlines and faint tracks of the report theme."""
+METHOD_COLORS: dict[str, str] = {
+    "ppo": "#d6d5cd",
+    "ppo-rnn": "#a3a29b",
+    "pqn-rnn": "#706f6a",
+    "count-bonus-ppo-rnn": "#3987e5",
+    "count-bonus-pqn-rnn": "#86b6ef",
+    "sil": "#199e70",
+    "smdp-skills": "#c98500",
+    "dyna-q": "#d95926",
+    "combo": "#a35bd6",
+}
+"""One colour per registry method on `SURFACE` (video theme): the three controls are
+greys, each at least 3:1 against the surface (contracts.md section 6)."""
+METHOD_COLORS_LIGHT: dict[str, str] = {
+    "ppo": "#2e2e2c",
+    "ppo-rnn": "#5c5b57",
+    "pqn-rnn": "#8a8983",
+    "count-bonus-ppo-rnn": "#1c5cab",
+    "count-bonus-pqn-rnn": "#3987e5",
+    "sil": "#127552",
+    "smdp-skills": "#8f5f00",
+    "dyna-q": "#a8411a",
+    "combo": "#7a3aa8",
+}
+"""The same keys on `SURFACE_LIGHT` (report theme)."""
 
 
 def ema(x: np.ndarray, alpha: float = 0.05) -> np.ndarray:

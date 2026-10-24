@@ -35,6 +35,7 @@ related-code:
 - Gameplay: `render_master`, `render_kept`, `detect`, `candidates`, `build_assets`, `write_page`, `short_cut`, `long_cut`, `gif`.
 - Learning process: `EvalRun`, `evaluate`, `evaluate_spec`, `load_eval`, `replay_episode` (eval file format: [[Recording training data]]), `build_grid`, `render_curves`, `render_timeline`, `render_overlay`, `sequence`.
 - Agent internals: `network_outputs(run, update, obs, actions, dones, greedy, skill, skill_steps)` re-runs a checkpoint's network over a replayed episode for action probabilities `(T, n_actions)` and values `(T,)`, float32, for every registry method; `episode_outputs(run, update, mode, seed)` does it for a stored eval episode (skill extras from the file); `network_family` (`ppo`, `ppo-rnn`, `pqn-rnn`, `skills`) picks the branch from the run's policy, `Q_FAMILIES` are the value-based ones; `value_label` names the overlay's value (`V(s)` or `max Q(s, a)`).
+- `charts`: the dark chart frame (`figure`, `style`, `frame`, `ema`, `SURFACE`, `INK`, `MUTED`, `GRID`, `SERIES`, `SEQ`) and, for the comparison figures, `METHOD_COLORS` (video, dark) and `METHOD_COLORS_LIGHT` (report) keyed by every registry name (the three controls three greys, every colour at least 3:1 against its surface) with the light theme's `SURFACE_LIGHT`, `INK_LIGHT`, `INK2_LIGHT`, `MUTED_LIGHT` and `GRID_LIGHT`.
 - Every step runs as `python -m wut_murl_craftax.visualisation.<step>` (`make vis STEP=<step> ARGS=...`).
 
 ## Data flow
@@ -59,10 +60,12 @@ flowchart LR
 - `network_outputs` threads the recurrent carry from zeros over the episode (reset after a done); PQN-RNN and the skill network get the previous stored action as last action, the skill network the stored skill one-hot and `steps_in_skill / step_limit` (the run's `timeout_mult`). Value-based methods give max Q and the epsilon-greedy distribution at the checkpoint's `params["eps"]` (one-hot when greedy); primitive-skill steps are one-hot on the stored action. Greedy probabilities' argmax is the stored greedy action up to float near-ties (the sequence re-run and the live one-step acting may round differently): use the stored action as the label, never assert argmax equality on production checkpoints.
 - Hook methods and combo re-run through the PPO-RNN or PQN-RNN branch of their base, dyna-q through the skills branch; a new policy class without a family raises `TypeError`.
 
+- `charts.METHOD_COLORS` and `METHOD_COLORS_LIGHT` have the registry's keys, distinct values, the three controls as the only greys and at least 3:1 contrast with their surface (`tests/visualisation/test_charts.py`).
+
 ## Known issues
 
 - This Homebrew ffmpeg has no `drawtext` or `subtitles` filters; all text is drawn with Pillow.
 
 ## Tests
 
-- [[tests/visualisation/test_ffmpeg.py]], [[tests/visualisation/test_text.py]], [[tests/visualisation/test_rollout.py]], [[tests/visualisation/test_render.py]], [[tests/visualisation/test_highlights.py]], [[tests/visualisation/test_review.py]], [[tests/visualisation/test_cuts.py]], [[tests/visualisation/test_eval_rollouts.py]], [[tests/visualisation/test_grid.py]], [[tests/visualisation/test_curves.py]], [[tests/visualisation/test_timeline.py]], [[tests/visualisation/test_overlay.py]], [[tests/visualisation/test_montage.py]]
+- [[tests/visualisation/test_charts.py]] (method colours: registry keys, greys, 3:1 contrast), [[tests/visualisation/test_ffmpeg.py]], [[tests/visualisation/test_text.py]], [[tests/visualisation/test_rollout.py]], [[tests/visualisation/test_render.py]], [[tests/visualisation/test_highlights.py]], [[tests/visualisation/test_review.py]], [[tests/visualisation/test_cuts.py]], [[tests/visualisation/test_eval_rollouts.py]], [[tests/visualisation/test_grid.py]], [[tests/visualisation/test_curves.py]], [[tests/visualisation/test_timeline.py]], [[tests/visualisation/test_overlay.py]], [[tests/visualisation/test_montage.py]]
