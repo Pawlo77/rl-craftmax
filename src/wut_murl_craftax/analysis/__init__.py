@@ -1,12 +1,64 @@
 """Phase 4 analysis: run loading, training analysis, cases and method comparison."""
 
 import importlib
+from typing import TYPE_CHECKING
 
-_EXPORTS: dict[str, str] = {}
+if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
+    from .load import (
+        BASE_CONTROL,
+        CONTROLS,
+        FINAL_PHASES,
+        METRICS_ROOT,
+        UNIT_COLUMNS,
+        Frames,
+        MissingPhaseError,
+        SchemaError,
+        base_control,
+        final_checkpoint,
+        in_phase,
+        load_phase,
+        load_phases,
+        pair_of,
+        select,
+    )
+
+_EXPORTS: dict[str, str] = {
+    "BASE_CONTROL": "load",
+    "CONTROLS": "load",
+    "FINAL_PHASES": "load",
+    "Frames": "load",
+    "METRICS_ROOT": "load",
+    "MissingPhaseError": "load",
+    "SchemaError": "load",
+    "UNIT_COLUMNS": "load",
+    "base_control": "load",
+    "final_checkpoint": "load",
+    "in_phase": "load",
+    "load_phase": "load",
+    "load_phases": "load",
+    "pair_of": "load",
+    "select": "load",
+}
 """Public name -> submodule; imported on first access so ``python -m`` runs of a
 submodule do not import it twice."""
 
-__all__: list[str] = []
+__all__ = [
+    "BASE_CONTROL",
+    "CONTROLS",
+    "FINAL_PHASES",
+    "METRICS_ROOT",
+    "UNIT_COLUMNS",
+    "Frames",
+    "MissingPhaseError",
+    "SchemaError",
+    "base_control",
+    "final_checkpoint",
+    "in_phase",
+    "load_phase",
+    "load_phases",
+    "pair_of",
+    "select",
+]
 
 
 def __getattr__(name: str) -> object:
