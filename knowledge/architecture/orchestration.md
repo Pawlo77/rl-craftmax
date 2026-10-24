@@ -38,6 +38,7 @@ related-code:
 - `warm_texture_cache() -> list[Path]`: build both games' texture caches; `make warm` runs it.
 - `collect_reproducibility_report() -> ReproducibilityReport`: environment snapshot.
 - `build_mlflow_tracker(...) -> MlflowRunTracker`: resumable MLflow run tracking.
+- `tracking.resolve_tracking_uri(uri)`: a local store URI made absolute; refuses the repo's store under pytest (the CLIs' client constructor).
 
 ## Modules
 

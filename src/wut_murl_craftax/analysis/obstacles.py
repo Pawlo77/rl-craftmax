@@ -514,12 +514,19 @@ def eval_actions(
 # --- shared detectors -------------------------------------------------------------
 
 
-def _floor(d: RunData, c: np.ndarray) -> float:
-    """Drawdown floor of the run (R92): 1 point at `ABSOLUTE_BUDGETS`, else relative."""
-    if str(d.run["budget"]) in ABSOLUTE_BUDGETS:
+def drawdown_floor(budget: str, c: np.ndarray) -> float:
+    """Drawdown floor of a smoothed score curve (R92), shared with comparison T3.
+
+    1 point at `ABSOLUTE_BUDGETS`, else ``max(0.1, 0.25 x`` the curve's best score).
+    """
+    if budget in ABSOLUTE_BUDGETS:
         return MIN_MAX
     best = float(np.nanmax(c)) if np.isfinite(c).any() else 0.0
     return max(DRAWDOWN_FLOOR_MIN, DRAWDOWN_FLOOR_SHARE * best)
+
+
+def _floor(d: RunData, c: np.ndarray) -> float:
+    return drawdown_floor(str(d.run["budget"]), c)
 
 
 def _instability(d: RunData) -> Hit | None:
