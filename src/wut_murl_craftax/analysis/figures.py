@@ -61,10 +61,11 @@ NAMES = {
     "F18": "sensitivity",
     "F19": "stability",
     "F20": "hardware",
+    "F2F3": "aggregate_poi",
 }
 """Figure id -> file stem (``.pdf`` and ``.png``; ``_video`` is added for the video)."""
-WRAP = {"report": 56, "video": 170}
-"""Characters per line of a note, by theme."""
+WIDTHS = {"column": COLUMN_MM, "double": 170.0}
+"""Report figure widths in mm: one column, or two columns (F1 per the report plan)."""
 STEPS = {"m": 1e6, "b": 1e9}
 LIT_LABEL = 34
 """Characters of a literature name shown beside its mark."""
@@ -92,6 +93,8 @@ HARDWARE_PANELS: tuple[tuple[str, tuple[tuple[str, str, float], ...]], ...] = (
 """F20 panels: x label, then (T4 column, legend name, factor to the shown unit)."""
 DARK_TEXT, LIGHT_TEXT = charts.INK_LIGHT, charts.SURFACE_LIGHT
 """Text on a light and on a dark heat-map cell."""
+ABLATION_KEY = ["benchmark", "block", "method", "config_ref"]
+"""Key columns of T1 (the first three) and of the ablation table."""
 SERIES_MARKERS = ("o", "D", "^")
 """Marker of the first, second and third series of a hardware panel."""
 
@@ -106,9 +109,10 @@ class Theme(NamedTuple):
     muted: str
     grid: str
     colors: Mapping[str, str]
-    low: str
-    mid: str
-    high: str
+    seq: Sequence[str]
+    """Heat-map ramp, low to high."""
+    div: Sequence[str]
+    """Diverging ramp: below, at and above the midpoint."""
     width: float
     """Figure width in inches."""
     height: float | None
@@ -122,28 +126,39 @@ class Theme(NamedTuple):
     ms: float
     suffix: str
     legend_cols: int
+    wrap: int
+    """Characters per line of a note."""
+    wide: bool
+    """Double-column report width: panels sit side by side as in the video."""
 
 
-THEMES: dict[str, Theme] = {
-    "report": Theme(
+def _report(width: str) -> Theme:
+    mm = WIDTHS[width]
+    return Theme(
         "report", charts.SURFACE_LIGHT, charts.INK_LIGHT, charts.INK2_LIGHT,
         charts.MUTED_LIGHT, charts.GRID_LIGHT, charts.METHOD_COLORS_LIGHT,
-        "#a8411a", "#f1f0ec", "#1c5cab",
-        COLUMN_MM * MM, None, 300, 7.0, 7.5, 3.3, 0.9, 3.0, "", 1,
-    ),
-    "video": Theme(
-        "video", charts.SURFACE, charts.INK, charts.INK2, charts.MUTED, charts.GRID,
-        charts.METHOD_COLORS, "#d95926", "#2c2c2a", "#3987e5",
-        19.2, 10.8, 100, 14.0, 17.0, 0.0, 2.2, 7.0, "_video", 5,
-    ),
-}  # fmt: skip
+        charts.SEQUENTIAL_LIGHT, charts.DIVERGING_LIGHT, mm * MM, None, 300, 7.0, 7.5,
+        3.3, 0.9, 3.0, "_double" if width == "double" else "",
+        4 if width == "double" else 1, round(56 * mm / COLUMN_MM), width == "double",
+    )  # fmt: skip
 
 
-def _theme(name: str) -> Theme:
-    if name not in THEMES:
-        msg = f"theme must be one of {sorted(THEMES)}, got {name!r}"
+VIDEO = Theme(
+    "video", charts.SURFACE, charts.INK, charts.INK2, charts.MUTED, charts.GRID,
+    charts.METHOD_COLORS, charts.SEQUENTIAL_DARK, charts.DIVERGING_DARK, 19.2, 10.8,
+    100, 14.0, 17.0, 0.0, 2.2, 7.0, "_video", 5, 170, True,
+)  # fmt: skip
+
+
+def _theme(name: str, width: str = "column") -> Theme:
+    """The theme of ``name``; ``width`` (column or double) sizes the report only."""
+    if name not in ("report", "video"):
+        msg = f"theme must be 'report' or 'video', got {name!r}"
         raise ValueError(msg)
-    return THEMES[name]
+    if width not in WIDTHS:
+        msg = f"width must be one of {sorted(WIDTHS)}, got {width!r}"
+        raise ValueError(msg)
+    return VIDEO if name == "video" else _report(width)
 
 
 # ----------------------------------------------------------------------- plumbing
@@ -214,7 +229,7 @@ def _title(
     ax: Axes, th: Theme, text: str, *, narrow: bool = False, width: int | None = None
 ) -> None:
     """Left-aligned title; ``narrow`` wraps it into a panel with long row labels."""
-    width = width or int(WRAP[th.name] * (0.45 if narrow else 0.8))
+    width = width or int(th.wrap * (0.45 if narrow else 0.8))
     wrapped = "\n".join(textwrap.wrap(text, width))
     ax.set_title(wrapped, loc="left", fontsize=th.title, color=th.ink)
 
@@ -260,7 +275,7 @@ def _finish(
             ncol=cols or th.legend_cols, fontsize=th.font, frameon=False,
             labelcolor=th.ink2,
         )  # fmt: skip
-    text = "\n".join(textwrap.fill(n, WRAP[th.name]) for n in notes if n)
+    text = "\n".join(textwrap.fill(n, th.wrap) for n in notes if n)
     if text:
         fig.supxlabel(
             text, x=0.01, ha="left", fontsize=th.font, color=th.muted,
@@ -273,7 +288,7 @@ def _placeholder(fig_name: str, th: Theme, out_dir: Path, text: str) -> Figure:
     fig = _figure(th, 30)
     ax = fig.add_subplot()
     ax.set_axis_off()
-    shown = "\n".join(textwrap.wrap(text, WRAP[th.name] * 4 // 5))
+    shown = "\n".join(textwrap.wrap(text, th.wrap * 4 // 5))
     ax.text(
         0.5, 0.5, shown, ha="center", va="center", fontsize=th.title, color=th.muted,
         transform=ax.transAxes,
@@ -342,15 +357,19 @@ def _apply_rows(ax: Axes, th: Theme, rows: Sequence[Row]) -> None:
             ax.axhline(row.y - 0.5, color=th.muted, lw=0.5)
 
 
-def _height_mm(th: Theme, n_rows: int, panels: int, extra: float = 16.0) -> float:
-    """Report height: row pitch per row plus a title and x axis per panel."""
-    return n_rows * th.pitch_mm + panels * extra + 14.0
+def _height_mm(
+    th: Theme, counts: Sequence[int], *, stacked: bool | None = None
+) -> float:
+    """Report height: row pitch per row plus a title and x axis per stacked panel."""
+    stacked = not th.wide if stacked is None else stacked
+    rows, panels = (sum(counts), len(counts)) if stacked else (max(counts), 1)
+    return rows * th.pitch_mm + panels * 16.0 + 14.0
 
 
 def _stack(fig: Figure, th: Theme, ratios: Sequence[float]) -> list[Axes]:
-    """One axes per panel: stacked in the report column, side by side in the video."""
+    """One axes per panel: stacked in the report column, side by side when wide."""
     n = len(ratios)
-    if th.name == "report":
+    if not th.wide:
         axes = fig.subplots(n, 1, squeeze=False, height_ratios=list(ratios))
     else:
         axes = fig.subplots(1, n, squeeze=False)
@@ -462,6 +481,7 @@ def plot_curves_score(
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     ablations: bool = False,
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
@@ -472,7 +492,7 @@ def plot_curves_score(
     methods solid; the band is `evaluation.stats.curve_band` over the seeds' curves.
     ``ablations=True`` adds each ablation as a dotted curve of its own.
     """
-    th, name = _theme(theme), NAMES["F1"]
+    th, name = _theme(theme, width), NAMES["F1"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no runs for the learning curves")
@@ -482,19 +502,22 @@ def plot_curves_score(
     panels: list[tuple[str, str, list[Row]]] = []
     for budget, mem in members.items():
         refs = _refs_of(runs, budget, mem) if ablations else {}
-        for block in compare.BLOCKS:
-            rows = [
-                r
-                for r in _rows([m for m in mem if m[0] == block], refs)
-                if r.kind != "heading"
-            ]
+        # double width: one panel per budget with every method, as the plan draws it
+        groups = (
+            [mem]
+            if th.wide
+            else [[m for m in mem if m[0] == b] for b in compare.BLOCKS]
+        )
+        for group in groups:
+            rows = _rows(group, refs, headings=False)
             if rows:
-                panels.append((budget, block, rows))
-    fig = _figure(th, len(panels) * 46 + 24)
+                panels.append((budget, "" if th.wide else group[0][0], rows))
+    fig = _figure(th, (62 if th.wide else len(panels) * 46) + 24)
     axes = _stack(fig, th, [1.0] * len(panels))
     for ax, (budget, block, rows) in zip(axes, panels, strict=True):
         _curve_panel(ax, th, budget, rows, score, runs, n_boot, seed)
-        _title(ax, th, _panel_title(budget, f"{BLOCK_TITLES[block]} block"))
+        what = f"{BLOCK_TITLES[block]} block" if block else "all methods"
+        _title(ax, th, _panel_title(budget, what))
     handles = _unique_handles(axes)
     _finish(fig, th, handles, _pending(list(members)))
     return _save(fig, th, out_dir, name)
@@ -600,11 +623,38 @@ def _lookup(table: pd.DataFrame, key: tuple[str, ...], cols: Sequence[str]) -> A
     return found.iloc[0] if len(found) else None
 
 
+def _interval_panel(
+    ax: Axes,
+    th: Theme,
+    budget: str,
+    rows: Sequence[Row],
+    t1: pd.DataFrame,
+    ablation: pd.DataFrame | None,
+) -> None:
+    """The interval rows of one budget (T1 for units, the ablation table for those)."""
+    for row in rows:
+        if row.kind == "heading":
+            continue
+        if row.kind == "ablation" and ablation is not None:
+            key, cols = (budget, row.block, row.method, row.ref), ABLATION_KEY
+            stats = _lookup(ablation, key, cols)
+        else:
+            stats = _lookup(t1, (budget, row.block, row.method), ABLATION_KEY[:3])
+        if stats is not None:
+            _interval_row(ax, th, budget, row, stats)
+    _style(ax, th)
+    _apply_rows(ax, th, rows)
+    _labels(ax, th, "final score (% of max)")
+    what = "IQM, mean" if budget in compare.SIGNIFICANCE_BUDGETS else "median, mean"
+    _title(ax, th, _panel_title(budget, f"{what}, 95% CI"), narrow=True)
+
+
 def plot_aggregate(
     frames: Frames,
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     table: pd.DataFrame | None = None,
     ablation: pd.DataFrame | None = None,
     ablations: bool = True,
@@ -618,7 +668,7 @@ def plot_aggregate(
     repeated. Numbers are T1 (`compare.main_table`); with ``ablations`` each ablation
     (`compare.ablation_table`) is a dotted, hollow row under its method, never pooled.
     """
-    th, name = _theme(theme), NAMES["F2"]
+    th, name = _theme(theme, width), NAMES["F2"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no runs for the aggregate scores")
@@ -634,33 +684,10 @@ def plot_aggregate(
         b: _rows(m, _ablation_refs(ablation, b) if ablation is not None else None)
         for b, m in members.items()
     }
-    total = sum(len(r) for r in layouts.values())
-    fig = _figure(th, _height_mm(th, total, len(layouts)))
+    fig = _figure(th, _height_mm(th, [len(r) for r in layouts.values()]))
     axes = _stack(fig, th, [len(r) for r in layouts.values()])
     for ax, (budget, rows) in zip(axes, layouts.items(), strict=True):
-        for row in rows:
-            if row.kind == "heading":
-                continue
-            stats = (
-                _lookup(
-                    ablation,
-                    (budget, row.block, row.method, row.ref),
-                    ["benchmark", "block", "method", "config_ref"],
-                )
-                if row.kind == "ablation" and ablation is not None
-                else _lookup(
-                    t1,
-                    (budget, row.block, row.method),
-                    ["benchmark", "block", "method"],
-                )
-            )
-            if stats is not None:
-                _interval_row(ax, th, budget, row, stats)
-        _style(ax, th)
-        _apply_rows(ax, th, rows)
-        _labels(ax, th, "final score (% of max)")
-        what = "IQM, mean" if budget in compare.SIGNIFICANCE_BUDGETS else "median, mean"
-        _title(ax, th, _panel_title(budget, f"{what}, 95% CI"), narrow=True)
+        _interval_panel(ax, th, budget, rows, t1, ablation)
     handles = _mark_handles(
         th, list(members), ablation is not None and len(ablation) > 0
     )
@@ -702,7 +729,7 @@ def _poi_panel(
 ) -> None:
     """One block's matrix: colour by PoI, bold where the CI excludes 0.5."""
     poi, lo, hi = _poi_cells(rows, names)
-    cmap = _cmap(th, th.low, th.mid, th.high)
+    cmap = _cmap(th, *th.div)
     image = ax.imshow(poi, cmap=cmap, vmin=0.0, vmax=1.0, aspect="auto")
     image.set_gid(_gid("poi", "1m", block))
     n = len(names)
@@ -739,6 +766,7 @@ def plot_poi_matrix(
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     table: pd.DataFrame | None = None,
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
@@ -749,7 +777,7 @@ def plot_poi_matrix(
     panel per block with its three controls, no cross-block cell and no stars: a cell
     is bold when its 95% CI excludes 0.5 (the video prints the interval).
     """
-    th, name = _theme(theme), NAMES["F3"]
+    th, name = _theme(theme, width), NAMES["F3"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no runs for the PoI matrix")
@@ -766,7 +794,9 @@ def plot_poi_matrix(
     if not blocks:
         return _no_data(name, th, out_dir, "no pairs in the PoI table")
     names = {b: [m for blk, m, _ in members if blk == b] for b in blocks}
-    fig = _figure(th, sum(len(v) for v in names.values()) * 9 + 50 * len(blocks))
+    sizes = [len(names[b]) for b in blocks]
+    cells = sum(sizes) if not th.wide else max(sizes)
+    fig = _figure(th, cells * 9 + 50 * (1 if th.wide else len(blocks)))
     axes = _stack(fig, th, [len(names[b]) for b in blocks])
     for ax, block in zip(axes, blocks, strict=True):
         rows = t[(t["benchmark"] == "1m") & (t["block"] == block)]
@@ -776,6 +806,113 @@ def plot_poi_matrix(
         "bootstrap CI excludes 0.5. A method is never set against the other block."
     )
     _finish(fig, th, notes=[note])
+    return _save(fig, th, out_dir, name)
+
+
+# ----------------------------------------------------------------------- F2 + F3
+
+
+def _poi_controls(
+    ax: Axes,
+    th: Theme,
+    rows: Sequence[Row],
+    table: pd.DataFrame,
+    controls: Sequence[str],
+) -> None:
+    """Each row's PoI against the controls (bold: CI excludes 0.5), aligned to F2."""
+    cells = np.full((len(rows), len(controls)), np.nan)
+    lo, hi = cells.copy(), cells.copy()
+    mine = table[table["benchmark"] == "1m"]
+    for row in rows:
+        if row.kind not in ("control", "method"):
+            continue
+        for j, c in enumerate(controls):
+            hit = _lookup(
+                mine, (row.block, row.method, c), ["block", "method", "versus"]
+            )
+            if hit is not None:
+                cells[row.y, j], lo[row.y, j], hi[row.y, j] = (
+                    hit["poi"], hit["poi_lo"], hit["poi_hi"],
+                )  # fmt: skip
+    cmap = _cmap(th, *th.div)
+    image = ax.imshow(
+        cells, cmap=cmap, vmin=0.0, vmax=1.0, aspect="auto", interpolation="nearest"
+    )
+    image.set_gid(_gid("poi", "1m", "controls"))
+    for i, j in zip(*np.where(np.isfinite(cells)), strict=True):
+        excluded = lo[i, j] > 0.5 or hi[i, j] < 0.5
+        ax.text(
+            j, i, f"{cells[i, j]:.2f}", ha="center", va="center", fontsize=th.font,
+            color=_ink_on(cmap(cells[i, j])),
+            fontweight="bold" if excluded else "normal",
+            gid="poi-cell/bold" if excluded else "poi-cell/plain",
+        )  # fmt: skip
+    ax.set_xticks(range(len(controls)), controls, rotation=90)
+    ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
+    ax.tick_params(axis="y", labelleft=False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    _labels(ax, th, "PoI vs control")
+
+
+def plot_aggregate_poi(
+    frames: Frames,
+    out_dir: Path,
+    theme: str = "report",
+    *,
+    width: str = "column",
+    table: pd.DataFrame | None = None,
+    poi: pd.DataFrame | None = None,
+    n_boot: int = BOOTSTRAP_N,
+    seed: int = 0,
+) -> Figure:
+    """F2 and F3 side by side (the report's F2): intervals and PoI against the controls.
+
+    Left, `plot_aggregate`'s interval panel without ablations; right, on the same rows,
+    the 1M probability of improvement against each control (`compare.poi_matrix`, bold
+    where its CI excludes 0.5). 1B rows have intervals only (the PoI needs 10 seeds).
+    Sized for one column at 7 pt: the PoI strip is three narrow columns.
+    """
+    th, name = _theme(theme, width), NAMES["F2F3"]
+    runs = frames["runs"]
+    if runs.empty:
+        return _no_data(name, th, out_dir, "no runs for the aggregate scores")
+    t1 = (
+        table
+        if table is not None
+        else compare.main_table(frames, n_boot=n_boot, seed=seed)
+    )
+    pt = (
+        poi if poi is not None else compare.poi_matrix(frames, n_boot=n_boot, seed=seed)
+    )
+    members = _budget_members(runs)
+    layouts = {b: _rows(m) for b, m in members.items()}
+    controls = [c for c in CONTROLS if c in set(runs["method"])]
+    counts = [len(r) for r in layouts.values()]
+    fig = _figure(th, _height_mm(th, counts, stacked=True) + 12)
+    grid = fig.add_gridspec(
+        len(layouts),
+        2,
+        width_ratios=[2.6 if th.wide else 1.2, 1.0],
+        height_ratios=counts,
+    )
+    for i, (budget, rows) in enumerate(layouts.items()):
+        with_poi = budget in compare.SIGNIFICANCE_BUDGETS
+        ax = fig.add_subplot(grid[i, 0] if with_poi else grid[i, :])
+        _interval_panel(ax, th, budget, rows, t1, None)
+        if with_poi:
+            side = fig.add_subplot(grid[i, 1], sharey=ax)
+            _poi_controls(side, th, rows, pt, controls)
+    note = (
+        "PoI: P(row score > control score) over seed pairs, blue above 0.5; bold: 95% "
+        "bootstrap CI excludes 0.5."
+    )
+    _finish(
+        fig,
+        th,
+        _mark_handles(th, list(members), False),
+        [note, *_pending(list(members))],
+    )
     return _save(fig, th, out_dir, name)
 
 
@@ -842,6 +979,7 @@ def plot_seed_spread(
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     literature: pd.DataFrame | None = None,
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
@@ -853,7 +991,7 @@ def plot_seed_spread(
     like-for-like block (T2: A at 1B, D at 1M) as diamonds, filled when their protocol
     is ours, hollow when it differs or is unstated, whiskers for a stated sd or s.e.
     """
-    th, name = _theme(theme), NAMES["F4"]
+    th, name = _theme(theme, width), NAMES["F4"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no runs for the seed spread")
@@ -864,11 +1002,9 @@ def plot_seed_spread(
     panels = {
         b: (_rows(m), _literature_rows(literature, b)) for b, m in members.items()
     }
-    total = sum(len(r) + len(lit) + (len(lit) > 0) for r, lit in panels.values())
-    fig = _figure(th, _height_mm(th, total, len(panels)))
-    axes = _stack(
-        fig, th, [len(r) + len(lit) + (len(lit) > 0) for r, lit in panels.values()]
-    )
+    counts = [len(r) + len(lit) + (len(lit) > 0) for r, lit in panels.values()]
+    fig = _figure(th, _height_mm(th, counts))
+    axes = _stack(fig, th, counts)
     for ax, (budget, (rows, lit)) in zip(axes, panels.items(), strict=True):
         mine = tuned[tuned["budget"] == budget]
         for row in rows:
@@ -903,8 +1039,10 @@ def _tier_spans(status: pd.DataFrame) -> list[tuple[str, int, int]]:
     return spans
 
 
-def _floor_labels(ax: Axes, th: Theme, floors: Sequence[int]) -> None:
-    """Right-hand ``F<n>`` labels at the middle of each run of one home floor."""
+def _floor_labels(
+    ax: Axes, th: Theme, floors: Sequence[int], tiers: Sequence[str] = ()
+) -> None:
+    """Right-hand floor labels (``<tier> F<n>`` with ``tiers``) per run of a floor."""
     runs: list[tuple[int, int, int]] = []
     for i, floor in enumerate(floors):
         if runs and runs[-1][0] == floor:
@@ -917,7 +1055,7 @@ def _floor_labels(ax: Axes, th: Theme, floors: Sequence[int]) -> None:
         mid = (a + b) / 2
         if mid - last >= gap:
             ticks.append(mid)
-            labels.append(f"F{floor}")
+            labels.append(f"{tiers[a]} F{floor}" if tiers else f"F{floor}")
             last = mid
     side = ax.secondary_yaxis("right")
     side.set_yticks(ticks, labels)
@@ -933,14 +1071,16 @@ def _heat_panel(
     per_method = {m: g.reset_index(drop=True) for m, g in status.groupby("method")}
     ref = next(iter(per_method.values()))
     n = len(ref)
+    by_name = {
+        m: g.set_index("achievement")["final_rate"].reindex(ref["achievement"])
+        for m, g in per_method.items()
+    }
     cells = np.column_stack([
-        per_method[m]["final_rate"].to_numpy(dtype=float)
-        if m in per_method
-        else np.full(n, np.nan)
+        by_name[m].to_numpy(dtype=float) if m in by_name else np.full(n, np.nan)
         for m in names
     ])
     image = ax.imshow(
-        cells, cmap=_cmap(th, th.mid, th.high), vmin=0.0, vmax=1.0, aspect="auto",
+        cells, cmap=_cmap(th, *th.seq), vmin=0.0, vmax=1.0, aspect="auto",
         interpolation="nearest",
     )  # fmt: skip
     image.set_gid(_gid("heat", budget, block))
@@ -949,21 +1089,42 @@ def _heat_panel(
     spans = _tier_spans(ref)
     for _, _, last in spans[:-1]:
         ax.axhline(last + 0.5, color=th.ink2, lw=0.6)
-    if first:
+    video = th.name == "video"
+    if first and video:  # 13 px a row: every achievement gets its name
+        ax.set_yticks(range(n), [str(a) for a in ref["achievement"]])
+        for tick in ax.get_yticklabels():
+            tick.set_fontsize(8)
+            tick.set_gid("heat/achievement")
+    elif first:
         ax.set_yticks([(a + b) / 2 for _, a, b in spans], [t for t, _, _ in spans])
         for tick in ax.get_yticklabels():
             tick.set_gid("heat/tier")
     else:
         ax.set_yticks([])
-    _floor_labels(ax, th, [int(f) for f in ref["floor"]])
+    _floor_labels(
+        ax,
+        th,
+        [int(f) for f in ref["floor"]],
+        [str(t) for t in ref["tier"]] if video else (),
+    )
     for spine in ax.spines.values():
         spine.set_visible(False)
-    _labels(ax, th, "tuned method", "achievement tier" if first else None)
+    _labels(
+        ax,
+        th,
+        "tuned method",
+        "achievement" if first and video else "achievement tier" if first else None,
+    )
     _title(ax, th, _panel_title(budget, block), width=14 if th.name == "report" else 40)
 
 
 def plot_success_heatmap(
-    frames: Frames, out_dir: Path, theme: str = "report", *, mode: str = "stochastic"
+    frames: Frames,
+    out_dir: Path,
+    theme: str = "report",
+    *,
+    width: str = "column",
+    mode: str = "stochastic",
 ) -> Figure:
     """F5 ``success_heatmap``: share of final eval episodes with each achievement.
 
@@ -972,7 +1133,7 @@ def plot_success_heatmap(
     seeds of each seed's share of ``mode`` episodes), tier names on the left, home
     floors on the right. One block per column, one row per budget.
     """
-    th, name = _theme(theme), NAMES["F5"]
+    th, name = _theme(theme, width), NAMES["F5"]
     runs, eps = frames["runs"], frames["eval_episodes"]
     if runs.empty or not any(c.startswith("ach/") for c in eps.columns):
         return _no_data(
@@ -999,7 +1160,7 @@ def plot_success_heatmap(
             _heat_panel(ax, th, budget, block, names, status[budget], first=col == 0)
     note = (
         "Cell: mean over seeds of the share of final stochastic eval episodes with the "
-        "achievement (light: none, dark blue: all). Right: home floor."
+        "achievement (light: none, dark: all). Right: home floor."
     )
     _finish(fig, th, notes=[note, *_pending(list(members))])
     return _save(fig, th, out_dir, name)
@@ -1007,7 +1168,7 @@ def plot_success_heatmap(
 
 # -------------------------------------------------------------------------- F18
 
-SENSITIVE_ALPHA = 0.3
+SENSITIVE_ALPHA = 0.5
 """Opacity of a bar whose ``S_h`` is below the noise floor."""
 NAME_CHARS = 18
 """Characters of a hyperparameter name shown on a bar's row."""
@@ -1032,7 +1193,7 @@ def _bar_rank(
     (bar,) = ax.barh(
         2 * row.y + rank - 1, s, height=0.7, label=name,
         facecolor=to_rgba(color, SENSITIVE_ALPHA if weak else 1.0), edgecolor=color,
-        linewidth=0.6,
+        linewidth=0.9,
     )  # fmt: skip
     bar.set_gid(_gid("sens", phase, row.method, str(rank)))
     bar.set_label(name)  # the container's label does not reach the rectangle
@@ -1043,7 +1204,7 @@ def _sens_axes(
     t7: pd.DataFrame, runs: pd.DataFrame,
 ) -> None:  # fmt: skip
     """Config-score strip (left) and sensitivity bars with the noise floor (right)."""
-    names: list[str] = []
+    names = [""] * (2 * len(rows))
     for row in rows:
         mine = runs[(runs["method"] == row.method) & in_phase(runs, phase)]
         r_c = config_scores(mine)["r_c"].to_numpy()
@@ -1055,10 +1216,13 @@ def _sens_axes(
         dots.set_gid(_gid("rc", phase, row.method))
         stats = _lookup(t7, (phase, row.method), ["phase", "method"])
         if stats is None:
-            continue
+            msg = f"no T7 row for {row.method} in {phase}"
+            raise ValueError(msg)
         for rank in (1, 2):
             _bar_rank(ax_s, th, phase, row, stats, rank)
-            names += [str(stats[f"top{rank}"])[:NAME_CHARS] or "(none varies)"]
+            names[base + rank - 1] = (
+                str(stats[f"top{rank}"])[:NAME_CHARS] or "(none varies)"
+            )
         (floor,) = ax_s.plot(
             [stats["noise_floor"]] * 2, [base - 0.4, base + 1.4], color=th.ink,
             lw=th.lw, ls=":",
@@ -1070,7 +1234,7 @@ def _sens_axes(
         ax.set_ylim(n - 0.5, -0.7)
         ax.tick_params(axis="y", length=0)
     ax_rc.set_yticks([2 * r.y + 0.5 for r in rows], [r.method for r in rows])
-    ax_s.set_yticks(range(n), names[:n] if len(names) >= n else [""] * n)
+    ax_s.set_yticks(range(n), names)
     ax_rc.axvline(ROBUST, color=th.muted, lw=0.5)
     ax_rc.set_xlim(0, 1.05)
     ax_s.set_xlim(0, 1.05)
@@ -1083,6 +1247,7 @@ def plot_sensitivity(
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     table: pd.DataFrame | None = None,
 ) -> Figure:
     """F18 ``sensitivity``: config scores and hyperparameter sensitivity at 1M.
@@ -1093,7 +1258,7 @@ def plot_sensitivity(
     right, the two most sensitive hyperparameters' ``S_h`` (T7), faint when below the
     method's noise floor (dotted line).
     """
-    th, name = _theme(theme), NAMES["F18"]
+    th, name = _theme(theme, width), NAMES["F18"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no tuning runs")
@@ -1170,8 +1335,10 @@ def _stability_row(
             ms=th.ms * 3, markeredgewidth=th.lw * 1.5,
         )  # fmt: skip
         tick.set_gid(_gid("dd-median", budget, row.block, row.method))
+    if not stats["curve_runs"]:  # T3 counts over the runs that have a curve
+        return
     for key, dy, alpha in (("drops", -0.17, 0.45), ("collapse", 0.17, 1.0)):
-        share = stats[f"runs_with_{key}"] / stats["seeds"]
+        share = stats[f"runs_with_{key}"] / stats["curve_runs"]
         (bar,) = ax_bar.barh(row.y + dy, share, height=0.3, color=to_rgba(color, alpha))
         bar.set_gid(_gid(key, budget, row.block, row.method))
 
@@ -1181,6 +1348,7 @@ def plot_stability(
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     per_run: pd.DataFrame | None = None,
     table: pd.DataFrame | None = None,
 ) -> Figure:
@@ -1189,9 +1357,9 @@ def plot_stability(
     Per budget: left, one dot per tuned run at its deepest drawdown of the smoothed
     score curve (`compare.run_stability`; hollow: the run had a drop, a cross: it
     collapsed; the bar marks the median, T3); right, the share of the method's runs
-    with a drop (light) and with a collapse (T3).
+    with a curve (T3 `curve_runs`) that had a drop (light) and a collapse.
     """
-    th, name = _theme(theme), NAMES["F19"]
+    th, name = _theme(theme, width), NAMES["F19"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no runs for the stability figure")
@@ -1199,7 +1367,7 @@ def plot_stability(
     t3 = table if table is not None else compare.stability_table(frames)
     members = _budget_members(runs)
     layouts = {b: _rows(m) for b, m in members.items()}
-    fig = _figure(th, _height_mm(th, sum(map(len, layouts.values())), len(layouts)))
+    fig = _figure(th, _height_mm(th, [len(r) for r in layouts.values()], stacked=True))
     grid = fig.subplots(
         len(layouts), 2, squeeze=False, sharey="row", width_ratios=[1.6, 1.0],
         height_ratios=[len(r) for r in layouts.values()],
@@ -1288,6 +1456,7 @@ def plot_hardware(
     out_dir: Path,
     theme: str = "report",
     *,
+    width: str = "column",
     budget: str = "1m",
     table: pd.DataFrame | None = None,
 ) -> Figure:
@@ -1297,7 +1466,7 @@ def plot_hardware(
     one block of six panels per profile (profiles are never compared). Not measured is
     ``n.m.``. Laptop timings carry the R97 note (two concurrent workers, context only).
     """
-    th, name = _theme(theme), NAMES["F20"]
+    th, name = _theme(theme, width), NAMES["F20"]
     runs = frames["runs"]
     if runs.empty:
         return _no_data(name, th, out_dir, "no runs for the hardware figure")
@@ -1347,7 +1516,13 @@ def plot_hardware(
     ]
     if missing:
         notes.append("n.m.: not measured on this profile.")
-    notes += _pending(sorted(set(runs["budget"])))
+    present = sorted(set(runs["budget"]))
+    notes += _pending(present)
+    undrawn = [b for b in present if b != budget]
+    if undrawn:  # T4 has these rows; the figure compares one budget only
+        notes.append(
+            f"{', '.join(_budget_name(b) for b in undrawn)} hardware not drawn."
+        )
     _finish(fig, th, handles, notes, cols=3)
     return _save(fig, th, out_dir, name)
 
@@ -1361,5 +1536,6 @@ FIGURES: dict[str, Callable[..., Figure]] = {
     "F18": plot_sensitivity,
     "F19": plot_stability,
     "F20": plot_hardware,
+    "F2F3": plot_aggregate_poi,
 }
 """Figure id -> its function, in the plan's order (the results CLI loops over it)."""

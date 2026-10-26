@@ -28,28 +28,50 @@ def figure_frames(
 ) -> dict[str, pd.DataFrame]:
     """The comparison fixture with an ``ach/<name>`` column per `ACHIEVEMENTS` name.
 
-    A method unlocks the first ``round(level)`` achievements of each 4 episodes, so the
-    rates differ by method and by achievement.
+    Of the 4 eval episodes of a seed, a method unlocks achievement ``i`` in the first
+    ``(k + 2 * i) % 5``, ``k`` being the method's position in `LEVEL`: the rate differs
+    by achievement and by method, so a misplaced row or column shows.
     """
     frames = make_frames(budgets)
     eps = frames["eval_episodes"].copy()
     slot = (eps["eval_seed"] - 10000) % 4
-    level = eps["method"].map(LEVEL)
+    offset = eps["method"].map({m: k for k, m in enumerate(LEVEL)})
     for i, name in enumerate(ACHIEVEMENTS):
-        eps[f"ach/{name}"] = (slot + i) % 4 < level.round().astype(int)
+        eps[f"ach/{name}"] = slot < (offset + 2 * i) % 5
     frames["eval_episodes"] = eps
     return frames
 
 
+EFFECTS = {
+    "ppo": (0.4, 0.002),
+    "sil": (0.8, 0.10),
+    "smdp-skills": (0.1, 0.50),
+}
+"""Score gain of the better learning rate and of the better second hyperparameter."""
+SECOND = {"ppo": "clip", "sil": "clip", "smdp-skills": "eps_top"}
+"""Name of each method's second hyperparameter, so the S_h tick labels differ."""
+
+
 def tuning_frames() -> dict[str, pd.DataFrame]:
-    """``runs`` of tune-coarse (3 methods) and tune-fine (2): 4 configs x 3 seeds."""
+    """``runs`` of tune-coarse (3 methods) and tune-fine (2): 4 configs x 3 seeds.
+
+    Each method has its own effects (`EFFECTS`, halved in tune-fine) and second
+    hyperparameter name (`SECOND`), so ``r_c`` and ``S_h`` differ by method and phase.
+    """
     rows = []
     for phase, methods in TUNED.items():
+        scale = 1.0 if phase == "tune-coarse" else 0.5
         for method in methods:
+            lr_gain, second_gain = (g * scale for g in EFFECTS[method])
             grid = itertools.product((1e-4, 3e-4), (0.1, 0.2))
-            for i, (lr, clip) in enumerate(grid):
+            for i, (lr, second) in enumerate(grid):
                 for seed in range(3):
-                    score = (1.0 if lr == 3e-4 else 0.5) + 0.01 * clip + 0.01 * seed
+                    score = (
+                        1.0
+                        + lr_gain * (lr == 3e-4)
+                        + second_gain * (second == 0.2)
+                        + 0.01 * seed
+                    )
                     rows.append({
                         "run_id": f"{phase}-{method}-{i}-{seed}",
                         "phase": phase,
@@ -65,7 +87,7 @@ def tuning_frames() -> dict[str, pd.DataFrame]:
                         "config_json": json.dumps({
                             "method": method,
                             "lr": lr,
-                            "clip": clip,
+                            SECOND[method]: second,
                             "seed": seed,
                         }),
                     })

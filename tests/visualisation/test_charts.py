@@ -59,3 +59,19 @@ def test_the_light_theme_has_its_own_surface_ink_muted_and_grid() -> None:
     assert contrast(charts.MUTED_LIGHT, charts.SURFACE_LIGHT) >= 4.5
     assert charts.GRID_LIGHT != charts.SURFACE_LIGHT
     assert charts.SURFACE == "#1a1a19"  # the dark constants stay as they were
+
+
+@pytest.mark.parametrize(
+    ("seq", "div"),
+    [("SEQUENTIAL_LIGHT", "DIVERGING_LIGHT"), ("SEQUENTIAL_DARK", "DIVERGING_DARK")],
+)
+def test_heat_map_ramps_never_reuse_a_method_colour(seq: str, div: str) -> None:
+    methods = {
+        c.lower()
+        for c in {*charts.METHOD_COLORS.values(), *charts.METHOD_COLORS_LIGHT.values()}
+    }
+    for name in (seq, div):
+        ramp = getattr(charts, name)
+        assert not {c.lower() for c in ramp} & methods
+        assert len(set(ramp)) == len(ramp)
+    assert len(getattr(charts, div)) == 3

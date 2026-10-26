@@ -15,6 +15,7 @@ import pytest
 from _compare_fixture import ABLATIONS
 from _figures_fixture import ACHIEVEMENTS, figure_frames, tuning_frames
 from matplotlib.artist import Artist
+from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.text import Text
 
@@ -35,6 +36,7 @@ from wut_murl_craftax.analysis.figures import (
     NAMES,
     PENDING_1B,
     plot_aggregate,
+    plot_aggregate_poi,
     plot_curves_score,
     plot_hardware,
     plot_poi_matrix,
@@ -43,7 +45,6 @@ from wut_murl_craftax.analysis.figures import (
     plot_stability,
     plot_success_heatmap,
 )
-from wut_murl_craftax.analysis.hard import achievement_status
 from wut_murl_craftax.evaluation.stability import config_scores
 from wut_murl_craftax.evaluation.stats import curve_band, step_grid
 from wut_murl_craftax.visualisation.charts import METHOD_COLORS, METHOD_COLORS_LIGHT
@@ -62,6 +63,7 @@ LABELS = {
     "F18": ("config score r_c", "sensitivity S_h"),
     "F19": ("max drawdown", "share of runs"),
     "F20": ("steps per second", "peak memory"),
+    "F2F3": ("final score (% of max)", "PoI vs control"),
 }
 """Substrings every figure's axis labels must contain, one per label."""
 
@@ -109,17 +111,22 @@ def draw(
     literature: pd.DataFrame,
     out_dir: Path,
     theme: str = "report",
+    width: str = "column",
 ) -> Figure:
     """Call the figure of ``fid`` with test-sized bootstraps and the shared tables."""
+    w = {"width": width}
     plain: dict[str, Callable[..., Figure]] = {
-        "F1": lambda: plot_curves_score(frames, out_dir, theme, n_boot=N),
-        "F2": lambda: plot_aggregate(frames, out_dir, theme, n_boot=N),
-        "F3": lambda: plot_poi_matrix(frames, out_dir, theme, n_boot=N),
-        "F4": lambda: plot_seed_spread(frames, out_dir, theme, literature=literature),
-        "F5": lambda: plot_success_heatmap(frames, out_dir, theme),
-        "F18": lambda: plot_sensitivity(tuning, out_dir, theme),
-        "F19": lambda: plot_stability(frames, out_dir, theme),
-        "F20": lambda: plot_hardware(frames, out_dir, theme),
+        "F1": lambda: plot_curves_score(frames, out_dir, theme, n_boot=N, **w),
+        "F2": lambda: plot_aggregate(frames, out_dir, theme, n_boot=N, **w),
+        "F3": lambda: plot_poi_matrix(frames, out_dir, theme, n_boot=N, **w),
+        "F4": lambda: plot_seed_spread(
+            frames, out_dir, theme, literature=literature, **w
+        ),
+        "F5": lambda: plot_success_heatmap(frames, out_dir, theme, **w),
+        "F18": lambda: plot_sensitivity(tuning, out_dir, theme, **w),
+        "F19": lambda: plot_stability(frames, out_dir, theme, **w),
+        "F20": lambda: plot_hardware(frames, out_dir, theme, **w),
+        "F2F3": lambda: plot_aggregate_poi(frames, out_dir, theme, n_boot=N, **w),
     }
     return plain[fid]()
 
@@ -234,7 +241,7 @@ def test_video_figures_fill_a_1080p_frame(
 
 
 @pytest.mark.parametrize("theme", THEMES)
-@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20"])
+@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20", "F2F3"])
 def test_a_missing_1b_is_pending_not_an_empty_axis(
     fid: str,
     theme: str,
@@ -262,7 +269,7 @@ def _none_lit() -> pd.DataFrame:
     return pd.DataFrame(columns=compare.LITERATURE_TABLE_COLUMNS)
 
 
-@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20"])
+@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20", "F2F3"])
 def test_no_run_data_gives_a_labelled_placeholder(
     fid: str, tmp_path: Path, tuning: dict[str, pd.DataFrame]
 ) -> None:
@@ -467,29 +474,35 @@ def test_f3_cells_are_the_poi_table_one_panel_per_block(
         assert np.isnan(np.diag(cells)).all()
 
 
-def test_f3_marks_the_cells_whose_interval_excludes_one_half(
+def _cell_texts(fig: Figure, image: Artist) -> dict[tuple[int, int], Text]:
+    """The PoI text of each (row, column) cell of ``image``, found by its position."""
+    return {
+        (round(t.get_position()[1]), round(t.get_position()[0])): t
+        for t in fig.findobj(Text)
+        if (t.get_gid() or "").startswith("poi-cell/") and t.axes is image.axes
+    }
+
+
+def test_f3_bold_is_exactly_the_cells_whose_interval_excludes_one_half(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = poi_matrix(frames, n_boot=N)
     fig = plot_poi_matrix(frames, tmp_path, n_boot=N, table=table)
-    bold = {
-        t.get_text()
-        for t in fig.findobj(Text)
-        if t.get_gid() == "poi-cell/bold" and t.get_text()
-    }
-    rows = table[table["benchmark"] == "1m"]
-    excluded = (rows["poi_lo"] > 0.5) | (rows["poi_hi"] < 0.5)
-    assert excluded.any()
-    assert (~excluded).any()
-    assert {f"{p:.2f}" for p in rows.loc[excluded, "poi"]} <= {
-        b.split("\n")[0] for b in bold
-    }
-    plain = {
-        t.get_text().split("\n")[0]
-        for t in fig.findobj(Text)
-        if t.get_gid() == "poi-cell/plain"
-    }
-    assert {f"{p:.2f}" for p in rows.loc[~excluded, "poi"]} <= plain
+    seen = set()
+    for block in ("main", "skills"):
+        image = with_gid(fig, "poi", "1m", block)
+        names = [t.get_text() for t in image.axes.get_yticklabels()]
+        cells = _cell_texts(fig, image)
+        rows = table[(table["benchmark"] == "1m") & (table["block"] == block)]
+        assert len(cells) == len(rows)
+        for r in rows.itertuples():
+            text = cells[(names.index(r.method), names.index(r.versus))]
+            excluded = r.poi_lo > 0.5 or r.poi_hi < 0.5
+            assert text.get_text().split("\n")[0] == f"{r.poi:.2f}"
+            assert text.get_gid() == ("poi-cell/bold" if excluded else "poi-cell/plain")
+            assert (text.get_fontweight() == "bold") == excluded
+            seen.add(excluded)
+    assert seen == {True, False}
 
 
 def test_f3_needs_1m_so_a_1b_only_export_says_so(tmp_path: Path) -> None:
@@ -553,14 +566,33 @@ def test_f4_without_literature_rows_draws_only_our_dots(
 # --- F5 ----------------------------------------------------------------------------
 
 
+def _expected_rates(
+    frames: dict[str, pd.DataFrame], budget: str = "1m"
+) -> pd.DataFrame:
+    """Method x achievement rates straight from the episodes (not via hard.py)."""
+    eps, runs = frames["eval_episodes"], frames["runs"]
+    ids = runs.loc[
+        (runs["config_ref"] == "tuned") & (runs["budget"] == budget), "run_id"
+    ]
+    final = eps[eps["run_id"].isin(ids) & (eps["mode"] == "stochastic")]
+    cols = [f"ach/{a}" for a in ACHIEVEMENTS]
+    per_seed = final.groupby(["method", "run_id"])[cols].mean()
+    return per_seed.groupby("method").mean().rename(columns=lambda c: c[4:])
+
+
+def test_f5_rates_differ_so_a_misplaced_row_or_column_fails(
+    frames_1m: dict[str, pd.DataFrame],
+) -> None:
+    rates = _expected_rates(frames_1m)
+    assert rates.nunique().min() > 3  # every achievement differs across methods
+    assert rates.T.nunique().min() > 2  # and every method across achievements
+
+
 def test_f5_cells_are_the_final_success_rates_by_tier_and_floor(
     frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = plot_success_heatmap(frames_1m, tmp_path)
-    eps = frames_1m["eval_episodes"]
-    runs = frames_1m["runs"]
-    tuned = runs[(runs["config_ref"] == "tuned") & (runs["budget"] == "1m")]
-    status = achievement_status(eps[eps["run_id"].isin(tuned["run_id"])])
+    rates = _expected_rates(frames_1m)
     for block in ("main", "skills"):
         image = with_gid(fig, "heat", "1m", block)
         names = [t.get_text() for t in image.axes.get_xticklabels()]
@@ -568,13 +600,25 @@ def test_f5_cells_are_the_final_success_rates_by_tier_and_floor(
         cells = np.asarray(image.get_array(), dtype=float)
         assert cells.shape == (len(ACHIEVEMENTS), len(names))
         for j, method in enumerate(names):
-            mine = status[(status["method"] == method)].reset_index(drop=True)
-            np.testing.assert_allclose(cells[:, j], mine["final_rate"])
+            for i, achievement in enumerate(ACHIEVEMENTS):  # row i is achievement i
+                assert cells[i, j] == pytest.approx(rates.loc[method, achievement])
     assert "smdp-skills" not in [
         t.get_text() for t in with_gid(fig, "heat", "1m", "main").axes.get_xticklabels()
     ]
     rows = [a.get_text() for a in fig.findobj(Text) if a.get_gid() == "heat/tier"]
     assert rows == ["basic", "intermediate", "advanced"]
+
+
+def test_f5_video_names_every_achievement_in_row_order(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_success_heatmap(frames_1m, tmp_path, "video")
+    image = with_gid(fig, "heat", "1m", "main")
+    assert [t.get_text() for t in image.axes.get_yticklabels()] == list(ACHIEVEMENTS)
+    assert fig.findobj(lambda a: a.get_gid() == "heat/achievement")
+    shown = texts(fig)
+    assert "basic F0" in shown
+    assert not [t for t in fig.findobj(Text) if t.get_gid() == "heat/tier"]
 
 
 # --- F18 ---------------------------------------------------------------------------
@@ -594,6 +638,7 @@ def test_f18_strip_and_bars_read_config_scores_and_t7(
                 sorted(config_scores(mine)["r_c"])
             )
             row = table[(table["phase"] == phase) & (table["method"] == method)].iloc[0]
+            assert row["top1"] in ("lr", "eps_top", "clip")
             for rank, (name, s) in enumerate(
                 ((row["top1"], row["top1_s"]), (row["top2"], row["top2_s"])), 1
             ):
@@ -612,13 +657,65 @@ def test_f18_marks_the_hyperparameters_below_the_noise_floor(
 ) -> None:
     table = sensitivity_table(tuning)
     fig = plot_sensitivity(tuning, tmp_path, table=table)
-    row = table[(table["phase"] == "tune-coarse") & (table["method"] == "sil")].iloc[0]
-    assert row["top1_insensitive"] is False or not row["top1_insensitive"]
-    assert row["top2_insensitive"]
-    strong = with_gid(fig, "sens", "tune-coarse", "sil", "1")
-    weak = with_gid(fig, "sens", "tune-coarse", "sil", "2")
+    ppo = table[(table["phase"] == "tune-coarse") & (table["method"] == "ppo")].iloc[0]
+    assert not ppo["top1_insensitive"]
+    assert ppo["top2_insensitive"]
+    strong = with_gid(fig, "sens", "tune-coarse", "ppo", "1")
+    weak = with_gid(fig, "sens", "tune-coarse", "ppo", "2")
     assert strong.get_facecolor()[3] == 1.0
-    assert weak.get_facecolor()[3] < 1.0 or weak.get_hatch()
+    assert 0.4 <= weak.get_facecolor()[3] < 1.0  # faint but still readable
+    assert weak.get_edgecolor()[3] == 1.0
+    sil = with_gid(fig, "sens", "tune-coarse", "sil", "2")
+    assert sil.get_facecolor()[3] == 1.0  # sil's second hyperparameter does matter
+
+
+def test_f18_rows_and_tick_labels_follow_the_methods(
+    tuning: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    table = sensitivity_table(tuning)
+    fig = plot_sensitivity(tuning, tmp_path, table=table)
+    order = {
+        "tune-coarse": ["ppo", "sil", "smdp-skills"],
+        "tune-fine": ["sil", "smdp-skills"],
+    }
+    for phase, methods in order.items():
+        bar = with_gid(fig, "sens", phase, methods[0], "1")
+        ax_s = bar.axes
+        ax_rc = with_gid(fig, "rc", phase, methods[0]).axes
+        assert [t.get_text() for t in ax_rc.get_yticklabels()] == methods
+        want = []
+        for m in methods:
+            row = table[(table["phase"] == phase) & (table["method"] == m)].iloc[0]
+            want += [row["top1"], row["top2"]]
+        assert [t.get_text() for t in ax_s.get_yticklabels()] == want
+        for k, m in enumerate(methods):
+            for rank in (1, 2):
+                rect = with_gid(fig, "sens", phase, m, str(rank))
+                y = rect.get_y() + rect.get_height() / 2
+                assert y == pytest.approx(2 * k + rank - 1)
+                assert rect.get_label() == want[2 * k + rank - 1]
+            dots = with_gid(fig, "rc", phase, m).get_offsets()[:, 1]
+            assert np.all(np.abs(dots - (2 * k + 0.5)) < 0.5)
+    smdp = table[(table["phase"] == "tune-coarse") & (table["method"] == "smdp-skills")]
+    assert smdp.iloc[0]["top1"] == "eps_top"  # its own hyperparameter name
+
+
+def test_sens_axes_refuses_a_method_without_a_t7_row(
+    tuning: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    table = sensitivity_table(tuning)
+    table = table[table["method"] != "sil"]
+    ax_rc, ax_s = Figure().subplots(1, 2)
+    with pytest.raises(ValueError, match="sil"):
+        figures._sens_axes(
+            ax_rc,
+            ax_s,
+            figures._theme("report"),
+            "tune-coarse",
+            [figures.Row(0, "sil", "method", "main", "sil", "tuned")],
+            table,
+            tuning["runs"],
+        )
 
 
 def test_f18_is_a_1m_figure_without_a_grid_it_says_so(tmp_path: Path) -> None:
@@ -703,3 +800,199 @@ def test_f20_keeps_profiles_apart_and_has_no_1b_rows_to_draw(
     titles = [ax.get_title(loc="left") for ax in fig.axes if ax.get_visible()]
     assert any("cuda" in t for t in titles)
     assert any("laptop" in t for t in titles)
+
+
+def test_f19_shares_divide_by_the_runs_that_have_a_curve(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    runs, curves = frames_1m["runs"], frames_1m["curves"]
+    sil = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]
+    gone = sil[sil["seed"] >= 5]["run_id"]  # half the runs logged no curve (R78)
+    half = {**frames_1m, "curves": curves[~curves["run_id"].isin(gone)]}
+    t3 = stability_table(half)
+    row = t3[(t3["method"] == "sil") & (t3["block"] == "main")].iloc[0]
+    assert (row["seeds"], row["curve_runs"]) == (10, 5)
+    assert row["runs_with_collapse"] == 1  # sil seed 0 collapses
+    fig = plot_stability(half, tmp_path)
+    collapse = with_gid(fig, "collapse", "1m", "main", "sil")
+    assert collapse.get_width() == pytest.approx(1 / 5)  # not 1 / 10
+    drops = with_gid(fig, "drops", "1m", "main", "sil")
+    assert drops.get_width() == pytest.approx(row["runs_with_drops"] / 5)
+    assert len(with_gid(fig, "dd", "1m", "main", "sil").get_offsets()) <= 5
+
+
+def test_f19_draws_no_share_bar_for_a_method_without_any_curve(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    runs, curves = frames_1m["runs"], frames_1m["curves"]
+    sil = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]["run_id"]
+    bare = {**frames_1m, "curves": curves[~curves["run_id"].isin(sil)]}
+    fig = plot_stability(bare, tmp_path)
+    assert not [a for a in artists(fig, "collapse") if a.get_gid().endswith("/sil")]
+
+
+# --- report widths (R105) -------------------------------------------------------
+
+
+@pytest.mark.parametrize("fid", list(NAMES))
+def test_double_width_is_170_mm_with_its_own_files_and_7pt_fonts(
+    fid: str,
+    frames: dict[str, pd.DataFrame],
+    tuning: dict[str, pd.DataFrame],
+    literature: pd.DataFrame,
+    tmp_path: Path,
+) -> None:
+    fig = draw(fid, frames, tuning, literature, tmp_path, width="double")
+    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
+    assert (tmp_path / f"{NAMES[fid]}_double.pdf").read_bytes().startswith(PDF)
+    assert (tmp_path / f"{NAMES[fid]}_double.png").read_bytes().startswith(PNG)
+    fig.canvas.draw()
+    small = {
+        t.get_text(): t.get_fontsize()
+        for t in fig.findobj(Text)
+        if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
+    }
+    assert not small, small
+
+
+def test_the_width_option_is_refused_when_unknown(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="width"):
+        plot_curves_score(frames, tmp_path, width="triple", n_boot=N)
+
+
+def test_the_video_ignores_the_width_option(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_curves_score(frames, tmp_path, "video", width="double", n_boot=N)
+    assert tuple(round(v) for v in fig.get_size_inches() * fig.dpi) == (1920, 1080)
+    assert (tmp_path / "curves_score_video.png").exists()
+
+
+def test_f1_at_double_width_is_one_panel_per_budget_with_every_method(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_curves_score(frames, tmp_path, width="double", n_boot=N)
+    panels = [ax for ax in fig.axes if ax.get_visible() and ax.lines]
+    assert len(panels) == 2  # 1M and 1B side by side, not four stacked panels
+    xs = sorted(ax.get_position().x0 for ax in panels)
+    assert xs[1] > xs[0]
+    assert panels[0].get_position().y0 == pytest.approx(panels[1].get_position().y0)
+    methods = {
+        a.get_gid().split("/")[3]
+        for a in artists(fig, "curve")
+        if "/1m/" in a.get_gid()
+    }
+    assert methods == set(METHOD_COLORS_LIGHT)  # all nine, the controls once
+    gids = [a.get_gid() for a in artists(fig, "curve")]
+    assert len(gids) == len(set(gids))
+    titles = [ax.get_title(loc="left") for ax in panels]
+    assert any("1B" in t and "indicative" in t for t in titles)
+    short = plot_curves_score(frames, tmp_path / "c", n_boot=N)
+    assert (
+        fig.get_size_inches()[1] < short.get_size_inches()[1]
+    )  # 0.25 page, not 4 stacked
+
+
+# --- F2 + F3 side by side -------------------------------------------------------
+
+
+def test_f2f3_puts_the_poi_against_each_control_beside_the_intervals(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    poi = poi_matrix(frames, n_boot=N)
+    t1 = main_table(frames, n_boot=N)
+    fig = plot_aggregate_poi(frames, tmp_path, table=t1, poi=poi)
+    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
+    iqm = with_gid(fig, "iqm", "1m", "main", "sil", "tuned")
+    left = iqm.axes
+    image = with_gid(fig, "poi", "1m", "controls")
+    right = image.axes
+    assert right.get_position().x0 > left.get_position().x1  # side by side
+    assert right.get_position().y0 == pytest.approx(left.get_position().y0)
+    assert [t.get_text() for t in right.get_xticklabels()] == list(CONTROLS)
+    labels = [t.get_text() for t in left.get_yticklabels()]
+    cells = {
+        (round(t.get_position()[1]), round(t.get_position()[0])): t for t in right.texts
+    }
+    one_1m = poi[poi["benchmark"] == "1m"]
+    n_cells = 0
+    for r in one_1m.itertuples():
+        if r.versus not in CONTROLS:
+            continue
+        # a method's row in its block; the controls repeat, so match by block order
+        rows = [i for i, name in enumerate(labels) if name == r.method]
+        block_start = labels.index(
+            "main" if r.block == "main" else "uses hand-written skills"
+        )
+        row = next(i for i in rows if i > block_start)
+        text = cells[(row, CONTROLS.index(r.versus))]
+        assert text.get_text() == f"{r.poi:.2f}"
+        excluded = r.poi_lo > 0.5 or r.poi_hi < 0.5
+        assert text.get_gid() == ("poi-cell/bold" if excluded else "poi-cell/plain")
+        n_cells += 1
+    assert n_cells == len(cells)
+    one(fig, "mean/1m/main/sil/tuned")
+
+
+def test_f2f3_1b_rows_have_intervals_only(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_aggregate_poi(frames, tmp_path, n_boot=N)
+    one(fig, "median/1b/main/sil/tuned")
+    assert len(artists(fig, "poi")) == 1  # the 1M image only
+    titles = [ax.get_title(loc="left") for ax in fig.axes if ax.get_visible()]
+    assert any("1B" in t and "indicative" in t for t in titles)
+
+
+# --- every method artist uses METHOD_COLORS -------------------------------------
+
+METHOD_KINDS = (
+    "curve", "band", "iqm", "mean", "median", "ci-iqm", "ci-mean", "ci-median",
+    "seeds", "rc", "sens", "dd", "drops", "collapse", "hw",
+)  # fmt: skip
+"""gid kinds drawn in a method's colour (the others are ink)."""
+
+
+def _hexes(artist: Artist) -> set[str]:
+    """Every colour an artist is drawn with, as hex without alpha."""
+    out: set[str] = set()
+    for getter in (
+        "get_color",
+        "get_facecolor",
+        "get_edgecolor",
+        "get_markerfacecolor",
+    ):
+        value = getattr(artist, getter, lambda: None)()
+        if value is None:
+            continue
+        if isinstance(value, str):
+            out.add(to_hex(value))
+            continue
+        arr = np.atleast_2d(np.asarray(value, dtype=float))
+        out |= {to_hex(tuple(row[:3])) for row in arr if row.size >= 3}
+    return out
+
+
+@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("fid", list(NAMES))
+def test_every_method_artist_is_drawn_in_a_method_colour(
+    fid: str,
+    theme: str,
+    frames: dict[str, pd.DataFrame],
+    tuning: dict[str, pd.DataFrame],
+    literature: pd.DataFrame,
+    tmp_path: Path,
+) -> None:
+    fig = draw(fid, frames, tuning, literature, tmp_path, theme)
+    palette = {to_hex(c) for c in _colors(theme).values()}
+    checked = 0
+    for kind in METHOD_KINDS:
+        for artist in artists(fig, kind):
+            checked += 1
+            assert _hexes(artist) & palette, (artist.get_gid(), _hexes(artist))
+            parts = artist.get_gid().split("/")
+            method = parts[2] if kind in ("rc", "sens") else parts[3]
+            assert to_hex(_colors(theme)[method]) in _hexes(artist), artist.get_gid()
+    assert checked or fid in ("F3", "F5")

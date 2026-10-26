@@ -97,3 +97,14 @@ def frame(fig: Figure) -> np.ndarray:
     canvas.draw()  # type: ignore[no-untyped-call]  # matplotlib Agg lacks annotations
     rgba = canvas.buffer_rgba()  # type: ignore[no-untyped-call]  # same
     return np.asarray(rgba)[..., :3].copy()
+
+
+SEQUENTIAL_LIGHT = ("#fff7b5", "#bcaf6f", "#7c7b78", "#31446b", "#00204d")
+"""Heat-map ramp on `SURFACE_LIGHT`, low to high: sampled from cividis (colour-vision
+safe); no value equals a method colour, so a cell is never read as a method."""
+SEQUENTIAL_DARK = ("#00204d", "#31446b", "#7c7b78", "#bcaf6f", "#ffea46")
+"""The same ramp on `SURFACE` (low values dark)."""
+DIVERGING_LIGHT = ("#9a8700", "#f1f0ec", "#00306f")
+"""Below, at and above the midpoint on `SURFACE_LIGHT` (probability of improvement)."""
+DIVERGING_DARK = ("#d4bd2a", "#2c2c2a", "#2e5fb0")
+"""Below, at and above the midpoint on `SURFACE`."""
