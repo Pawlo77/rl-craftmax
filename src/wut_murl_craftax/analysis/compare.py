@@ -118,6 +118,10 @@ STABILITY_COLUMNS = [
     *_HEAD, "indicative", "seeds", "sd", "cv", "curve_runs", "max_drawdown_median",
     "runs_with_drops", "runs_with_collapse",
 ]  # fmt: skip
+RUN_STABILITY_COLUMNS = [
+    "benchmark", "run_id", "method", "seed", "max_drawdown", "drops", "collapsed",
+]  # fmt: skip
+"""One row per tuned run with a score curve (`run_stability`)."""
 HARDWARE_METRICS = (
     "steady_sps", "overall_sps", "wall_clock_s", "compile_s", "peak_rss_mb",
     "peak_host_mem_mb", "peak_device_mem_mb", "steps_per_joule", "cpu_util_mean",
@@ -195,6 +199,21 @@ def _budgets(runs: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
 
 def _tuned(runs: pd.DataFrame) -> pd.DataFrame:
     return runs[runs["config_ref"] == TUNED]
+
+
+def budgets(runs: pd.DataFrame) -> Iterator[tuple[str, pd.DataFrame]]:
+    """Each budget of ``runs`` (1M before 1B) with its runs, for the figures."""
+    yield from _budgets(runs)
+
+
+def tuned(runs: pd.DataFrame) -> pd.DataFrame:
+    """The tuned runs of ``runs`` (no ablation, no tuning config)."""
+    return _tuned(runs)
+
+
+def members(runs: pd.DataFrame) -> list[Member]:
+    """Rows of every table: per block, the controls, then its methods (combo last)."""
+    return _members(runs)
 
 
 def _members(runs: pd.DataFrame) -> list[Member]:
@@ -692,26 +711,49 @@ def _curve_stability(curve: np.ndarray, budget: str) -> tuple[float, bool, bool]
     return deepest, bool(drops(c, floor=floor)), collapsed(c, floor)
 
 
-def stability_table(frames: Frames) -> pd.DataFrame:
-    """T3: seed sd and CV of the final score; per-run drawdowns, drops and collapses.
+def run_stability(frames: Frames) -> pd.DataFrame:
+    """The per-run part of T3: deepest drawdown, any drop and collapse of each run.
 
-    Curves are ``train/score_pct`` per update, smoothed as `stability.smoothed`, with
-    `obstacles.drawdown_floor` (R92); a run without the curve is left out of the curve
-    columns (``curve_runs`` counts the rest).
+    One row per tuned run with a ``train/score_pct`` curve (`RUN_STABILITY_COLUMNS`);
+    ``max_drawdown`` is NaN below `obstacles.drawdown_floor` (R92). A run without the
+    curve has no row.
     """
     curves = frames["curves"]
     score = curves[curves["metric"] == SCORE[0]].sort_values(["run_id", "env_steps"])
     rows = []
     for budget, runs in _budgets(_tuned(frames["runs"])):
         mine = score[score["run_id"].isin(runs["run_id"])]
-        per_run = {
-            r: _curve_stability(g["value"].to_numpy(dtype=float), budget)
-            for r, g in mine.groupby("run_id")
-        }
+        info = runs.set_index("run_id")
+        for run_id, g in mine.groupby("run_id"):
+            deepest, dropped, collapse = _curve_stability(
+                g["value"].to_numpy(dtype=float), budget
+            )
+            rows.append({
+                "benchmark": budget,
+                "run_id": run_id,
+                "method": info.at[run_id, "method"],
+                "seed": info.at[run_id, "seed"],
+                "max_drawdown": deepest,
+                "drops": dropped,
+                "collapsed": collapse,
+            })
+    return pd.DataFrame(rows, columns=RUN_STABILITY_COLUMNS)
+
+
+def stability_table(frames: Frames) -> pd.DataFrame:
+    """T3: seed sd and CV of the final score; per-run drawdowns, drops and collapses.
+
+    Curves are ``train/score_pct`` per update, smoothed as `stability.smoothed`, with
+    `obstacles.drawdown_floor` (R92; `run_stability`); a run without the curve is left
+    out of the curve columns (``curve_runs`` counts the rest).
+    """
+    per_run = run_stability(frames).set_index("run_id")
+    rows = []
+    for budget, runs in _budgets(_tuned(frames["runs"])):
         for block, method, role in _members(runs):
             g = runs[runs["method"] == method]
             spread = seed_spread(g["final_score"].to_numpy(dtype=float))
-            found = [per_run[r] for r in g["run_id"] if r in per_run]
+            found = per_run.loc[per_run.index.intersection(g["run_id"])]
             rows.append({
                 "benchmark": budget,
                 "block": block,
@@ -722,9 +764,9 @@ def stability_table(frames: Frames) -> pd.DataFrame:
                 "sd": spread["sd"],
                 "cv": spread["cv"],
                 "curve_runs": len(found),
-                "max_drawdown_median": pd.Series([f[0] for f in found]).median(),
-                "runs_with_drops": sum(f[1] for f in found),
-                "runs_with_collapse": sum(f[2] for f in found),
+                "max_drawdown_median": found["max_drawdown"].median(),
+                "runs_with_drops": int(found["drops"].sum()),
+                "runs_with_collapse": int(found["collapsed"].sum()),
             })
     return pd.DataFrame(rows, columns=STABILITY_COLUMNS)
 

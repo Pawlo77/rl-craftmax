@@ -775,3 +775,33 @@ def test_t2_reads_a_budget_of_controls_only(tmp_path: Path) -> None:
     known = published_rows.loc[~unknown, "protocol_match"]
     assert known.isin({"same", "different protocol"}).all()
     assert (known == "same").any()
+
+
+def test_run_stability_is_the_per_run_part_of_t3(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    per_run = compare.run_stability(frames)
+    assert list(per_run.columns) == compare.RUN_STABILITY_COLUMNS
+    assert per_run["run_id"].is_unique
+    runs = frames["runs"]
+    tuned = runs[runs["config_ref"] == "tuned"]
+    assert set(per_run["run_id"]) == set(tuned["run_id"])
+    t3 = stability_table(frames)
+    sil = per_run[(per_run["benchmark"] == "1m") & (per_run["method"] == "sil")]
+    row = t3[
+        (t3["benchmark"] == "1m") & (t3["method"] == "sil") & (t3["block"] == "main")
+    ].iloc[0]
+    assert sil["max_drawdown"].median() == pytest.approx(row["max_drawdown_median"])
+    assert sil["drops"].sum() == row["runs_with_drops"]
+    assert sil["collapsed"].sum() == row["runs_with_collapse"] == 1
+
+
+def test_budgets_members_and_tuned_are_the_tables_own_helpers(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    runs = frames["runs"]
+    assert [b for b, _ in compare.budgets(runs)] == ["1m", "1b"]
+    assert compare.tuned(runs)["config_ref"].eq("tuned").all()
+    rows = compare.members(compare.tuned(runs[runs["budget"] == "1m"]))
+    assert rows[0] == ("main", "ppo", "control")
+    assert ("skills", "dyna-q", "method") in rows
