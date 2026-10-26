@@ -618,6 +618,16 @@ def test_the_cli_refuses_an_out_folder_not_named_analysis(
         ])  # fmt: skip
 
 
+def test_the_cli_refuses_a_store_that_is_not_sqlite(
+    metrics: Path, tmp_path: Path
+) -> None:
+    with pytest.raises(SystemExit):
+        training.main([
+            "--phases", "final-1m", "--out", str(tmp_path / "analysis"),
+            "--metrics-root", str(metrics), "--tracking-uri", "http://localhost:5000",
+        ])  # fmt: skip
+
+
 def test_importing_the_cli_imports_neither_jax_nor_mlflow() -> None:
     import subprocess
 

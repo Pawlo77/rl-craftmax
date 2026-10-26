@@ -48,8 +48,6 @@ ANALYSIS_DIR = "analysis"
 section 4), so ``--out`` must end in it."""
 COMPLETE, LOGGED = ".complete", ".logged"
 """Markers of a finished method folder and of its finished MLflow logging."""
-STORE_TIMEOUT_S = 300.0
-"""SQLite busy timeout of the store reads and writes when the URI names none (R103)."""
 DEFAULT_PHASES = ("final-1m", "combo-1m")
 """The phases that exist at 1M; the 1B ones are accepted but not assumed (R75, R86)."""
 REPLAY_FRAMES = {"skill_ends": SKILL_ENDS, "inventory": INVENTORY}
@@ -66,17 +64,6 @@ class TrainingSummary:
     """Methods whose complete folder was kept (a missing logging still ran)."""
     failed: list[str] = field(default_factory=list)
     """One ``<case id>: <error>`` per case that could not be replayed."""
-
-
-def _split_uri(tracking_uri: str) -> tuple[str, float]:
-    """The URI without its query, and its ``timeout`` in seconds.
-
-    Raises:
-        ValueError: If the timeout is not a number.
-    """
-    base, _, query = tracking_uri.partition("?")
-    found = dict(p.partition("=")[::2] for p in query.split("&") if p)
-    return base, float(found.get("timeout", STORE_TIMEOUT_S))
 
 
 def _root_of(out: Path) -> Path:
@@ -525,9 +512,10 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         help="leave masters/ (a video per case) out of the MLflow artifacts",
     )
     a = p.parse_args(argv)
+    if not a.tracking_uri.partition("?")[0].startswith("sqlite:///"):
+        p.error(f"--tracking-uri must be a sqlite:/// store, got {a.tracking_uri}")
     try:
         _root_of(a.out)
-        _split_uri(a.tracking_uri)
     except ValueError as e:
         p.error(str(e))
     return a
