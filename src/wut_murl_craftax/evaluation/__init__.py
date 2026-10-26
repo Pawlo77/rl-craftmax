@@ -1,4 +1,4 @@
-"""Evaluation and metrics: game tables, events, records, statistics, combo pair."""
+"""Evaluation and metrics: game tables, events, records, statistics, pair, export."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -50,6 +50,12 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         StepEvents,
         step_events,
     )
+    from .export import (
+        ANALYSIS_EXPERIMENT,
+        config_refs,
+        export_phase,
+        log_export,
+    )
     from .hardware import (
         HARDWARE_KEYS,
         NOT_MEASURED,
@@ -87,6 +93,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         ReplayMismatchError,
         RunRef,
         Tables,
+        arrow_table,
         at_cap,
         episode_columns,
         file_tables,
@@ -145,6 +152,7 @@ _EXPORTS: dict[str, str] = {
     "ADDED_FIELDS": "episode_metrics",
     "ADVANCED_ACHIEVEMENTS": "milestones",
     "ADVANCED_ACTIONS": "milestones",
+    "ANALYSIS_EXPERIMENT": "export",
     "CAUSES": "episode_metrics",
     "CREATURES": "milestones",
     "CREATURE_OFFSET": "milestones",
@@ -190,6 +198,7 @@ _EXPORTS: dict[str, str] = {
     "achievement_names": "milestones",
     "action_names": "milestones",
     "added_paths": "episode_metrics",
+    "arrow_table": "rollout_metrics",
     "at_cap": "rollout_metrics",
     "band": "reproduction",
     "choose_pair": "select_pair",
@@ -197,6 +206,7 @@ _EXPORTS: dict[str, str] = {
     "close_update": "episode_metrics",
     "collapsed": "stability",
     "combo_text": "select_pair",
+    "config_refs": "export",
     "config_scores": "stability",
     "controls_of": "select_pair",
     "coverage_summary": "coverage",
@@ -208,6 +218,7 @@ _EXPORTS: dict[str, str] = {
     "episode_record": "episode_records",
     "episode_step": "episode_metrics",
     "events_of": "episode_metrics",
+    "export_phase": "export",
     "file_tables": "rollout_metrics",
     "final_results": "select_pair",
     "final_scores": "select_pair",
@@ -219,6 +230,7 @@ _EXPORTS: dict[str, str] = {
     "init_seen": "coverage",
     "iqm": "stats",
     "ladder": "milestones",
+    "log_export": "export",
     "mann_whitney_holm": "stats",
     "mean_se": "stats",
     "method_knobs": "select_pair",
@@ -271,6 +283,7 @@ __all__ = [
     "ADDED_FIELDS",
     "ADVANCED_ACHIEVEMENTS",
     "ADVANCED_ACTIONS",
+    "ANALYSIS_EXPERIMENT",
     "CAUSES",
     "CREATURES",
     "CREATURE_OFFSET",
@@ -316,6 +329,7 @@ __all__ = [
     "achievement_names",
     "action_names",
     "added_paths",
+    "arrow_table",
     "at_cap",
     "band",
     "choose_pair",
@@ -323,6 +337,7 @@ __all__ = [
     "close_update",
     "collapsed",
     "combo_text",
+    "config_refs",
     "config_scores",
     "controls_of",
     "coverage_summary",
@@ -334,6 +349,7 @@ __all__ = [
     "episode_record",
     "episode_step",
     "events_of",
+    "export_phase",
     "file_tables",
     "final_results",
     "final_scores",
@@ -345,6 +361,7 @@ __all__ = [
     "init_seen",
     "iqm",
     "ladder",
+    "log_export",
     "mann_whitney_holm",
     "mean_se",
     "method_knobs",
