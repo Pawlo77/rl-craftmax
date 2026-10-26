@@ -211,12 +211,12 @@ def test_repeated_features_on_a_path_merge_into_one_interval() -> None:
         (
             Condition("facing_block", None, 4),
             "craftax",
-            "facing_block is invalid, out_of_bounds, grass, water or stone",
+            "facing_block is unlit/invalid, out_of_bounds, grass, water or stone",
         ),
         (
             Condition("facing_block", 5, None),
             "classic",
-            "facing_block is not invalid, out_of_bounds, grass, water or stone",
+            "facing_block is not unlit/invalid, out_of_bounds, grass, water or stone",
         ),
         (Condition("facing_block", 16, None), "classic", "facing_block is ripe_plant"),
         (Condition("tree_row_sign", None, -1), "craftax", "tree_row_sign is above"),
@@ -256,6 +256,64 @@ def test_condition_text_names_the_codes_of_ordinal_features(
     assert condition_text(condition, game) == text  # type: ignore[arg-type]  # test literal
 
 
+def _parse(text: str) -> list[tuple[str, str, float]]:
+    """``feature op number`` comparisons of a rule line's IF part."""
+    ifs = text.split(" THEN ")[0].split("IF ")[1]
+    return [
+        (m[1], m[2], float(m[3]))
+        for c in ifs.split(" AND ")
+        if (m := re.fullmatch(r"(\w+) (<=|>=) (\S+)", c))
+    ]
+
+
+def test_a_fractional_column_keeps_its_float_threshold() -> None:
+    """``light_level`` is not an integer: a rule must cut where the tree cuts."""
+
+    def make(seed: int) -> Dataset:
+        ds = _dataset(seed)
+        rng = np.random.default_rng(seed + 10)
+        feats = ds.features.copy()
+        light = rng.random(len(feats)).astype(np.float32)
+        feats[:, COLUMNS.index("iron")] = light
+        label = 2 * (light > 0.37) + (feats[:, COLUMNS.index("wood")] >= 5)
+        return ds._replace(
+            features=feats,
+            columns=tuple("light_level" if c == "iron" else c for c in COLUMNS),
+            label=np.array([NOOP, DO, SLEEP, PLACE_TABLE], np.int8)[label],
+        )
+
+    train, val, test = make(0), make(1), make(2)
+    tree = fit_grid(train, val)[LEAF_GRID.index(4)]
+    assert tree.leaves == 4
+    x, cols = test.features, test.columns
+    seen = np.zeros(len(x), int)
+    for rule, line in zip(
+        extract_rules(tree), rules_text(tree).splitlines(), strict=True
+    ):
+        mask = _matches(rule, x, cols)
+        assert (tree.model.predict(x[mask]) == rule.action).all()
+        seen += mask
+        # the printed numbers select the same states as the bounds
+        text_mask = np.ones(len(x), bool)
+        for name, op, v in _parse(line):
+            col = x[:, cols.index(name)]
+            text_mask &= (
+                (col <= np.float32(v)) if op == "<=" else (col >= np.float32(v))
+            )
+        np.testing.assert_array_equal(text_mask, mask)
+    assert (seen == 1).all()
+    bounds = {
+        v
+        for r in extract_rules(tree)
+        for c in r.conditions
+        if c.feature == "light_level"
+        for v in (c.lo, c.hi)
+        if v is not None
+    }
+    assert bounds  # the cut in each wood branch
+    assert all(abs(v - 0.37) < 0.02 and v != int(v) for v in bounds)
+
+
 def test_a_condition_that_selects_no_named_code_is_refused() -> None:
     with pytest.raises(ValueError, match="direction"):
         condition_text(Condition("direction", 5, None))
@@ -275,7 +333,7 @@ def test_the_game_is_read_from_the_columns() -> None:
     mana = tuple("mana" if c == "iron" else c for c in stump.columns)
     craftax = rules_text(stump._replace(columns=mana))
     assert "facing_block is ripe_plant" not in craftax
-    assert "facing_block is not invalid, out_of_bounds, grass" in craftax
+    assert "facing_block is not unlit/invalid, out_of_bounds, grass" in craftax
 
 
 def test_paths_to_returns_every_chain_ending_in_the_action() -> None:
@@ -353,11 +411,9 @@ def test_importance_matches_test_columns_by_name() -> None:
         features=test.features[:, order],
         columns=tuple(test.columns[i] for i in order),
     )
-    a = {r["feature"]: r["importance"] for r in importance(tree, test)}
-    b = {r["feature"]: r["importance"] for r in importance(tree, shuffled)}
-    assert a.keys() == b.keys()
-    for f in a:
-        assert a[f] == pytest.approx(b[f], abs=0.02)
+    a = {r["feature"]: r for r in importance(tree, test)}
+    b = {r["feature"]: r for r in importance(tree, shuffled)}
+    assert a == b  # the tree's columns are read by name, so the same draws
 
 
 def test_importance_needs_test_states() -> None:
@@ -530,6 +586,7 @@ def test_an_older_checkpoint_can_be_asked_for() -> None:
     assert got.update == 0
     assert got.n_rules == 25
     assert got.skills == ("descend",)
+    assert got.n_optimistic == 2  # keys with wood == 9 have no tried skill
 
 
 def test_a_table_file_is_read_like_the_frame(tmp_path: Path) -> None:
@@ -538,6 +595,18 @@ def test_a_table_file_is_read_like_the_frame(tmp_path: Path) -> None:
     table.to_parquet(path)
     assert top_level_rules(path) == top_level_rules(table)
     assert top_level_rules(str(path)) == top_level_rules(table)
+
+
+def test_the_untried_argmax_keys_are_counted_in_either_view() -> None:
+    for tried in (False, True):
+        got = top_level_rules(_table(), tried=tried)
+        assert got.n_optimistic == 4  # the 4 keys with wood == 9
+        assert got.optimistic_share == pytest.approx(0.1)
+    table = _table()
+    table.loc[table["update"] == 100, "greedy_tried_skill"] = "drink"
+    got = top_level_rules(table)
+    assert (got.n_optimistic, got.optimistic_share) == (40, 1.0)
+    assert top_level_rules(table, update=0).n_optimistic == 2  # untouched
 
 
 def test_the_tried_view_drops_keys_without_a_tried_skill() -> None:
@@ -557,6 +626,7 @@ def test_a_checkpoint_without_keys_has_no_rules() -> None:
     assert got.rules == []
     assert got.top == []
     assert got.tree_text == ""
+    assert (got.n_optimistic, got.optimistic_share) == (0, 0.0)
 
 
 def test_one_skill_everywhere_is_one_rule() -> None:

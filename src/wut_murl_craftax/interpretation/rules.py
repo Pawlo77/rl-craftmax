@@ -70,16 +70,22 @@ _KEY_META = frozenset({
     *("greedy_tried_skill", "greedy_tried_value"),
 })
 """Greedy-table columns that are not decoded key fields."""
+_FRACTIONAL = frozenset({"light_level"})
+"""The one non-integer column: its rules keep the float threshold."""
 KEY_LEAVES = 16
 """Leaves of the key tree printed when it never reaches L90 (the rules-tree size)."""
 
 
 class Condition(NamedTuple):
-    """One feature restricted to an inclusive integer interval; None: unbounded."""
+    """One feature restricted to an inclusive interval; None: unbounded.
+
+    Bounds are integers, except on `_FRACTIONAL` columns where they are the float32
+    values that reproduce the tree's cut exactly.
+    """
 
     feature: str
-    lo: int | None
-    hi: int | None
+    lo: float | None
+    hi: float | None
 
 
 class Rule(NamedTuple):
@@ -115,6 +121,11 @@ class TopLevel(NamedTuple):
     tree_text: str
     top: list[Row]
     """The highest-value keys: key, skill, value and the rule in words."""
+    n_optimistic: int
+    """Keys whose greedy skill is not their greedy tried skill, so the argmax landed
+    on an untried optimistic entry (counted on all keys of the checkpoint)."""
+    optimistic_share: float
+    """``n_optimistic`` over all keys of the checkpoint (0 without keys)."""
 
 
 def action_id(action: int | str) -> int:
@@ -147,7 +158,8 @@ def _codes(feature: str, game: GameKind) -> dict[int, str] | None:
         return dict(enumerate(CREATURES))
     if feature == "facing_block":
         blocks = [b for b in BlockType if game == "craftax" or b.value < 17]
-        return {b.value: b.name.lower() for b in blocks}
+        names = {b.value: b.name.lower() for b in blocks}
+        return names | {0: "unlit/invalid"}  # an unlit tile decodes as block 0
     if feature == "prev_action":
         return {-1: "start", **{i: _NAMES[i] for i in range(n_actions)}}
     return next((c for s, c in _SIGNS.items() if feature.endswith(s)), None)
@@ -192,16 +204,24 @@ def _text(c: Condition, game: GameKind) -> str:
         return f"skill is {'' if lo else 'not '}{f.removeprefix('skill_')}"
     if f in _FLAGS:
         return f if lo else f"not {f}"
-    if lo is None:
-        return f"{f} <= {hi}"
-    if hi is None:
-        return f"{f} >= {lo}"
-    return f"{f} = {lo}" if lo == hi else f"{lo} <= {f} <= {hi}"
+    low, high = (None if b is None else _number(f, b) for b in (lo, hi))
+    if low is None:
+        return f"{f} <= {high}"
+    if high is None:
+        return f"{f} >= {low}"
+    return f"{f} = {low}" if lo == hi else f"{low} <= {f} <= {high}"
+
+
+def _number(feature: str, v: float) -> str:
+    """An integer, or for a fractional column the shortest float32 text of ``v``."""
+    if feature in _FRACTIONAL:
+        return str(np.format_float_positional(np.float32(v), trim="-"))
+    return str(int(v))
 
 
 def _merge(path: Sequence[Condition]) -> tuple[Condition, ...]:
     """One interval per feature, in order of first appearance on the path."""
-    bounds: dict[str, list[int | None]] = {}
+    bounds: dict[str, list[float | None]] = {}
     for f, lo, hi in path:
         b = bounds.setdefault(f, [None, None])
         if lo is not None:
@@ -212,7 +232,11 @@ def _merge(path: Sequence[Condition]) -> tuple[Condition, ...]:
 
 
 def _extract(model: DecisionTreeClassifier, columns: Sequence[str]) -> list[Rule]:
-    """Leaves of ``model``, left to right; columns are integers, so cut at the floor."""
+    """Leaves of ``model``, left to right.
+
+    An integer column is cut at the floor of the threshold; a fractional one keeps the
+    float32 values on either side of it, so a rule selects what the tree sends there.
+    """
     t = model.tree_
     total = int(t.n_node_samples[0])
     rules: list[Rule] = []
@@ -227,10 +251,21 @@ def _extract(model: DecisionTreeClassifier, columns: Sequence[str]) -> list[Rule
             purity = float(counts.max() / counts.sum())
             rules.append(Rule(_merge(path), action, n, n / total, purity))
             continue
-        feature, cut = columns[t.feature[node]], math.floor(t.threshold[node])
-        stack.append((right, (*path, Condition(feature, cut + 1, None))))
-        stack.append((left, (*path, Condition(feature, None, cut))))
+        feature, cut = columns[t.feature[node]], float(t.threshold[node])
+        below, above = _cut(feature, cut)
+        stack.append((right, (*path, Condition(feature, above, None))))
+        stack.append((left, (*path, Condition(feature, None, below))))
     return rules
+
+
+def _cut(feature: str, t: float) -> tuple[float, float]:
+    """Largest value the left child takes and smallest the right child takes."""
+    if feature not in _FRACTIONAL:
+        return math.floor(t), math.floor(t) + 1
+    f, inf = np.float32(t), np.float32(np.inf)  # the tree compares float32 features
+    below = f if f <= t else np.nextafter(f, -inf)
+    above = f if f > t else np.nextafter(f, inf)
+    return float(below), float(above)
 
 
 def extract_rules(tree: FittedTree) -> list[Rule]:
@@ -414,7 +449,9 @@ def top_level_rules(
     over the keys) and the ``top`` highest-value keys in words. The greedy skill is
     the unmasked argmax of the key's row, so an untried optimistic entry can win:
     ``tried=True`` uses the best tried skill and its value instead, dropping keys
-    without one.
+    without one. At ``q_init`` 10 most final keys were never updated off it, so the
+    argmax is a tie broken by skill order: the tried view is the informative one and
+    ``n_optimistic`` / ``optimistic_share`` say how many keys the default misreads.
 
     Raises:
         ValueError: If the table has no rows.
@@ -430,6 +467,8 @@ def top_level_rules(
         else ("greedy_skill", "value")
     )
     df = df[df["update"] == update]
+    n_optimistic = int((df["greedy_skill"] != df["greedy_tried_skill"]).sum())
+    share = n_optimistic / len(df) if len(df) else 0.0
     df = df[df[skill] != ""]  # no tried entry
     fields = [c for c in df.columns if c not in _KEY_META]
     counts = Counter(df[skill])
@@ -466,4 +505,6 @@ def top_level_rules(
         rules=shown,
         tree_text=text,
         top=best,
+        n_optimistic=n_optimistic,
+        optimistic_share=share,
     )
