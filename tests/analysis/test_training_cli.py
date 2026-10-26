@@ -96,10 +96,13 @@ def fake_replay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Replay:
 
     def export(case: Any, out_dir: Path, run: Any = None, **kw: Any) -> dict[str, Any]:
         cid = str(case["id"])
-        if cid in seen.fail:
+        root = kw["root"]
+        if cid in seen.fail:  # fails late, after the flat rollout was copied
+            flat = root / "visualisation" / "runs" / f"case-{cid}.npz"
+            flat.parent.mkdir(parents=True, exist_ok=True)
+            flat.write_bytes(b"x")
             msg = f"replay of {cid} failed"
             raise ValueError(msg)
-        root = kw["root"]
         files = {
             "rollout": root / "visualisation" / "runs" / f"case-{cid}.npz",
             "master": out_dir / "masters" / f"case-{cid}.mkv",
@@ -368,17 +371,53 @@ def test_every_method_is_logged_under_its_own_run_name(
     assert (db.parent / "mlruns" / "analysis").is_dir()
 
 
-def test_masters_can_stay_out_of_the_logged_artifacts(
+def test_masters_stay_out_of_the_logged_artifacts_unless_asked(
     metrics: Path, fake_replay: Replay, store: str, tmp_path: Path
 ) -> None:
     out = tmp_path / "out"
-    run_cli(metrics, out, store, "--log-no-masters", phases=("final-1m",), method="sil")
-    run = runs_of(store)["training-analysis-1m-sil"]
+    run_cli(metrics, out, store, phases=("final-1m",), method="sil")
     client = mlflow.MlflowClient(store)
-    top = {a.path for a in client.list_artifacts(run.info.run_id)}
-    assert "masters" not in top
-    assert {"gifs", "rollouts", "hard", "obstacles.md"} <= top
+
+    def top() -> set[str]:
+        run = runs_of(store)["training-analysis-1m-sil"]
+        return {a.path for a in client.list_artifacts(run.info.run_id)}
+
+    assert "masters" not in top()
+    assert {"gifs", "rollouts", "hard", "obstacles.md"} <= top()
     assert any((folder(out, "1m", "sil") / "masters").iterdir())  # kept on disk
+    run_cli(
+        metrics,
+        out,
+        store,
+        "--force",
+        "--log-masters",
+        phases=("final-1m",),
+        method="sil",
+    )
+    assert "masters" in top()  # the rerun replaced the artifacts, now with masters
+
+
+def test_the_tag_names_the_phases_that_were_loaded(
+    metrics: Path, fake_replay: Replay, store: str, tmp_path: Path
+) -> None:
+    run_cli(
+        metrics, tmp_path / "out", store, "--skip-missing",
+        phases=("final-1m", "final-9b"), method="sil",
+    )  # fmt: skip
+    tags = runs_of(store)["training-analysis-1m-sil"].data.tags
+    assert tags["analysis/phases"] == "final-1m"
+
+
+def test_a_full_disk_stops_the_run_before_any_work(
+    metrics: Path, fake_replay: Replay, store: str, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    monkeypatch.setattr(
+        training.shutil, "disk_usage", lambda p: SimpleNamespace(free=int(1e8))
+    )
+    with pytest.raises(SystemExit, match="GB free"):
+        run_cli(metrics, tmp_path / "out", store, "--no-log", method="sil")
+    assert not (tmp_path / "out").exists()
 
 
 def test_a_rerun_skips_complete_methods_and_logs_nothing_twice(
@@ -463,9 +502,70 @@ def test_a_failed_case_fails_the_run_but_not_the_other_methods(
     assert (folder(out, "1m", "ppo") / ".complete").is_file()  # the others finished
     assert not (folder(out, "1m", "sil") / ".complete").exists()  # this one reruns
     assert (folder(out, "1m", "sil") / "obstacles.md").is_file()  # what worked stays
+    failed = json.loads((folder(out, "1m", "sil") / "failed.json").read_text())
+    assert list(failed) == ["1m-sil-death-1"]
+    assert "ValueError" in failed["1m-sil-death-1"]
+    # the partial flat rollout of the failed case is gone, the others' stay
+    flat = out / "visualisation" / "runs"
+    assert not (flat / "case-1m-sil-death-1.npz").exists()
+    assert (flat / "case-1m-sil-stall-1.npz").exists()
     fake_replay.fail.clear()
     run_cli(metrics, out, store, "--no-log", phases=("final-1m",), method="sil")
     assert (folder(out, "1m", "sil") / ".complete").is_file()
+    assert not (folder(out, "1m", "sil") / "failed.json").exists()
+
+
+def test_a_method_without_exported_cases_loses_its_old_rows(
+    metrics: Path, fake_replay: Replay, store: str, tmp_path: Path
+) -> None:
+    out = tmp_path / "out"
+    run_cli(metrics, out, store, "--no-log", phases=("final-1m",), method="all")
+    table = out / "analysis" / "1m" / "cases.csv"
+    assert "sil" in set(pd.read_csv(table)["method"])
+    ids = pd.read_csv(table).query("method == 'sil'")["id"]
+    fake_replay.fail.update(ids)  # every case of sil fails now
+    with pytest.raises(SystemExit):
+        run_cli(
+            metrics,
+            out,
+            store,
+            "--no-log",
+            "--force",
+            phases=("final-1m",),
+            method="sil",
+        )
+    rows = pd.read_csv(table)
+    assert "sil" not in set(rows["method"])  # no row names a deleted rollout
+    assert "ppo" in set(rows["method"])
+
+
+def test_a_logging_failure_keeps_the_previous_artifacts(
+    store: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wut_murl_craftax.orchestration.tracking import log_analysis_run
+
+    folder_ = tmp_path / "f"
+    (folder_ / "d").mkdir(parents=True)
+    (folder_ / "d" / "old.txt").write_text("old")
+    (folder_ / "keep.txt").write_text("1")
+    paths = lambda: sorted(folder_.iterdir())  # noqa: E731
+    run_id = log_analysis_run(folder_, paths(), "r", {"analysis/kind": "x"}, store)
+    client = mlflow.MlflowClient(store)
+    (folder_ / "d" / "old.txt").unlink()
+    (folder_ / "d" / "new.txt").write_text("new")
+
+    def boom(*a: Any, **k: Any) -> None:
+        msg = "upload failed"
+        raise OSError(msg)
+
+    with monkeypatch.context() as m:
+        m.setattr(mlflow.MlflowClient, "log_artifacts", boom)
+        with pytest.raises(OSError, match="upload failed"):
+            log_analysis_run(folder_, paths(), "r", {}, store)
+    assert {a.path for a in client.list_artifacts(run_id, "d")} == {"d/old.txt"}
+    assert log_analysis_run(folder_, paths(), "r", {}, store) == run_id
+    assert {a.path for a in client.list_artifacts(run_id, "d")} == {"d/new.txt"}
+    assert client.get_run(run_id).info.status == "FINISHED"
 
 
 # ------------------------------------------------------------- replay inputs

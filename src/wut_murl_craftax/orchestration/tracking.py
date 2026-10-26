@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,9 @@ _ACTIVE_MLFLOW_RUN_ID_ENV = "MLFLOW_ACTIVE_RUN_ID"
 UNDER_PYTEST_ENV = "WUT_MURL_UNDER_PYTEST"
 """Set by the tests' conftest; the CLIs then refuse the repo-root MLflow store."""
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+ANALYSIS_EXPERIMENT = "analysis"
+"""MLflow experiment of every analysis writer: export, training analysis, ... (contracts
+section 8)."""
 
 
 def _refuse_repo_store(local_path: Path) -> None:
@@ -113,6 +116,70 @@ def _use_experiment(mlflow: Any, tracking_uri: str, name: str) -> None:
             if mlflow.get_experiment_by_name(name) is None:
                 raise
     mlflow.set_experiment(name)
+
+
+def log_analysis_run(
+    folder: Path,
+    paths: Sequence[Path],
+    name: str,
+    tags: Mapping[str, str],
+    tracking_uri: str,
+) -> str:
+    """Log ``paths`` (files or folders in ``folder``) as the artifacts of run ``name``.
+
+    The run lives in experiment `ANALYSIS_EXPERIMENT` (get-or-create) and carries the
+    given tags only: loaders select training runs by ``phases``, ``method`` ... so an
+    analysis run never sets those. ``tracking_uri`` may end in ``?timeout=<s>``. A
+    rerun reuses the run of that name: it is RUNNING while the new files are logged,
+    and the old artifacts the new upload lacks are deleted only after that succeeded.
+
+    Returns:
+        The run id.
+
+    Raises:
+        OSError: If an old artifact cannot be deleted.
+    """
+    # imported here: the file-only paths of the analysis CLIs need no MLflow
+    import mlflow
+
+    base, _, query = tracking_uri.partition("?")
+    resolved = resolve_tracking_uri(base)
+    uri = resolved + (f"?{query}" if query else "")  # SQLAlchemy takes ?timeout=
+    mlflow.set_tracking_uri(uri)
+    _use_experiment(mlflow, resolved, ANALYSIS_EXPERIMENT)
+    client = mlflow.MlflowClient(uri)
+    exp = client.get_experiment_by_name(ANALYSIS_EXPERIMENT)
+    if exp is None:  # _use_experiment just made it
+        msg = f"experiment {ANALYSIS_EXPERIMENT} is missing"
+        raise RuntimeError(msg)
+    found = client.search_runs(
+        [exp.experiment_id], filter_string=f"attributes.run_name = '{name}'"
+    )
+    if found:
+        run_id = found[0].info.run_id
+        client.update_run(run_id, status="RUNNING")
+    else:
+        run_id = client.create_run(exp.experiment_id, run_name=name).info.run_id
+    for key, value in tags.items():
+        client.set_tag(run_id, key, value)
+    kept: set[Path] = set()
+    for path in paths:
+        rel = path.relative_to(folder)
+        if path.is_dir():
+            client.log_artifacts(run_id, str(path), rel.as_posix())
+            kept |= {rel / f.relative_to(path) for f in path.rglob("*") if f.is_file()}
+        else:
+            client.log_artifact(run_id, str(path))
+            kept.add(rel)
+    if found and (uri_of := client.get_run(run_id).info.artifact_uri):
+        root = artifact_path(uri_of)
+        for old in sorted(root.rglob("*"), reverse=True):  # children before parents
+            if old.is_file() and old.relative_to(root) not in kept:
+                old.unlink()  # raises if it cannot delete
+            elif old.is_dir() and not any(old.iterdir()):
+                old.rmdir()
+    client.set_terminated(run_id)
+    return str(run_id)
 
 
 @dataclass(slots=True)

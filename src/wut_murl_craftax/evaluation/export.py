@@ -20,7 +20,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import mlflow
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -30,11 +29,8 @@ import yaml
 
 from ..analysis.load import CURVES_COLUMNS, RUNS_COLUMNS
 from ..orchestration.queue import PHASES_DIR, expand_phase
-from ..orchestration.tracking import (
-    _use_experiment,
-    artifact_path,
-    resolve_tracking_uri,
-)
+from ..orchestration.tracking import ANALYSIS_EXPERIMENT as ANALYSIS_EXPERIMENT
+from ..orchestration.tracking import log_analysis_run
 from ..training.checkpoints import load_index
 from .episode_records import stored_records
 from .hardware import SYSTEM_HI, SYSTEM_LO, hardware_summary, open_store
@@ -53,8 +49,6 @@ from .rollout_metrics import (
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_EXPERIMENT = "analysis"
-"""Experiment of the analysis runs (contracts.md section 8)."""
 DEFAULT_URI = "sqlite:///mlruns.db"
 TABLES = ("runs", "curves", "eval_episodes")
 """The export tables, by file stem."""
@@ -480,49 +474,17 @@ def log_export(
     Raises:
         OSError: If an old artifact cannot be deleted.
     """
-    base, _, query = tracking_uri.partition("?")
-    resolved = resolve_tracking_uri(base)
-    uri = resolved + (f"?{query}" if query else "")  # SQLAlchemy takes ?timeout=
-    mlflow.set_tracking_uri(uri)
-    _use_experiment(mlflow, resolved, ANALYSIS_EXPERIMENT)
-    client = mlflow.MlflowClient(uri)
-    exp = client.get_experiment_by_name(ANALYSIS_EXPERIMENT)
-    if exp is None:  # _use_experiment just made it
-        msg = f"experiment {ANALYSIS_EXPERIMENT} is missing"
-        raise RuntimeError(msg)
-    name = f"export-{phase}"
-    found = client.search_runs(
-        [exp.experiment_id], filter_string=f"attributes.run_name = '{name}'"
-    )
-    if found:
-        run_id = found[0].info.run_id
-        client.update_run(run_id, status="RUNNING")
-    else:
-        run_id = client.create_run(exp.experiment_id, run_name=name).info.run_id
     budgets = sorted(
         set(pd.read_parquet(folder / "runs.parquet", columns=["budget"])["budget"])
     )
-    for key, value in (
-        ("analysis/kind", "export"),
-        ("analysis/phases", phase),
-        ("analysis/budget", ",".join(budgets)),
-    ):
-        client.set_tag(run_id, key, value)
+    tags = {
+        "analysis/kind": "export",
+        "analysis/phases": phase,
+        "analysis/budget": ",".join(budgets),
+    }
     globs = ("*.parquet", "*.csv", "*.csv.gz") if csv else ("*.parquet",)
     files = sorted(p for g in globs for p in folder.glob(g))
-    for path in files:
-        client.log_artifact(run_id, str(path))
-    if found and (uri_of := client.get_run(run_id).info.artifact_uri):
-        keep = {p.name for p in files}
-        for old in artifact_path(uri_of).iterdir():
-            if old.name in keep:
-                continue
-            if old.is_dir():  # both raise if they cannot delete
-                shutil.rmtree(old)
-            else:
-                old.unlink()
-    client.set_terminated(run_id)
-    return str(run_id)
+    return log_analysis_run(folder, files, f"export-{phase}", tags, tracking_uri)
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:

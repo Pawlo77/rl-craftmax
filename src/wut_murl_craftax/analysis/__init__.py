@@ -100,7 +100,6 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         table_rows,
     )
     from .training import (
-        ANALYSIS_EXPERIMENT,
         TrainingSummary,
         analyse_training,
         replay_frames,
@@ -190,7 +189,6 @@ _EXPORTS: dict[str, str] = {
     "stability_table": "compare",
     "TUNING_OPTIMISM_COLUMNS": "compare",
     "tuning_optimism": "compare",
-    "ANALYSIS_EXPERIMENT": "training",
     "TrainingSummary": "training",
     "analyse_training": "training",
     "replay_frames": "training",
@@ -202,7 +200,6 @@ __all__ = [
     "ABLATION_COLUMNS",
     "ACHIEVEMENTS",
     "ALIASES",
-    "ANALYSIS_EXPERIMENT",
     "BASE_CONTROL",
     "BLOCKS",
     "CASE_COLUMNS",

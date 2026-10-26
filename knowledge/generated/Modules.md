@@ -13,21 +13,21 @@ parent: "[[wut_murl_craftax]]"
 | Module | Summary | Domain | See | Lines | Architecture note |
 |---|---|---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. |  |  | 3 |  |
-| [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 298 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 295 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1056 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 853 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 388 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/obstacles.py]] | Obstacle detectors of the training analysis, their registry and the obstacles table. |  | [[2026-10-20-craftax-training-analysis]] | 1521 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/training.py]] | Training analysis of every method: hard scenarios, obstacles and case episodes. |  | [[2026-10-20-craftax-training-analysis]] | 553 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/training.py]] | Training analysis of every method: hard scenarios, obstacles and case episodes. |  | [[2026-10-20-craftax-training-analysis]] | 554 | [[analysis]] |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. |  |  | 149 |  |
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, records, statistics, pair, export. |  |  | 418 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/coverage.py]] | Exploration coverage of an episode: tiles seen per floor, new tiles, revisits. |  |  | 81 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. |  |  | 611 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_records.py]] | Records of eval episodes: one row of the eval-episode table per episode. |  |  | 568 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. |  |  | 394 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/export.py]] | Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 580 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/export.py]] | Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 542 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/hardware.py]] | Hardware usage of one run, summarised from its stored MLflow series. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 372 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. |  |  | 173 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/reproduction.py]] | Reproduction check: does a control's final score match the published one? |  |  | 226 | [[evaluation]] |
@@ -51,7 +51,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. |  |  | 1319 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. |  |  | 187 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. |  |  | 481 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 253 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 320 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. |  |  | 202 | [[orchestration]] |
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. |  |  | 386 | [[training]] |
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. |  |  | 119 | [[training]] |

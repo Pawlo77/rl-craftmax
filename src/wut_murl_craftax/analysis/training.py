@@ -41,13 +41,16 @@ from .obstacles import EVAL_MODE, INVENTORY, SKILL_ENDS, eval_actions
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_EXPERIMENT = "analysis"
-"""MLflow experiment of the analysis runs (contracts.md section 8)."""
 ANALYSIS_DIR = "analysis"
 """Name of the output folder: the case files are relative to its parent (contracts
 section 4), so ``--out`` must end in it."""
-COMPLETE, LOGGED = ".complete", ".logged"
-"""Markers of a finished method folder and of its finished MLflow logging."""
+COMPLETE, LOGGED, FAILED = ".complete", ".logged", "failed.json"
+"""Markers of a finished method folder and of its finished MLflow logging, and the
+failed cases of an unfinished one (id -> error)."""
+LOG_SKIP = ("masters",)
+"""Folder entries kept out of the MLflow artifacts (disk, R104)."""
+UNIT_GB = 0.25
+"""Disk per (method, config_ref) unit: about 20 cases of 9 to 17 MB each."""
 DEFAULT_PHASES = ("final-1m", "combo-1m")
 """The phases that exist at 1M; the 1B ones are accepted but not assumed (R75, R86)."""
 REPLAY_FRAMES = {"skill_ends": SKILL_ENDS, "inventory": INVENTORY}
@@ -263,16 +266,22 @@ def _json_default(value: Any) -> Any:
     raise TypeError(msg)
 
 
+def _flat_rollout(root: Path, case_id: str) -> Path:
+    """Where `export_case` copies a case's rollout for the video glob."""
+    return root / "visualisation" / "runs" / f"case-{case_id}.npz"
+
+
 def _replay_cases(
     cases: pd.DataFrame, folder: Path, root: Path, dirs: Mapping[str, Path]
-) -> tuple[pd.DataFrame, list[str]]:
-    """Export and describe each case; the table of those that worked, and the failures.
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Export and describe each case: the table of those that worked, the failures.
 
-    One `_open_run` per run serves all its cases (its compiled replay is shared).
+    One `_open_run` per run serves all its cases (its compiled replay is shared). A
+    failed case's flat rollout, copied before a later step failed, is removed.
     """
     (folder / "cases").mkdir(parents=True, exist_ok=True)
     opened: dict[str, Any] = {}
-    done, failed = [], []
+    done, failed = [], {}
     for case in cases.to_dict("records"):
         cid, rid = str(case["id"]), str(case["run_id"])
         t0 = time.time()
@@ -283,7 +292,8 @@ def _replay_cases(
             facts = describe_case(case, opened[rid])
         except Exception as e:  # one bad case must not stop the others
             logger.exception("case %s failed", cid)
-            failed.append(f"{cid}: {type(e).__name__}: {e}")
+            failed[cid] = f"{type(e).__name__}: {e}"
+            _flat_rollout(root, cid).unlink(missing_ok=True)
             continue
         text = json.dumps(facts, indent=1, default=_json_default)
         (folder / "cases" / f"{cid}.json").write_text(text + "\n")
@@ -292,75 +302,14 @@ def _replay_cases(
     return pd.DataFrame(done, columns=list(CASE_COLUMNS)), failed
 
 
-# -------------------------------------------------------------------------- MLflow
-
-
-def _log_folder(
-    folder: Path,
-    name: str,
-    tags: Mapping[str, str],
-    tracking_uri: str,
-    skip: Collection[str] = (),
-) -> str:
-    """Log ``folder`` as the artifacts of run ``name`` of the `ANALYSIS_EXPERIMENT`.
-
-    A run of that name is reused and its artifacts replaced (contracts section 8); the
-    tags are ``analysis/*`` only, since loaders select training runs by ``phases``,
-    ``method``, ``budget``, ``seed`` and ``config_hash``. Entries of ``folder`` named in
-    ``skip`` stay out. Returns the run id.
-    """
-    # imported here: MLflow and the tracking helpers stay out of the file-only paths
-    import mlflow
-
-    from ..orchestration.tracking import (
-        _use_experiment,
-        artifact_path,
-        resolve_tracking_uri,
-    )
-
-    base, _, query = tracking_uri.partition("?")
-    resolved = resolve_tracking_uri(base)
-    uri = resolved + (f"?{query}" if query else "")  # SQLAlchemy takes ?timeout=
-    mlflow.set_tracking_uri(uri)
-    _use_experiment(mlflow, resolved, ANALYSIS_EXPERIMENT)
-    client = mlflow.MlflowClient(uri)
-    exp = client.get_experiment_by_name(ANALYSIS_EXPERIMENT)
-    if exp is None:  # _use_experiment just made it
-        msg = f"experiment {ANALYSIS_EXPERIMENT} is missing"
-        raise RuntimeError(msg)
-    found = client.search_runs(
-        [exp.experiment_id], filter_string=f"attributes.run_name = '{name}'"
-    )
-    if found:
-        run_id, old = found[0].info.run_id, found[0].info.artifact_uri
-        if old:  # never rmtree a path made from an empty URI
-            shutil.rmtree(artifact_path(old), ignore_errors=True)
-    else:
-        run_id = client.create_run(exp.experiment_id, run_name=name).info.run_id
-    try:
-        for key, value in tags.items():
-            client.set_tag(run_id, key, value)
-        for child in sorted(folder.iterdir()):
-            if child.name in skip:
-                continue
-            if child.is_dir():
-                client.log_artifacts(run_id, str(child), child.name)
-            else:
-                client.log_artifact(run_id, str(child))
-    except BaseException:
-        client.set_terminated(run_id, "FAILED")
-        raise
-    client.set_terminated(run_id)
-    return str(run_id)
-
-
 # ----------------------------------------------------------------------- one method
 
 
 def _reset(folder: Path, root: Path) -> None:
-    """Empty a method folder and drop the flat rollouts its ``cases.csv`` names.
+    """Empty a method folder and drop its flat rollouts.
 
-    Only ``case-*.npz`` files directly under ``<root>/visualisation/runs``, so another
+    Those named in its ``cases.csv`` and the ids of its ``failed.json``; only
+    ``case-*.npz`` files directly under ``<root>/visualisation/runs``, so another
     method's rollouts and anything else stay.
     """
     table = folder / "cases.csv"
@@ -371,7 +320,18 @@ def _reset(folder: Path, root: Path) -> None:
             path = (root / str(rel)).resolve() if rel else None
             if path and path.parent == flat and path.name.startswith("case-"):
                 path.unlink(missing_ok=True)
+    if (folder / FAILED).is_file():
+        for cid in json.loads((folder / FAILED).read_text()):
+            _flat_rollout(root, cid).unlink(missing_ok=True)
     shutil.rmtree(folder, ignore_errors=True)
+
+
+def _drop_rows(root: Path, budget: str, method: str) -> None:
+    """Remove a method's rows from the budget's ``cases.csv`` (it exported no case)."""
+    table = root / ANALYSIS_DIR / budget / "cases.csv"
+    if table.is_file():
+        rows = pd.read_csv(table, keep_default_na=False)
+        rows[rows["method"] != method].to_csv(table, index=False)
 
 
 def _analyse_method(
@@ -407,14 +367,18 @@ def _analyse_method(
     cases = pd.concat(
         [*found, pd.DataFrame(columns=list(CASE_COLUMNS))], ignore_index=True
     )
-    table, failed = _replay_cases(cases, folder, root, dirs)
+    table, failures = _replay_cases(cases, folder, root, dirs)
     if len(table):
         # all units of the method in one call: write_cases merges by method only
         write_cases(table, root)
-    else:
+    else:  # its old rows would name files that are gone
         folder.joinpath("cases.csv").write_text(",".join(CASE_COLUMNS) + "\n")
+        _drop_rows(root, budget, method)
         logger.warning("%s %s: no case was exported", budget, method)
-    if not failed:
+    failed = [f"{cid}: {error}" for cid, error in failures.items()]
+    if failures:
+        (folder / FAILED).write_text(json.dumps(failures, indent=1) + "\n")
+    else:
         facts = {"units": _refs(sel), "cases": len(table), "runs": len(ids)}
         (folder / COMPLETE).write_text(json.dumps(facts) + "\n")
     return failed
@@ -430,7 +394,7 @@ def analyse_training(
     phases: Sequence[str] = (),
     log: bool = True,
     force: bool = False,
-    log_skip: Collection[str] = (),
+    log_skip: Collection[str] = LOG_SKIP,
 ) -> TrainingSummary:
     """Analyse each (budget, method) of ``frames``: files first, then MLflow.
 
@@ -438,7 +402,9 @@ def analyse_training(
     others stay in ``frames`` for the detectors. ``out`` ends in ``analysis``; its
     parent is the root of the case files. A complete folder is kept (``force`` empties
     and redoes it); a folder without ``.logged`` is only logged again, without the
-    entries named in ``log_skip`` (disk: ``masters`` holds a video per case).
+    entries named in ``log_skip`` (default `LOG_SKIP`: ``masters`` holds a video per
+    case and `vis` Task 2 renders them again). ``phases`` are the phases the frames
+    were loaded from, for the run tag.
 
     Raises:
         ValueError: If ``out`` is not named ``analysis``, or ``methods`` names one the
@@ -467,6 +433,8 @@ def analyse_training(
             else:
                 summary.skipped.append(job)
             if log and not (folder / LOGGED).is_file():
+                from ..orchestration.tracking import log_analysis_run
+
                 tags = {
                     "analysis/kind": "training",
                     "analysis/phases": ",".join(phases),
@@ -474,7 +442,8 @@ def analyse_training(
                     "analysis/method": method,
                 }
                 name = f"training-analysis-{budget}-{method}"
-                run_id = _log_folder(folder, name, tags, tracking_uri, log_skip)
+                paths = [c for c in sorted(folder.iterdir()) if c.name not in log_skip]
+                run_id = log_analysis_run(folder, paths, name, tags, tracking_uri)
                 (folder / LOGGED).write_text(run_id + "\n")
                 logger.info("logged %s to run %s", folder, run_id)
     return summary
@@ -507,9 +476,9 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     p.add_argument("--force", action="store_true", help="redo complete methods")
     p.add_argument("--no-log", action="store_true", help="write the files only")
     p.add_argument(
-        "--log-no-masters",
+        "--log-masters",
         action="store_true",
-        help="leave masters/ (a video per case) out of the MLflow artifacts",
+        help="also log masters/ (a video per case; off by default for disk space)",
     )
     a = p.parse_args(argv)
     if not a.tracking_uri.partition("?")[0].startswith("sqlite:///"):
@@ -521,22 +490,54 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     return a
 
 
+def _check_disk(
+    out: Path,
+    runs: pd.DataFrame,
+    methods: Sequence[str] | None,
+    *,
+    log: bool,
+    masters: bool,
+) -> None:
+    """Refuse a run whose estimated output and MLflow copy exceed the free disk.
+
+    Raises:
+        SystemExit: If the free space of ``out``'s disk is below `UNIT_GB` per unit,
+            times 2 with ``masters`` logged, 1.6 with other logging, 1 without.
+    """
+    sel = runs if methods is None else runs[runs["method"].isin(methods)]
+    n = len(sel[["budget", "method", "config_ref"]].drop_duplicates())
+    need = n * UNIT_GB * (1 + log * (1.0 if masters else 0.6))
+    probe = next(p for p in (out, *out.parents) if p.exists())
+    free = shutil.disk_usage(probe).free / 1e9
+    if free < need:
+        msg = f"{n} units need about {need:.1f} GB, {free:.1f} GB free on {probe}"
+        raise SystemExit(msg)
+    logger.info("%d units: about %.1f GB needed, %.1f GB free", n, need, free)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the training analysis of the given phases and methods.
 
+    A case that cannot be replayed fails only its method (``failed.json`` in its
+    folder); the other methods finish and the exit code is 1. Any other error (the
+    store, a detector, a plot, no disk space) stops the command: rerun it, finished
+    methods are skipped.
+
     Raises:
-        SystemExit: If a method is unknown, or some case could not be replayed (the
-            other methods still ran, and the failed one is redone by the next run).
+        SystemExit: If a method is unknown, the disk is too full, or some case could
+            not be replayed.
     """
     a = _parse(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     frames = load_phases(a.phases, a.metrics_root, skip_missing=a.skip_missing)
     methods = None if a.method == ["all"] else a.method
+    _check_disk(a.out, frames["runs"], methods, log=not a.no_log, masters=a.log_masters)
+    loaded = [p for p in a.phases if p in set(frames["runs"]["phase"])]
     try:
         summary = analyse_training(
             frames, methods=methods, out=a.out, tracking_uri=a.tracking_uri,
-            metrics_root=a.metrics_root, phases=a.phases, log=not a.no_log,
-            force=a.force, log_skip=("masters",) if a.log_no_masters else (),
+            metrics_root=a.metrics_root, phases=loaded, log=not a.no_log,
+            force=a.force, log_skip=() if a.log_masters else LOG_SKIP,
         )  # fmt: skip
     except ValueError as e:
         raise SystemExit(str(e)) from e
