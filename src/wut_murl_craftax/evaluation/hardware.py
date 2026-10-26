@@ -20,6 +20,7 @@ import sys
 from collections.abc import Generator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
+from urllib.parse import parse_qs
 
 import numpy as np
 import pandas as pd
@@ -81,6 +82,8 @@ TUNING_PHASES = frozenset({"tune-coarse", "tune-fine"})
 _BUDGET = re.compile(r"(\d+)([mb])")
 _BUDGET_UNIT = {"m": 10**6, "b": 10**9}
 _NAN = math.nan
+STORE_TIMEOUT_S = 300.0
+"""SQLite busy timeout of store reads (R103); ``?timeout=`` in a URI overrides it."""
 
 
 class Series(NamedTuple):
@@ -113,13 +116,26 @@ def show_metric(value: float | None, spec: str = "{:.1f}") -> str:
 
 
 @contextlib.contextmanager
-def _open(store: Store) -> Generator[sqlite3.Connection]:
-    """A read-only connection to the store (an open one is passed through)."""
+def open_store(store: Store) -> Generator[sqlite3.Connection]:
+    """A read-only connection to the store (an open one is passed through).
+
+    The store runs in rollback-journal mode, so a read blocks the writers' commits
+    while it lasts (R103): callers keep connections short and fetch every row. The
+    busy timeout is `STORE_TIMEOUT_S`, or ``?timeout=<s>`` of a ``sqlite:///`` URI.
+
+    Raises:
+        ValueError: For a URI of another kind of store.
+    """
     if isinstance(store, sqlite3.Connection):
         yield store
         return
-    path = Path(str(store).removeprefix("sqlite:///")).expanduser().resolve()
-    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    text, _, query = str(store).partition("?")
+    if "://" in text and not text.startswith("sqlite:///"):
+        msg = f"expected a sqlite:/// tracking URI, got {store}"
+        raise ValueError(msg)
+    timeout = float(parse_qs(query).get("timeout", [str(STORE_TIMEOUT_S)])[0])
+    path = Path(text.removeprefix("sqlite:///")).expanduser().resolve()
+    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=timeout)
     try:
         yield con
     finally:
@@ -132,7 +148,7 @@ def system_keys(store: Store, run_id: str) -> list[str]:
     Raises:
         ValueError: If the run is not in the store (a typo is not "nothing logged").
     """
-    with _open(store) as con:
+    with open_store(store) as con:
         _tags(con, run_id)
         rows = con.execute(
             "SELECT DISTINCT key FROM metrics WHERE run_uuid = ? AND key >= ? "
@@ -294,7 +310,7 @@ def hardware_summary(
     Raises:
         ValueError: If the run is not in the store or its ``train/wall_s`` decreases.
     """
-    with _open(store) as con:
+    with open_store(store) as con:
         tags = _tags(con, run_id)
         series = _load(con, run_id)
     learner = tags.get("learner_device", "")

@@ -5,12 +5,14 @@ domain: interpretation
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, interpretation]
 created: 2026-10-24
-updated: 2026-10-24
+updated: 2026-10-25
 related-code:
   - "[[src/wut_murl_craftax/interpretation/__init__.py]]"
   - "[[src/wut_murl_craftax/interpretation/features.py]]"
   - "[[src/wut_murl_craftax/interpretation/dataset.py]]"
   - "[[src/wut_murl_craftax/interpretation/distill.py]]"
+  - "[[src/wut_murl_craftax/interpretation/tree_policy.py]]"
+  - "[[src/wut_murl_craftax/interpretation/rules.py]]"
 ---
 # interpretation
 
@@ -20,6 +22,8 @@ related-code:
 - `features`: decode symbolic observations of both games into named, human-readable tree inputs.
 - `dataset`: label the states a final policy visits with its network's outputs, per seed split.
 - `distill`: fit the grid of decision trees to a dataset, score them on held-out states, read the complexity levels off the curve.
+- `tree_policy`: play a fitted tree as a policy and score it in closed loop against its network.
+- `rules`: read a fitted tree as rules in plain words, rank its features, break down where it fails, and report the top-level rules of the skill methods from their greedy table.
 
 ## Public surface
 
@@ -40,19 +44,42 @@ related-code:
 - `fidelity_curve(trees, test) -> list[dict]`: one row per tree (`kind`, `size`, `leaves`, `depth`, `top1`, `expected`, `val_top1`, `memory`, `skill`: whether the tree reads memory-proxy or current-skill columns, so the fits of one recurrent policy stay distinguishable); plain values, ready for `complexity.csv`.
 - `complexity(curve) -> {"L80", "L90", "L95", "depth_L90"}`: smallest leaf-grid `max_leaf_nodes` with test top-1 >= 0.8, 0.9, 0.95 (None = never, reported as "> 4096") and the depth of the L90 tree; depth-grid rows are ignored.
 - `workers` runs the independent fits in threads (the tree builder releases the GIL); trees are identical for any count.
+- `TreePolicy(tree, game, top_level=None)`: a `FittedTree` as a deterministic policy under both protocols.
+  - `init_carry(n)` and `step(params, carry, obs, key, greedy, reward=None, done=None)`: `training.interface.Policy`, what `rollout_seeds` drives.
+  - `__call__(state, rng)` and `name = "tree"`: `visualisation.rollout.Policy`, for `play`.
+  - `extras(carry)`: the memory proxies it read (`prev_action`, `steps_since_unlock`) and the top level's extras.
+  - `ValueError`: a column it cannot compute (skill columns without `top_level`); a missing `reward` in `step` when the tree reads `steps_since_unlock` or has a top level; `__call__` with a top level, whose params arrive through `step` only.
+- `TreeCarry`: `memory` (proxies, last action, last health, started) and `top` (the top level's carry, `()` without one).
+- `tree_rollouts(tree, run, update, seeds) -> dict`: eval-file arrays (`rollout_seeds`) of the tree played greedily with the eval keys; a run whose policy has `extras` is two-level and becomes the top level. The online `steps_since_unlock` is checked against the count from `events/unlocked`: `RuntimeError` on a mismatch when the tree reads it, a warning otherwise.
+- `closed_loop(tree, run, update, seeds=TEST_SEEDS, network=None) -> ClosedLoop`: per-seed greedy scores (% of max) of the tree and of the network on the same seeds; `network` reuses the network's scores of an earlier call (`ValueError` unless one per seed). `ClosedLoop.fidelity` = mean tree score / mean network score (NaN when the network's is <= 0).
+- `CLOSED_LOOP_LEAVES` (256): the one leaf-grid size played in closed loop (preflight I4).
+- `extract_rules(tree) -> list[Rule]`: one `Rule(conditions, action, samples, share, purity)` per leaf, left to right; `Condition(feature, lo, hi)` is an inclusive interval, the conditions of a path merged per feature. Integer columns cut at `floor(t)`; the one fractional column, `light_level`, keeps the cut as the float32 values either side of the threshold and prints them as the shortest float32 text, so the printed rule selects exactly what the tree sends to the leaf. `action` is the primitive action id (a skill name for a key tree).
+- `rules_text(tree, game=None) -> str`: one numbered line per leaf, `IF <conditions> THEN <ACTION> (<share> of states, purity <p>)`; `game` defaults to Classic when every observation column is one of its 60, else Craftax. `condition_text(condition, game="craftax")` prints one condition in decoded units; a memory-proxy condition ends in `[memory proxy]`, so recurrent rules show them apart.
+- `paths_to(tree, action) -> list[Rule]`: every leaf that plays an action id or name (`"DO"`, any case); `action_id(action)` resolves it (`ValueError` on an unknown name).
+- `importance(tree, test, repeats=5, seed=0) -> list[dict]`: permutation importance on test states, one row per tree column (`feature`, `group` = observation, memory or skill, `importance` = drop in top-1 fidelity, `std`), largest first; columns the tree never splits on are 0 without a shuffle. `ValueError` without test states.
+- `failure_breakdown(tree, test) -> dict`: `top1`, `groups` (`ACTION_GROUPS` keys), `confusion[i, j]` (network action in group i, tree action in group j) and `by_floor` (`floor`, `states`, `top1`, floors ascending).
+- `ACTION_GROUPS`: group -> action names (noop, move, do, rest, place, craft, ladder, combat, potion, upgrade), a partition of the `Action` enum (Classic shares ids 0-16).
+- `top_level_rules(table, update=None, tried=False, top=10) -> TopLevel`: `table` is the frame or parquet file of `eval/smdp_greedy_table.parquet` (SMDP and Dyna-Q); rows are filtered to `update` (default the largest: the table holds every checkpoint; pass it when the final checkpoint stored no keys). Fields: `update`, `n_rules` (visited keys), `skills` (distinct greedy skills, most frequent first), `counts`, `levels` (`complexity` of the key tree: L80, L90, L95 over keys, `depth_L90`), `curve`, `rules` and `tree_text` (the L90 tree, else the `KEY_LEAVES` = 16-leaf one), `top` (the `top` highest-value keys: `key`, `skill`, `value`, `text`), `n_optimistic` and `optimistic_share` (keys whose `greedy_skill` differs from `greedy_tried_skill`, counted on all keys of the checkpoint, either view). **The tried view is the informative one**: at `q_init` 10 most final keys were never updated off it, so the default argmax is a tie broken by skill order (on 4 sampled final-1m tables 96-100% of keys), and the default's top-value rules are ties at 10.00. Report the tried view as the main one and the default beside it, with `optimistic_share`. `tried=True` uses `greedy_tried_skill` and `greedy_tried_value` and drops keys without a tried skill. `ValueError` for a table without rows; an `update` without rows gives an empty `TopLevel`.
 - Ordinal codes (a split such as `direction <= 2.5` means "left or right"; rules must translate thresholds into sets):
 
 | Column | Codes |
 |---|---|
 | `direction` | 1 left, 2 right, 3 up, 4 down (`Action` ids) |
 | `facing_creature` | 0 none, 1 melee, 2 passive, 3 ranged, 4 enemy projectile |
-| `facing_block` | `BlockType` id; 0 (`INVALID`) is an unlit tile |
+| `facing_block` | `BlockType` id; 0 (`INVALID`) is an unlit tile, printed "unlit/invalid" |
+| `prev_action` | -1 start, else `Action` id |
+| `<target>_row_sign`, `hostile_row_sign` | -1 above, 0 level or nothing in view, 1 below |
+| `<target>_col_sign`, `hostile_col_sign` | -1 left, 0 level or nothing in view, 1 right |
+
+`rules` prints these by name, never as a threshold: the codes an interval selects, or "not" plus the other codes when those are fewer ("facing_creature is not none"); an interval that selects no code raises `ValueError`.
 
 ## Data flow
 
 - In: flat symbolic observations (`featurize`); runs and network outputs from [[visualisation]] (`EvalRun`, `network_outputs`), final scores from MLflow.
 - `collect`: the stored stochastic eval file of the checkpoint when it holds every seed (the validation split), else `rollout_seeds` in batches of 64; then per episode `replay_episode` (observations, dones, unlock events), `outputs` twice over the whole episode (stochastic `probs`, greedy label), uniform subsample, `featurize` on the kept rows only.
 - `fit_grid`: one column-restricted float32 matrix per split, shared by all 21 fits; each fit is scored on the validation states at once (`val_top1`).
+- `closed_loop`: the network's greedy `rollout_seeds`, then the same with the run's policy swapped for a `TreePolicy` (`dataclasses.replace`), so both play the eval keys; returns from the events (`eval_returns`).
+- `rules`: a tree's leaves are walked with scikit-learn's arrays (`tree_`), no re-prediction; `importance` and `failure_breakdown` predict on the test matrix in the tree's columns; `top_level_rules` fits its own trees on the final checkpoint's keys, each key one row.
 - Out: `outputs/interpretation/<budget>/` (datasets, trees, rules, `complexity.csv`).
 
 ## Invariants
@@ -70,7 +97,16 @@ related-code:
 - Rows follow the order of `seeds`, then the step.
 - Trees are fitted on train states only; validation states only score (`val_top1`), test states give every reported fidelity and L value.
 - Memory proxies reach a tree only through `feature_columns`: never for a feed-forward policy, for a recurrent one by default and reported apart from the fit without them.
+- A tree policy computes its columns as `collect` does: `featurize` (jax.numpy), `prev_action` the action played one step earlier (-1 at a start), `steps_since_unlock` reset by an unlock; `step` detects an unlock as reward minus 0.1 x the health change above 0.5 (the smallest unlock weight is 1), `__call__` from the state's achievements.
+- Tree splits run in float32 with each threshold rounded down to float32, so a JAX tree plays exactly what scikit-learn predicts.
+- Two-level trees replace only the skill network: the top level gets params, key, greedy, reward and done and keeps choosing and ending skills; primitive skills keep their fixed action; an `SMDPPolicy` carry gets the played action as its last action.
 - Complexity levels read the leaf grid only; the depth grid is a second view of the same data and never moves L80, L90 or L95.
+
+- The leaves of a rules tree partition the states: the merged conditions of one leaf select exactly the rows the tree sends to it.
+- Rule text prints decoded units only: counts and levels as integers, flags as their name, ordinal codes as names; memory proxies carry a suffix and importance rows a `group`, so a recurrent policy's memory use is reported apart from its observation features.
+- The key tree has no held-out keys: every visited key is a rule of the top level, so its fidelity is on the keys themselves (`min_samples_leaf=1`) and a table with one greedy skill gets L90 = 2 (the grid's smallest size) from a one-leaf tree.
+- The greedy skill of a key is the unmasked argmax of its row, so an untried optimistic entry can win; `tried=True` is the view without them.
+- Only the final checkpoint is read: the greedy table holds every checkpoint, so rows are always filtered to one `update`.
 
 ## Known issues
 
@@ -78,6 +114,8 @@ related-code:
 
 ## Tests
 
+- `tests/interpretation/test_rules.py`: a planted 8-leaf policy over 5 decoded features plus 3 noise columns (recovered by 8 leaves; `rules_text` lists 8 leaves, uses only the 5 features, prints thresholds as integers and ordinal codes by name), leaves partitioning the states and playing what the tree predicts, merged intervals, `condition_text` for every kind of column, a code-less interval refused, the game read from the columns, `paths_to` by id and name with several chains for one action, importance ranking the 5 features above noise (memory columns in their own group), a known-truth importance of 0.75, seeds and column matching, the confusion by group against a hand count and fidelity per floor, `ACTION_GROUPS` covering the enum once, and the top level on a 40-key table (final checkpoint only, 4 skills, L90 = 4, the 10 highest-value rules in words, parquet input, `tried`, an empty checkpoint, one skill, no rows).
 - `tests/interpretation/test_dataset.py`: seed splits, empty seeds refused, identical repeat collections with family and recurrent flag and outputs equal to `network_outputs` on an untrained Classic PPO checkpoint, steps since the last unlock, uniform subsampling, a recurrent toy whose labels follow its carry, a two-level toy's labels and skill columns, eval-file reuse, save and load.
 - `tests/interpretation/test_distill.py`: a synthetic policy with a known 8-leaf rule over 5 features (top-1 1.0 from 8 leaves, L90 at most 8, expected fidelity equal to top-1 for a one-hot policy and by hand for a soft one), grid sizes and tree parameters, validation fidelity, worker counts giving identical trees (features, thresholds, node sizes), memory and skill column selection (a tree splitting on a skill column, curve flags), a label only a memory proxy explains, matching by column name, `complexity` on hand-made curves.
+- `tests/interpretation/test_tree_policy.py`: actions on replayed states and 100 Classic steps of a 4-leaf tree through `play`, memory proxies online equal to `collect`'s offline ones with actions equal to scikit-learn's on those rows, both protocols playing the same episodes, errors for a missing reward (memory proxies, top level), uncomputable columns and an online unlock count off the events, a one-seed Craftax-Symbolic episode, a two-level toy keeping its skills, primitive actions and the reward and done it is handed, an `smdp-skills` checkpoint reading the played action and playing the tree's action on `collect`'s rows of learned skills, closed-loop fidelity 1 for a tree equal to its toy network, float32 splits at every threshold.
 - `tests/interpretation/test_features.py`: round trips on edited reset states of both games, hand-placed targets and creatures, darkness, ladders, fountain and tree kinds, walkable blockers, Craftax creatures, width check, numpy vs jitted jax, 10,000 observations in whole chunks.

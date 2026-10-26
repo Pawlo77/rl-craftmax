@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from _toys import CLASSIC, toy_run
 
 from wut_murl_craftax.interpretation import (
     FEATURES,
@@ -36,7 +37,6 @@ from wut_murl_craftax.visualisation.eval_rollouts import (
     stored_episode,
 )
 
-CLASSIC = "Craftax-Classic-Symbolic-v1"
 N_ACTIONS = 17
 MOVES = 5
 """The toy network's greedy action cycles NOOP and the four moves."""
@@ -100,26 +100,6 @@ class _SkillPolicy:
         }
 
 
-class _ToyTrainer:
-    """Registry entry of a toy policy; no params are read."""
-
-    def __init__(self, policy: Any) -> None:
-        self._policy = policy
-
-    def init(self, config: Mapping[str, Any], key: jax.Array) -> dict[str, jax.Array]:
-        del config, key
-        return {"w": jnp.zeros((), jnp.int32)}
-
-    def params(self, state: dict[str, jax.Array]) -> dict[str, jax.Array]:
-        return state
-
-    def policy(self, state: dict[str, jax.Array]) -> Any:
-        return self._policy
-
-    def env_wrapper(self, state: dict[str, jax.Array]) -> None:
-        return None
-
-
 def _mixed(action: np.ndarray, greedy: bool) -> np.ndarray:
     """Greedy one-hot, else half uniform: rows sum to 1, argmax is ``action``."""
     eps = 0.0 if greedy else 0.5
@@ -161,21 +141,14 @@ def _skill_outputs(
     return _mixed(action, greedy), np.zeros(len(obs), np.float32)
 
 
-def _toy_run(root: Path, policy: Any) -> EvalRun:
-    root.mkdir()
-    (root / "config.json").write_text(json.dumps({"method": "toy", "env": CLASSIC}))
-    save_checkpoint(root, 0, 0, 0.0, {"w": np.int32(0)})
-    return EvalRun.load(root, {"toy": _ToyTrainer(policy)})
-
-
 @pytest.fixture
 def counting_run(tmp_path: Path) -> EvalRun:
-    return _toy_run(tmp_path / "counting", _CountingPolicy())
+    return toy_run(tmp_path / "counting", _CountingPolicy())
 
 
 @pytest.fixture
 def skill_run(tmp_path: Path) -> EvalRun:
-    return _toy_run(tmp_path / "skills", _SkillPolicy())
+    return toy_run(tmp_path / "skills", _SkillPolicy())
 
 
 @pytest.fixture(scope="module")
