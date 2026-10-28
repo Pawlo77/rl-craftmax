@@ -52,6 +52,9 @@ this folder, when it exists.
 - One fixed colour per category, shown once in a standalone legend figure; no repeated
   legends. Other legends sit outside the data.
 - Nothing cropped, no overlapping text, no lone category label; compact for the column.
+- Paper-ready proportions: exact column or double width, height from a small set of
+  aspect ratios, fonts sized for 1:1 inclusion (never scaled in LaTeX), tiled panels
+  identical in size.
 - An automated audit over every figure kind, then look at every rendered PNG.
 
 ## Pitfalls
