@@ -44,28 +44,24 @@ from ..visualisation import charts
 from . import compare
 from .figures import (
     BLOCK_TITLES,
-    PENDING,
+    Figs,
+    Shape,
     Theme,
-    _budget_name,
     _budget_steps,
     _cmap,
     _color,
     _figure,
-    _finish,
     _gid,
     _ink_on,
     _labels,
     _no_data,
-    _panel_title,
-    _pending,
-    _placeholder,
     _save,
-    _stack,
+    _single_budget,
     _style,
     _style_of,
     _theme,
-    _title,
     method_handles,
+    wants,
 )
 from .hard import ACHIEVEMENTS, TIERS, _cells, death_causes, stall_ccdf, stall_stats
 from .hard import stall_table as _stall_table
@@ -88,9 +84,10 @@ GAME_NAMES = {
     "F14": "actions",
     "F15": "resources",
     "F16": "advanced",
-    "F17": "radar_{budget}",
+    "F17": "radar_{method}",
 }
-"""Figure id -> file stem; ``{method}`` and ``{budget}`` are filled per file."""
+"""Figure id -> file stem or the prefix of its stems (one panel per file, such as
+``funnel_tech``, ``race_steps_main``); ``{method}`` is filled per file."""
 NOT_LOGGED = "not logged"
 """What a figure says of a family a run never logged (R78)."""
 NOT_RECORDED = "not recorded"
@@ -113,17 +110,20 @@ SPLIT_GAP = 2.0
 """Rows apart (in method offsets) of the speedrun boxes of two milestones."""
 DODGE = 0.62
 """Total vertical spread of the methods inside one category row."""
-ROW_MM = 1.45
-"""Millimetres per method inside one category row of a dot panel."""
-LEGEND_MM = 24.0
-"""Notes and margins of one report figure; the legend is added by `_legend_mm`."""
-LEGEND_ROW_MM = 3.6
-"""Millimetres per row of a legend or of the notes."""
-PANEL_MM = 16.0
-"""Title and x axis allowance of one report panel."""
 BOX_ALPHA = 0.4
-HEAT_TICK_MM = 22.0
-"""Method labels under a heat map."""
+DODGE_MM = 1.3
+"""Millimetres per method inside one category row of a dot panel."""
+GAP_MM = 1.5
+"""Millimetres between two category rows of a dot panel."""
+MAX_DOT_ROWS = 5
+"""Category rows a dot panel holds (each row has a mark per method): a longer list is a
+profile along x, a fixed-aspect figure."""
+SPLIT_ROWS = 6
+"""Most milestones of the speedrun splits (the earliest on the ladder)."""
+HEAT_ROWS = 12
+"""Most rows of a heat map (a creature or action list): the rest go to the caption."""
+KILL_MIN = 0.01
+"""Mean kills per episode below which a creature is not a row (the caption names it)."""
 
 
 class Ctx(NamedTuple):
@@ -142,15 +142,17 @@ class Ctx(NamedTuple):
 Drawer = Callable[[Axes, Theme, Ctx, list[str]], None]
 
 
-class Panel(NamedTuple):
-    """One panel of a figure, drawn once per benchmark."""
+class FigPanel(NamedTuple):
+    """One figure file of a family: its stem, caption and how it is drawn and sized."""
 
+    stem: str
     title: str
+    """Short name of the figure (the caption's first cell)."""
+    caption: str
+    """What is drawn and how to read it; the drawer's notes are appended."""
     draw: Drawer
-    mm: Callable[[Ctx], float]
-    """Report height in millimetres, title and axis included."""
-    narrow: bool = True
-    """Wrap the title for row labels beside it."""
+    size: Callable[[Theme, Ctx], Figure]
+    """The report figure of the right size class (the video is always 1080p)."""
 
 
 # ----------------------------------------------------------------------- plumbing
@@ -176,30 +178,17 @@ def _method_handles(th: Theme, names: Sequence[str]) -> list[Line2D]:
     return method_handles(th, names)
 
 
-def _grid(fig: Figure, th: Theme, mm: Sequence[Sequence[float]]) -> list[list[Axes]]:
-    """Axes ``[row][col]``: stacked in the report column, a grid when wide."""
-    rows, cols = len(mm), len(mm[0])
-    if th.wide:
-        grid = fig.subplots(
-            rows, cols, squeeze=False, height_ratios=[max(r) for r in mm]
-        )
-        return [list(r) for r in grid]
-    flat = fig.subplots(
-        rows * cols, 1, squeeze=False, height_ratios=list(itertools.chain(*mm))
-    )
-    axes = [ax for r in flat for ax in r]
-    return [axes[i * cols : (i + 1) * cols] for i in range(rows)]
+def _ctx(frames: Frames, n_boot: int = BOOTSTRAP_N, seed: int = 0) -> Ctx | None:
+    """The one benchmark's `Ctx`, None without tuned runs.
 
-
-def _legend_mm(th: Theme, entries: int) -> float:
-    """Report height of the notes and of a legend of ``entries`` methods."""
-    return LEGEND_MM + ceil(entries / th.legend_cols) * LEGEND_ROW_MM
-
-
-def _height(th: Theme, mm: Sequence[Sequence[float]], entries: int) -> float:
-    """Report figure height: every panel stacked, or the tallest of each row."""
-    rows = [max(r) for r in mm] if th.wide else [sum(r) for r in mm]
-    return sum(rows) + _legend_mm(th, entries)
+    Raises:
+        ValueError: If ``frames`` hold several benchmarks (`results.draw` cuts them).
+    """
+    ctxs = _contexts(frames, n_boot, seed)
+    if len(ctxs) > 1:
+        msg = f"draw one benchmark at a time, got {[c.budget for c in ctxs]}"
+        raise ValueError(msg)
+    return ctxs[0] if ctxs else None
 
 
 def _unique(notes: Sequence[str]) -> list[str]:
@@ -207,34 +196,82 @@ def _unique(notes: Sequence[str]) -> list[str]:
 
 
 def _draw(
-    name: str,
     frames: Frames,
     out_dir: Path,
     theme: str,
     width: str,
-    panels: Sequence[Panel],
+    panels: Sequence[FigPanel],
     *,
-    notes: Sequence[str] = (),
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """The figure of ``panels`` per benchmark, written as ``name`` in ``out_dir``."""
+) -> Figs:
+    """One file per panel of the family, each with its caption (notes folded in)."""
     th = _theme(theme, width)
-    ctxs = _contexts(frames, n_boot, seed)
-    if not ctxs:
-        return _no_data(name, th, out_dir, "no tuned runs for the in-game figures")
-    mm = [[p.mm(c) for p in panels] for c in ctxs]
-    names = list(dict.fromkeys(m for c in ctxs for m in c.names))
-    fig = _figure(th, _height(th, mm, len(names)))
-    axes = _grid(fig, th, mm)
-    extra: list[str] = []
-    for row, ctx in zip(axes, ctxs, strict=True):
-        for ax, panel in zip(row, panels, strict=True):
-            panel.draw(ax, th, ctx, extra)
-            _title(ax, th, _panel_title(ctx.budget, panel.title), narrow=panel.narrow)
-    pending = _pending([c.budget for c in ctxs])
-    _finish(fig, th, _method_handles(th, names), [*notes, *_unique(extra), *pending])
-    return _save(fig, th, out_dir, name)
+    ctx = _ctx(frames, n_boot, seed)
+    if ctx is None:
+        text = "no tuned runs for the in-game figures"
+        return {panels[0].stem: _no_data(panels[0].stem, th, out_dir, text)}
+    figs: Figs = {}
+    for panel in panels:
+        if not wants(th, panel.stem):
+            continue
+        fig = panel.size(th, ctx)
+        ax = fig.add_subplot()
+        notes: list[str] = []
+        panel.draw(ax, th, ctx, notes)
+        text = " ".join([panel.caption, *_unique(notes)])
+        _save(fig, th, out_dir, panel.stem, title=panel.title, description=text)
+        figs[panel.stem] = fig
+    return figs
+
+
+def _curve_size(th: Theme, _ctx: Ctx) -> Figure:
+    return _figure(th, shape=Shape.CURVE)
+
+
+def _square_size(th: Theme, _ctx: Ctx) -> Figure:
+    return _figure(th, shape=Shape.SQUARE)
+
+
+def _dot_pitch(ctx: Ctx) -> float:
+    """Millimetres of one category row of a dot panel: a dodged mark per method."""
+    return len(ctx.names) * DODGE_MM + GAP_MM
+
+
+def _dots_size(
+    rows: Callable[[Ctx], int], extra_mm: float = 0.0
+) -> Callable[[Theme, Ctx], Figure]:
+    """Size of a dot panel of ``rows(ctx)`` category rows, each holding every method."""
+
+    def size(th: Theme, ctx: Ctx) -> Figure:
+        n = max(1, rows(ctx))
+        if n > MAX_DOT_ROWS:  # a long list is a profile along x (`_profile_panel`)
+            return _figure(th, shape=Shape.CURVE)
+        return charts.category_figure(th, n, extra_mm, _dot_pitch(ctx))
+
+    return size
+
+
+def _bars_size(extra_mm: float = 0.0) -> Callable[[Theme, Ctx], Figure]:
+    """Size of a panel with one row per method."""
+
+    def size(th: Theme, ctx: Ctx) -> Figure:
+        return charts.category_figure(th, len(ctx.names), extra_mm)
+
+    return size
+
+
+def _heat_size(rows: Callable[[Ctx], int]) -> Callable[[Theme, Ctx], Figure]:
+    """Size of a heat map: one row per label and room for the rotated method names."""
+
+    def size(th: Theme, ctx: Ctx) -> Figure:
+        extra = charts.label_inset_mm(th, ctx.names, pad_mm=0.0)
+        return _figure(
+            th, shape=Shape.ROWS, rows=max(1, rows(ctx)),
+            base_mm=charts.ROWS_BASE_MM + extra,
+        )  # fmt: skip
+
+    return size
 
 
 def _legend_below(ax: Axes, th: Theme, handles: Sequence[Any], cols: int) -> None:
@@ -291,10 +328,6 @@ def _interval(values: np.ndarray, how: str, n_boot: int, seed: int) -> Interval 
     )
 
 
-def _dot_mm(ctx: Ctx, rows: int) -> float:
-    return rows * (len(ctx.names) * ROW_MM + 2.0) + PANEL_MM
-
-
 def _dodge(n: int) -> np.ndarray:
     return np.linspace(-DODGE / 2, DODGE / 2, n) if n > 1 else np.zeros(1)
 
@@ -347,18 +380,18 @@ def _dot_panel(
             )
             dot.set_gid(_gid(kind, ctx.budget, method, key))
     if cats.unlogged:
-        notes.append(
-            f"{_budget_name(ctx.budget)}: {', '.join(cats.unlogged)} "
-            f"training entropy {NOT_LOGGED} (R78)."
-        )
+        notes.append(f"{', '.join(cats.unlogged)} training entropy {NOT_LOGGED} (R78).")
     absent = [m for m in ctx.names if m not in seen]
     if not seen:
         _empty(ax, th, f"{missing}: {', '.join(absent)}")
         return
     if absent:
-        notes.append(f"{_budget_name(ctx.budget)}: {', '.join(absent)} {missing}.")
+        notes.append(f"{', '.join(absent)} {missing}.")
     _style(ax, th)
-    ax.set_yticks(range(len(cats.keys)), list(cats.labels))
+    if len(cats.keys) == 1:  # the x label names it: a lone row label would repeat it
+        ax.set_yticks([])
+    else:
+        ax.set_yticks(range(len(cats.keys)), list(cats.labels))
     ax.set_ylim(len(cats.keys) - 0.5, -0.5)
     ax.tick_params(axis="y", length=0)
     ax.grid(axis="y", visible=False)
@@ -366,6 +399,64 @@ def _dot_panel(
         ax.set_xscale("log")
         ax.xaxis.set_major_formatter(FuncFormatter(_num_text))
     _labels(ax, th, xlabel)
+
+
+def _profile_panel(
+    ax: Axes,
+    th: Theme,
+    ctx: Ctx,
+    kind: str,
+    cats: Cats,
+    ylabel: str,
+    notes: list[str],
+    *,
+    how: str = "mean",
+    log: bool = False,
+) -> None:
+    """Per ordered category, each method's estimate with its bootstrap interval, joined.
+
+    The transposed dot panel for a long ordered list (a funnel): categories along x,
+    one line per method, a short vertical interval at each point.
+    """
+    offsets = np.linspace(-0.25, 0.25, len(ctx.names)) if len(ctx.names) > 1 else [0.0]
+    seen: set[str] = set()
+    for j, method in enumerate(ctx.names):
+        style = _style_of(th, method)
+        xs, ys = [], []
+        for i, key in enumerate(cats.keys):
+            est = _interval(cats.values(method, key), how, ctx.n_boot, ctx.seed)
+            if est is None:
+                continue
+            x = i + offsets[j]
+            ax.vlines(
+                x, est.lo, est.hi, colors=style["color"], linewidth=th.lw * 0.6,
+                gid=_gid("ci", ctx.budget, method, key),
+            )  # fmt: skip
+            xs.append(x)
+            ys.append(est.estimate)
+        if not xs:
+            continue
+        seen.add(method)
+        (line,) = ax.plot(
+            xs, ys, color=style["color"], ls=style["ls"], lw=th.lw * 0.8,
+            marker=style["marker"], ms=th.ms * 0.8,
+        )  # fmt: skip
+        line.set_gid(_gid(kind, ctx.budget, method))
+    absent = [m for m in ctx.names if m not in seen]
+    if not seen:
+        _empty(ax, th, f"{NOT_RECORDED}: {', '.join(absent)}")
+        return
+    if absent:
+        notes.append(f"{', '.join(absent)} {NOT_RECORDED}.")
+    _style(ax, th, grid="both")
+    ax.set_xticks(range(len(cats.keys)), list(cats.labels), rotation=90)
+    ax.set_xlim(-0.6, len(cats.keys) - 0.4)
+    ax.tick_params(axis="x", length=0)
+    ax.grid(axis="x", visible=False)
+    if log:
+        ax.set_yscale("log")
+        ax.yaxis.set_major_formatter(FuncFormatter(_num_text))
+    _labels(ax, th, None, ylabel)
 
 
 def _num_text(v: float, _pos: int | None = None) -> str:
@@ -387,6 +478,15 @@ def _cell_number(value: float, narrow: bool) -> str:
     return "1.0" if text == "1.00" else text.replace("0.", ".", 1)
 
 
+def _compact(value: float) -> str:
+    """A number for a narrow cell: ``12``, ``1.5``, ``.35`` (never wider than four)."""
+    if value >= 10:
+        return f"{value:.0f}"
+    if value >= 1:
+        return f"{value:.1f}"
+    return f"{value:.2f}".replace("0.", ".", 1)
+
+
 def _heat(
     ax: Axes,
     th: Theme,
@@ -397,26 +497,43 @@ def _heat(
     *,
     annotate: bool = False,
     vmax: float | None = None,
+    solo: int | None = None,
 ) -> None:
-    """Rows ``labels`` down, ``ctx.names`` across; NaN cells are the surface."""
-    top = float(np.nanmax(matrix)) if np.isfinite(matrix).any() else 1.0
-    norm = Normalize(0.0, vmax if vmax is not None else (top or 1.0))
+    """Rows ``labels`` down, ``ctx.names`` across; NaN cells are the surface.
+
+    ``solo`` is a row with its own colour scale (a quantity of another size, like the
+    passive kills); cells carry their value when ``annotate``.
+    """
     cmap = _cmap(th, *th.seq)
-    charts.heatmap(ax, th, matrix, cmap, norm=norm, gid=_gid("heat", ctx.budget, kind))
+
+    def norm_of(part: np.ndarray, cap: float | None = None) -> Normalize:
+        top = float(np.nanmax(part)) if np.isfinite(part).any() else 1.0
+        return Normalize(0.0, cap if cap is not None else (top or 1.0))
+
+    if solo is None:
+        parts = [(matrix, norm_of(matrix, vmax))]
+    else:
+        main = matrix.copy()
+        main[solo] = np.nan
+        alone = np.full_like(matrix, np.nan)
+        alone[solo] = matrix[solo]
+        parts = [(main, norm_of(main)), (alone, norm_of(alone))]
+    for k, (part, norm) in enumerate(parts):
+        gid = _gid("heat", ctx.budget, kind if k == 0 else f"{kind}-solo")
+        charts.heatmap(ax, th, part, cmap, norm=norm, gid=gid)
+        if annotate:
+            for i, j in zip(*np.where(np.isfinite(part)), strict=True):
+                ax.text(
+                    j + 0.5, i + 0.5, _compact(part[i, j]), ha="center", va="center",
+                    fontsize=th.font, color=_ink_on(cmap(norm(part[i, j]))),
+                )  # fmt: skip
     ax.set_xticks(np.arange(len(ctx.names)) + 0.5, ctx.names, rotation=90)
-    ax.set_yticks(np.arange(len(labels)) + 0.5, list(labels))
+    if len(labels) == 1:  # a lone row label is an axis label
+        ax.set_yticks([])
+        _labels(ax, th, None, labels[0])
+    else:
+        ax.set_yticks(np.arange(len(labels)) + 0.5, list(labels))
     ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
-    if annotate:
-        for i, j in zip(*np.where(np.isfinite(matrix)), strict=True):
-            ax.text(
-                j + 0.5,
-                i + 0.5,
-                f"{matrix[i, j]:.2f}",
-                ha="center",
-                va="center",
-                fontsize=th.font,
-                color=_ink_on(cmap(norm(matrix[i, j]))),
-            )
     for spine in ax.spines.values():
         spine.set_visible(False)
 
@@ -442,6 +559,61 @@ def _per_seed_of(
         return found.get(method, np.empty(0))
 
     return values
+
+
+# ------------------------------------------------- legacy helpers (figures_angles)
+# The comparison figures above are one panel per file (`FigPanel`, `_draw`); the
+# analysis-angle figures still lay panels out the old way until they are converted.
+
+ROW_MM = 1.45
+"""Millimetres per method inside one category row of a legacy dot panel."""
+LEGEND_MM = 24.0
+"""Notes and margins of one legacy report figure (`_legend_mm` adds the legend)."""
+LEGEND_ROW_MM = 3.6
+"""Millimetres per row of a legend or of the notes."""
+PANEL_MM = 16.0
+"""Title and x axis allowance of one legacy report panel."""
+
+
+class Panel(NamedTuple):
+    """One panel of a legacy multi-panel figure, drawn once per benchmark."""
+
+    title: str
+    draw: Drawer
+    mm: Callable[[Ctx], float]
+    """Report height in millimetres, title and axis included."""
+    narrow: bool = True
+    """Wrap the title for row labels beside it."""
+
+
+def _dot_mm(ctx: Ctx, rows: int) -> float:
+    return rows * (len(ctx.names) * ROW_MM + 2.0) + PANEL_MM
+
+
+def _grid(fig: Figure, th: Theme, mm: Sequence[Sequence[float]]) -> list[list[Axes]]:
+    """Axes ``[row][col]``: stacked in the report column, a grid when wide."""
+    rows, cols = len(mm), len(mm[0])
+    if th.wide:
+        grid = fig.subplots(
+            rows, cols, squeeze=False, height_ratios=[max(r) for r in mm]
+        )
+        return [list(r) for r in grid]
+    flat = fig.subplots(
+        rows * cols, 1, squeeze=False, height_ratios=list(itertools.chain(*mm))
+    )
+    axes = [ax for r in flat for ax in r]
+    return [axes[i * cols : (i + 1) * cols] for i in range(rows)]
+
+
+def _legend_mm(th: Theme, entries: int) -> float:
+    """Report height of the notes and of a legend of ``entries`` methods."""
+    return LEGEND_MM + ceil(entries / th.legend_cols) * LEGEND_ROW_MM
+
+
+def _height(th: Theme, mm: Sequence[Sequence[float]], entries: int) -> float:
+    """Report figure height: every panel stacked, or the tallest of each row."""
+    rows = [max(r) for r in mm] if th.wide else [sum(r) for r in mm]
+    return sum(rows) + _legend_mm(th, entries)
 
 
 # --------------------------------------------------------------------------- F6
@@ -565,9 +737,7 @@ def _race_panel(
     ax.set_xlim(*limits)
 
 
-def _race_notes(
-    table: pd.DataFrame, runs: pd.DataFrame, budget: str, clock: str
-) -> list[str]:
+def _race_notes(table: pd.DataFrame, runs: pd.DataFrame, clock: str) -> list[str]:
     """Methods without the family, methods with fewer logging seeds, the R97 note."""
     notes = []
     logged = table.groupby("method")["n"].first()
@@ -578,7 +748,7 @@ def _race_notes(
     short = [f"{m} {int(n)} of {count[m]}" for m, n in logged.items() if n < count[m]]
     if short:
         notes.append(f"Seeds that logged the race: {', '.join(short)}.")
-    return notes + _wall_notes(table, budget, clock)
+    return notes + _wall_notes(table, clock)
 
 
 def _ineligible_note(table: pd.DataFrame, rows: Sequence[str], where: str) -> list[str]:
@@ -594,11 +764,11 @@ def _ineligible_note(table: pd.DataFrame, rows: Sequence[str], where: str) -> li
     return [text]
 
 
-def _wall_notes(table: pd.DataFrame, budget: str, clock: str) -> list[str]:
+def _wall_notes(table: pd.DataFrame, clock: str) -> list[str]:
     notes: list[str] = []
     if clock == "wall":
         walls = sorted({w for w in table["wall_note"].dropna() if w})
-        notes += [f"{_budget_name(budget)} wall-clock: {w}." for w in walls]
+        notes += [f"Wall-clock: {w}." for w in walls]
     return notes
 
 
@@ -618,32 +788,6 @@ def _race_limits(full: pd.DataFrame, budget: str, clock: str) -> tuple[float, fl
     return low, high
 
 
-def _race_heights(th: Theme, sizes: Mapping[tuple[str, str], int]) -> list[float]:
-    """Report height per stacked panel, or per benchmark row when wide."""
-    if not th.wide:
-        return [n * th.pitch_mm + PANEL_MM for n in sizes.values()]
-    rows: dict[str, int] = {}
-    for (budget, _block), n in sizes.items():
-        rows[budget] = max(rows.get(budget, 0), n)
-    return [n * th.pitch_mm + PANEL_MM for n in rows.values()]
-
-
-def _race_layout(
-    fig: Figure, th: Theme, sizes: Mapping[tuple[str, str], int], heights: list[float]
-) -> list[Axes]:
-    """One axes per (budget, block): stacked, or a benchmark x block grid when wide."""
-    if not th.wide:
-        return _stack(fig, th, [float(n) for n in sizes.values()])
-    budgets = list(dict.fromkeys(b for b, _ in sizes))
-    grid = fig.subplots(
-        len(budgets), len(compare.BLOCKS), squeeze=False, height_ratios=heights
-    )
-    axes = [grid[budgets.index(b), compare.BLOCKS.index(k)] for b, k in sizes]
-    for ax in grid.ravel():
-        ax.set_visible(any(ax is a for a in axes))
-    return axes
-
-
 def race(
     frames: Frames,
     out_dir: Path | None,
@@ -652,18 +796,20 @@ def race(
     width: str = "column",
     clock: str = "steps",
     upto: int | None = None,
-) -> Figure:
-    """F6 ``race_steps`` / ``race_wall``: median first unlock of each achievement.
+) -> Figs:
+    """F6 ``race_<clock>_<block>``: median first unlock of each achievement.
 
-    Achievements down (tier, floor, game order; those some method is eligible for),
-    the median over seeds on a log x axis per method with 25th-75th percentile
-    whiskers, the winner ringed; one panel per (budget, block), a method racing only
-    inside its block. Medians, eligibility and winners are `compare.race_table`.
-    ``upto`` (env steps) draws only the first unlocks before that step, on the axes of
-    the full race (the frames of the race GIF); ``out_dir=None`` writes no file.
+    Achievements down (tier, floor, game order; those some method is eligible for, the
+    same rows in both blocks), the median over seeds on a log x axis per method with
+    25th-75th percentile whiskers, the winner ringed; one file per block, a method
+    racing only inside its block. Medians, eligibility and winners are
+    `compare.race_table`. ``upto`` (env steps) draws only the first unlocks before that
+    step, on the axes of the full race (the frames of the race GIF); ``out_dir=None``
+    writes no file.
 
     Raises:
-        ValueError: If ``clock`` is neither ``steps`` nor ``wall``.
+        ValueError: If ``clock`` is neither ``steps`` nor ``wall``, or ``out_dir`` is
+            None and there is nothing to race.
     """
     if clock not in ("steps", "wall"):
         msg = f"clock must be 'steps' or 'wall', got {clock!r}"
@@ -675,58 +821,49 @@ def race(
         if out_dir is None:
             msg = "no first-unlock curves for the race"
             raise ValueError(msg)
-        return _no_data(name, th, out_dir, "no first-unlock curves for the race")
+        return {
+            name: _no_data(name, th, out_dir, "no first-unlock curves for the race")
+        }
+    budget = _single_budget(tuned)
     shown = full if upto is None else compare.race_table(_masked(frames, upto))
     firsts = compare.first_unlocks(frames["curves"], tuned)
-    panels = [
-        (b, blk)
-        for b, _ in compare.budgets(tuned)
-        for blk in compare.BLOCKS
-        if ((full["benchmark"] == b) & (full["block"] == blk)).any()
-    ]
 
-    def of(table: pd.DataFrame, b: str, blk: str) -> pd.DataFrame:
-        return table[(table["benchmark"] == b) & (table["block"] == blk)]
+    def of(table: pd.DataFrame, blk: str) -> pd.DataFrame:
+        return table[(table["benchmark"] == budget) & (table["block"] == blk)]
 
-    rows = {p: _race_rows(of(full, *p)) for p in panels}
-    sizes = {p: max(len(r), 4) for p, r in rows.items()}
-    heights = _race_heights(th, sizes)
-    fig = _figure(th, sum(heights) + _legend_mm(th, 9))
-    axes = _race_layout(fig, th, sizes, heights)
-    notes: list[str] = []
-    for ax, (budget, block) in zip(axes, panels, strict=True):
-        mine = tuned[tuned["budget"] == budget]
-        spread = _spread(firsts, mine, clock, upto)
-        _race_panel(
-            ax,
-            th,
-            budget,
-            of(shown, budget, block),
-            rows[budget, block],
-            spread,
-            clock,
-            _race_limits(full, budget, clock),
-        )
+    blocks = [b for b in compare.BLOCKS if len(of(full, b))]
+    rows = _race_rows(full[full["benchmark"] == budget])  # shared: the files tile
+    limits = _race_limits(full, budget, clock)
+    left = charts.label_inset_mm(th, rows)
+    unit = "environment steps" if clock == "steps" else "wall-clock seconds"
+    figs: Figs = {}
+    for block in blocks:
+        stem = f"{name}_{block}"
+        if not wants(th, stem):
+            continue
+        fig = _figure(th, shape=Shape.ROWS, rows=max(len(rows), 4))
+        ax = charts.add_panel(fig, left_mm=left)
+        in_block = [m for b, m, _ in compare.members(tuned) if b == block]
+        mine = tuned[tuned["method"].isin(in_block)]
+        spread = _spread(firsts, tuned, clock, upto)
+        _race_panel(ax, th, budget, of(shown, block), rows, spread, clock, limits)
+        notes = [
+            *_race_notes(of(full, block), mine, clock),
+            *_ineligible_note(of(full, block), rows, f"{BLOCK_TITLES[block]} block"),
+        ]
         what = f"{BLOCK_TITLES[block]} block first unlocks"
         if upto is not None:
             what += f" up to env step {upto:,}"
-        _title(ax, th, _panel_title(budget, what), narrow=True)
-        in_block = [m for b, m, _ in compare.members(mine) if b == block]
-        notes += _race_notes(
-            of(full, budget, block),
-            mine[mine["method"].isin(in_block)],
-            budget,
-            clock,
-        )
-        notes += _ineligible_note(
-            of(full, budget, block),
-            rows[budget, block],
-            f"{_budget_name(budget)} {block} block",
-        )
-    names = list(dict.fromkeys(full["method"]))
-    pending = _pending([b for b, _ in compare.budgets(tuned)])
-    _finish(fig, th, _method_handles(th, names), [*_unique(notes), *pending])
-    return _save(fig, th, out_dir, name) if out_dir is not None else fig
+        if out_dir is not None:
+            text = (
+                f"Median first unlock ({unit}, log axis) of each achievement in the "
+                f"{BLOCK_TITLES[block]} block: dot = median over seeds, line = 25th "
+                "to 75th percentile, ring = the fastest method; a seed that never "
+                f"unlocked it counts as infinitely late. {' '.join(_unique(notes))}"
+            )
+            _save(fig, th, out_dir, stem, title=what.capitalize(), description=text)
+        figs[stem] = fig
+    return figs
 
 
 def plot_race(
@@ -735,10 +872,10 @@ def plot_race(
     theme: str = "report",
     *,
     width: str = "column",
-) -> Figure:
-    """F6: ``race_wall`` and ``race_steps`` files; returns the env-steps figure."""
-    race(frames, out_dir, theme, width=width, clock="wall")
-    return race(frames, out_dir, theme, width=width, clock="steps")
+) -> Figs:
+    """F6: the ``race_wall_*`` and ``race_steps_*`` files (every stem, both clocks)."""
+    wall = race(frames, out_dir, theme, width=width, clock="wall")
+    return {**wall, **race(frames, out_dir, theme, width=width, clock="steps")}
 
 
 # --------------------------------------------------------------------------- F7
@@ -995,7 +1132,7 @@ def _tier_pt(th: Theme, need_pt: float, rows: int) -> float:
     """One tier row in points: the label stack of the busiest tier fits in it."""
     if th.height is not None:
         return th.height * 72 * 0.8 / (rows + 1.5)
-    return max(TIER_PT, need_pt + 12, 70.0 / rows)
+    return max(TIER_PT, need_pt + 12, 35.0 / rows)
 
 
 def _tier_names(tiers: Sequence[int]) -> list[str]:
@@ -1060,9 +1197,12 @@ def _order_panel(
     ax.set_xlim(-0.05, 1.05)
     height = _tier_pt(th, need, len(tiers))
     ax.set_ylim(len(tiers) - 0.5, -max(0.5, (need + 4) / height))
-    ax.set_yticks(range(len(tiers)), _tier_names(tiers))
+    if len(tiers) == 1:  # the caption names the one tier: a lone label would repeat it
+        ax.set_yticks([])
+    else:
+        ax.set_yticks(range(len(tiers)), _tier_names(tiers))
     ax.tick_params(axis="y", length=0)
-    _labels(ax, th, "mean normalised rank (0 first, 1 last)", "tier")
+    _labels(ax, th, "mean normalised rank (0 first, 1 last)")
 
 
 def plot_order_graph(
@@ -1072,74 +1212,57 @@ def plot_order_graph(
     *,
     width: str = "column",
     method: str,
-) -> Figure:
-    """F7 ``order_<method>``: the achievement order graph of one method per benchmark.
+) -> Figs:
+    """F7 ``order_<method>``: the achievement order graph of one method.
 
     Nodes: achievements unlocked in 5% of the final stochastic eval episodes, x their
-    mean normalised rank, y their tier (only tiers with a node are drawn, the note
-    names the others); arrows: ``P(a before b) >= 0.9`` over 20
-    co-occurring episodes after transitive reduction (`order_graph`). Node names are
-    printed in the double-width and video versions.
+    mean normalised rank, y their tier (only tiers with a node are drawn, the caption
+    names the others); arrows: ``P(a before b) >= 0.9`` over 20 co-occurring episodes
+    after transitive reduction (`order_graph`). Node names are printed, so the figure
+    is drawn at the double width and as video only (`figures.DOUBLE_ONLY`).
     """
     th, name = _theme(theme, width), f"order_{method}"
-    ctxs = [c for c in _contexts(frames) if method in c.names]
-    if not ctxs:
-        return _no_data(name, th, out_dir, f"no tuned runs of {method}")
-    graphs = [order_graph(c.eps[c.eps["method"] == method]) for c in ctxs]
-    tiers = sorted({y for n, _ in graphs for _, y in _node_positions(n).values()})
-    tiers = tiers or [0]  # a graph with no node still draws its first tier
-    need = max(
-        (
-            _label_pt(th, _label_levels(_node_positions(n), th, len(graphs)))
-            for n, _ in graphs
-        ),
-        default=0.0,
-    )
-    need = need if th.wide else 0.0
+    ctx = _ctx(frames)
+    if ctx is None or method not in ctx.names:
+        return {name: _no_data(name, th, out_dir, f"no tuned runs of {method}")}
+    if not wants(th, name):
+        return {}
+    nodes, edges = order_graph(ctx.eps[ctx.eps["method"] == method])
+    pos = _node_positions(nodes)
+    tiers = sorted({y for _, y in pos.values()}) or [0]  # no node: the first tier
+    need = _label_pt(th, _label_levels(pos, th)) if th.wide else 0.0
     row = _tier_pt(th, need, len(tiers))
     axes_mm = row * (len(tiers) - 0.5 + max(0.5, (need + 4) / row)) / 72 * 25.4
-    # the title is the method's name, so there is no legend; the report figure is as
-    # tall as its drawn tier rows and label stacks need, the video frame is fixed
-    fig = _figure(th, len(ctxs) * (axes_mm + 14) + _legend_mm(th, 0))
-    axes = _stack(fig, th, [1.0] * len(ctxs))
+    fig = _figure(th, height_mm=axes_mm + 12.0, shape=Shape.ROWS)
+    ax = fig.add_subplot()
+    _order_panel(ax, th, ctx.budget, method, nodes, edges, labels=th.wide, tiers=tiers)
     notes = []
-    for ax, ctx, (nodes, edges) in zip(axes, ctxs, graphs, strict=True):
-        _order_panel(
-            ax,
-            th,
-            ctx.budget,
-            method,
-            nodes,
-            edges,
-            labels=th.wide,
-            tiers=tiers,
-            columns=len(ctxs) if th.wide else 1,
-        )
-        _title(ax, th, _panel_title(ctx.budget, f"{method} order graph"))
-        if edges.empty:
-            notes.append(
-                f"{_budget_name(ctx.budget)}: no edge reaches P >= {ORDER_P} over "
-                f"{ORDER_PAIRS} episodes."
-            )
-    notes.append("Arrow: a is unlocked before b in at least 90% of episodes with both.")
+    if edges.empty:
+        notes.append(f"No edge reaches P >= {ORDER_P} over {ORDER_PAIRS} episodes.")
     if missing := [t for t in range(len(TIERS)) if t not in tiers]:
         notes.append(f"No node in the tiers: {', '.join(_tier_names(missing))}.")
-    if not th.wide:
-        notes.append("Node names: double-width and video figures.")
-    pending = _pending([c.budget for c in ctxs])
-    _finish(fig, th, notes=[*notes, *pending])
-    return _save(fig, th, out_dir, name)
+    if len(tiers) == 1:
+        notes.append(f"All nodes are in the tier {_tier_names(tiers)[0]}.")
+    text = (
+        f"Order graph of {method}: achievements unlocked in at least 5% of its final "
+        "stochastic eval episodes, placed by their mean normalised rank among an "
+        "episode's unlocks (0 first, 1 last) and by tier. Arrow: a is unlocked before "
+        f"b in at least {ORDER_P:.0%} of the episodes with both ({ORDER_PAIRS} or "
+        f"more), after transitive reduction. {' '.join(notes)}"
+    )
+    _save(fig, th, out_dir, name, title=f"Order graph, {method}", description=text)
+    return {name: fig}
 
 
 def plot_order_graphs(
     frames: Frames, out_dir: Path, theme: str = "report", *, width: str = "column"
-) -> dict[str, Figure]:
+) -> Figs:
     """`plot_order_graph` for every method of ``frames``."""
     methods = list(dict.fromkeys(frames["runs"]["method"]))
-    return {
-        m: plot_order_graph(frames, out_dir, theme, width=width, method=m)
-        for m in methods
-    }
+    figs: Figs = {}
+    for m in methods:
+        figs |= plot_order_graph(frames, out_dir, theme, width=width, method=m)
+    return figs
 
 
 def plot_order_agreement(
@@ -1150,57 +1273,55 @@ def plot_order_agreement(
     width: str = "column",
     n_perm: int = PERMUTATIONS,
     seed: int = 0,
-) -> Figure:
+) -> Figs:
     """F7 ``order_agreement``: Kendall tau-b between the methods' unlock orders.
 
-    One matrix per benchmark (`order_agreement`); a cell is bold when its permutation
-    p-value is below 0.05, blank when fewer than three nodes are shared.
+    One matrix (`order_agreement`); a cell is bold when its permutation p-value is
+    below 0.05, blank when fewer than three nodes are shared.
     """
     th, name = _theme(theme, width), GAME_NAMES["F7"]
     table = order_agreement(frames, n_perm=n_perm, seed=seed)
-    ctxs = _contexts(frames)
-    if table.empty:
-        return _no_data(name, th, out_dir, "no order graphs (need unlock steps)")
-    fig = _figure(th, sum(len(c.names) * 7 + 32 for c in ctxs) + _legend_mm(th, 0))
-    axes = _stack(fig, th, [float(len(c.names)) for c in ctxs])
+    ctx = _ctx(frames)
+    if table.empty or ctx is None:
+        return {
+            name: _no_data(name, th, out_dir, "no order graphs (need unlock steps)")
+        }
+    if not wants(th, name):
+        return {}
+    fig = _figure(th, shape=Shape.SQUARE)
+    ax = fig.add_subplot()
+    n = len(ctx.names)
+    index = {m: i for i, m in enumerate(ctx.names)}
+    cells = np.full((n, n), np.nan)
+    sig = np.zeros((n, n), bool)
+    for r in table[table["benchmark"] == ctx.budget].itertuples():
+        cells[index[r.method], index[r.other]] = r.tau
+        sig[index[r.method], index[r.other]] = r.p < TAU_ALPHA
     cmap = _cmap(th, *th.div)
-    for ax, ctx in zip(axes, ctxs, strict=True):
-        n = len(ctx.names)
-        index = {m: i for i, m in enumerate(ctx.names)}
-        cells = np.full((n, n), np.nan)
-        sig = np.zeros((n, n), bool)
-        for r in table[table["benchmark"] == ctx.budget].itertuples():
-            cells[index[r.method], index[r.other]] = r.tau
-            sig[index[r.method], index[r.other]] = r.p < TAU_ALPHA
-        charts.heatmap(
-            ax, th, cells, cmap, vmin=-1, vmax=1, gid=_gid("tau", ctx.budget, "all")
-        )
-        for i, j in zip(*np.where(np.isfinite(cells)), strict=True):
-            ax.text(
-                j + 0.5,
-                i + 0.5,
-                _cell_number(cells[i, j], n > 6 and not th.wide),
-                ha="center",
-                va="center",
-                fontsize=th.font,
-                color=_ink_on(cmap((cells[i, j] + 1) / 2)),
-                fontweight="bold" if sig[i, j] else "normal",
-                gid="tau-cell/bold" if sig[i, j] else "tau-cell/plain",
-            )
-        ax.set_xticks(np.arange(n) + 0.5, ctx.names, rotation=90)
-        ax.set_yticks(np.arange(n) + 0.5, ctx.names)
-        ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        _labels(ax, th, "method", "method")
-        _title(ax, th, _panel_title(ctx.budget, "Kendall tau-b of the unlock order"))
-    note = (
-        f"Mean normalised rank of the shared order-graph nodes; bold: permutation "
-        f"p < {TAU_ALPHA} ({n_perm:,} permutations). Blank: methods of different "
-        "blocks are not compared (controls are, in both)."
+    charts.heatmap(
+        ax, th, cells, cmap, vmin=-1, vmax=1, gid=_gid("tau", ctx.budget, "all")
     )
-    _finish(fig, th, notes=[note, *_pending([c.budget for c in ctxs])])
-    return _save(fig, th, out_dir, name)
+    for i, j in zip(*np.where(np.isfinite(cells)), strict=True):
+        ax.text(
+            j + 0.5, i + 0.5, _cell_number(cells[i, j], n > 6 and not th.wide),
+            ha="center", va="center", fontsize=th.font,
+            color=_ink_on(cmap((cells[i, j] + 1) / 2)),
+            fontweight="bold" if sig[i, j] else "normal",
+            gid="tau-cell/bold" if sig[i, j] else "tau-cell/plain",
+        )  # fmt: skip
+    ax.set_xticks(np.arange(n) + 0.5, ctx.names, rotation=90)
+    ax.set_yticks(np.arange(n) + 0.5, ctx.names)
+    ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    text = (
+        "Kendall tau-b between the unlock orders of two methods: the mean normalised "
+        "rank of the order-graph nodes they share. Bold: permutation p < "
+        f"{TAU_ALPHA} ({n_perm:,} permutations). Blank: methods of different blocks "
+        "are not compared (controls are, in both)."
+    )
+    _save(fig, th, out_dir, name, title="Order agreement", description=text)
+    return {name: fig}
 
 
 # --------------------------------------------------------------------------- F8
@@ -1252,24 +1373,42 @@ def _funnel_cats(ctx: Ctx, kind: str) -> Cats:
     return Cats([str(s) for s in steps], list(labels), values)
 
 
+def _funnel_profile(
+    ax: Axes, th: Theme, ctx: Ctx, kind: str, cats: Cats, notes: list[str]
+) -> None:
+    _profile_panel(
+        ax, th, ctx, f"funnel-{kind}", cats, "share of episodes", notes, how="mean"
+    )
+    ax.set_ylim(-0.02, 1.02)
+
+
+def _funnel_dots(kind: str) -> Callable[[Axes, Theme, Ctx, list[str]], None]:
+    """A funnel with a few steps as a dot panel (the tech ladder is a profile)."""
+
+    def draw(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
+        shown, tail = _trim_zero_tail(ctx, _funnel_cats(ctx, kind))
+        if tail:
+            notes.append(f"No episode reached {', '.join(tail)}.")
+        if len(shown.keys) > MAX_DOT_ROWS:
+            _funnel_profile(ax, th, ctx, kind, shown, notes)
+            return
+        _dot_panel(
+            ax, th, ctx, f"funnel-{kind}", shown, "share of episodes", notes, how="mean"
+        )
+        ax.set_xlim(-0.02, 1.02)
+
+    return draw
+
+
 def _funnel_panel(kind: str) -> Callable[[Axes, Theme, Ctx, list[str]], None]:
     def draw(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
         shown, tail = _trim_zero_tail(ctx, _funnel_cats(ctx, kind))
         if tail:
-            notes.append(
-                f"{_budget_name(ctx.budget)}: no episode reached {', '.join(tail)}."
-            )
-        _dot_panel(
-            ax,
-            th,
-            ctx,
-            f"funnel-{kind}",
-            shown,
-            "share of episodes",
-            notes,
-            how="mean",
+            notes.append(f"No episode reached {', '.join(tail)}.")
+        _profile_panel(
+            ax, th, ctx, f"funnel-{kind}", shown, "share of episodes", notes, how="mean"
         )
-        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
 
     return draw
 
@@ -1282,39 +1421,32 @@ def plot_funnel(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F8 ``funnel``: progress at the final checkpoint, tech ladder and floors.
+) -> Figs:
+    """F8 ``funnel_tech`` and ``funnel_floor``: progress at the final checkpoint.
 
     Per method the share of eval episodes with tech depth at least k on the ladder
     wood to diamond pickaxe, and with max floor at least f; mean over seeds with a
-    95% bootstrap interval, so a row never exceeds the one above it.
+    95% bootstrap interval, so a step never exceeds the one before.
     """
     panels = [
-        Panel(
-            "tech ladder reached",
-            _funnel_panel("tech"),
-            lambda c: _dot_mm(
-                c, len(_trim_zero_tail(c, _funnel_cats(c, "tech"))[0].keys)
+        FigPanel(
+            "funnel_tech", "Tech ladder reached",
+            "Share of the final stochastic eval episodes that reach each step of the "
+            "tech ladder, wood to diamond pickaxe: mean over seeds, vertical line = "
+            "95% bootstrap interval.",
+            _funnel_panel("tech"), _curve_size,
+        ),
+        FigPanel(
+            "funnel_floor", "Deepest floor reached",
+            "Share of the final stochastic eval episodes that reach each floor: mean "
+            "over seeds, vertical line = 95% bootstrap interval.",
+            _funnel_dots("floor"),
+            _dots_size(
+                lambda c: len(_trim_zero_tail(c, _funnel_cats(c, "floor"))[0].keys)
             ),
         ),
-        Panel(
-            "deepest floor reached",
-            _funnel_panel("floor"),
-            lambda c: _dot_mm(
-                c, len(_trim_zero_tail(c, _funnel_cats(c, "floor"))[0].keys)
-            ),
-        ),
-    ]
-    return _draw(
-        GAME_NAMES["F8"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 def _run_series(
@@ -1375,9 +1507,7 @@ def _series_panel(
             )
             line.set_gid(_gid(kind, ctx.budget, method))
         if missing:
-            notes.append(
-                f"{_budget_name(ctx.budget)}: {', '.join(missing)} {NOT_LOGGED} (R78)."
-            )
+            notes.append(f"{', '.join(missing)} {NOT_LOGGED} (R78).")
         if len(missing) == len(ctx.names):
             _empty(ax, th, f"{NOT_LOGGED} for every method")
             return
@@ -1397,8 +1527,8 @@ def plot_funnel_training(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F8 ``funnel_training``: how far the funnel reaches during training.
+) -> Figs:
+    """F8 ``funnel_training_depth`` and ``funnel_training_floor``: funnel in training.
 
     The mean tech depth (sum over k of the share ``train/funnel/depth_k``) and the mean
     deepest floor (sum over f >= 1 of ``train/funnel/floor_f``), mean over seeds with
@@ -1407,29 +1537,22 @@ def plot_funnel_training(
     depth = [f"train/funnel/depth_{k}" for k in range(1, len(LADDER_NAMES) + 1)]
     floor = [f"train/funnel/floor_{f}" for f in range(1, len(FLOOR_NAMES))]
     panels = [
-        Panel(
-            "mean tech depth in training",
+        FigPanel(
+            "funnel_training_depth", "Mean tech depth in training",
+            "Mean tech-ladder depth over training (sum over the ladder steps of the "
+            "share of training episodes that reached them); band: 95% bootstrap CI.",
             _series_panel("depth", lambda _c: depth, "sum", "mean tech depth"),
-            lambda _c: 40.0 + PANEL_MM,
-            narrow=False,
+            _curve_size,
         ),
-        Panel(
-            "mean deepest floor in training",
+        FigPanel(
+            "funnel_training_floor", "Mean deepest floor in training",
+            "Mean deepest floor over training (sum over floors 1 and deeper of the "
+            "share of training episodes that reached them); band: 95% bootstrap CI.",
             _series_panel("floor", lambda _c: floor, "sum", "mean deepest floor"),
-            lambda _c: 40.0 + PANEL_MM,
-            narrow=False,
+            _curve_size,
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F8T"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # --------------------------------------------------------------------------- F9
@@ -1516,28 +1639,20 @@ def plot_deaths(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
+) -> Figs:
     """F9 ``deaths``: cause-of-death shares per method (`hard.death_causes`).
 
     Stacked bars at the final checkpoint's stochastic eval episodes; the four largest
     causes of the benchmark have a ramp step each, the rest are ``other``; a method
     that never died says so. A thin bar in the method colour marks each row.
     """
-    panel = Panel(
-        "cause of death",
-        _death_panel,
-        lambda c: len(c.names) * 5.5 + PANEL_MM + 14,
-    )
-    return _draw(
-        GAME_NAMES["F9"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        [panel],
-        n_boot=n_boot,
-        seed=seed,
-    )
+    panel = FigPanel(
+        "deaths", "Cause of death",
+        "Share of the deaths of each method by cause, in the final stochastic eval "
+        "episodes; the four largest causes have their own colour, the rest are other.",
+        _death_panel, _bars_size(extra_mm=6.0),
+    )  # fmt: skip
+    return _draw(frames, out_dir, theme, width, [panel], n_boot=n_boot, seed=seed)
 
 
 def _stall_ccdf_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
@@ -1565,7 +1680,7 @@ def _stall_ccdf_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
         _empty(ax, th, "no stalls in the eval episodes")
         return
     if absent:
-        notes.append(f"{_budget_name(ctx.budget)}: {', '.join(absent)} had no stall.")
+        notes.append(f"{', '.join(absent)} had no stall.")
     _style(ax, th, grid="both")
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -1602,14 +1717,14 @@ def _escape_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
         return
     absent = [m for m in ctx.names if m not in drawn]
     if absent:
-        notes.append(f"{_budget_name(ctx.budget)}: {', '.join(absent)} had no stall.")
+        notes.append(f"{', '.join(absent)} had no stall.")
     _style(ax, th)
     ax.set_xlim(0, 1)
     ax.set_yticks(range(len(ctx.names)), ctx.names)
     ax.set_ylim(len(ctx.names) - 0.5, -0.5)
     ax.tick_params(axis="y", length=0)
     ax.grid(axis="y", visible=False)
-    _labels(ax, th, "escape rate (stalls ending in an unlock)")
+    _labels(ax, th, "escape rate")
 
 
 def plot_stalls(
@@ -1620,28 +1735,22 @@ def plot_stalls(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F9 ``stalls``: stall-length CCDF and escape rate per method (`hard`)."""
+) -> Figs:
+    """F9 ``stalls_ccdf`` and ``stalls_escape``: stall lengths and escape rate."""
     panels = [
-        Panel(
-            "stall lengths", _stall_ccdf_panel, lambda _c: 42.0 + PANEL_MM, narrow=False
+        FigPanel(
+            "stalls_ccdf", "Stall lengths",
+            "Share of the stalls (steps with no progress) that last at least a given "
+            "number of steps, per method; both axes logarithmic.",
+            _stall_ccdf_panel, _curve_size,
         ),
-        Panel(
-            "escape rate",
-            _escape_panel,
-            lambda c: len(c.names) * 4.0 + PANEL_MM,
+        FigPanel(
+            "stalls_escape", "Escape rate",
+            "Share of the stalls that ended in an unlock, per method.",
+            _escape_panel, _bars_size(),
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F9S"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # -------------------------------------------------------------------------- F10
@@ -1679,9 +1788,9 @@ def split_table(eps: pd.DataFrame) -> pd.DataFrame:
 
 
 def _split_rows(table: pd.DataFrame) -> list[str]:
-    """The milestones some method reached (the others are named in a note)."""
+    """The first `SPLIT_ROWS` milestones some method reached (the rest: a note)."""
     reached = set(table.loc[table["n"] > 0, "milestone"])
-    return [m for m in MILESTONES if m in reached]
+    return [m for m in MILESTONES if m in reached][:SPLIT_ROWS]
 
 
 def _split_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
@@ -1691,16 +1800,20 @@ def _split_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
     if table.empty or not rows:
         _empty(ax, th, f"{NOT_RECORDED}: no split columns")
         return
+    reached = set(table.loc[table["n"] > 0, "milestone"])
     missed = [
-        m for m in MILESTONES if (table["milestone"] == m).any() and m not in rows
+        m for m in MILESTONES if m not in reached and (table["milestone"] == m).any()
     ]
+    later = [m for m in MILESTONES if m in reached and m not in rows]
     if missed:
+        _notes.append(f"no episode reached {', '.join(missed)}.")
+    if later:
         _notes.append(
-            f"{_budget_name(ctx.budget)}: no episode reached {', '.join(missed)}."
+            f"Not drawn (only the first {SPLIT_ROWS} are): {', '.join(later)}."
         )
     offsets = dict(zip(ctx.names, _dodge(len(ctx.names)), strict=True))
     for r in table.itertuples():
-        if not r.n:
+        if not r.n or r.milestone not in rows:
             continue
         y = rows.index(r.milestone) + offsets[r.method]
         stats = [
@@ -1747,11 +1860,12 @@ def _split_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
     _style(ax, th)
     ax.set_xscale("log")
     ax.xaxis.set_major_formatter(FuncFormatter(_steps_label))
+    ax.xaxis.set_minor_formatter(NullFormatter())  # minor labels run together
     ax.set_yticks(range(len(rows)), rows)
     ax.set_ylim(len(rows) - 0.5, -0.5)
     ax.tick_params(axis="y", length=0)
     ax.grid(axis="y", visible=False)
-    _labels(ax, th, "steps to the first unlock (log); right: share reaching it")
+    _labels(ax, th, "steps to the first unlock (log)")
 
 
 def plot_splits(
@@ -1762,31 +1876,29 @@ def plot_splits(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
+) -> Figs:
     """F10 ``splits``: speedrun splits, box plots of steps to each milestone.
 
     Rows: the tech ladder then the ``enter_*`` achievements; a box per method spans the
     quartiles of the episodes that reached it, a line marks the median; the text at
     the right is the lowest and highest share of a method's episodes reaching it.
     """
-    panel = Panel(
-        "speedrun splits",
-        _split_panel,
-        lambda c: (
-            max(1, len(_split_rows(split_table(c.eps)))) * (len(c.names) * 0.9 + 2.0)
-            + PANEL_MM
-        ),
-    )
-    return _draw(
-        GAME_NAMES["F10"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        [panel],
-        n_boot=n_boot,
-        seed=seed,
-    )
+
+    def rows(c: Ctx) -> int:
+        return max(1, len(_split_rows(split_table(c.eps))))
+
+    def size(th: Theme, ctx: Ctx) -> Figure:
+        pitch = len(ctx.names) * 0.9 + 2.0
+        return charts.category_figure(th, rows(ctx), 0.0, pitch)
+
+    panel = FigPanel(
+        "splits", "Speedrun splits",
+        "Steps to the first unlock of each milestone (log axis), per method: box = "
+        "quartiles of the episodes that reached it, line = median. The text at the "
+        "right is the lowest and highest share of a method's episodes that reached it.",
+        _split_panel, size,
+    )  # fmt: skip
+    return _draw(frames, out_dir, theme, width, [panel], n_boot=n_boot, seed=seed)
 
 
 # ----------------------------------------------------------------- F11, F12, F14
@@ -1845,14 +1957,12 @@ def _dots(
         if trim:
             shown, tail = _trim_zero_tail(ctx, shown)
             if tail:
-                notes.append(
-                    f"{_budget_name(ctx.budget)}: nothing above zero in "
-                    f"{', '.join(tail)}."
-                )
+                notes.append(f"nothing above zero in {', '.join(tail)}.")
         if dropped and shown.keys:  # rows without any value are not drawn, but said
-            notes.append(
-                f"{_budget_name(ctx.budget)}: no value for {', '.join(dropped)}."
-            )
+            notes.append(f"no value for {', '.join(dropped)}.")
+        if len(shown.keys) > MAX_DOT_ROWS:
+            _profile_panel(ax, th, ctx, kind, shown, xlabel, notes, how=how, log=log)
+            return
         _dot_panel(
             ax,
             th,
@@ -1897,42 +2007,35 @@ def plot_coverage(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F11 ``coverage``: share of each floor seen, and new tiles per 100 steps.
+) -> Figs:
+    """F11 ``coverage`` and ``new_tiles``: share of each floor seen, new tiles per 100.
 
     Per method the median over seeds of each seed's median episode (floors never
     visited are skipped), with a bootstrap interval over seeds; the new-tile rate is
     the episode mean the replay stores, not a series over the episode.
     """
     panels = [
-        Panel(
-            "exploration coverage per floor",
+        FigPanel(
+            "coverage", "Exploration coverage per floor",
+            "Share of each floor that an episode sees: median over seeds of each "
+            "seed's median episode, line = 95% bootstrap interval over seeds.",
             _dots("coverage", _coverage_cats, "share of the floor seen"),
-            lambda c: _dot_mm(c, max(1, len(_with_data(c, _coverage_cats(c))[0].keys))),
+            _dots_size(lambda c: len(_with_data(c, _coverage_cats(c))[0].keys)),
         ),
-        Panel(
-            "new tiles",
+        FigPanel(
+            "new_tiles", "New tiles",
+            "Tiles of the map an episode sees for the first time per 100 steps: "
+            f"median over seeds, line = 95% bootstrap interval. {NEW_TILES_NOTE}",
             _dots("tiles", _tiles_cats, "new tiles per 100 steps"),
-            lambda c: _dot_mm(c, 1),
+            _dots_size(lambda _c: 1),
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F11"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        notes=[NEW_TILES_NOTE],
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
-def _share_cats(ctx: Ctx) -> Cats:
-    keys = [f"{kind}_share/{s}" for s in STATS for kind in ("low", "zero")]
-    labels = [f"{s} {kind}" for s in STATS for kind in ("low", "zero")]
-    return Cats(keys, labels, _per_seed_of(ctx, "{}"))
+def _share_cats(ctx: Ctx, kind: str) -> Cats:
+    keys = [f"{kind}_share/{s}" for s in STATS]
+    return Cats(keys, list(STATS), _per_seed_of(ctx, "{}"))
 
 
 def _level_cats(ctx: Ctx) -> Cats:
@@ -1950,35 +2053,37 @@ def plot_survival(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F12 ``survival``: time low or empty, and the stat level at eat, drink, sleep.
+) -> Figs:
+    """F12 ``survival_low``, ``survival_zero``, ``survival_level``.
 
     The shares of steps with a stat low and at zero, and the mean stat value in the
     state before each eat, drink and sleep start (replay only: ``not recorded`` where
     the export has no trace); median over seeds with a bootstrap interval.
     """
     panels = [
-        Panel(
-            "steps with a stat low or zero",
-            _dots("share", _share_cats, "share of steps"),
-            lambda c: _dot_mm(c, 2 * len(STATS)),
+        FigPanel(
+            "survival_low", "Steps with a stat low",
+            "Share of the steps in which food, drink or energy is low: median over "
+            "seeds of each seed's median episode, line = 95% bootstrap interval.",
+            _dots("share", lambda c: _share_cats(c, "low"), "share of steps"),
+            _dots_size(lambda _c: len(STATS)),
         ),
-        Panel(
-            "stat level at the action",
+        FigPanel(
+            "survival_zero", "Steps with a stat at zero",
+            "Share of the steps in which food, drink or energy is zero: median over "
+            "seeds of each seed's median episode, line = 95% bootstrap interval.",
+            _dots("zero", lambda c: _share_cats(c, "zero"), "share of steps"),
+            _dots_size(lambda _c: len(STATS)),
+        ),
+        FigPanel(
+            "survival_level", "Stat level at the action",
+            "Mean value of the stat in the state before each eat, drink and sleep: "
+            "median over seeds, line = 95% bootstrap interval.",
             _dots("level", _level_cats, "mean stat value"),
-            lambda c: _dot_mm(c, len(STATS)),
+            _dots_size(lambda _c: len(STATS)),
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F12"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # -------------------------------------------------------------------------- F13
@@ -1990,23 +2095,34 @@ def _kill_columns(eps: pd.DataFrame) -> list[str]:
     return [*cols, "kills/passive"] if "kills/passive" in eps.columns else cols
 
 
-def _kills_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
-    """Heat map of mean kills per episode: creature types down, methods across."""
+def _kills_view(
+    ctx: Ctx,
+) -> tuple[list[str], np.ndarray, int | None, list[str]]:
+    """Creature rows some method killed, their matrix, the passive row, the rest."""
     cols = _kill_columns(ctx.eps)
     matrix = _mean_by_method(ctx, cols)
-    if not cols or not np.isfinite(matrix).any():
+    names = [c.removeprefix("kills/") for c in cols]
+    top = [float(np.nanmax(row)) if np.isfinite(row).any() else 0.0 for row in matrix]
+    best = sorted(range(len(cols)), key=lambda i: -top[i])[:HEAT_ROWS]
+    seen = sorted(i for i in best if top[i] >= KILL_MIN)  # game order, passive last
+    never = [names[i] for i in range(len(cols)) if i not in seen]
+    labels = [names[i] for i in seen]
+    solo = labels.index("passive") if "passive" in labels else None
+    return labels, matrix[seen], solo, never
+
+
+def _kills_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
+    """Heat map of mean kills per episode: creature types down, methods across."""
+    labels, matrix, solo, never = _kills_view(ctx)
+    if not labels:
         _empty(ax, th, f"{NOT_RECORDED}: no kill columns")
         return
-    _heat(
-        ax,
-        th,
-        ctx,
-        "kills",
-        [c.removeprefix("kills/") for c in cols],
-        matrix,
-        annotate=len(cols) <= 12,
-    )
-    _labels(ax, th, None, "creature (passive last)")
+    if never:
+        notes.append(
+            "Not drawn (killed less than 0.01 times per episode by every method): "
+            f"{', '.join(never)}."
+        )
+    _heat(ax, th, ctx, "kills", labels, matrix, annotate=True, solo=solo)
 
 
 def _damage_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
@@ -2022,13 +2138,9 @@ def _damage_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
             continue
         style = _style_of(th, method)
         (dot,) = ax.plot(
-            [x],
-            [y],
-            ls="",
-            marker=style["marker"],
-            ms=th.ms * 1.3,
+            [x], [y], ls="", marker=style["marker"], ms=th.ms * 1.3,
             color=style["color"],
-        )
+        )  # fmt: skip
         dot.set_gid(_gid("damage", ctx.budget, method))
         drawn.append(method)
     if not drawn:
@@ -2058,37 +2170,36 @@ def plot_combat(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F13 ``combat``: kills per creature type, damage dealt against taken, fights.
+) -> Figs:
+    """F13 ``combat_kills``, ``combat_damage`` and ``combat_fights``.
 
-    Kills are the mean per episode over seeds (hostile types, then passive kills
-    apart); damage is the episode mean per method; fights are the episode mean of the
-    stored fight records, with a bootstrap interval over seeds.
+    Kills are the mean per episode over seeds (the creature types some method killed,
+    passive kills on their own colour scale, the others named in the caption); damage
+    is the episode mean per method; fights are the episode mean of the stored fight
+    records, with a bootstrap interval over seeds.
     """
     panels = [
-        Panel(
-            "kills per episode",
-            _kills_panel,
-            lambda c: (len(_kill_columns(c.eps)) + 1) * 2.9 + PANEL_MM + HEAT_TICK_MM,
-            narrow=False,
+        FigPanel(
+            "combat_kills", "Kills per episode",
+            "Mean kills per episode of each creature type, per method (mean over "
+            "seeds). The last row, passive creatures, has its own colour scale.",
+            _kills_panel, _heat_size(lambda c: len(_kills_view(c)[0])),
         ),
-        Panel("damage", _damage_panel, lambda _c: 42.0 + PANEL_MM, narrow=False),
-        Panel(
-            "fights",
+        FigPanel(
+            "combat_damage", "Damage dealt and taken",
+            "Damage dealt against damage taken per episode, one dot per method "
+            "(episode mean over seeds).",
+            _damage_panel, _curve_size,
+        ),
+        FigPanel(
+            "combat_fights", "Fights per episode",
+            "Fights per episode, from the stored fight records: mean over seeds, line "
+            "= 95% bootstrap interval.",
             _dots("fights", _fight_cats, "fights per episode"),
-            lambda c: _dot_mm(c, 1),
+            _dots_size(lambda _c: 1),
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F13"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # -------------------------------------------------------------------------- F14
@@ -2098,12 +2209,11 @@ def _action_columns(eps: pd.DataFrame) -> list[str]:
     return [c for c in eps.columns if c.startswith("action_count/")]
 
 
-def _actions_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
-    """Heat map of the share of steps per action (not forced), methods across."""
+def _actions_view(ctx: Ctx) -> tuple[list[str], np.ndarray, list[str]]:
+    """Actions some method used, their share-of-steps matrix, the unused ones."""
     cols = _action_columns(ctx.eps)
     if not cols:
-        _empty(ax, th, f"{NOT_RECORDED}: no action counts")
-        return
+        return [], np.empty((0, len(ctx.names))), []
     counts = ctx.eps[cols].to_numpy(float)
     shares = pd.DataFrame(
         counts / np.maximum(counts.sum(axis=1, keepdims=True), 1),
@@ -2112,10 +2222,29 @@ def _actions_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
     )
     shown = ctx._replace(eps=ctx.eps.assign(**shares.to_dict("series")))
     matrix = _mean_by_method(shown, cols)
-    _heat(
-        ax, th, ctx, "actions", [c.removeprefix("action_count/") for c in cols], matrix
+    names = [c.removeprefix("action_count/") for c in cols]
+    top = [float(np.nanmax(row)) if np.isfinite(row).any() else 0.0 for row in matrix]
+    best = sorted(range(len(cols)), key=lambda i: -top[i])[:HEAT_ROWS]
+    used = sorted(i for i in best if top[i] > 0)
+    return (
+        [names[i] for i in used],
+        matrix[used],
+        [n for i, n in enumerate(names) if i not in used],
     )
-    _labels(ax, th, None, "action")
+
+
+def _actions_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
+    """Heat map of the share of steps per action (not forced), methods across."""
+    labels, matrix, unused = _actions_view(ctx)
+    if not labels:
+        _empty(ax, th, f"{NOT_RECORDED}: no action counts")
+        return
+    if unused:
+        notes.append(
+            f"Only the {HEAT_ROWS} most used actions are drawn; not drawn: "
+            f"{', '.join(unused)}."
+        )
+    _heat(ax, th, ctx, "actions", labels, matrix, annotate=True)
 
 
 def _last_by_method(ctx: Ctx, metric: str) -> dict[str, np.ndarray]:
@@ -2153,44 +2282,38 @@ def plot_actions(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F14 ``actions``: action usage heat map, entropy and wasted share per method.
+) -> Figs:
+    """F14 ``actions_share``, ``actions_entropy`` and ``actions_wasted``.
 
-    Heat map: the mean over seeds of the share of non-forced steps per action. Entropy
-    (nats) is the eval-episode action entropy and the last logged training action
-    entropy (``not logged`` for the reused PPO and PPO-RNN runs, R78); the wasted share
-    is the eval episodes' median.
+    Heat map: the mean over seeds of the share of non-forced steps per action (only the
+    actions some method takes, the others named in the caption). Entropy (nats) is the
+    eval-episode action entropy and the last logged training action entropy (``not
+    logged`` for the reused PPO and PPO-RNN runs, R78); the wasted share is the eval
+    episodes' median.
     """
     panels = [
-        Panel(
-            "share of steps per action",
-            _actions_panel,
-            lambda c: (
-                max(1, len(_action_columns(c.eps))) * 2.9 + PANEL_MM + HEAT_TICK_MM
-            ),
-            narrow=False,
+        FigPanel(
+            "actions_share", "Share of steps per action",
+            "Share of the non-forced steps spent on each action, per method (mean over "
+            "seeds).",
+            _actions_panel, _heat_size(lambda c: len(_actions_view(c)[0])),
         ),
-        Panel(
-            "action entropy",
+        FigPanel(
+            "actions_entropy", "Action entropy",
+            "Entropy of the action distribution in nats, in the eval episodes and at "
+            "the end of training: median over seeds, line = 95% bootstrap interval.",
             _dots("entropy", _entropy_cats, "entropy (nats)", missing=NOT_LOGGED),
-            lambda c: _dot_mm(c, 2),
+            _dots_size(lambda _c: 2),
         ),
-        Panel(
-            "wasted share",
+        FigPanel(
+            "actions_wasted", "Wasted steps",
+            "Share of the steps that change nothing (a wasted action): median over "
+            "seeds of the eval episodes, line = 95% bootstrap interval.",
             _dots("wasted", _wasted_cats, "share of steps wasted"),
-            lambda c: _dot_mm(c, 1),
+            _dots_size(lambda _c: 1),
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F14"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # ------------------------------------------------------------------------ F15
@@ -2267,7 +2390,7 @@ def _diamond_note(ctx: Ctx) -> str:
     w2d = _column(ctx.eps, "wood_to_diamond")
     share = (w2d >= 0).groupby(ctx.eps["method"]).mean()
     text = ", ".join(f"{m} {share[m]:.0%}" for m in ctx.names if m in share.index)
-    return f"{_budget_name(ctx.budget)} episodes reaching diamond: {text}."
+    return f"Episodes reaching diamond: {text}."
 
 
 def plot_resources(
@@ -2278,39 +2401,31 @@ def plot_resources(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F15 ``resources``: gathered against used, steps per achievement, wood to diamond.
+) -> Figs:
+    """F15 ``resources_use`` and ``resources_time``.
 
-    The first panel is the replay's inventory trace (``not recorded`` without it);
-    the time panels are medians of seed medians, wood to diamond over the episodes
-    that reached diamond (their share is in the note).
+    Gathered against used per resource (the replay's inventory trace, ``not recorded``
+    without it); the time panel is medians of seed medians, wood to diamond over the
+    episodes that reached diamond (their share goes to the caption).
     """
+    ctx = _ctx(frames, n_boot, seed)
+    diamond = _diamond_note(ctx) if ctx and "wood_to_diamond" in ctx.eps.columns else ""
     panels = [
-        Panel(
-            "gathered and used", _use_panel, lambda _c: 46.0 + PANEL_MM, narrow=False
+        FigPanel(
+            "resources_use", "Gathered and used",
+            "Mean amount gathered against mean amount used per episode, one marker per "
+            "resource and one colour per method; dashed: used = gathered.",
+            _use_panel, lambda th, _c: _figure(th, shape=Shape.CURVE),
         ),
-        Panel(
-            "time to progress",
+        FigPanel(
+            "resources_time", "Time to progress",
+            "Steps per achievement and steps from wood to diamond (log axis): median "
+            f"over seeds of each seed's median episode. {diamond}",
             _dots("time", _time_cats, "steps (log)", log=True),
-            lambda c: _dot_mm(c, 2),
+            _dots_size(lambda _c: 2),
         ),
-    ]
-    notes = [
-        _diamond_note(c)
-        for c in _contexts(frames)
-        if "wood_to_diamond" in c.eps.columns
-    ]
-    return _draw(
-        GAME_NAMES["F15"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        notes=notes,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # ------------------------------------------------------------------------ F16
@@ -2338,40 +2453,36 @@ def plot_advanced(
     width: str = "column",
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
-) -> Figure:
-    """F16 ``advanced``: adoption of the advanced mechanics over training.
+) -> Figs:
+    """F16 ``advanced_mean`` and ``advanced_final``: adoption of the advanced mechanics.
 
     From the ``train/ach/*`` rates (% of episodes) of the nine advanced achievements:
     the mean rate over them per method with a bootstrap band, and each one's final
     rate. The reused PPO and PPO-RNN runs did not log them (R78).
     """
     panels = [
-        Panel(
-            "mean advanced-achievement rate",
+        FigPanel(
+            "advanced_mean", "Advanced achievements over training",
+            "Mean training rate (% of episodes) of the nine advanced achievements, per "
+            "method; band: 95% bootstrap CI over seeds.",
             _series_panel("advanced", _advanced_metrics, "mean", "% of episodes"),
-            lambda _c: 40.0 + PANEL_MM,
-            narrow=False,
+            _curve_size,
         ),
-        Panel(
-            "final rate per achievement",
+        FigPanel(
+            "advanced_final", "Advanced achievements at the end",
+            "Final training rate (% of episodes) of each advanced achievement: mean "
+            "over seeds, line = 95% bootstrap interval.",
             _dots(
                 "adv", _advanced_cats, "% of episodes", missing=NOT_LOGGED, trim=True
             ),
-            lambda c: _dot_mm(
-                c, len(_trim_zero_tail(c, _with_data(c, _advanced_cats(c))[0])[0].keys)
+            _dots_size(
+                lambda c: len(
+                    _trim_zero_tail(c, _with_data(c, _advanced_cats(c))[0])[0].keys
+                )
             ),
         ),
-    ]
-    return _draw(
-        GAME_NAMES["F16"],
-        frames,
-        out_dir,
-        theme,
-        width,
-        panels,
-        n_boot=n_boot,
-        seed=seed,
-    )
+    ]  # fmt: skip
+    return _draw(frames, out_dir, theme, width, panels, n_boot=n_boot, seed=seed)
 
 
 # ------------------------------------------------------------------------ F17
@@ -2479,63 +2590,44 @@ def plot_radar(
     theme: str = "report",
     *,
     width: str = "column",
-    budget: str = "1m",
-) -> Figure:
-    """F17 ``radar_<budget>``: one playstyle radar per method on shared axes.
+) -> Figs:
+    """F17 ``radar_<method>``: the playstyle radar of each method on shared axes.
 
     Eight axes (`RADAR_AXES`) from the final stochastic eval episodes, min-max scaled
-    over all methods and controls of the benchmark (`radar_table`); narrow report
-    panels print the first four letters of an axis name.
+    over all methods and controls of the benchmark (`radar_table`); one square file per
+    method, titled with its name.
     """
-    th, name = _theme(theme, width), f"radar_{budget}"
-    present = [c.budget for c in _contexts(frames)]
-    if budget not in present:
-        return _placeholder(name, th, out_dir, PENDING.format(budget.upper()))
-    ctx = next(c for c in _contexts(frames) if c.budget == budget)
+    th = _theme(theme, width)
+    ctx = _ctx(frames)
+    if ctx is None:
+        return {"radar": _no_data("radar", th, out_dir, "no tuned runs for the radar")}
     table = radar_table(frames)
-    table = table[table["benchmark"] == budget]
-    narrow = th.name == "report" and not th.wide
-    cols = 2 if narrow else 3
-    rows = ceil(len(ctx.names) / cols)
-    fig = _figure(th, rows * (th.width * 25.4 / cols * 0.9) + _legend_mm(th, 0))
-    grid = fig.subplots(rows, cols, squeeze=False, subplot_kw={"projection": "polar"})
-    labels = [a[:SHORT_AXES].title() if narrow else a for a in RADAR_AXES]
-    notes = []
-    for k, ax in enumerate(grid.ravel()):
-        if k >= len(ctx.names):
-            ax.set_visible(False)
+    figs: Figs = {}
+    for method in ctx.names:
+        stem = f"radar_{method}"
+        if not wants(th, stem):
             continue
-        method = ctx.names[k]
         mine = table[table["method"] == method].set_index("axis")["scaled"]
         values = mine.reindex(RADAR_AXES).to_numpy(float)
+        notes = []
         if np.isnan(values).any():
             lost = ", ".join(np.array(RADAR_AXES)[np.isnan(values)])
-            notes.append(f"{method}: {NOT_RECORDED} on {lost}.")
-        _radar_cell(ax, th, budget, method, values, labels)
-    if narrow:
-        names = ", ".join(f"{a[:SHORT_AXES].title()} {a}" for a in RADAR_AXES)
-        notes.append(f"Axes: {names}.")
-    notes.append(
-        "Axes min-max scaled over the methods of the benchmark (0.5: all equal)."
-    )
-    notes.append(
-        "Survivor: 1 - the largest single-stat zero share, an upper bound of survival."
-    )
-    _finish(fig, th, notes=[*_unique(notes), *_pending(present)])
-    return _save(fig, th, out_dir, name)
+            notes.append(f"{NOT_RECORDED} on {lost}.")
+        fig = _figure(th, shape=Shape.SQUARE)
+        ax = fig.add_subplot(projection="polar")
+        _radar_cell(ax, th, ctx.budget, method, values, list(RADAR_AXES))
+        text = (
+            f"Playstyle radar of {method}: eight axes from the final stochastic eval "
+            "episodes, each min-max scaled over the methods of the benchmark (0.5: all "
+            "equal). Survivor is one minus the largest single-stat zero share, an "
+            f"upper bound of survival. {' '.join(notes)}"
+        )
+        _save(fig, th, out_dir, stem, title=f"Radar, {method}", description=text)
+        figs[stem] = fig
+    return figs
 
 
-def plot_radars(
-    frames: Frames, out_dir: Path, theme: str = "report", *, width: str = "column"
-) -> dict[str, Figure]:
-    """`plot_radar` for every benchmark with runs."""
-    return {
-        c.budget: plot_radar(frames, out_dir, theme, width=width, budget=c.budget)
-        for c in _contexts(frames)
-    }
-
-
-GAME_FIGURES: dict[str, Callable[..., Figure]] = {
+GAME_FIGURES: dict[str, Callable[..., Any]] = {
     "F6": plot_race,
     "F7": plot_order_agreement,
     "F7G": plot_order_graph,

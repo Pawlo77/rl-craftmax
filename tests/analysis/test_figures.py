@@ -1,10 +1,10 @@
 """Tests of the core figures F1-F5 and F18-F20 on the comparison fixture.
 
-Every figure writes a PNG (and no PDF), is sized for one Interspeech column (report)
-or a 1920 x 1080 frame (video), takes its colours from `METHOD_COLORS` and its numbers
-from the comparison tables; the tests read the drawn artists back (found by their
-``gid``, ``<kind>/<budget or phase>/<block>/<method>/<ref>``) and compare them with the
-tables.
+Every figure is one panel per PNG (a function writes a set of stems), is sized for one
+Interspeech column (report) or a 1920 x 1080 frame (video), takes its colours from
+`METHOD_COLORS` and its numbers from the comparison tables, and registers a caption;
+the tests read the drawn artists back (found by their ``gid``,
+``<kind>/<budget or phase>/<block>/<method>/<ref>``) and compare them with the tables.
 """
 
 from collections.abc import Callable
@@ -22,7 +22,6 @@ from matplotlib.text import Text
 
 from wut_murl_craftax.analysis import compare, figures
 from wut_murl_craftax.analysis.compare import (
-    CONTEXT_NOTE,
     ablation_table,
     hardware_table,
     literature_table,
@@ -35,9 +34,7 @@ from wut_murl_craftax.analysis.compare import (
 from wut_murl_craftax.analysis.figures import (
     FIGURES,
     NAMES,
-    PENDING_1B,
     plot_aggregate,
-    plot_aggregate_poi,
     plot_curves_score,
     plot_hardware,
     plot_legend_methods,
@@ -60,19 +57,57 @@ N = 200
 THEMES = ("report", "video")
 CONTROLS = ("ppo", "ppo-rnn", "pqn-rnn")
 PNG = b"\x89PNG\r\n\x1a\n"
+STEMS = {
+    "LEG": ["legend_methods"],
+    "F1": ["curves_score_main", "curves_score_skills"],
+    "F2": ["aggregate"],
+    "F3": ["poi_matrix_main", "poi_matrix_skills"],
+    "F4": ["seed_spread_main", "seed_spread_skills", "seed_spread_published"],
+    "F5": ["success_heatmap_main", "success_heatmap_skills"],
+    "F18": [
+        "config_scores_coarse", "sensitivity_coarse", "config_scores_fine",
+        "sensitivity_fine",
+    ],
+    "F19": ["stability_drawdown", "stability_events"],
+    "F20": [
+        "hardware_sps", "hardware_wall_clock", "hardware_compile", "hardware_memory",
+        "hardware_utilisation",
+    ],
+}  # fmt: skip
+"""The files each figure id writes at 1M on the fixture (one panel per file)."""
 LABELS = {
     "LEG": (),
     "F1": ("env steps", "score (% of max)"),
     "F2": ("final score (% of max)",),
-    "F3": ("versus (column)", "method (row)"),
+    "F3": (),
     "F4": ("final score (% of max)",),
-    "F5": ("tuned method",),
+    "F5": (),
     "F18": ("config score r_c", "sensitivity S_h"),
     "F19": ("max drawdown", "share of runs"),
     "F20": ("steps per second", "peak memory"),
-    "F2F3": ("final score (% of max)", "PoI vs control"),
 }
-"""Substrings every figure's axis labels must contain, one per label."""
+"""Substrings the axis labels of a figure set must contain."""
+
+
+class Bundle:
+    """The figures one call wrote (stem -> figure), searched as if they were one."""
+
+    def __init__(
+        self, figs: dict[str, Figure], captions: dict[str, str] | None = None
+    ) -> None:
+        self.figs = figs
+        self.captions = captions or {}
+        """Stem -> caption description registered while the figures were drawn."""
+
+    @property
+    def axes(self) -> list:
+        return [a for f in self.figs.values() for a in f.axes]
+
+    def findobj(self, match: Callable[[Artist], bool]) -> list[Artist]:
+        return [a for f in self.figs.values() for a in f.findobj(match)]
+
+    def __getitem__(self, stem: str) -> Figure:
+        return self.figs[stem]
 
 
 def _colors(theme: str) -> dict[str, str]:
@@ -81,14 +116,19 @@ def _colors(theme: str) -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def frames() -> dict[str, pd.DataFrame]:
-    """1M (10 seeds) and 1B (3 seeds) with achievements."""
-    return figure_frames()
+    """Craftax-1M: 10 seeds, the ablations and achievements (one benchmark a call)."""
+    return figure_frames(("1m",))
 
 
 @pytest.fixture(scope="module")
-def frames_1m() -> dict[str, pd.DataFrame]:
-    """Only Craftax-1M: 1B is pending (R86)."""
-    return figure_frames(("1m",))
+def frames_1m(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    return frames
+
+
+@pytest.fixture(scope="module")
+def frames_1b() -> dict[str, pd.DataFrame]:
+    """Craftax-1B: 3 seeds (indicative: median and mean, no PoI)."""
+    return figure_frames(("1b",))
 
 
 @pytest.fixture(scope="module")
@@ -119,10 +159,10 @@ def draw(
     out_dir: Path,
     theme: str = "report",
     width: str = "column",
-) -> Figure:
+) -> Bundle:
     """Call the figure of ``fid`` with test-sized bootstraps and the shared tables."""
     w = {"width": width}
-    plain: dict[str, Callable[..., Figure]] = {
+    plain: dict[str, Callable[[], dict[str, Figure]]] = {
         "F1": lambda: plot_curves_score(frames, out_dir, theme, n_boot=N, **w),
         "F2": lambda: plot_aggregate(frames, out_dir, theme, n_boot=N, **w),
         "F3": lambda: plot_poi_matrix(frames, out_dir, theme, n_boot=N, **w),
@@ -133,29 +173,31 @@ def draw(
         "F18": lambda: plot_sensitivity(tuning, out_dir, theme, **w),
         "F19": lambda: plot_stability(frames, out_dir, theme, **w),
         "F20": lambda: plot_hardware(frames, out_dir, theme, **w),
-        "F2F3": lambda: plot_aggregate_poi(frames, out_dir, theme, n_boot=N, **w),
-        "LEG": lambda: plot_legend_methods(frames, out_dir, theme, **w),
+        "LEG": lambda: {
+            "legend_methods": plot_legend_methods(frames, out_dir, theme, **w)
+        },
     }
-    return plain[fid]()
+    return Bundle(plain[fid]())
 
 
-def artists(fig: Figure, kind: str) -> list[Artist]:
+def artists(fig: Bundle | Figure, kind: str) -> list[Artist]:
     """Artists whose gid starts with ``kind + '/'``, in drawing order."""
     return fig.findobj(lambda a: (a.get_gid() or "").startswith(f"{kind}/"))
 
 
-def one(fig: Figure, gid: str) -> Artist:
+def one(fig: Bundle | Figure, gid: str) -> Artist:
     found = fig.findobj(lambda a: a.get_gid() == gid)
     assert len(found) == 1, f"{gid}: {len(found)} artists"
     return found[0]
 
 
-def texts(fig: Figure) -> list[str]:
-    fig.canvas.draw()
+def texts(fig: Bundle | Figure) -> list[str]:
+    for f in fig.figs.values() if isinstance(fig, Bundle) else [fig]:
+        f.canvas.draw()
     return [t.get_text() for t in fig.findobj(Text) if t.get_visible() and t.get_text()]
 
 
-def axis_labels(fig: Figure) -> str:
+def axis_labels(fig: Bundle | Figure) -> str:
     labels = []
     for ax in fig.axes:
         labels += [ax.get_xlabel(), ax.get_ylabel()]
@@ -166,8 +208,16 @@ def tick_labels(ax: object) -> list[str]:
     return [t.get_text() for t in ax.get_yticklabels()]  # type: ignore[attr-defined]
 
 
-def with_gid(fig: Figure, kind: str, *parts: str) -> Artist:
+def with_gid(fig: Bundle | Figure, kind: str, *parts: str) -> Artist:
     return one(fig, "/".join((kind, *parts)))
+
+
+def _block(method: str) -> str:
+    return "skills" if method in ("smdp-skills", "dyna-q") else "main"
+
+
+def _none_lit() -> pd.DataFrame:
+    return pd.DataFrame(columns=compare.LITERATURE_TABLE_COLUMNS)
 
 
 # --- every figure -------------------------------------------------------------------
@@ -175,7 +225,7 @@ def with_gid(fig: Figure, kind: str, *parts: str) -> Artist:
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", list(NAMES))
-def test_each_figure_writes_a_png_and_no_pdf(
+def test_each_figure_writes_its_files_as_png_with_captions(
     fid: str,
     theme: str,
     frames: dict[str, pd.DataFrame],
@@ -183,21 +233,24 @@ def test_each_figure_writes_a_png_and_no_pdf(
     literature: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
-    fig = draw(fid, frames, tuning, literature, tmp_path, theme)
-    assert isinstance(fig, Figure)
-    stem = NAMES[fid] + ("_video" if theme == "video" else "")
-    assert not (tmp_path / f"{stem}.pdf").exists()
-    assert (tmp_path / f"{stem}.png").read_bytes().startswith(PNG)
+    with capture_captions() as caps:
+        figs = draw(fid, frames, tuning, literature, tmp_path, theme)
+    assert sorted(figs.figs) == sorted(STEMS[fid])
+    suffix = "_video" if theme == "video" else ""
+    for stem in STEMS[fid]:
+        assert not (tmp_path / f"{stem}{suffix}.pdf").exists()
+        assert (tmp_path / f"{stem}{suffix}.png").read_bytes().startswith(PNG)
+    assert sorted(c.stem for c in caps) == sorted(STEMS[fid])
     assert FIGURES[fid] is getattr(figures, FIGURES[fid].__name__)
     for want in LABELS[fid]:
-        assert want in axis_labels(fig), (fid, want, axis_labels(fig))
+        assert want in axis_labels(figs), (fid, want, axis_labels(figs))
 
 
 def test_the_two_themes_are_two_files_and_two_surfaces(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    light = plot_aggregate(frames, tmp_path, "report", n_boot=N)
-    dark = plot_aggregate(frames, tmp_path, "video", n_boot=N)
+    light = plot_aggregate(frames, tmp_path, "report", n_boot=N)["aggregate"]
+    dark = plot_aggregate(frames, tmp_path, "video", n_boot=N)["aggregate"]
     assert light.get_facecolor() != dark.get_facecolor()
     assert {p.name for p in tmp_path.iterdir()} == {
         "aggregate.png",
@@ -212,6 +265,12 @@ def test_an_unknown_theme_is_refused(
         plot_aggregate(frames, tmp_path, "poster", n_boot=N)
 
 
+def test_a_figure_shows_one_benchmark_at_a_time(tmp_path: Path) -> None:
+    both = figure_frames()
+    with pytest.raises(ValueError, match="one benchmark"):
+        plot_aggregate(both, tmp_path, n_boot=N)
+
+
 @pytest.mark.parametrize("fid", list(NAMES))
 def test_report_figures_are_one_column_wide_with_7pt_fonts(
     fid: str,
@@ -220,17 +279,17 @@ def test_report_figures_are_one_column_wide_with_7pt_fonts(
     literature: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
-    fig = draw(fid, frames, tuning, literature, tmp_path)
-    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
-    fig.canvas.draw()
-    sizes = {
-        t.get_text(): t.get_fontsize()
-        for t in fig.findobj(Text)
-        if t.get_visible() and t.get_text().strip()
-    }
-    assert sizes
-    small = {k: v for k, v in sizes.items() if v < 7}
-    assert not small, small
+    figs = draw(fid, frames, tuning, literature, tmp_path)
+    for fig in figs.figs.values():
+        assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
+        fig.canvas.draw()
+        sizes = {
+            t.get_text(): t.get_fontsize()
+            for t in fig.findobj(Text)
+            if t.get_visible() and t.get_text().strip()
+        }
+        small = {k: v for k, v in sizes.items() if v < 7}
+        assert not small, small
 
 
 @pytest.mark.parametrize("fid", list(NAMES))
@@ -241,56 +300,85 @@ def test_video_figures_fill_a_1080p_frame(
     literature: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
-    fig = draw(fid, frames, tuning, literature, tmp_path, "video")
-    width, height = fig.get_size_inches() * fig.dpi
-    assert (round(width), round(height)) == (1920, 1080)
+    for fig in draw(fid, frames, tuning, literature, tmp_path, "video").figs.values():
+        width, height = fig.get_size_inches() * fig.dpi
+        assert (round(width), round(height)) == (1920, 1080)
 
 
-@pytest.mark.parametrize("theme", THEMES)
-@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20", "F2F3"])
-def test_a_missing_1b_is_pending_not_an_empty_axis(
+@pytest.mark.parametrize("fid", [f for f in NAMES if f != "LEG"])
+def test_a_one_panel_figure_has_no_double_width_variant(
     fid: str,
-    theme: str,
-    frames_1m: dict[str, pd.DataFrame],
+    frames: dict[str, pd.DataFrame],
     tuning: dict[str, pd.DataFrame],
+    literature: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
-    fig = (
-        draw(fid, frames_1m, tuning, pd.DataFrame(), tmp_path, theme)
-        if (fid != "F4")
-        else plot_seed_spread(frames_1m, tmp_path, theme, literature=_none_lit())
-    )
-    shown = texts(fig)
-    if fid != "F3":  # F3 is a 1M figure by design: nothing is pending in it
-        assert any(PENDING_1B in t for t in shown), shown
-    for ax in fig.axes:
-        if ax.get_visible() and ax.axison:
-            assert ax.has_data() or ax.texts, (
-                "an empty axis needs a label or must be off"
-            )
-            assert ax.get_title(loc="left") or ax.get_xlabel(), "an unlabelled axis"
+    """Every core figure fits the column: only a listed stem gets ``_double``."""
+    assert not figures.DOUBLE_STEMS
+    figs = draw(fid, frames, tuning, literature, tmp_path, width="double")
+    assert not figs.figs
+    assert not list(tmp_path.iterdir())
 
 
-def _none_lit() -> pd.DataFrame:
-    return pd.DataFrame(columns=compare.LITERATURE_TABLE_COLUMNS)
+def test_a_listed_stem_gets_a_170_mm_variant(
+    frames: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(figures, "DOUBLE_STEMS", ("aggregate",))
+    fig = plot_aggregate(frames, tmp_path, width="double", n_boot=N)["aggregate"]
+    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
+    assert (tmp_path / "aggregate_double.png").read_bytes().startswith(PNG)
 
 
-@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20", "F2F3"])
+def test_the_width_option_is_refused_when_unknown(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="width"):
+        plot_curves_score(frames, tmp_path, width="triple", n_boot=N)
+
+
+def test_the_video_ignores_the_width_option(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    figs = plot_curves_score(frames, tmp_path, "video", width="double", n_boot=N)
+    for fig in figs.values():
+        assert tuple(round(v) for v in fig.get_size_inches() * fig.dpi) == (1920, 1080)
+    assert (tmp_path / "curves_score_main_video.png").exists()
+
+
+@pytest.mark.parametrize("fid", ["F1", "F2", "F3", "F4", "F5", "F19", "F20"])
 def test_no_run_data_gives_a_labelled_placeholder(
     fid: str, tmp_path: Path, tuning: dict[str, pd.DataFrame]
 ) -> None:
+    full = figure_frames(("1m",))
     empty = {
-        "runs": figure_frames()["runs"].iloc[:0],
-        "curves": figure_frames()["curves"].iloc[:0],
-        "eval_episodes": figure_frames()["eval_episodes"].iloc[:0],
+        "runs": full["runs"].iloc[:0],
+        "curves": full["curves"].iloc[:0],
+        "eval_episodes": full["eval_episodes"].iloc[:0],
     }
-    fig = (
-        plot_seed_spread(empty, tmp_path, literature=_none_lit())
+    figs = (
+        Bundle(plot_seed_spread(empty, tmp_path, literature=_none_lit()))
         if fid == "F4"
         else draw(fid, empty, tuning, pd.DataFrame(), tmp_path)
     )
-    assert any("no data" in t for t in texts(fig))
+    assert any("no data" in t for t in texts(figs))
     assert (tmp_path / f"{NAMES[fid]}.png").exists()
+
+
+@pytest.mark.parametrize("fid", ["F1", "F2", "F4", "F5", "F19"])
+def test_1b_figures_have_no_pending_or_indicative_text(
+    fid: str,
+    frames_1b: dict[str, pd.DataFrame],
+    tuning: dict[str, pd.DataFrame],
+    tmp_path: Path,
+) -> None:
+    """The 1B set is drawn from 1B alone and says nothing about the other budget."""
+    if fid == "F4":
+        figs = Bundle(plot_seed_spread(frames_1b, tmp_path, literature=_none_lit()))
+    else:
+        figs = draw(fid, frames_1b, tuning, pd.DataFrame(), tmp_path)
+    assert figs.figs
+    for t in texts(figs):
+        assert not any(w in t for w in ("pending", "indicative", "1B", "1M")), t
 
 
 # --- F1 ----------------------------------------------------------------------------
@@ -300,7 +388,7 @@ def test_no_run_data_gives_a_labelled_placeholder(
 def test_f1_colours_and_styles_follow_the_contract(
     theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_curves_score(frames, tmp_path, theme, n_boot=N)
+    fig = Bundle(plot_curves_score(frames, tmp_path, theme, n_boot=N))
     colors = _colors(theme)
     lines = artists(fig, "curve")
     assert lines
@@ -317,25 +405,32 @@ def test_f1_colours_and_styles_follow_the_contract(
     assert len(grey) == 3
 
 
-def test_f1_shows_the_two_blocks_and_the_controls_in_both(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+def test_f1_has_one_file_per_block_with_the_controls_in_both_and_one_y_range(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_curves_score(frames_1m, tmp_path, n_boot=N)
-    gids = [a.get_gid().split("/") for a in artists(fig, "curve")]
-    for control in CONTROLS:
-        assert {b for _, _, b, m, _ in gids if m == control} == {"main", "skills"}
-    assert {m for _, _, b, m, _ in gids if b == "skills"} - set(CONTROLS) == {
-        "smdp-skills",
-        "dyna-q",
-    }
-    assert "smdp-skills" not in {m for _, _, b, m, _ in gids if b == "main"}
+    figs = plot_curves_score(frames, tmp_path, n_boot=N)
+    assert sorted(figs) == ["curves_score_main", "curves_score_skills"]
+    methods = {}
+    for stem, fig in figs.items():
+        gids = [a.get_gid().split("/") for a in artists(fig, "curve")]
+        methods[stem] = {m for _, _, _, m, _ in gids}
+        assert {b for _, _, b, _, _ in gids} == {stem.removeprefix("curves_score_")}
+    assert set(CONTROLS) <= methods["curves_score_main"]
+    assert set(CONTROLS) <= methods["curves_score_skills"]
+    assert methods["curves_score_skills"] - set(CONTROLS) == {"smdp-skills", "dyna-q"}
+    assert "smdp-skills" not in methods["curves_score_main"]
+    first, second = (f.axes[0] for f in figs.values())
+    assert first.get_ylim() == second.get_ylim()
+    assert first.get_position().bounds[2] == pytest.approx(
+        second.get_position().bounds[2]
+    )
 
 
 def test_f1_is_the_shared_curve_band_over_seeds(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+    frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_curves_score(frames_1m, tmp_path, n_boot=N, seed=3)
-    runs, curves = frames_1m["runs"], frames_1m["curves"]
+    fig = Bundle(plot_curves_score(frames, tmp_path, n_boot=N, seed=3))
+    runs, curves = frames["runs"], frames["curves"]
     mine = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]
     score = curves[curves["metric"] == "train/score_pct"]
     per_seed = [
@@ -354,9 +449,9 @@ def test_f1_is_the_shared_curve_band_over_seeds(
 
 
 def test_f1_ablations_are_dotted_hollow_and_a_unit_of_their_own(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+    frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_curves_score(frames_1m, tmp_path, n_boot=N, ablations=True)
+    fig = Bundle(plot_curves_score(frames, tmp_path, n_boot=N, ablations=True))
     colors = _colors("report")
     for method, ref in ABLATIONS:
         line = with_gid(fig, "curve", "1m", _block(method), method, ref)
@@ -368,20 +463,6 @@ def test_f1_ablations_are_dotted_hollow_and_a_unit_of_their_own(
         assert not np.allclose(line.get_ydata(), tuned.get_ydata())
 
 
-def _block(method: str) -> str:
-    return "skills" if method in ("smdp-skills", "dyna-q") else "main"
-
-
-def test_f1_1b_panels_are_marked_indicative(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    fig = plot_curves_score(frames, tmp_path, n_boot=N)
-    titles = [ax.get_title(loc="left") for ax in fig.axes if ax.get_visible()]
-    assert any("1B" in t and "indicative" in t for t in titles)
-    assert not any("1M" in t and "indicative" in t for t in titles)
-    one(fig, "curve/1b/main/sil/tuned")
-
-
 # --- F2 ----------------------------------------------------------------------------
 
 
@@ -389,7 +470,7 @@ def test_f2_reads_the_main_table_and_separates_the_blocks(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = main_table(frames, n_boot=N)
-    fig = plot_aggregate(frames, tmp_path, n_boot=N, table=table)
+    fig = Bundle(plot_aggregate(frames, tmp_path, n_boot=N, table=table))
     for row in table[table["benchmark"] == "1m"].itertuples():
         base = (row.benchmark, row.block, row.method, "tuned")
         iqm = with_gid(fig, "iqm", *base)
@@ -404,18 +485,18 @@ def test_f2_reads_the_main_table_and_separates_the_blocks(
     ax = with_gid(fig, "iqm", "1m", "main", "sil", "tuned").axes
     labels = tick_labels(ax)
     assert "main" in labels
-    assert "uses hand-written skills" in labels
-    assert labels.index("main") < labels.index("uses hand-written skills")
-    after = labels[labels.index("uses hand-written skills") :]
+    assert "skills" in labels
+    assert labels.index("main") < labels.index("skills")
+    after = labels[labels.index("skills") :]
     assert [c for c in CONTROLS if c in after] == list(CONTROLS)  # controls repeated
-    assert "smdp-skills" not in labels[: labels.index("uses hand-written skills")]
+    assert "smdp-skills" not in labels[: labels.index("skills")]
 
 
 def test_f2_1b_gives_median_and_mean_never_iqm(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1b: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    table = main_table(frames, n_boot=N)
-    fig = plot_aggregate(frames, tmp_path, n_boot=N, table=table)
+    table = main_table(frames_1b, n_boot=N)
+    fig = Bundle(plot_aggregate(frames_1b, tmp_path, n_boot=N, table=table))
     row = table[(table["benchmark"] == "1b") & (table["method"] == "sil")].iloc[0]
     assert with_gid(fig, "median", "1b", "main", "sil", "tuned").get_xdata()[0] == (
         pytest.approx(row["median"])
@@ -426,18 +507,19 @@ def test_f2_1b_gives_median_and_mean_never_iqm(
         pytest.approx(row["t_lo"]),
         pytest.approx(row["t_hi"]),
     )
-    assert not [a for a in artists(fig, "iqm") if "/1b/" in a.get_gid()]
-    titles = [ax.get_title(loc="left") for ax in fig.axes if ax.get_visible()]
-    assert any("1B" in t and "indicative" in t for t in titles)
+    assert not artists(fig, "iqm")
 
 
 def test_f2_ablations_are_dotted_rows_under_their_method(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = ablation_table(frames, n_boot=N)
-    fig = plot_aggregate(
-        frames, tmp_path, n_boot=N, ablation=table, table=main_table(frames, n_boot=N)
-    )
+    fig = Bundle(
+        plot_aggregate(
+            frames, tmp_path, n_boot=N, ablation=table,
+            table=main_table(frames, n_boot=N),
+        )
+    )  # fmt: skip
     colors = _colors("report")
     for row in table[table["benchmark"] == "1m"].itertuples():
         base = (row.benchmark, row.block, row.method, row.config_ref)
@@ -458,19 +540,21 @@ def test_f2_ablations_are_dotted_rows_under_their_method(
 # --- F3 ----------------------------------------------------------------------------
 
 
-def test_f3_cells_are_the_poi_table_one_panel_per_block(
+def test_f3_cells_are_the_poi_table_one_square_file_per_block(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = poi_matrix(frames, n_boot=N)
-    fig = plot_poi_matrix(frames, tmp_path, n_boot=N, table=table)
+    figs = plot_poi_matrix(frames, tmp_path, n_boot=N, table=table)
     for block, other in (("main", "smdp-skills"), ("skills", "sil")):
+        fig = figs[f"poi_matrix_{block}"]
+        w, h = fig.get_size_inches()
+        assert h / w == pytest.approx(1.0)
         image = with_gid(fig, "poi", "1m", block)
         ax = image.axes
         names = [t.get_text() for t in ax.get_yticklabels()]
         assert [t.get_text() for t in ax.get_xticklabels()] == names
         assert set(CONTROLS) <= set(names)
         assert other not in names  # no cross-block cell
-        assert block in ax.get_title(loc="left")
         cells = np.asarray(image.get_array(), dtype=float)
         rows = table[(table["benchmark"] == "1m") & (table["block"] == block)]
         for r in rows.itertuples():
@@ -480,7 +564,7 @@ def test_f3_cells_are_the_poi_table_one_panel_per_block(
         assert np.isnan(np.diag(cells)).all()
 
 
-def _cell_texts(fig: Figure, image: Artist) -> dict[tuple[int, int], Text]:
+def _cell_texts(fig: Bundle | Figure, image: Artist) -> dict[tuple[int, int], Text]:
     """The PoI text of each (row, column) cell of ``image``, found by its position."""
     return {
         (int(t.get_position()[1]), int(t.get_position()[0])): t
@@ -493,7 +577,7 @@ def test_f3_bold_is_exactly_the_cells_whose_interval_excludes_one_half(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = poi_matrix(frames, n_boot=N)
-    fig = plot_poi_matrix(frames, tmp_path, n_boot=N, table=table)
+    fig = Bundle(plot_poi_matrix(frames, tmp_path, n_boot=N, table=table))
     seen = set()
     for block in ("main", "skills"):
         image = with_gid(fig, "poi", "1m", block)
@@ -512,8 +596,8 @@ def test_f3_bold_is_exactly_the_cells_whose_interval_excludes_one_half(
 
 
 def test_f3_needs_1m_so_a_1b_only_export_says_so(tmp_path: Path) -> None:
-    fig = plot_poi_matrix(figure_frames(("1b",)), tmp_path, n_boot=N)
-    assert any("Craftax-1M" in t and "pending" in t for t in texts(fig))
+    figs = plot_poi_matrix(figure_frames(("1b",)), tmp_path, n_boot=N)
+    assert any("10-seed 1M" in t for t in texts(Bundle(figs)))
 
 
 # --- F4 ----------------------------------------------------------------------------
@@ -522,51 +606,47 @@ def test_f3_needs_1m_so_a_1b_only_export_says_so(tmp_path: Path) -> None:
 def test_f4_dots_are_the_per_seed_final_scores(
     frames: dict[str, pd.DataFrame], literature: pd.DataFrame, tmp_path: Path
 ) -> None:
-    fig = plot_seed_spread(frames, tmp_path, literature=literature)
+    fig = Bundle(plot_seed_spread(frames, tmp_path, literature=literature))
     runs = frames["runs"]
-    for budget in ("1m", "1b"):
-        for method in ("ppo", "sil"):
-            got = with_gid(fig, "seeds", budget, _block(method), method)
-            want = runs[
-                (runs["budget"] == budget)
-                & (runs["method"] == method)
-                & (runs["config_ref"] == "tuned")
-            ]["final_score"]
-            assert sorted(got.get_offsets()[:, 0]) == pytest.approx(sorted(want))
+    for method in ("ppo", "sil"):
+        got = with_gid(fig, "seeds", "1m", _block(method), method)
+        want = runs[(runs["method"] == method) & (runs["config_ref"] == "tuned")][
+            "final_score"
+        ]
+        assert sorted(got.get_offsets()[:, 0]) == pytest.approx(sorted(want))
 
 
-def test_f4_literature_values_are_marks_of_the_comparable_block(
+def test_f4_published_rows_are_their_own_file_on_the_same_x_range_and_inset(
     frames: dict[str, pd.DataFrame], literature: pd.DataFrame, tmp_path: Path
 ) -> None:
-    fig = plot_seed_spread(frames, tmp_path, literature=literature)
+    figs = plot_seed_spread(frames, tmp_path, literature=literature)
+    assert sorted(figs) == [
+        "seed_spread_main", "seed_spread_published", "seed_spread_skills",
+    ]  # fmt: skip
     lit = literature[
         (literature["source"] == "literature")
         & (literature["score_kind"] == "training")
+        & (literature["benchmark"] == "1m")
     ]
-    marks = artists(fig, "lit")
+    marks = artists(figs["seed_spread_published"], "lit")
     assert len(marks) == len(lit)
-    for budget in ("1m", "1b"):
-        rows = lit[lit["benchmark"] == budget]
-        got = sorted(
-            float(m.get_offsets()[0, 0])
-            for m in marks
-            if m.get_gid().split("/")[1] == budget
-        )
-        assert got == pytest.approx(sorted(rows["score_pct"]))
-    same = {
-        m.get_gid() for m in marks if m.get_facecolor().size and m.get_facecolor()[0][3]
-    }
+    got = sorted(float(m.get_offsets()[0, 0]) for m in marks)
+    assert got == pytest.approx(sorted(lit["score_pct"]))
+    same = [m for m in marks if m.get_facecolor().size and m.get_facecolor()[0][3]]
     assert same  # protocol-matching rows are filled, the others hollow
     assert len(same) < len(marks)
-    assert not [t for t in texts(fig) if "[[" in t]
+    axes = [f.axes[0] for f in figs.values()]
+    assert len({ax.get_xlim() for ax in axes}) == 1
+    assert len({round(ax.get_position().x0, 6) for ax in axes}) == 1
+    assert len({round(ax.get_position().x1, 6) for ax in axes}) == 1
 
 
-def test_f4_without_literature_rows_draws_only_our_dots(
+def test_f4_without_literature_rows_has_no_published_file(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_seed_spread(frames, tmp_path, literature=_none_lit())
-    assert not artists(fig, "lit")
-    assert artists(fig, "seeds")
+    figs = plot_seed_spread(frames, tmp_path, literature=_none_lit())
+    assert "seed_spread_published" not in figs
+    assert artists(Bundle(figs), "seeds")
 
 
 # --- F5 ----------------------------------------------------------------------------
@@ -587,44 +667,53 @@ def _expected_rates(
 
 
 def test_f5_rates_differ_so_a_misplaced_row_or_column_fails(
-    frames_1m: dict[str, pd.DataFrame],
+    frames: dict[str, pd.DataFrame],
 ) -> None:
-    rates = _expected_rates(frames_1m)
+    rates = _expected_rates(frames)
     assert rates.nunique().min() > 3  # every achievement differs across methods
     assert rates.T.nunique().min() > 2  # and every method across achievements
 
 
-def test_f5_cells_are_the_final_success_rates_by_tier_and_floor(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+def test_f5_cells_are_the_final_success_rates_one_file_per_block(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_success_heatmap(frames_1m, tmp_path)
-    rates = _expected_rates(frames_1m)
+    figs = plot_success_heatmap(frames, tmp_path)
+    rates = _expected_rates(frames)
     for block in ("main", "skills"):
+        fig = figs[f"success_heatmap_{block}"]
         image = with_gid(fig, "heat", "1m", block)
         names = [t.get_text() for t in image.axes.get_xticklabels()]
         assert set(CONTROLS) <= set(names)
+        rows = [t.get_text() for t in image.axes.get_yticklabels()]
+        assert rows == list(ACHIEVEMENTS)  # every fixture rate is far above 1%
         cells = np.asarray(image.get_array(), dtype=float)
         assert cells.shape == (len(ACHIEVEMENTS), len(names))
         for j, method in enumerate(names):
             for i, achievement in enumerate(ACHIEVEMENTS):  # row i is achievement i
                 assert cells[i, j] == pytest.approx(rates.loc[method, achievement])
-    assert "smdp-skills" not in [
-        t.get_text() for t in with_gid(fig, "heat", "1m", "main").axes.get_xticklabels()
+    main = [
+        t.get_text() for t in figs["success_heatmap_main"].axes[0].get_xticklabels()
     ]
-    rows = [a.get_text() for a in fig.findobj(Text) if a.get_gid() == "heat/tier"]
-    assert rows == ["basic", "intermediate", "advanced"]
+    assert "smdp-skills" not in main
+    sizes = {tuple(f.get_size_inches()) for f in figs.values()}
+    assert len(sizes) == 1  # the two files tile
+    a, b = (f.axes[0].get_position().bounds for f in figs.values())
+    assert a[1] == pytest.approx(b[1])
+    assert a[3] == pytest.approx(b[3])
 
 
-def test_f5_video_names_every_achievement_in_row_order(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+def test_f5_folds_the_achievements_nobody_reaches_into_the_caption(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_success_heatmap(frames_1m, tmp_path, "video")
-    image = with_gid(fig, "heat", "1m", "main")
-    assert [t.get_text() for t in image.axes.get_yticklabels()] == list(ACHIEVEMENTS)
-    assert fig.findobj(lambda a: a.get_gid() == "heat/achievement")
-    shown = texts(fig)
-    assert "basic F0" in shown
-    assert not [t for t in fig.findobj(Text) if t.get_gid() == "heat/tier"]
+    eps = frames["eval_episodes"].copy()
+    eps["ach/enter_sewers"] = False  # nobody reaches it
+    with capture_captions() as caps:
+        figs = plot_success_heatmap({**frames, "eval_episodes": eps}, tmp_path)
+    rows = [
+        t.get_text() for t in figs["success_heatmap_main"].axes[0].get_yticklabels()
+    ]
+    assert "enter_sewers" not in rows
+    assert all("enter_sewers" in c.description for c in caps)
 
 
 # --- F18 ---------------------------------------------------------------------------
@@ -634,7 +723,7 @@ def test_f18_strip_and_bars_read_config_scores_and_t7(
     tuning: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = sensitivity_table(tuning)
-    fig = plot_sensitivity(tuning, tmp_path, table=table)
+    fig = Bundle(plot_sensitivity(tuning, tmp_path, table=table))
     runs = tuning["runs"]
     for phase in ("tune-coarse", "tune-fine"):
         for method in ("sil", "smdp-skills"):
@@ -662,7 +751,7 @@ def test_f18_marks_the_hyperparameters_below_the_noise_floor(
     tuning: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = sensitivity_table(tuning)
-    fig = plot_sensitivity(tuning, tmp_path, table=table)
+    fig = Bundle(plot_sensitivity(tuning, tmp_path, table=table))
     ppo = table[(table["phase"] == "tune-coarse") & (table["method"] == "ppo")].iloc[0]
     assert not ppo["top1_insensitive"]
     assert ppo["top2_insensitive"]
@@ -679,7 +768,7 @@ def test_f18_rows_and_tick_labels_follow_the_methods(
     tuning: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     table = sensitivity_table(tuning)
-    fig = plot_sensitivity(tuning, tmp_path, table=table)
+    fig = Bundle(plot_sensitivity(tuning, tmp_path, table=table))
     order = {
         "tune-coarse": ["ppo", "sil", "smdp-skills"],
         "tune-fine": ["sil", "smdp-skills"],
@@ -688,6 +777,7 @@ def test_f18_rows_and_tick_labels_follow_the_methods(
         bar = with_gid(fig, "sens", phase, methods[0], "1")
         ax_s = bar.axes
         ax_rc = with_gid(fig, "rc", phase, methods[0]).axes
+        assert ax_rc is not ax_s  # one panel per file
         assert [t.get_text() for t in ax_rc.get_yticklabels()] == methods
         want = []
         for m in methods:
@@ -701,33 +791,31 @@ def test_f18_rows_and_tick_labels_follow_the_methods(
                 assert y == pytest.approx(2 * k + rank - 1)
                 assert rect.get_label() == want[2 * k + rank - 1]
             dots = with_gid(fig, "rc", phase, m).get_offsets()[:, 1]
-            assert np.all(np.abs(dots - (2 * k + 0.5)) < 0.5)
+            assert np.all(np.abs(dots - k) < 0.5)
     smdp = table[(table["phase"] == "tune-coarse") & (table["method"] == "smdp-skills")]
     assert smdp.iloc[0]["top1"] == "eps_top"  # its own hyperparameter name
 
 
-def test_sens_axes_refuses_a_method_without_a_t7_row(
-    tuning: dict[str, pd.DataFrame], tmp_path: Path
+def test_the_bars_panel_refuses_a_method_without_a_t7_row(
+    tuning: dict[str, pd.DataFrame],
 ) -> None:
     table = sensitivity_table(tuning)
     table = table[table["method"] != "sil"]
-    ax_rc, ax_s = Figure().subplots(1, 2)
+    ax = Figure().subplots()
     with pytest.raises(ValueError, match="sil"):
-        figures._sens_axes(
-            ax_rc,
-            ax_s,
+        figures._bars_panel(
+            ax,
             figures._theme("report"),
             "tune-coarse",
             [figures.Row(0, "sil", "method", "main", "sil", "tuned")],
             table,
-            tuning["runs"],
         )
 
 
-def test_f18_is_a_1m_figure_without_a_grid_it_says_so(tmp_path: Path) -> None:
+def test_f18_without_a_grid_draws_only_the_phase_it_has(tmp_path: Path) -> None:
     runs = tuning_frames()["runs"]
-    fig = plot_sensitivity({"runs": runs[runs["phase"] == "tune-coarse"]}, tmp_path)
-    assert any("tune-fine" in t and "no runs" in t for t in texts(fig))
+    figs = plot_sensitivity({"runs": runs[runs["phase"] == "tune-coarse"]}, tmp_path)
+    assert sorted(figs) == ["config_scores_coarse", "sensitivity_coarse"]
 
 
 # --- F19 ---------------------------------------------------------------------------
@@ -736,44 +824,79 @@ def test_f18_is_a_1m_figure_without_a_grid_it_says_so(tmp_path: Path) -> None:
 def test_f19_dots_are_the_per_run_drawdowns_and_bars_are_t3(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_stability(frames, tmp_path)
+    figs = plot_stability(frames, tmp_path)
+    fig = Bundle(figs)
     per_run = run_stability(frames)
     t3 = stability_table(frames)
-    for budget in ("1m", "1b"):
-        for method in ("sil", "ppo"):
-            mine = per_run[
-                (per_run["benchmark"] == budget) & (per_run["method"] == method)
-            ]
-            dots = with_gid(fig, "dd", budget, _block(method), method)
-            got = sorted(dots.get_offsets()[:, 0])
-            assert got == pytest.approx(sorted(mine["max_drawdown"].dropna()))
-            row = t3[
-                (t3["benchmark"] == budget)
-                & (t3["method"] == method)
-                & (t3["block"] == _block(method))
-            ].iloc[0]
-            median = with_gid(fig, "dd-median", budget, _block(method), method)
-            assert median.get_xdata()[0] == pytest.approx(row["max_drawdown_median"])
-            drops = with_gid(fig, "drops", budget, _block(method), method)
-            assert drops.get_width() == pytest.approx(
-                row["runs_with_drops"] / row["seeds"]
-            )
-            collapse = with_gid(fig, "collapse", budget, _block(method), method)
-            assert collapse.get_width() == pytest.approx(
-                row["runs_with_collapse"] / row["seeds"]
-            )
+    for method in ("sil", "ppo"):
+        mine = per_run[(per_run["benchmark"] == "1m") & (per_run["method"] == method)]
+        dots = with_gid(fig, "dd", "1m", _block(method), method)
+        got = sorted(dots.get_offsets()[:, 0])
+        assert got == pytest.approx(sorted(mine["max_drawdown"].dropna()))
+        row = t3[
+            (t3["benchmark"] == "1m")
+            & (t3["method"] == method)
+            & (t3["block"] == _block(method))
+        ].iloc[0]
+        median = with_gid(fig, "dd-median", "1m", _block(method), method)
+        assert median.get_xdata()[0] == pytest.approx(row["max_drawdown_median"])
+        drops = with_gid(fig, "drops", "1m", _block(method), method)
+        assert drops.get_width() == pytest.approx(row["runs_with_drops"] / row["seeds"])
+        collapse = with_gid(fig, "collapse", "1m", _block(method), method)
+        assert collapse.get_width() == pytest.approx(
+            row["runs_with_collapse"] / row["seeds"]
+        )
     assert (t3["runs_with_collapse"] > 0).any()  # the fixture has a collapsing run
     marked = with_gid(fig, "collapsed", "1m", "main", "sil")
     assert len(marked.get_offsets()) == 1  # sil seed 0 collapses
 
 
+def test_f19_files_have_one_size_and_one_axes_box(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    a, b = plot_stability(frames, tmp_path).values()
+    assert tuple(a.get_size_inches()) == tuple(b.get_size_inches())
+    assert a.axes[0].get_position().bounds == b.axes[0].get_position().bounds
+
+
+def test_f19_shares_divide_by_the_runs_that_have_a_curve(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    runs, curves = frames["runs"], frames["curves"]
+    sil = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]
+    gone = sil[sil["seed"] >= 5]["run_id"]  # half the runs logged no curve (R78)
+    half = {**frames, "curves": curves[~curves["run_id"].isin(gone)]}
+    t3 = stability_table(half)
+    row = t3[(t3["method"] == "sil") & (t3["block"] == "main")].iloc[0]
+    assert (row["seeds"], row["curve_runs"]) == (10, 5)
+    assert row["runs_with_collapse"] == 1  # sil seed 0 collapses
+    fig = Bundle(plot_stability(half, tmp_path))
+    collapse = with_gid(fig, "collapse", "1m", "main", "sil")
+    assert collapse.get_width() == pytest.approx(1 / 5)  # not 1 / 10
+    drops = with_gid(fig, "drops", "1m", "main", "sil")
+    assert drops.get_width() == pytest.approx(row["runs_with_drops"] / 5)
+    assert len(with_gid(fig, "dd", "1m", "main", "sil").get_offsets()) <= 5
+
+
+def test_f19_draws_no_share_bar_for_a_method_without_any_curve(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    runs, curves = frames["runs"], frames["curves"]
+    sil = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]["run_id"]
+    bare = {**frames, "curves": curves[~curves["run_id"].isin(sil)]}
+    fig = Bundle(plot_stability(bare, tmp_path))
+    assert not [a for a in artists(fig, "collapse") if a.get_gid().endswith("/sil")]
+
+
 # --- F20 ---------------------------------------------------------------------------
 
 
-def test_f20_reads_t4_medians_and_carries_the_context_note(
+def test_f20_reads_t4_medians_one_file_per_metric_and_names_the_machine(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_hardware(frames, tmp_path)
+    with capture_captions() as caps:
+        figs = plot_hardware(frames, tmp_path)
+    fig = Bundle(figs)
     t4 = hardware_table(frames)
     row = t4[
         (t4["benchmark"] == "1m")
@@ -784,172 +907,32 @@ def test_f20_reads_t4_medians_and_carries_the_context_note(
     assert sps.get_offsets()[0, 0] == pytest.approx(row["steady_sps"])
     hours = with_gid(fig, "hw", "laptop", "wall_clock_s", "sil")
     assert hours.get_offsets()[0, 0] == pytest.approx(row["wall_clock_s"] / 3600)
-    shown = " ".join(texts(fig))
-    assert CONTEXT_NOTE in " ".join(shown.split())
-    assert "n.m." in shown  # no GPU, energy or device-memory series on the laptop
+    assert "hardware_efficiency" not in figs  # no energy series: not drawn, said below
+    text = {c.stem: c.description for c in caps}
+    assert "Apple Silicon laptop" in text["hardware_sps"]
+    assert "steps per joule" in text["hardware_sps"]
+    assert compare.CONTEXT_NOTE in " ".join(text["hardware_sps"].split())
     assert not [a for a in artists(fig, "hw") if a.get_gid().endswith("/1b")]
+    assert not [t for t in texts(fig) if "n.m." in t]
 
 
-def test_f20_keeps_profiles_apart_and_has_no_1b_rows_to_draw(
+def test_f20_keeps_profiles_apart_in_files_of_their_own(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     runs = frames["runs"].copy()
     other = runs[runs["method"].isin(["ppo", "sil"])].assign(profile="cuda")
-    fig = plot_hardware({**frames, "runs": pd.concat([runs, other])}, tmp_path)
-    one(fig, "hw/cuda/steady_sps/ppo")
-    one(fig, "hw/cuda/steady_sps/sil")
-    one(fig, "hw/laptop/steady_sps/dyna-q")
+    figs = plot_hardware({**frames, "runs": pd.concat([runs, other])}, tmp_path)
+    assert {"hardware_sps_cuda", "hardware_sps_laptop"} <= set(figs)
+    cuda, laptop = (
+        Bundle({"c": figs["hardware_sps_cuda"]}),
+        Bundle({"l": figs["hardware_sps_laptop"]}),
+    )
+    one(cuda, "hw/cuda/steady_sps/ppo")
+    one(cuda, "hw/cuda/steady_sps/sil")
+    one(laptop, "hw/laptop/steady_sps/dyna-q")
     with pytest.raises(AssertionError):
-        one(fig, "hw/cuda/steady_sps/dyna-q")  # a profile only shows its own runs
-    note = [t for t in texts(fig) if CONTEXT_NOTE in " ".join(t.split())]
-    assert note
-    titles = [ax.get_title(loc="left") for ax in fig.axes if ax.get_visible()]
-    assert any("cuda" in t for t in titles)
-    assert any("laptop" in t for t in titles)
-
-
-def test_f19_shares_divide_by_the_runs_that_have_a_curve(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    runs, curves = frames_1m["runs"], frames_1m["curves"]
-    sil = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]
-    gone = sil[sil["seed"] >= 5]["run_id"]  # half the runs logged no curve (R78)
-    half = {**frames_1m, "curves": curves[~curves["run_id"].isin(gone)]}
-    t3 = stability_table(half)
-    row = t3[(t3["method"] == "sil") & (t3["block"] == "main")].iloc[0]
-    assert (row["seeds"], row["curve_runs"]) == (10, 5)
-    assert row["runs_with_collapse"] == 1  # sil seed 0 collapses
-    fig = plot_stability(half, tmp_path)
-    collapse = with_gid(fig, "collapse", "1m", "main", "sil")
-    assert collapse.get_width() == pytest.approx(1 / 5)  # not 1 / 10
-    drops = with_gid(fig, "drops", "1m", "main", "sil")
-    assert drops.get_width() == pytest.approx(row["runs_with_drops"] / 5)
-    assert len(with_gid(fig, "dd", "1m", "main", "sil").get_offsets()) <= 5
-
-
-def test_f19_draws_no_share_bar_for_a_method_without_any_curve(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    runs, curves = frames_1m["runs"], frames_1m["curves"]
-    sil = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]["run_id"]
-    bare = {**frames_1m, "curves": curves[~curves["run_id"].isin(sil)]}
-    fig = plot_stability(bare, tmp_path)
-    assert not [a for a in artists(fig, "collapse") if a.get_gid().endswith("/sil")]
-
-
-# --- report widths (R105) -------------------------------------------------------
-
-
-@pytest.mark.parametrize("fid", list(NAMES))
-def test_double_width_is_170_mm_with_its_own_files_and_7pt_fonts(
-    fid: str,
-    frames: dict[str, pd.DataFrame],
-    tuning: dict[str, pd.DataFrame],
-    literature: pd.DataFrame,
-    tmp_path: Path,
-) -> None:
-    fig = draw(fid, frames, tuning, literature, tmp_path, width="double")
-    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert not (tmp_path / f"{NAMES[fid]}_double.pdf").exists()
-    assert (tmp_path / f"{NAMES[fid]}_double.png").read_bytes().startswith(PNG)
-    fig.canvas.draw()
-    small = {
-        t.get_text(): t.get_fontsize()
-        for t in fig.findobj(Text)
-        if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
-    }
-    assert not small, small
-
-
-def test_the_width_option_is_refused_when_unknown(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    with pytest.raises(ValueError, match="width"):
-        plot_curves_score(frames, tmp_path, width="triple", n_boot=N)
-
-
-def test_the_video_ignores_the_width_option(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    fig = plot_curves_score(frames, tmp_path, "video", width="double", n_boot=N)
-    assert tuple(round(v) for v in fig.get_size_inches() * fig.dpi) == (1920, 1080)
-    assert (tmp_path / "curves_score_video.png").exists()
-
-
-def test_f1_at_double_width_is_one_panel_per_budget_with_every_method(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    fig = plot_curves_score(frames, tmp_path, width="double", n_boot=N)
-    panels = [ax for ax in fig.axes if ax.get_visible() and ax.lines]
-    assert len(panels) == 2  # 1M and 1B side by side, not four stacked panels
-    xs = sorted(ax.get_position().x0 for ax in panels)
-    assert xs[1] > xs[0]
-    assert panels[0].get_position().y0 == pytest.approx(panels[1].get_position().y0)
-    methods = {
-        a.get_gid().split("/")[3]
-        for a in artists(fig, "curve")
-        if "/1m/" in a.get_gid()
-    }
-    assert methods == set(METHOD_COLORS_LIGHT)  # all nine, the controls once
-    gids = [a.get_gid() for a in artists(fig, "curve")]
-    assert len(gids) == len(set(gids))
-    titles = [ax.get_title(loc="left") for ax in panels]
-    assert any("1B" in t and "indicative" in t for t in titles)
-    short = plot_curves_score(frames, tmp_path / "c", n_boot=N)
-    assert (
-        fig.get_size_inches()[1] < short.get_size_inches()[1]
-    )  # 0.25 page, not 4 stacked
-
-
-# --- F2 + F3 side by side -------------------------------------------------------
-
-
-def test_f2f3_puts_the_poi_against_each_control_beside_the_intervals(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    poi = poi_matrix(frames, n_boot=N)
-    t1 = main_table(frames, n_boot=N)
-    fig = plot_aggregate_poi(frames, tmp_path, table=t1, poi=poi)
-    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
-    iqm = with_gid(fig, "iqm", "1m", "main", "sil", "tuned")
-    left = iqm.axes
-    image = with_gid(fig, "poi", "1m", "controls")
-    right = image.axes
-    assert right.get_position().x0 > left.get_position().x1  # side by side
-    assert right.get_position().y0 == pytest.approx(left.get_position().y0)
-    assert [t.get_text() for t in right.get_xticklabels()] == list(CONTROLS)
-    labels = [t.get_text() for t in left.get_yticklabels()]
-    cells = {
-        (int(t.get_position()[1]), int(t.get_position()[0])): t for t in right.texts
-    }
-    one_1m = poi[poi["benchmark"] == "1m"]
-    n_cells = 0
-    for r in one_1m.itertuples():
-        if r.versus not in CONTROLS:
-            continue
-        # a method's row in its block; the controls repeat, so match by block order
-        rows = [i for i, name in enumerate(labels) if name == r.method]
-        block_start = labels.index(
-            "main" if r.block == "main" else "uses hand-written skills"
-        )
-        row = next(i for i in rows if i > block_start)
-        text = cells[(row, CONTROLS.index(r.versus))]
-        assert text.get_text() == f"{r.poi:.2f}"
-        excluded = r.poi_lo > 0.5 or r.poi_hi < 0.5
-        assert text.get_gid() == ("poi-cell/bold" if excluded else "poi-cell/plain")
-        n_cells += 1
-    assert n_cells == len(cells)
-    one(fig, "mean/1m/main/sil/tuned")
-
-
-def test_f2f3_1b_rows_have_intervals_only(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    fig = plot_aggregate_poi(frames, tmp_path, n_boot=N)
-    one(fig, "median/1b/main/sil/tuned")
-    assert len(artists(fig, "poi")) == 1  # the 1M image only
-    titles = [ax.get_title(loc="left") for ax in fig.axes if ax.get_visible()]
-    assert any("1B" in t and "indicative" in t for t in titles)
+        one(cuda, "hw/cuda/steady_sps/dyna-q")  # a profile only shows its own runs
+    assert not artists(cuda, "hw/laptop")
 
 
 # --- every method artist uses METHOD_COLORS -------------------------------------

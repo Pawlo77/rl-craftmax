@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from ..visualisation import charts
 from . import hard, obstacles
 from .cases import (
     CASE_COLUMNS,
@@ -104,10 +105,14 @@ def _write_hard(sel: Frames, folder: Path) -> None:
     for name, table in tables.items():
         table.to_csv(folder / "hard" / f"{name}.csv", index=False)
     plots = folder / "plots"
-    hard.plot_floor_reach(tables["floor_reach"], plots)
-    hard.plot_achievement_status(tables["achievement_status"], plots)
-    hard.plot_death_causes(tables["death_causes"], plots)
-    hard.plot_stall_lengths(tables["stall_ccdf"], plots)
+    for old in plots.glob("*.png"):  # one panel a file now: the old stems are stale
+        old.unlink()
+    with charts.capture_captions() as captions:
+        hard.plot_floor_reach(tables["floor_reach"], plots)
+        hard.plot_achievement_status(tables["achievement_status"], plots)
+        hard.plot_death_causes(tables["death_causes"], plots)
+        hard.plot_stall_lengths(tables["stall_ccdf"], plots)
+    charts.write_captions(plots, "HARD", captions)
 
 
 # ---------------------------------------------------------------- detector inputs

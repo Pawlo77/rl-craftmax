@@ -731,24 +731,29 @@ def game_summary_tex(t6: pd.DataFrame, budget: str) -> str:
 
 
 def _table_texts(given: Mapping[str, pd.DataFrame]) -> dict[str, str]:
-    """The ``.tex`` text of every table that has rows, by file stem."""
+    """The ``.tex`` text of every table that has rows, by ``<budget>/<stem>``.
+
+    Each benchmark gets its own set (``1m/main``, ``1m/literature``, ...) made from
+    the rows of that benchmark alone; a benchmark without rows gets no file.
+    """
     texts: dict[str, str] = {}
     for budget in BUDGET_NAMES:
-        if (given["main"]["benchmark"] == budget).any():
-            texts[f"main_{budget}"] = main_tex(given["main"], budget)
-        if (given["game"]["benchmark"] == budget).any():
-            texts[f"game_summary_{budget}"] = game_summary_tex(given["game"], budget)
-    if (given["main"]["benchmark"] == "1m").any():
-        texts["main_vs_1m"] = versus_tex(given["main"])
-    if len(given["literature"]):
-        texts["literature"] = literature_tex(given["literature"])
-    if len(given["hardware"]):
-        texts["stability_hardware"] = stability_hardware_tex(
-            stability_hardware(given["stability"], given["hardware"])
-        )
-    for plan, real in (("main", "main_1m"), ("game_summary", "game_summary_1m")):
-        if real in texts:  # the plan's names are the 1M tables (1M files come first)
-            texts[plan] = texts[real]
+
+        def rows(key: str, budget: str = budget) -> pd.DataFrame:
+            return given[key][given[key]["benchmark"] == budget]
+
+        if len(rows("main")):
+            texts[f"{budget}/main"] = main_tex(given["main"], budget)
+            if budget in compare.SIGNIFICANCE_BUDGETS:
+                texts[f"{budget}/main_vs_controls"] = versus_tex(given["main"], budget)
+        if len(rows("game")):
+            texts[f"{budget}/game_summary"] = game_summary_tex(given["game"], budget)
+        if len(rows("literature")):
+            texts[f"{budget}/literature"] = literature_tex(rows("literature"))
+        if len(rows("hardware")):
+            texts[f"{budget}/stability_hardware"] = stability_hardware_tex(
+                stability_hardware(rows("stability"), rows("hardware"))
+            )
     return texts
 
 
@@ -760,11 +765,12 @@ def write_tables(
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
 ) -> list[Path]:
-    """Write the report tables (T1, T2, T5, T6) into ``out_dir``.
+    """Write the report tables (T1, T2, T5, T6) into ``out_dir/<budget>/``.
 
-    Files: ``main_<budget>.tex`` and ``game_summary_<budget>.tex`` (also written as
-    ``main.tex`` and ``game_summary.tex``, the plan's names, holding the 1M table),
-    ``main_vs_1m.tex``, ``literature.tex`` and ``stability_hardware.tex``.
+    Files per benchmark folder (``1m/``, ``1b/``), each from that benchmark's rows:
+    ``main.tex`` (T1), ``main_vs_controls.tex`` (PoI and Holm p, 1M only),
+    ``game_summary.tex`` (T6), ``literature.tex`` (T2) and ``stability_hardware.tex``
+    (T5).
 
     ``tables`` takes precomputed ``main``, ``literature``, ``stability``,
     ``hardware`` and ``game`` frames (T1 to T4, T6); the others are computed from
@@ -792,9 +798,35 @@ def write_tables(
     paths = []
     for stem, text in texts.items():
         path = out_dir / f"{stem}.tex"
+        path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(path, text)
         paths.append(path)
     return paths
+
+
+def copy_tables(results_dir: Path, out_dir: Path) -> list[Path]:
+    """Copy the ``.tex`` tables of each benchmark folder of ``results_dir`` over.
+
+    The flat ``<out_dir>/*.tex`` of the old layout and every ``.tex`` of a benchmark
+    folder that the run no longer writes are deleted; other files stay.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("*.tex"):
+        old.unlink()
+    copied = []
+    folders = results_dir.iterdir() if results_dir.is_dir() else []
+    for folder in sorted(p for p in folders if p.is_dir()):
+        dest = out_dir / folder.name
+        dest.mkdir(parents=True, exist_ok=True)
+        sources = sorted(folder.glob("*.tex"))
+        keep = {p.name for p in sources}
+        for old in dest.glob("*.tex"):
+            if old.name not in keep:
+                old.unlink()
+        for src in sources:
+            shutil.copy2(src, dest / src.name)
+            copied.append(dest / src.name)
+    return copied
 
 
 # ---------------------------------------------------------------------- figures

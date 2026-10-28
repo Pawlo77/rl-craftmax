@@ -235,4 +235,4 @@ def test_tiled_panels_with_one_inset_have_identical_axes_boxes() -> None:
     assert boxes[0] == boxes[1]
     left, _, width, _ = boxes[0]
     assert left * 80.0 == pytest.approx(inset)
-    assert (left + width) * 80.0 == pytest.approx(78.0)
+    assert (left + width) * 80.0 == pytest.approx(76.0)

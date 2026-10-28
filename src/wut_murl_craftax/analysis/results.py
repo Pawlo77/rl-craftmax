@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pandas as pd
 
@@ -60,6 +60,108 @@ BOOT_GAME = ("F8", "F8T", "F9", "F9S", "F10", "F11", "F12", "F13", "F14", "F15",
 """In-game figures that bootstrap over seeds (the others take no resampling)."""
 TABLE_FILES = {"game": "game_summary"}
 """Table key -> CSV stem where they differ."""
+
+
+class TableCaption(NamedTuple):
+    """What one table file is: its id in the plan, a title and a description."""
+
+    id: str
+    title: str
+    description: str
+
+
+TABLE_CAPTIONS: dict[str, TableCaption] = {
+    "main": TableCaption(
+        "T1",
+        "Main results",
+        "Final score of every tuned method (and control) per block: mean with s.e., "
+        "IQM or median with 95% bootstrap CIs, the final-checkpoint eval means, and "
+        "against each control the probability of improvement with Holm-adjusted p.",
+    ),
+    "main_vs_controls": TableCaption(
+        "T1",
+        "Comparison with the controls",
+        "Probability of improvement with its 95% CI and the Holm p of every method "
+        "against each control, per block (LaTeX table of the main results).",
+    ),
+    "poi_matrix": TableCaption(
+        "T1",
+        "Probability of improvement matrix",
+        "P(row beats column) with its 95% CI between every two methods of one block "
+        "(the source of the PoI matrix figure); no cross-block pair.",
+    ),
+    "ablation": TableCaption(
+        "T1",
+        "Ablations",
+        "Each ablation against the tuned runs of its method: difference of means with "
+        "a bootstrap CI, IQM, PoI and Mann-Whitney p (Holm over a block); never pooled "
+        "with the method.",
+    ),
+    "reproduction_gate": TableCaption(
+        "T2",
+        "Reproduction gate",
+        "Each control's final score against its published value: pass or fail with the "
+        "gap and the band half-width h.",
+    ),
+    "literature": TableCaption(
+        "T2",
+        "Literature comparison",
+        "Our rows beside the published rows of the comparable score kind, with our CI "
+        "and the reproduction-gate status of the controls; published rows keep their "
+        "protocol, seeds and spread as copied.",
+    ),
+    "stability": TableCaption(
+        "T3",
+        "Stability",
+        "Seed sd and CV of the final score and, per run with a score curve, the "
+        "deepest drawdown, drops and collapses.",
+    ),
+    "stability_runs": TableCaption(
+        "T3",
+        "Stability per run",
+        "The per-run part of the stability table: deepest drawdown, any drop and "
+        "collapse of each tuned run with a score curve.",
+    ),
+    "hardware": TableCaption(
+        "T4",
+        "Hardware",
+        "Run medians per hardware profile (steps per second, wall-clock, compile time, "
+        "memory, utilisation); profiles are never compared, laptop timings are context "
+        "only.",
+    ),
+    "stability_hardware": TableCaption(
+        "T5",
+        "Stability and hardware",
+        "Seed sd, drawdown, drops and collapses beside steady steps per second, "
+        "wall-clock and memory, per profile and block (LaTeX table).",
+    ),
+    "game_summary": TableCaption(
+        "T6",
+        "In-game summary",
+        "Per method: race wins, deepest floor, most frequent cause of death, coverage, "
+        "wasted share and adoption of the advanced mechanics.",
+    ),
+    "race": TableCaption(
+        "T6",
+        "First-unlock race",
+        "Median first unlock of every achievement per method (env steps and "
+        "wall-clock) with the eligibility rule and the winners, per block.",
+    ),
+    "sensitivity": TableCaption(
+        "T7",
+        "Hyperparameter sensitivity",
+        "Per tuning phase and method: configs tried, the best config, robust share, "
+        "the noise floor and the two most sensitive hyperparameters.",
+    ),
+    "tuning_optimism": TableCaption(
+        "T7",
+        "Tuning optimism",
+        "Mean score of the tuned configuration during tuning against fresh seeds of "
+        "the same configuration, per method.",
+    ),
+}
+"""Table stem (CSV and LaTeX share it) -> its `TableCaption`: what each
+file of ``tables/<budget>/`` is, written to its ``captions.csv``."""
 COMPLEXITY_MACRO = re.compile(
     r"^(?:lEighty|lNinety|depthNinety|fid|expectedFid|closedLoop|spearman|majority|"
     r"gain|peakVal|group)"
@@ -322,15 +424,59 @@ def build_tables(inputs: _Inputs) -> dict[str, pd.DataFrame]:
     return t
 
 
+def write_table_captions(out: Path) -> list[Path]:
+    """``captions.csv`` of every ``<out>/tables/<budget>/`` folder: what its files are.
+
+    One row per file stem the folder holds (CSV or LaTeX), from `TABLE_CAPTIONS`
+    (``stem,id,title,description``, grouped by table id). Run after the LaTeX tables.
+    """
+    from ..visualisation import charts
+
+    paths = []
+    for folder in sorted(p for p in (out / "tables").iterdir() if p.is_dir()):
+        have = {p.stem for p in [*folder.glob("*.csv"), *folder.glob("*.tex")]}
+        (folder / "captions.csv").unlink(missing_ok=True)
+        by_id: dict[str, list[charts.Caption]] = {}
+        for stem, cap in TABLE_CAPTIONS.items():
+            if stem in have:
+                by_id.setdefault(cap.id, []).append(
+                    charts.Caption(stem, cap.title, cap.description)
+                )
+        for tid, group in by_id.items():
+            paths.append(charts.write_captions(folder, tid, group))
+    return paths
+
+
 def write_table_files(tables: Mapping[str, pd.DataFrame], out: Path) -> list[Path]:
-    """The CSV of each table into ``<out>/tables`` (rewritten on every run)."""
+    """The CSV of each table into ``<out>/tables/<budget>/``, rewritten on every run.
+
+    Each benchmark folder holds only that benchmark's rows (``1m/main.csv``); a table
+    without a ``benchmark`` column is shared and sits in ``<out>/tables`` itself.
+    The flat ``*.csv`` and ``*.tex`` of the old layout are deleted.
+    """
     folder = out / "tables"
     folder.mkdir(parents=True, exist_ok=True)
-    files = []
+    for old in [*folder.glob("*.csv"), *folder.glob("*.tex")]:
+        old.unlink()
+    files: list[Path] = []
+    budgets = sorted({
+        str(b) for f in tables.values() if "benchmark" in f for b in f["benchmark"]
+    })
     for key, frame in tables.items():
-        path = folder / f"{TABLE_FILES.get(key, key)}.csv"
-        frame.to_csv(path, index=False)
-        files.append(path)
+        stem = TABLE_FILES.get(key, key)
+        parts = (
+            [(b, frame[frame["benchmark"] == b]) for b in budgets]
+            if "benchmark" in frame
+            else [("", frame)]
+        )
+        for budget, part in parts:
+            if budget and part.empty and not frame.empty:
+                continue  # a table with no row at all keeps its header in every folder
+            target = folder / budget
+            target.mkdir(parents=True, exist_ok=True)
+            path = target / f"{stem}.csv"
+            part.to_csv(path, index=False)
+            files.append(path)
     return files
 
 
@@ -344,8 +490,7 @@ def figure_functions() -> dict[str, Callable[..., Any]]:
     core: dict[str, Callable[..., Any]] = dict(figures.FIGURES)
     game: dict[str, Callable[..., Any]] = dict(figures_game.GAME_FIGURES)
     game["F7G"] = figures_game.plot_order_graphs  # one file per method
-    game["F17"] = figures_game.plot_radars  # one file per budget
-    order = ["LEG", "F1", "F2", "F3", "F2F3", "F4", "F5", "F18", "F19", "F20"]
+    order = ["LEG", "F1", "F2", "F3", "F4", "F5", "F18", "F19", "F20"]
     return {k: core[k] for k in order} | game | dict(figures_angles.ANGLE_FIGURES)
 
 
@@ -358,7 +503,6 @@ def figure_kwargs(
         "F1": boot,
         "F2": {"table": t["main"], "ablation": t["ablation"], **boot},
         "F3": {"table": t["poi_matrix"], **boot},
-        "F2F3": {"table": t["main"], "poi": t["poi_matrix"], **boot},
         "F4": {"literature": t["literature"], **boot},
         "F18": {"table": t["sensitivity"]},
         "F19": {"per_run": t["stability_runs"], "table": t["stability"]},
@@ -476,8 +620,11 @@ def copy_fidelity(
     ``<folder>/<budget>/fidelity_vs_leaves.png`` with a row in that folder's
     ``captions.csv`` (id ``FID``).
     """
+    from ..interpretation import run as interpretation
     from ..visualisation import charts
 
+    # the distillation owns the caption text (FIDELITY_CAPTION: fallback before it did)
+    text = getattr(interpretation, "FIDELITY_DESCRIPTION", FIDELITY_CAPTION)
     copied = []
     for budget in budgets:
         root = o.complexity_root / budget
@@ -496,7 +643,7 @@ def copy_fidelity(
         charts.write_captions(
             dest,
             "FID",
-            [charts.Caption(FIDELITY, "Distillation fidelity", FIDELITY_CAPTION)],
+            [charts.Caption(FIDELITY, "Distillation fidelity", text)],
         )
         copied.append(dest / f"{FIDELITY}.png")
     return copied
@@ -514,14 +661,12 @@ def write_report_files(
     o = inputs.o
     boot: dict[str, Any] = {"n_boot": o.n_boot, "seed": o.seed}
     tex_dir = o.out / "tables"
-    written = latex.write_tables(
+    latex.write_tables(
         tables={k: t[k] for k in ("main", "literature", "stability", "hardware")}
         | {"game": t["game"]},
         out_dir=tex_dir, **boot,
     )  # fmt: skip
-    (o.report_dir / "tables").mkdir(parents=True, exist_ok=True)
-    for path in written:
-        shutil.copy2(path, o.report_dir / "tables" / path.name)
+    latex.copy_tables(tex_dir, o.report_dir / "tables")
     numbers = o.report_dir / "numbers.tex"
     if not o.complexity and _has_complexity_macros(numbers):
         numbers = o.report_dir / "numbers.partial.tex"  # keep the full file intact
@@ -682,6 +827,7 @@ def run_comparison(o: ResultsOptions) -> ResultsSummary:
         for stale in (o.out / "figures").glob(f"*/{FIDELITY}.*"):
             stale.unlink()
     write_report_files(inputs, t, s)
+    write_table_captions(o.out)
     if o.log:
         log_results(inputs, st, s)
     return s

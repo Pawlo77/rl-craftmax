@@ -175,12 +175,20 @@ ROWS_BASE_MM = 14.0
 """x axis, its label and the margins of a `Shape.ROWS` figure, besides its rows."""
 
 
-def shape_height_mm(th: "Theme", shape: Shape, rows: int | None = None) -> float:
+def shape_height_mm(
+    th: "Theme",
+    shape: Shape,
+    rows: int | None = None,
+    base_mm: float | None = None,
+    pitch_mm: float | None = None,
+) -> float:
     """Report height in mm of ``shape`` at the theme's width (the video has its own).
 
     ``CURVE``, ``DOTS`` and ``SQUARE`` are width times `ASPECT`; ``ROWS`` is
-    ``rows * th.pitch_mm + ROWS_BASE_MM`` (needs ``rows``); ``LEGEND`` needs ``rows`` as
-    the number of legend rows (4.2 mm each, 4 mm margin).
+    ``rows * pitch_mm + base_mm`` (needs ``rows``; ``pitch_mm`` defaults to the theme's
+    row pitch, ``base_mm`` to `ROWS_BASE_MM`, give more for a legend or long rotated
+    labels); ``LEGEND`` needs
+    ``rows`` as the number of legend rows (4.2 mm each, 4 mm margin).
 
     Raises:
         ValueError: If ``rows`` is missing for ``ROWS`` or ``LEGEND``.
@@ -192,7 +200,8 @@ def shape_height_mm(th: "Theme", shape: Shape, rows: int | None = None) -> float
         raise ValueError(msg)
     if shape is Shape.LEGEND:
         return rows * 4.2 + 4.0
-    return rows * th.pitch_mm + ROWS_BASE_MM
+    pitch = th.pitch_mm if pitch_mm is None else pitch_mm
+    return rows * pitch + (ROWS_BASE_MM if base_mm is None else base_mm)
 
 
 SERIES_LIGHT = ("#1c5cab", "#a8411a", "#127552", "#8f5f00")
@@ -347,6 +356,8 @@ def themed_figure(
     *,
     shape: Shape | None = None,
     rows: int | None = None,
+    base_mm: float | None = None,
+    pitch_mm: float | None = None,
 ) -> Figure:
     """A constrained-layout figure on the theme surface.
 
@@ -360,7 +371,7 @@ def themed_figure(
         ValueError: If neither ``height_mm`` nor ``shape`` is given.
     """
     if shape is not None and height_mm is None:
-        height_mm = shape_height_mm(th, shape, rows)
+        height_mm = shape_height_mm(th, shape, rows, base_mm, pitch_mm)
     if height_mm is None:
         msg = "themed_figure needs a height_mm or a shape"
         raise ValueError(msg)
@@ -370,6 +381,7 @@ def themed_figure(
         facecolor=th.surface, layout="constrained",
     )  # fmt: skip
     fig.shape = shape  # type: ignore[attr-defined]  # read back by the audit
+    fig.font_scale = th.font / 7.0  # type: ignore[attr-defined]  # `add_panel` insets
     FigureCanvasAgg(fig)
     _bind(fig, rc)
     fig.theme_rc = rc  # type: ignore[attr-defined]  # read back by `settle`, `write_png`
@@ -395,6 +407,24 @@ def style_axes(ax: Axes, th: Theme, *, grid: Literal["x", "y", "both"] = "x") ->
     return ax
 
 
+def category_figure(
+    th: Theme, rows: int, extra_mm: float = 0.0, pitch_mm: float | None = None
+) -> Figure:
+    """A figure for ``rows`` category rows: `Shape.DOTS` if they fit, else `Shape.ROWS`.
+
+    Short lists get the fixed 0.45 aspect (they tile with their neighbours); a longer
+    list grows by the row pitch (the theme's, or ``pitch_mm`` where each row holds
+    several dodged marks). ``extra_mm`` adds room for a legend or long rotated labels.
+    """
+    base = ROWS_BASE_MM + extra_mm
+    pitch = th.pitch_mm if pitch_mm is None else pitch_mm
+    if rows * pitch + base <= th.width * 25.4 * ASPECT[Shape.DOTS]:
+        return themed_figure(th, shape=Shape.DOTS)
+    return themed_figure(
+        th, shape=Shape.ROWS, rows=rows, base_mm=base, pitch_mm=pitch_mm
+    )
+
+
 def label_inset_mm(th: Theme, labels: Sequence[str], pad_mm: float = 3.5) -> float:
     """Left inset in mm that fits the longest of ``labels`` (measured) and a y label.
 
@@ -414,18 +444,21 @@ def add_panel(
     fig: Figure,
     *,
     left_mm: float,
-    bottom_mm: float = 9.0,
-    right_mm: float = 2.0,
+    bottom_mm: float = 11.0,
+    right_mm: float = 4.0,
     top_mm: float = 2.0,
     **kwargs: Any,
 ) -> Axes:
     """One axes with exact insets in mm from the canvas edges (no layout engine).
 
     ``left_mm`` holds the category or tick labels and the y label (see
-    `label_inset_mm`), ``bottom_mm`` the x tick labels and x label. Give every panel of
-    a tile group the same insets and size: their axes areas are then identical.
+    `label_inset_mm`), ``bottom_mm`` the x tick labels and x label; bottom, right and
+    top are given for 7 pt text and grow with the theme's font (the video). Give every
+    panel of a tile group the same insets and size: their axes areas are then identical.
     """
     fig.set_layout_engine("none")
+    scale = getattr(fig, "font_scale", 1.0)
+    bottom_mm, right_mm, top_mm = bottom_mm * scale, right_mm * scale, top_mm * scale
     w, h = fig.get_size_inches() * 25.4
     return fig.add_axes(
         (left_mm / w, bottom_mm / h, 1 - (left_mm + right_mm) / w,
@@ -776,6 +809,9 @@ def finish(
     layout engine, one box has no such problem.
     """
     text = "\n".join(textwrap.fill(n, th.wrap) for n in notes if n)
+    fixed = isinstance(fig, Figure) and fig.get_layout_engine() is None
+    if fixed and str(loc).startswith("outside "):
+        loc = str(loc).removeprefix("outside ")  # fixed insets: the caller left room
     if handles:
         legend = fig.legend(
             handles=list(handles), loc=loc, ncol=cols or th.legend_cols,

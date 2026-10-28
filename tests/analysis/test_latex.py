@@ -197,7 +197,7 @@ def test_the_best_mean_of_a_block_is_bold(tables: dict[str, pd.DataFrame]) -> No
     assert any(ln.startswith(f"{top['method']} &") for ln in bold)
 
 
-def test_write_tables_writes_each_file_and_skips_a_missing_1b(
+def test_write_tables_writes_each_file_in_its_benchmark_folder_and_skips_a_missing_1b(
     frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     t = {
@@ -208,24 +208,22 @@ def test_write_tables_writes_each_file_and_skips_a_missing_1b(
         "game": compare.game_summary_table(game_frames(("1m",))),
     }
     paths = write_tables(frames_1m, tmp_path, tables=t)
-    names = {p.name for p in paths}
+    names = {str(p.relative_to(tmp_path)) for p in paths}
     assert names == {
-        "main.tex",
-        "game_summary.tex",
-        "main_1m.tex",
-        "main_vs_1m.tex",
-        "game_summary_1m.tex",
-        "stability_hardware.tex",
-    }  # fmt: skip
-    assert not (tmp_path / "main_1b.tex").exists()
-    plan = {"main.tex": "main_1m.tex", "game_summary.tex": "game_summary_1m.tex"}
-    for plan_name, real in plan.items():  # the plan's names hold the 1M tables
-        assert (tmp_path / plan_name).read_text() == (tmp_path / real).read_text()
+        "1m/main.tex",
+        "1m/main_vs_controls.tex",
+        "1m/game_summary.tex",
+        "1m/stability_hardware.tex",
+    }
+    assert not (tmp_path / "1b").exists()
+    assert not list(tmp_path.glob("*.tex"))  # no flat file
     for p in paths:
         text = p.read_text()
         assert r"\begin{tabular}" in text
         assert r"\toprule" in text
         assert r"\bottomrule" in text
+        assert "pending" not in text
+        assert "indicative" not in text
 
 
 def test_write_tables_with_1b_and_literature(
@@ -249,10 +247,11 @@ def test_write_tables_with_1b_and_literature(
         "gate": "pass", "gap": 0.05, "h": 0.25,
     }])  # fmt: skip
     paths = write_tables(frames, tmp_path, tables={**tables, "literature": lit})
-    assert {"main_1b.tex", "game_summary_1b.tex", "literature.tex"} <= {
-        p.name for p in paths
+    assert {"1b/main.tex", "1b/game_summary.tex", "1m/literature.tex"} <= {
+        str(p.relative_to(tmp_path)) for p in paths
     }
-    text = (tmp_path / "literature.tex").read_text()
+    assert not (tmp_path / "1b" / "literature.tex").exists()  # 1M's published rows
+    text = (tmp_path / "1m" / "literature.tex").read_text()
     assert r"PPO (paper\_x)" in text
     assert r"11.50 $\pm$ 0.70 (sd)" in text
     # our rows: CI of the mean, and the reproduction gate (status, gap and h)
@@ -261,7 +260,8 @@ def test_write_tables_with_1b_and_literature(
     assert r"pass (gap 0.05, h 0.25)" in text
     line = next(ln for ln in text.splitlines() if ln.startswith("PPO (paper"))
     assert line.rstrip().endswith(r"-- \\")  # a published row has no gate
-    vs = (tmp_path / "main_vs_1m.tex").read_text()
+    vs = (tmp_path / "1m" / "main_vs_controls.tex").read_text()
+    assert not (tmp_path / "1b" / "main_vs_controls.tex").exists()  # 1M only
     assert "PoI vs ppo-rnn" in vs
     assert "p Holm pqn-rnn" in vs
 

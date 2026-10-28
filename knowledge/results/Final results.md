@@ -21,7 +21,7 @@ related-code:
 - Craftax-1M only: 1B pending (`final-1b` not run, R75); the 1B sections below are placeholders for the same tables and figures at 1B.
 - Units: scores are the final training score, mean training-episode return in % of the 226-point maximum (last 2% of the budget, at least 100 episodes); eval scores are the fixed-seed final checkpoint, stochastic and greedy, same unit. 10 seeds per method, tuned config.
 - Phases: `final-1m` (tuned runs and the six ablations) and `combo-1m` (the combination of [[Count-Based Progress Bonus design]] and [[Self-Imitation Learning design]] on PPO-RNN, [[Experiment decisions]], 2026-10-24).
-- Numbers come from `outputs/results/tables/*.csv` and `report/numbers.tex`, written by the comparison run of 2026-10-28 (`wut_murl_craftax.analysis.results`, plan [[2026-10-20-craftax-comparison-and-results]]); each table section names its file. Figures are in `outputs/results/figures/`.
+- Numbers come from `outputs/results/tables/1m/*.csv` and `report/numbers.tex`, written by the comparison run of 2026-10-28 (`wut_murl_craftax.analysis.results`, plan [[2026-10-20-craftax-comparison-and-results]]); each table section names its file. Figures are in `outputs/results/figures/1m/` (one panel per PNG, no text on the images); the report prints their captions from [[Figures 1M]] and [[Tables 1M]], which list every figure and table file with its description.
 - Two blocks: main (`count-bonus-ppo-rnn`, `count-bonus-pqn-rnn`, `sil`, `combo`) and "uses hand-written skills" (`smdp-skills`, `dyna-q`, [[Craftax skill library]]); the three controls are the reference rows of both and a method is never ranked against the other block. PoI = probability of improvement; Holm p = Mann-Whitney p, Holm-adjusted within the block.
 - Reporting rulings: runs belong to a phase by the `phases` tag, ablations are reported apart (R77); "not logged" for metric families the 26 runs reused from tuning lack (R78); hardware and timing are context only (R97); tuning optimism uses fresh seeds only (R102); the tuning-runs obstacles table is deferred (R107). All in [[Experiment decisions]], "Phase 4 analysis rulings at 1M".
 
@@ -206,30 +206,31 @@ Every laptop run trained with two concurrent queue workers, so these figures are
 
 ## Figure index
 
-Files in `outputs/results/figures/` (`.png` only; `_double` and `_video` variants beside each). "Descriptive" = no table-backed headline; read the figure.
+Files in `outputs/results/figures/1m/` (`.png` only; a `_video` variant beside each, `_double` for the order graphs and `legend_methods`). One panel per file; the description of each file is in [[Figures 1M]], the tables in [[Tables 1M]]. "Descriptive" = no table-backed headline; read the figure.
 
-| ID | File | Takeaway |
+| ID | Files | Takeaway |
 |---|---|---|
-| F1 | `curves_score` | Learning curves per method (mean, 95% band; controls dashed); drawdowns in T3 |
-| F2 | `aggregate`, `aggregate_poi` | IQM and mean with CIs: PPO, PPO-RNN, count-bonus PPO-RNN, SIL and the combination between 2.07 and 2.37; PQN-RNN family and skills below 1.74 |
-| F3 | `poi_matrix` | Per-block PoI matrix: only the PQN-RNN family and the skill methods separate from PPO and PPO-RNN (Holm p 0.002 or lower) |
-| F4 | `seed_spread` | Seed sd from 0.046 (SIL) to 0.651 (SMDP skills); published marks beside |
-| F5 | `success_heatmap` | 47 to 54 of 67 achievements never unlocked by any seed, per method |
-| F6 | `race_steps`, `race_wall` | Race wins in steps: count-bonus PPO-RNN and SIL 6 each in the main block; wall variant context only (R97) |
+| F1 | `curves_score_main`, `curves_score_skills` | Learning curves per method (mean, 95% band; controls dashed); drawdowns in T3 |
+| F2 | `aggregate` | IQM and mean with CIs: PPO, PPO-RNN, count-bonus PPO-RNN, SIL and the combination between 2.07 and 2.37; PQN-RNN family and skills below 1.74 |
+| F3 | `poi_matrix_main`, `poi_matrix_skills` | Per-block PoI matrix: only the PQN-RNN family and the skill methods separate from PPO and PPO-RNN (Holm p 0.002 or lower) |
+| F4 | `seed_spread_main`, `seed_spread_skills`, `seed_spread_published` | Seed sd from 0.046 (SIL) to 0.651 (SMDP skills); published marks on the same axis |
+| F5 | `success_heatmap_main`, `success_heatmap_skills` | 47 to 54 of 67 achievements never unlocked by any seed, per method |
+| F6 | `race_steps_<block>`, `race_wall_<block>` | Race wins in steps: count-bonus PPO-RNN and SIL 6 each in the main block; wall variant context only (R97) |
 | F7 | `order_<method>`, `order_agreement` | Descriptive: achievement order graphs and Kendall tau agreement |
-| F8 | `funnel`, `funnel_training` | Every method's deepest floor is 0 (share 1.0) |
-| F9 | `deaths`, `stalls` | Zombie is the top death cause for every method (0.466 to 0.611); stalls per eval episode 0.084 (combo) to 0.164 (PQN-RNN) |
+| F8 | `funnel_tech`, `funnel_floor`, `funnel_training_depth`, `funnel_training_floor` | Every method's deepest floor is 0 (share 1.0) |
+| F9 | `deaths`, `stalls_ccdf`, `stalls_escape` | Zombie is the top death cause for every method (0.466 to 0.611); stalls per eval episode 0.084 (combo) to 0.164 (PQN-RNN) |
 | F10 | `splits` | Descriptive: steps to each milestone |
-| F11 | `coverage` | Coverage 0.089 (SMDP skills) to 0.130 (count-bonus PPO-RNN) |
-| F12 | `survival` | Descriptive: low and zero stats, stat value at eat, drink and sleep |
-| F13 | `combat` | Descriptive: kills per creature, damage dealt and taken |
-| F14 | `actions` | Wasted share 0.616 (count-bonus PPO-RNN) to 0.857 (SMDP skills) |
-| F15 | `resources` | Descriptive: gathered vs used, steps per achievement |
-| F16 | `advanced` | Advanced-mechanics adoption at most 0.0011 for every method |
-| F17 | `radar_1m` | Descriptive: playstyle radars, shared axes |
-| F18 | `sensitivity` | Robust share from 0.021 (SMDP skills, coarse) to 1.000 (PPO, count-bonus PPO-RNN and SIL at `tune-fine`); see T7 |
-| F19 | `stability` | Collapses concentrate in PQN-RNN family and skills (T3) |
-| F20 | `hardware` | Context only (R97); never ranked |
+| F11 | `coverage`, `new_tiles` | Coverage 0.089 (SMDP skills) to 0.130 (count-bonus PPO-RNN) |
+| F12 | `survival_low`, `survival_zero`, `survival_level` | Descriptive: low and zero stats, stat value at eat, drink and sleep |
+| F13 | `combat_kills`, `combat_damage`, `combat_fights` | Descriptive: kills per creature, damage dealt and taken |
+| F14 | `actions_share`, `actions_entropy`, `actions_wasted` | Wasted share 0.616 (count-bonus PPO-RNN) to 0.857 (SMDP skills) |
+| F15 | `resources_use`, `resources_time` | Descriptive: gathered vs used, steps per achievement |
+| F16 | `advanced_mean`, `advanced_final` | Advanced-mechanics adoption at most 0.0011 for every method |
+| F17 | `radar_<method>` | Descriptive: playstyle radars, shared axes |
+| F18 | `config_scores_<phase>`, `sensitivity_<phase>` | Robust share from 0.021 (SMDP skills, coarse) to 1.000 (PPO, count-bonus PPO-RNN and SIL at `tune-fine`); see T7 |
+| F19 | `stability_drawdown`, `stability_events` | Collapses concentrate in PQN-RNN family and skills (T3) |
+| F20 | `hardware_<metric>` | Context only (R97); never ranked |
+| LEG | `legend_methods` | Colour, line style and marker of every method; no other figure carries a method legend |
 
 ## Interpretation (decision trees)
 
@@ -240,7 +241,7 @@ Full write-up: [[Decision-tree interpretation]] (90 policies, 9 methods x 10 see
 - Every recurrent policy's tree leans most on the previous action, a memory proxy (importance 0.117 to 0.186); without it fidelity at 256 leaves drops by 0.036 to 0.071.
 - A 256-leaf tree keeps 0.183 (count-bonus PPO-RNN) to 0.490 (SMDP skills) of its network's greedy score in closed loop; one DAgger round raises this for all 9 methods.
 - SMDP skills and Dyna-Q: the lowest-scoring seeds have skill networks whose greedy majority action cannot succeed given the policy's inventory (`READ_BOOK` with no book, `MAKE_DIAMOND_PICKAXE` and `MAKE_IRON_ARMOUR` with no diamond or iron ever collected); their top levels are lookup tables over 47 to 355 visited keys, and the median-score seed's 10 highest values lie within 0.08 of the optimistic start 10.
-- Figure: `fidelity_vs_leaves_1m` (PNG); F27 `distil_score` and F28 `distil_features` come from the figure-angles branch.
+- Figure: `fidelity_vs_leaves` (PNG, `figures/1m/`); F27 `distil_score` and F28 `distil_features` come from the figure-angles branch.
 
 ## 1B (pending)
 

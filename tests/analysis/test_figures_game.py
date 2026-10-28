@@ -7,6 +7,7 @@ compared with the tables they come from. The fixture's values are deterministic
 functions of (method, seed, eval slot), so a misplaced method or row fails.
 """
 
+import functools
 import itertools
 from collections.abc import Callable
 from pathlib import Path
@@ -21,8 +22,10 @@ from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 from matplotlib.text import Text
 from scipy import stats as sps
+from test_figures import Bundle, with_gid
 
 from wut_murl_craftax.analysis import compare, figures_game
+from wut_murl_craftax.analysis import figures_game as fg
 from wut_murl_craftax.analysis.figures_game import (
     GAME_FIGURES,
     GAME_NAMES,
@@ -30,29 +33,47 @@ from wut_murl_craftax.analysis.figures_game import (
     kendall_permutation,
     order_agreement,
     order_graph,
-    plot_actions,
-    plot_advanced,
-    plot_combat,
-    plot_coverage,
-    plot_deaths,
-    plot_funnel,
-    plot_funnel_training,
-    plot_order_agreement,
-    plot_order_graph,
-    plot_race,
-    plot_radar,
-    plot_resources,
-    plot_splits,
-    plot_stalls,
-    plot_survival,
-    race,
     radar_table,
     split_table,
     transitive_reduction,
 )
 from wut_murl_craftax.analysis.hard import stall_stats
 from wut_murl_craftax.evaluation.stats import stratified_bootstrap_ci
-from wut_murl_craftax.visualisation.charts import METHOD_COLORS, METHOD_COLORS_LIGHT
+from wut_murl_craftax.visualisation.charts import (
+    METHOD_COLORS,
+    METHOD_COLORS_LIGHT,
+    capture_captions,
+)
+
+
+def _bundled(fn: Callable[..., dict[str, Figure]]) -> Callable[..., Bundle]:
+    """``fn`` returning one `Bundle` of its files, searched as if they were one."""
+
+    @functools.wraps(fn)
+    def call(*args: object, **kwargs: object) -> Bundle:
+        with capture_captions() as caps:
+            figs = fn(*args, **kwargs)
+        return Bundle(figs, {c.stem: c.description for c in caps})
+
+    return call
+
+
+plot_actions = _bundled(fg.plot_actions)
+plot_advanced = _bundled(fg.plot_advanced)
+plot_combat = _bundled(fg.plot_combat)
+plot_coverage = _bundled(fg.plot_coverage)
+plot_deaths = _bundled(fg.plot_deaths)
+plot_funnel = _bundled(fg.plot_funnel)
+plot_funnel_training = _bundled(fg.plot_funnel_training)
+plot_order_agreement = _bundled(fg.plot_order_agreement)
+plot_order_graph = _bundled(fg.plot_order_graph)
+plot_race = _bundled(fg.plot_race)
+plot_radar = _bundled(fg.plot_radar)
+plot_resources = _bundled(fg.plot_resources)
+plot_splits = _bundled(fg.plot_splits)
+plot_stalls = _bundled(fg.plot_stalls)
+plot_survival = _bundled(fg.plot_survival)
+race = _bundled(fg.race)
 
 N = 100
 """Bootstrap resamples and permutations in tests."""
@@ -62,16 +83,35 @@ NOT_LOGGED = ("ppo", "ppo-rnn")
 """The reused runs without the online families (R78)."""
 FIGS = ["F6", "F7", "F7G", "F8", "F8T", "F9", "F9S"] + [f"F{i}" for i in range(10, 18)]
 """Every figure id of `GAME_FIGURES`."""
+METHODS = (
+    "ppo", "ppo-rnn", "pqn-rnn", "count-bonus-ppo-rnn", "count-bonus-pqn-rnn", "sil",
+    "combo", "dyna-q", "smdp-skills",
+)  # fmt: skip
 STEMS = {
-    "F6": "race_steps",
-    "F7G": "order_sil",
-    "F17": "radar_1m",
+    "F6": [f"race_{c}_{b}" for c in ("steps", "wall") for b in ("main", "skills")],
+    "F7": ["order_agreement"],
+    "F7G": ["order_sil"],
+    "F8": ["funnel_tech", "funnel_floor"],
+    "F8T": ["funnel_training_depth", "funnel_training_floor"],
+    "F9": ["deaths"],
+    "F9S": ["stalls_ccdf", "stalls_escape"],
+    "F10": ["splits"],
+    "F11": ["coverage", "new_tiles"],
+    "F12": ["survival_low", "survival_zero", "survival_level"],
+    "F13": ["combat_kills", "combat_damage", "combat_fights"],
+    "F14": ["actions_share", "actions_entropy", "actions_wasted"],
+    "F15": ["resources_use", "resources_time"],
+    "F16": ["advanced_mean", "advanced_final"],
+    "F17": [f"radar_{m}" for m in METHODS],
 }
-"""File stems that differ from `GAME_NAMES` (templates filled in)."""
+"""The files each figure id writes on the fixture at 1M (one panel per file)."""
+DOUBLE = {"F7G"}
+"""Figure ids with a 170 mm variant: the order graphs print node names, so they are
+drawn at the double width and as video only."""
 LABELS = {
     "F6": ("median first unlock",),
-    "F7": ("method",),
-    "F7G": ("mean normalised rank", "tier"),
+    "F7": (),
+    "F7G": ("mean normalised rank",),
     "F8": ("share of episodes",),
     "F8T": ("env steps", "mean tech depth"),
     "F9": ("share of deaths",),
@@ -85,22 +125,28 @@ LABELS = {
     "F16": ("env steps", "% of episodes"),
     "F17": (),
 }
-"""Substrings the axis labels of a figure must contain."""
+"""Substrings the axis labels of a figure set must contain."""
 
 
-def stem(fid: str) -> str:
-    return STEMS.get(fid, GAME_NAMES.get(fid, ""))
+def axis_labels(fig: Bundle | Figure) -> str:
+    return " | ".join(f"{ax.get_xlabel()} | {ax.get_ylabel()}" for ax in fig.axes)
 
 
 @pytest.fixture(scope="module")
 def frames() -> dict[str, pd.DataFrame]:
-    return game_frames()
+    """Craftax-1M (10 seeds): a figure shows one benchmark at a time."""
+    return game_frames(("1m",))
 
 
 @pytest.fixture(scope="module")
-def frames_1m() -> dict[str, pd.DataFrame]:
-    """Only Craftax-1M: 1B is pending (R86)."""
-    return game_frames(("1m",))
+def frames_1m(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    return frames
+
+
+@pytest.fixture(scope="module")
+def frames_1b() -> dict[str, pd.DataFrame]:
+    """Craftax-1B (3 seeds)."""
+    return game_frames(("1b",))
 
 
 def draw(
@@ -109,11 +155,11 @@ def draw(
     out_dir: Path,
     theme: str = "report",
     width: str = "column",
-) -> Figure:
+) -> Bundle:
     """Call the figure of ``fid`` with test-sized bootstraps."""
     k = {"width": width}
     b = {"n_boot": N, **k}
-    calls: dict[str, Callable[[], Figure]] = {
+    calls: dict[str, Callable[[], Bundle]] = {
         "F6": lambda: plot_race(frames, out_dir, theme, **k),
         "F7": lambda: plot_order_agreement(frames, out_dir, theme, n_perm=N, **k),
         "F7G": lambda: plot_order_graph(frames, out_dir, theme, method="sil", **k),
@@ -133,27 +179,24 @@ def draw(
     return calls[fid]()
 
 
-def artists(fig: Figure, kind: str) -> list[Artist]:
+def artists(fig: Bundle | Figure, kind: str) -> list[Artist]:
     """Artists whose gid starts with ``kind + '/'``, in drawing order."""
     return fig.findobj(lambda a: (a.get_gid() or "").startswith(f"{kind}/"))
 
 
-def gids(fig: Figure, kind: str) -> set[str]:
+def gids(fig: Bundle | Figure, kind: str) -> set[str]:
     return {a.get_gid() for a in artists(fig, kind)}
 
 
-def texts(fig: Figure) -> list[str]:
-    fig.canvas.draw()
+def texts(fig: Bundle | Figure) -> list[str]:
+    for f in fig.figs.values() if isinstance(fig, Bundle) else [fig]:
+        f.canvas.draw()
     return [t.get_text() for t in fig.findobj(Text) if t.get_visible() and t.get_text()]
 
 
-def said(fig: Figure) -> str:
-    """Every visible text of ``fig`` on one line (notes are wrapped)."""
-    return " ".join(" ".join(texts(fig)).split())
-
-
-def axis_labels(fig: Figure) -> str:
-    return " | ".join(f"{ax.get_xlabel()} | {ax.get_ylabel()}" for ax in fig.axes)
+def said(fig: Bundle) -> str:
+    """Every text on the images and in the captions of ``fig`` on one line."""
+    return " ".join(" ".join([*texts(fig), *fig.captions.values()]).split())
 
 
 def xdata(artist: Artist) -> float:
@@ -169,16 +212,21 @@ def ydata(artist: Artist) -> float:
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", FIGS)
-def test_each_figure_writes_a_png_and_no_pdf(
+def test_each_figure_writes_its_files_as_png_with_captions(
     fid: str, theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path, theme)
-    assert isinstance(fig, Figure)
-    name = stem(fid) + ("_video" if theme == "video" else "")
-    assert not (tmp_path / f"{name}.pdf").exists()
-    assert (tmp_path / f"{name}.png").read_bytes().startswith(PNG)
+    width = "double" if fid in DOUBLE else "column"
+    figs = draw(fid, frames, tmp_path, theme, width)
+    assert sorted(figs.figs) == sorted(STEMS[fid]) or fid == "F6"
+    if fid == "F6":  # the wall-clock and the env-steps race, a file per block
+        assert sorted(figs.figs) == sorted(STEMS[fid])
+    suffix = "_video" if theme == "video" else "_double" if width == "double" else ""
+    for name in STEMS[fid]:
+        assert not (tmp_path / f"{name}{suffix}.pdf").exists()
+        assert (tmp_path / f"{name}{suffix}.png").read_bytes().startswith(PNG)
+        assert figs.captions[name].strip(), name
     for want in LABELS[fid]:
-        assert want in axis_labels(fig), (fid, want, axis_labels(fig))
+        assert want in axis_labels(figs), (fid, want, axis_labels(figs))
 
 
 def test_every_figure_id_has_a_function_and_a_stem() -> None:
@@ -188,45 +236,52 @@ def test_every_figure_id_has_a_function_and_a_stem() -> None:
         assert GAME_FIGURES[fid].__name__.startswith("plot_")
 
 
-@pytest.mark.parametrize("fid", FIGS)
+@pytest.mark.parametrize("fid", [f for f in FIGS if f not in DOUBLE])
 def test_report_figures_are_one_column_wide_with_7pt_fonts(
     fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path)
-    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
-    fig.canvas.draw()
-    small = {
-        t.get_text(): t.get_fontsize()
-        for t in fig.findobj(Text)
-        if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
-    }
-    assert not small, small
+    for fig in draw(fid, frames, tmp_path).figs.values():
+        assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
+        fig.canvas.draw()
+        small = {
+            t.get_text(): t.get_fontsize()
+            for t in fig.findobj(Text)
+            if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
+        }
+        assert not small, small
 
 
 @pytest.mark.parametrize("fid", FIGS)
 def test_video_figures_fill_a_1080p_frame(
     fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path, "video")
-    width, height = fig.get_size_inches() * fig.dpi
-    assert (round(width), round(height)) == (1920, 1080)
+    for fig in draw(fid, frames, tmp_path, "video").figs.values():
+        width, height = fig.get_size_inches() * fig.dpi
+        assert (round(width), round(height)) == (1920, 1080)
 
 
 @pytest.mark.parametrize("fid", FIGS)
-def test_double_width_is_170_mm_with_its_own_files(
+def test_only_the_figures_that_need_the_width_have_a_double_variant(
     fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path, width="double")
-    assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert not (tmp_path / f"{stem(fid)}_double.pdf").exists()
-    assert (tmp_path / f"{stem(fid)}_double.png").read_bytes().startswith(PNG)
-    fig.canvas.draw()
-    small = [
-        t.get_text()
-        for t in fig.findobj(Text)
-        if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
-    ]
-    assert not small, small
+    figs = draw(fid, frames, tmp_path, width="double")
+    if fid not in DOUBLE:
+        assert not figs.figs
+        assert not list(tmp_path.iterdir())
+        return
+    for fig in figs.figs.values():
+        assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
+    for name in STEMS[fid]:
+        assert (tmp_path / f"{name}_double.png").read_bytes().startswith(PNG)
+        assert not (tmp_path / f"{name}.png").exists()  # the column has no node names
+    texts(figs)
+    for fig in figs.figs.values():
+        small = [
+            t.get_text()
+            for t in fig.findobj(Text)
+            if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
+        ]
+        assert not small, small
 
 
 def test_the_width_option_is_refused_when_unknown(
@@ -243,27 +298,25 @@ def test_an_unknown_theme_is_refused(
         plot_funnel(frames, tmp_path, "poster", n_boot=N)
 
 
-@pytest.mark.parametrize("theme", THEMES)
+def test_a_figure_shows_one_benchmark_at_a_time(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="one benchmark"):
+        plot_funnel(game_frames(), tmp_path, n_boot=N)
+
+
 @pytest.mark.parametrize("fid", FIGS)
-def test_a_missing_1b_is_pending_not_an_empty_axis(
-    fid: str, theme: str, frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+def test_1b_figures_have_no_pending_or_indicative_text(
+    fid: str, frames_1b: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames_1m, tmp_path, theme)
-    assert any("Craftax-1B pending" in t for t in texts(fig)), texts(fig)
-    for ax in fig.axes:
-        if ax.get_visible() and ax.axison:
-            assert ax.has_data() or ax.texts, (
-                "an empty axis needs a label or must be off"
-            )
-            assert ax.get_title(loc="left") or ax.get_xlabel(), "an unlabelled axis"
-
-
-def test_the_1b_radar_without_1b_runs_is_a_pending_placeholder(
-    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    fig = plot_radar(frames_1m, tmp_path, budget="1b")
-    assert any("Craftax-1B pending" in t for t in texts(fig))
-    assert (tmp_path / "radar_1b.png").exists()
+    """A benchmark's set is drawn from its own runs and mentions no other budget."""
+    figs = draw(fid, frames_1b, tmp_path, width="double" if fid in DOUBLE else "column")
+    assert figs.figs
+    labels = [
+        t
+        for ax in figs.axes
+        for t in (ax.get_xlabel(), ax.get_ylabel(), ax.get_title())
+    ]
+    for t in [*labels, *figs.captions.values()]:  # a step tick "1B" is data
+        assert not any(w in t for w in ("pending", "indicative", "1B", "Craftax")), t
 
 
 @pytest.mark.parametrize("fid", FIGS)
@@ -271,9 +324,9 @@ def test_no_run_data_gives_a_labelled_placeholder(
     fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     empty = {k: v.iloc[:0] for k, v in frames.items()}
-    fig = draw(fid, empty, tmp_path)
-    assert any("no data" in t or "pending" in t for t in texts(fig))
-    assert (tmp_path / f"{stem(fid)}.png").exists()
+    figs = draw(fid, empty, tmp_path, width="double" if fid in DOUBLE else "column")
+    assert any("no data" in t for t in texts(figs))
+    assert list(tmp_path.glob("*.png"))
 
 
 # --- F6 -------------------------------------------------------------------------
@@ -318,11 +371,12 @@ def test_f6_wall_clock_is_a_second_file_with_its_winners(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = race(frames, tmp_path, clock="wall")
-    assert (tmp_path / "race_wall.png").exists()
+    assert (tmp_path / "race_wall_main.png").exists()
+    assert (tmp_path / "race_wall_skills.png").exists()
     won = compare.race_table(frames)
     assert not won["winner_wall"].any()  # R97: every run is a laptop run, no ring
     assert gids(fig, "winner") == set()
-    assert any("two concurrent workers" in t for t in texts(fig))
+    assert "two concurrent workers" in said(fig)
 
 
 def test_f6_says_not_logged_for_the_reused_runs_and_how_many_seeds_logged(
@@ -343,7 +397,7 @@ def test_f6_says_not_logged_for_the_reused_runs_and_how_many_seeds_logged(
             & frames["curves"]["metric"].str.startswith("first_unlock")
         )
     ]
-    assert "sil 7 of 10" in " ".join(" ".join(texts(race(partial, tmp_path))).split())
+    assert "sil 7 of 10" in said(race(partial, tmp_path))
 
 
 def test_f6_upto_draws_only_first_unlocks_before_that_step(
@@ -366,7 +420,6 @@ def test_f6_upto_draws_only_first_unlocks_before_that_step(
     # the axes of the frames do not move, so a GIF does not rescale
     ax, ref = fig.axes[0], full.axes[0]
     assert ax.get_xlim() == ref.get_xlim()
-    assert "up to env step" in said(fig)
 
 
 def test_f6_without_an_out_dir_writes_no_file(
@@ -425,9 +478,9 @@ def test_the_order_graph_of_a_chain_keeps_only_the_consecutive_edges(
 
 
 def test_an_edge_needs_twenty_episodes_with_both_achievements(
-    frames: dict[str, pd.DataFrame],
+    frames_1b: dict[str, pd.DataFrame],
 ) -> None:
-    nodes, edges = order_graph(_method_eps(frames, "sil", "1b"))  # 12 episodes
+    nodes, edges = order_graph(_method_eps(frames_1b, "sil", "1b"))  # 12 episodes
     assert len(nodes) > 1
     assert edges.empty
 
@@ -485,22 +538,20 @@ def test_f7_graph_figure_draws_the_reduced_edges_and_every_node(
 ) -> None:
     fig = plot_order_graph(frames, tmp_path, method="sil", width="double")
     nodes, edges = order_graph(_method_eps(frames, "sil", "1m"))
-    assert {g for g in gids(fig, "edge") if g.startswith("edge/1m/")} == {
+    assert gids(fig, "edge") == {
         f"edge/1m/sil/{s}>{t}"
         for s, t in zip(edges["source"], edges["target"], strict=True)
     }
-    nodes_1m = {g for g in gids(fig, "node") if g.startswith("node/1m/")}
-    assert nodes_1m == {f"node/1m/sil/{a}" for a in nodes["achievement"]}
-    assert any(g.startswith("node/1b/") for g in gids(fig, "node"))
-    assert any("no edge reaches" in t and "1B" in t for t in texts(fig))
+    assert gids(fig, "node") == {f"node/1m/sil/{a}" for a in nodes["achievement"]}
     assert (tmp_path / "order_sil_double.png").exists()
+    assert "Arrow: a is unlocked before b" in said(fig)
 
 
-def test_f7_agreement_matrix_is_the_table_one_panel_per_benchmark(
+def test_f7_agreement_matrix_is_the_table(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = plot_order_agreement(frames, tmp_path, n_perm=N)
-    assert len(gids(fig, "tau")) == 2
+    assert len(gids(fig, "tau")) == 1
     shown = [t for t in texts(fig) if t.replace("-", "").replace(".", "").isdigit()]
     assert len(shown) == len(order_agreement(frames, n_perm=N).dropna(subset=["tau"]))
 
@@ -520,29 +571,27 @@ def test_funnel_shares_never_increase_with_depth(
     assert table["share"].nunique() > 5
 
 
-def test_f8_dots_are_the_funnel_shares(
+def test_f8_the_tech_profile_and_floor_dots_are_the_funnel_shares(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = plot_funnel(frames, tmp_path, n_boot=N)
     (ctx,) = [c for c in figures_game._contexts(frames) if c.budget == "1m"]
     table = funnel_shares(ctx.eps)
-    for kind in ("tech", "floor"):
-        dots = {a.get_gid(): xdata(a) for a in artists(fig, f"funnel-{kind}")}
-        rows = table[table["kind"] == kind]
-        for r in rows.itertuples():
-            gid = f"funnel-{kind}/1m/{r.method}/{r.step}"
-            if gid in dots:
-                assert dots[gid] == pytest.approx(r.share), gid
-            else:  # the all-zero tail is not drawn (named in a note)
-                assert r.share == 0, gid
-        # along one method the drawn points never move right as the step grows
-        steps = sorted({int(g.split("/")[-1]) for g in dots})
-        assert steps == sorted(rows["step"].unique())[: len(steps)]
-        for m in ctx.names:
-            xs = [dots[f"funnel-{kind}/1m/{m}/{s}"] for s in steps]
-            assert all(a >= b - 1e-9 for a, b in itertools.pairwise(xs))
-    notes = " ".join(t.get_text() for t in fig.texts)
-    assert "no episode reached" in notes or len(dots) == len(rows)
+    tech = table[table["kind"] == "tech"]
+    for m in ctx.names:  # a line per method: share at each drawn step, never rising
+        line = with_gid(fig, "funnel-tech", "1m", m)
+        y = np.asarray(line.get_ydata(), float)  # type: ignore[attr-defined]
+        rows = tech[tech["method"] == m].sort_values("step")
+        assert y == pytest.approx(rows["share"].to_numpy()[: len(y)])
+        assert (rows["share"].to_numpy()[len(y) :] == 0).all()  # all-zero tail: a note
+        assert all(a >= b - 1e-9 for a, b in itertools.pairwise(y))
+    floor = table[table["kind"] == "floor"]
+    for (
+        m
+    ) in ctx.names:  # more steps than a dot panel holds: a profile like the tech one
+        y = np.asarray(with_gid(fig, "funnel-floor", "1m", m).get_ydata(), float)  # type: ignore[attr-defined]
+        rows = floor[floor["method"] == m].sort_values("step")
+        assert y == pytest.approx(rows["share"].to_numpy()[: len(y)])
 
 
 def test_f8_training_is_the_sum_of_the_logged_shares(
@@ -578,7 +627,7 @@ def test_f9_death_bars_stack_to_one_with_the_methods_own_cause(
     assert zombie["death/1m/smdp-skills/zombie"] == pytest.approx(1.0)
     starve = {b.get_gid(): b.get_width() for b in bars if "/sil/" in b.get_gid()}  # type: ignore[attr-defined]
     assert starve["death/1m/sil/starvation"] == pytest.approx(1.0)
-    assert len(gids(fig, "swatch")) == 2 * 9
+    assert len(gids(fig, "swatch")) == 9
 
 
 def test_f9_stall_ccdf_starts_at_one_and_never_rises(
@@ -630,10 +679,13 @@ def test_f10_boxes_are_the_quartiles_and_the_share_is_text(
     fig = plot_splits(frames, tmp_path, n_boot=N)
     (ctx,) = [c for c in figures_game._contexts(frames) if c.budget == "1m"]
     table = split_table(ctx.eps)
-    reached = table[table["n"] > 0]
-    assert {g for g in gids(fig, "split") if g.startswith("split/1m/")} == {
+    shown = figures_game._split_rows(table)
+    assert len(shown) == figures_game.SPLIT_ROWS  # the fixture reaches more
+    reached = table[(table["n"] > 0) & table["milestone"].isin(shown)]
+    assert gids(fig, "split") == {
         f"split/1m/{r.method}/{r.milestone}" for r in reached.itertuples()
     }
+    assert "Not drawn (only the first" in said(fig)
     box = next(
         a for a in artists(fig, "split") if a.get_gid() == "split/1m/sil/collect_wood"
     )
@@ -725,13 +777,15 @@ def test_f12_dots_are_the_median_of_the_seed_medians_per_stat(
 ) -> None:
     fig = plot_survival(frames, tmp_path, n_boot=N)
     share = {a.get_gid(): xdata(a) for a in artists(fig, "share")}
+    zero = {a.get_gid(): xdata(a) for a in artists(fig, "zero")}
     level = {a.get_gid(): xdata(a) for a in artists(fig, "level")}
     for method in ("ppo", "sil", "dyna-q"):
         for stat in ("food", "drink", "energy"):
-            for kind in ("low", "zero"):
+            for kind, found in (("low", share), ("zero", zero)):
                 column = f"{kind}_share/{stat}"
                 want = np.median(_seed_median(frames, method, column))
-                assert share[f"share/1m/{method}/{column}"] == pytest.approx(want)
+                prefix = "share" if kind == "low" else "zero"
+                assert found[f"{prefix}/1m/{method}/{column}"] == pytest.approx(want)
             column = f"survival/level/{stat}"
             want = np.median(_seed_median(frames, method, column))
             assert level[f"level/1m/{method}/{column}"] == pytest.approx(want)
@@ -745,18 +799,23 @@ def test_f13_kills_are_mean_per_episode_with_passive_last(
     fig = plot_combat(frames, tmp_path, n_boot=N)
     heat = next(a for a in artists(fig, "heat") if a.get_gid() == "heat/1m/kills")
     cells = np.asarray(heat.get_array(), float)  # type: ignore[attr-defined]
-    assert cells.shape == (3, 9)
+    solo = next(a for a in artists(fig, "heat") if a.get_gid() == "heat/1m/kills-solo")
+    alone = np.asarray(solo.get_array(), float)  # type: ignore[attr-defined]
+    assert cells.shape == alone.shape == (3, 9)
     eps = _method_eps(frames, "sil", "1m")
     names = figures_game._contexts(frames)[0].names
     j = names.index("sil")
     assert cells[0, j] == pytest.approx(
         eps.groupby("run_id")["kills/zombie"].mean().mean()
     )
-    assert cells[2, j] == pytest.approx(
+    assert alone[2, j] == pytest.approx(  # the passive row has a scale of its own
         eps.groupby("run_id")["kills/passive"].mean().mean()
     )
+    assert np.isnan(cells[2]).all()
+    assert np.isnan(alone[:2]).all()
     ytick = [t.get_text() for t in fig.axes[0].get_yticklabels()]
     assert ytick == ["zombie", "skeleton", "passive"]
+    assert "Never killed" not in said(fig) or "Not drawn" in said(fig)
     taken = {a.get_gid(): xdata(a) for a in artists(fig, "damage")}
     assert taken["damage/1m/sil"] == pytest.approx(
         eps.groupby("run_id")["damage_taken"].mean().mean()
@@ -816,7 +875,7 @@ def test_f15_gathered_and_used_are_the_episode_means(
     assert ydata(dot) == pytest.approx(eps["used/wood"].mean())
     one_m = {g for g in gids(fig, "use") if g.startswith("use/1m/")}
     assert len(one_m) == 9 * 3  # nine methods, three resources
-    assert any("episodes reaching diamond" in t for t in texts(fig))
+    assert "Episodes reaching diamond" in said(fig)
     t = next(a for a in artists(fig, "time") if a.get_gid() == "time/1m/sil/w2d")
     reach = eps[eps["wood_to_diamond"] >= 0]
     want = reach.groupby("run_id")["wood_to_diamond"].median().median()
@@ -834,13 +893,14 @@ def test_f16_reused_runs_are_not_logged_and_others_are_drawn(
         10 * (list(LEVEL).index("sil") + 1)
     )  # type: ignore[attr-defined]
     assert "ppo, ppo-rnn not logged" in said(fig)
-    rates = {a.get_gid(): xdata(a) for a in artists(fig, "adv")}
     want = 10 * (list(LEVEL).index("sil") + 1)
-    assert rates["adv/1m/sil/train/ach/cast_fireball"] == pytest.approx(want)
-    assert rates["adv/1m/dyna-q/train/ach/fire_bow"] == pytest.approx(
-        10 * (list(LEVEL).index("dyna-q") + 1)
-    )
-    assert sum(g.startswith("adv/1m/") for g in rates) == 7 * 9  # 7 methods x 9
+    # nine achievements are more rows than a dot panel holds: a profile, a line each
+    lines = {a.get_gid(): a for a in artists(fig, "adv")}
+    assert len(lines) == 7  # the seven methods that logged them
+    y = np.asarray(lines["adv/1m/sil"].get_ydata(), float)  # type: ignore[attr-defined]
+    assert y == pytest.approx([want] * 9)
+    dyna = np.asarray(lines["adv/1m/dyna-q"].get_ydata(), float)  # type: ignore[attr-defined]
+    assert dyna == pytest.approx([10 * (list(LEVEL).index("dyna-q") + 1)] * 9)
 
 
 # --- F17 ------------------------------------------------------------------------
@@ -916,7 +976,12 @@ def test_f17_draws_one_polygon_per_method_at_the_scaled_values(
     assert len(axes) == 9
     assert all(ax.name == "polar" for ax in axes)
     assert all(ax.get_ylim() == (0.0, 1.0) for ax in axes)
-    assert (tmp_path / "radar_1m.png").exists()
+    assert (tmp_path / "radar_sil.png").exists()
+    assert {ax.get_title(loc="left") for ax in axes} == set(lines_methods(lines))
+
+
+def lines_methods(lines: dict[str, Artist]) -> list[str]:
+    return [g.split("/")[2] for g in lines]
 
 
 # --- colours --------------------------------------------------------------------
@@ -957,7 +1022,7 @@ def _hexes(artist: Artist) -> set[str]:
 def test_every_method_artist_is_drawn_in_its_method_colour(
     fid: str, theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path, theme)
+    fig = draw(fid, frames, tmp_path, theme, "double" if fid in DOUBLE else "column")
     colors = METHOD_COLORS if theme == "video" else METHOD_COLORS_LIGHT
     checked = 0
     for kind in METHOD_KINDS:
@@ -1071,7 +1136,8 @@ def test_the_radar_leaves_an_axis_that_was_not_recorded_open_never_at_zero(
     y = np.asarray(line.get_ydata(), float)  # type: ignore[attr-defined]
     assert np.isnan(y[figures_game.RADAR_AXES.index("mage")])
     assert np.isfinite(np.delete(y, [6, 8])).all()
-    assert "sil: not recorded on mage" in said(fig)
+    assert "not recorded on mage" in fig.captions["radar_sil"]
+    assert "not recorded" not in fig.captions["radar_ppo"]
 
 
 def test_radar_explorer_and_mage_follow_their_definitions(
@@ -1122,11 +1188,13 @@ def test_f7g_draws_only_the_tiers_with_a_node_and_has_no_legend(
     fig = plot_order_graph(frames, tmp_path, "report", width="double", method="sil")
     nodes = artists(fig, "node")
     used = {round(float(a.get_ydata()[0])) for a in nodes}
-    for ax in {a.axes for a in nodes}:  # every panel has one row per drawn tier only
-        assert used == set(range(len(ax.get_yticklabels())))
-    assert not fig.legends
-    notes = " ".join(t.get_text() for t in fig.texts)
+    for ax in {a.axes for a in nodes}:  # one row per drawn tier, a lone one unlabelled
+        ticks = [t for t in ax.get_yticklabels() if t.get_text()]
+        assert len(ticks) == (len(used) if len(used) > 1 else 0)
+    assert not [f for f in fig.figs.values() if f.legends]
+    notes = fig.captions["order_sil"]
     assert ("No node in the tiers" in notes) == (len(used) < 4)
+    assert ("All nodes are in the tier" in notes) == (len(used) == 1)
 
 
 def test_one_unit_plots_of_hard_have_no_one_entry_legend(tmp_path: Path) -> None:

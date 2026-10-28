@@ -218,9 +218,12 @@ def test_the_hard_tables_and_plots_cover_the_plan_questions(
     }  # fmt: skip
     plots = {p.name for p in (d / "plots").glob("*.png")}
     assert plots == {
-        "floor_reach.png", "achievement_status.png", "death_causes_over_training.png",
-        "stall_lengths.png",
+        "floor_reach.png", "achievement_status_tuned.png",
+        "death_causes_over_training_tuned.png", "stall_lengths.png",
     }  # fmt: skip
+    captions = pd.read_csv(d / "plots" / "captions.csv")
+    assert set(captions["stem"]) == {p[:-4] for p in plots}
+    assert set(captions["id"]) == {"HARD"}
     floors = pd.read_csv(d / "hard" / "floor_reach.csv")
     assert set(floors["method"]) == {"sil"}
     assert set(floors["budget"]) == {"1m"}

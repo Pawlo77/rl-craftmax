@@ -20,7 +20,7 @@ PHASE_FLAGS = $(if $(METHOD),--method $(METHOD)) $(if $(FINE),--expand-fine $(FI
 
 include kit.mk
 
-.PHONY: coverage merge-mlflow mlflow mlflow-stop queue status train-ppo vis warm
+.PHONY: coverage figure-notes merge-mlflow mlflow mlflow-stop queue status train-ppo vis warm
 
 coverage: ## Run tests with coverage report
 	uv run pytest --cov=./src/wut_murl_craftax --cov-report=term-missing tests/
@@ -82,3 +82,6 @@ mlflow-stop: ## Stop local MLflow UI processes
 			lsof -nP -iTCP:"$$PORT" -sTCP:LISTEN; \
 		fi; \
 	fi
+
+figure-notes: ## Build knowledge/results/Figures 1M.md and Tables 1M.md from the captions.csv files: make figure-notes [BUDGET=1m]
+	uv run python -m wut_murl_craftax.analysis.captions --budget $(or $(BUDGET),1m)
