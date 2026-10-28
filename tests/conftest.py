@@ -8,6 +8,8 @@ queue does that too: set ``WUT_MURL_STORE_GUARD=off`` to run tests beside one).
 """
 
 import os
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -30,6 +32,21 @@ def store_listing(root: Path = ROOT) -> dict[str, tuple[int, int]]:
         for p in paths
         if p.is_file()
     }
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Build Craftax's texture caches once, before any xdist worker starts.
+
+    Craftax writes them inside the installed package on first use, so in a fresh
+    virtual environment (CI) parallel workers would read a cache that another worker
+    is still writing.
+    A subprocess keeps the JAX import out of this process (XLA_FLAGS stay open).
+    """
+    if hasattr(config, "workerinput"):  # an xdist worker: the controller already warmed
+        return
+    env = os.environ | {"JAX_PLATFORMS": "cpu"}
+    cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.runtime"]  # make warm
+    subprocess.run(cmd, check=True, capture_output=True, env=env)
 
 
 @pytest.fixture(autouse=True, scope="session")

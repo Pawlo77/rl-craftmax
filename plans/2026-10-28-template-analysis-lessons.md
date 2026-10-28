@@ -120,7 +120,18 @@ The template has no skill for quantitative analysis or report figures; `developm
 - [ ] **Step 1: Write the failing test** over a fresh render.
 - [ ] **Step 2:** Render a stub `local.md` per skill that names it (a heading and "nothing project-specific yet"), or add "when it exists" everywhere; ship skill `vibe` or remove its mentions. Commit `fix: resolve dangling skill references`.
 
-### Task 10: Take the fixes here
+### Task 10: The test suite runs serially in CI
 
-- [ ] **Step 1:** `uvx copier update --trust` to the fixed template version; drop the local copies of Tasks 3-6 where the template now matches.
+A grown project's suite (about 1,500 tests here, 33 min serially on a laptop) cannot finish inside the 30-minute job of `test.yaml`; the template ships no parallel runner.
+
+**Files:**
+- Modify: `template/pyproject.toml` (dev group: `pytest-xdist`; `[tool.pytest.ini_options] addopts = "-n auto --dist loadfile"`), `template/.github/workflows/test.yaml` (timeout sized for the parallel run)
+- Test: a fresh render runs `make tests` and the CI command in parallel with session fixtures (the MLflow store guard, isolated tracking) correct per worker
+
+- [ ] **Step 1:** Add xdist and the `addopts`; check every session-scoped fixture is worker-safe (each worker has its own tmp store; no fixed paths in the repo).
+- [ ] **Step 2:** Fresh render, run the suite with `-n auto` and with `-n 0`; both pass. Commit `ci: run the test suite on every core`.
+
+### Task 11: Take the fixes here
+
+- [ ] **Step 1:** `uvx copier update --trust` to the fixed template version; drop the local copies of Tasks 3-6 and 10 where the template now matches.
 - [ ] **Step 2:** `make check` passes; mark this plan `done`.

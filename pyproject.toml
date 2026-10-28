@@ -87,6 +87,8 @@ dev = [
   "prek>=0.4.9",
   "pytest>=8.4.2",
   "pytest-cov>=7.1.0",
+  # pytest-xdist: the suite runs on every core (about 1,500 tests take over 30 min serially)
+  "pytest-xdist>=3.8",
   "ruff>=0.15.20",
   "ty>=0.0.85",
   "types-pyyaml>=6.0.12.20250915",
@@ -149,6 +151,9 @@ skips = ["B404", "B603"]  # git and system probes in reproducibility.py
 
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]
+# One worker per core; a test file stays on one worker, so its module and session fixtures
+# are built once. `-n 0` runs serially (debugging, a single focused test).
+addopts = "-n auto --dist loadfile"
 filterwarnings = [
 ]
 
