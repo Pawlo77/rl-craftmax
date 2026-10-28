@@ -185,3 +185,27 @@ flowchart LR
 - [ ] **Step 2:** recompute every table with the measured values (laptop hours with compile, GPU hours without); mark them "measured".
 - [ ] **Step 3:** after `tune-coarse` of each method, recheck its overhead factor against the PPO-RNN or PQN-RNN base and the eval episode length at its final checkpoint; after the first `final-1b` run, replace the 1B eval assumptions with its measured eval time.
 - Note 2026-10-23: Steps 1 to 3 are done for what has run (tuning of the three controls and four Phase 1 methods; see "Laptop time"): run minutes, 2-worker throughput, eval per checkpoint and Craftax steps/s are measured; the `final-1m`, `combo-1m` and 1B numbers are recomputed estimates. Still open: Dyna-Q tuning (running), the first `final-1m` run times (replace the "Estimates" table), the first `final-1b` eval time.
+
+## 1B storage
+
+Only what a later step reads is kept and copied back (measured on the 1M store, 2026-10-28: `state/` was 232 GB of 457 GB and is read only to resume or repair a run).
+
+| Item | 1B policy | Size per run | Copied back |
+|---|---|---|---|
+| `ckpt/` (13 checkpoints + `index.json`) | all kept: 3 seeds only, and the best seed and case updates are unknown until the 1B analysis | 0.34-0.50 GB | yes |
+| `state/` | one file, replaced every `checkpoint_every` updates; deleted when the run closes FINISHED with a complete evaluation and no lost checkpoint (`drop_state_on_finish: true` in `configs/profiles/cuda.yaml`); kept for killed, failed and unevaluated runs, which resume on the cluster | 0 after the finish; 0.45-1.8 GB (twice while its `.tmp` is written) while running | never |
+| `eval/`, `metrics.npz`, `episodes.npz`, `extras.npz`, `config.json`, reproducibility report | kept | about 0.05-0.17 GB | yes |
+| `*.tmp`, `owner.json` | transient | 0 | never |
+| node DB `mlruns-node-<i>.db` and `.array.json` | kept | about 25 MB per run | yes |
+
+Expected: about 0.4-0.65 GB per finished 1B run, about 11-18 GB for the 27 runs plus 0.7 GB of node DBs; the cluster disk holds that plus one live `state/` (up to 3.6 GB) per running node.
+
+### Task 2: 1B storage
+
+**Files:**
+- Modify: this file (measured sizes)
+
+- [ ] **Step 1:** start the first `final-1b` array without `SEED_FROM` (no 1B run exists in the main store, so seeding would only copy its 457 GB tree); seed a later rerun only from a store holding just the 1B runs ([[2026-10-20-craftax-infrastructure]] Task 6 Step 5).
+- [ ] **Step 2:** copy back only finished runs: after `make status PHASE=final-1b` on the cluster shows them finished, `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json node-stores/ <laptop>:node-stores/`, then `make merge-mlflow SRC=node-stores/mlruns-node-<i>.db` per node. The merge refuses an unfinished node run without `state/` (it would restart from update 0 beside its checkpoints): such runs stay on the cluster and resume there.
+- [ ] **Step 3:** measure the first finished run's synced size (`du -sh` of its artifact folder) and replace the 0.4-0.65 GB estimate above; check that its `state/` is gone and its `ckpt/` has 13 files.
+- [ ] **Step 4 (optional, after the 1B training analysis and the video footage are fixed):** `uv run python -m wut_murl_craftax.orchestration.prune --phases final-1b combo-1b` (dry run; `--apply` deletes) keeps the final checkpoint, the case updates and the best and median seeds by `final_score` plus the best seed by `eval_stochastic_score` of each 1B unit, about 6 GB less; not needed for the disk.

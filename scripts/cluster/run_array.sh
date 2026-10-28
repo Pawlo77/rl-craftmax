@@ -13,6 +13,11 @@
 # read-only copy of the main mlruns.db with its mlruns/ beside it: the node first takes
 # this worker's runs from it, so it reuses finished runs instead of retraining them),
 # extra queue flags after the phase, e.g. `... tune-coarse --method ppo`.
+# The 1B phases (final-1b, combo-1b) start without SEED_FROM: the main store holds no
+# 1B run. Copy back finished runs only, without state/ (cuda.yaml deletes it once a run
+# is FINISHED and evaluated):
+#   rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json node-stores/ <laptop>:node-stores/
+# then `make merge-mlflow SRC=node-stores/mlruns-node-<i>.db` per node.
 #
 # Stop grace (review M12): --signal=B:TERM@600 sends SIGTERM to this shell, exec'd into
 # uv, which forwards it to the queue, 10 minutes before the time limit. The queue ends

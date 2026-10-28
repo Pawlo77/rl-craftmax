@@ -39,11 +39,12 @@ Status: ready
 | `analysis/<budget>/<method>/` | hard scenarios, `cases.csv`, obstacles tables, plots | [[2026-10-20-craftax-training-analysis]] |
 | `interpretation/<budget>/<method>/` | fidelity curves, complexity, 16-leaf rules, importance | [[2026-10-20-craftax-interpretation-and-ruleset]] |
 | `checkpoints/<budget>/<method>/s<seed>/` | final params (`final.msgpack`), `config.json`, model card `README.md` | final runs (`final-1m`, `final-1b`, `combo-1m`, `combo-1b`), every seed (10 at 1M, 3 at 1B) |
-| `checkpoints/<budget>/<method>/video/` | the early checkpoints used in the videos (best seed only) | `ckpt/index.json` |
+| `checkpoints/<budget>/<method>/video/` | the early checkpoints used in the videos (best seed only: the highest `final_score` per budget, method and `config_ref`, as pinned in [[2026-10-20-craftax-visualisation-production]] Footage) | `ckpt/index.json` |
 | `media/gifs/`, `media/videos/` | GIFs and the three MP4s | visualisation outputs |
 | `report/report.pdf` | the report | `report/` |
 | `LICENSE`, `NOTICE` | the MIT licence text (copy of the repository `LICENSE`) and third-party notices | this plan |
 
+- Checkpoints on disk after the storage prune (`python -m wut_murl_craftax.orchestration.prune`): every final run keeps its final checkpoint, so `final.msgpack` exists for every seed; earlier checkpoints exist only for the best and median seed by `final_score` and the best seed by `eval_stochastic_score` (plus case updates); tuning runs keep none (`ckpt/pruned.json` lists what was deleted).
 - Size estimate for checkpoints: a Craftax-Symbolic width-512 params-only checkpoint is 38,163,145 B ([[Recording training data]]); multiply by the final runs (8 agents and the combination, 10 seeds at 1M and 3 at 1B) and replace with measured sizes in Task 3.
 - Videos with music go in only if every music licence in `configs/video/music.yaml` allows redistribution outside YouTube; otherwise the voice-only mix is uploaded, made from the silent storyboard render and its `voice.wav` with `uv run python -m wut_murl_craftax.visualisation.cuts mux <silent storyboard render> outputs/visualisation/out/<video>_<layout>_voice.mp4 --voice <that video's voice.wav from the storyboard>` (no `--music`; the silent render is the storyboard run without `--voice-dir` and `--music`), and `bundle.py` stages that file under `media/videos/`.
 - Never uploaded: `.env`, tokens, host names, absolute local paths, tuning checkpoints, 16 px masters, lossless clips.

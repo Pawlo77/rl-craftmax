@@ -54,6 +54,8 @@ flowchart LR
 | Cases | episodes flagged `video = yes` in `outputs/analysis/<budget>/cases.csv` ([[2026-10-20-craftax-training-analysis]]) | method, case kind | stuck-then-solved, deepest floor, deaths |
 | Classic trained | final checkpoint of the PPO debugging run on Craftax-Classic | "Craftax-Classic, PPO" | warm-up only |
 
+Seed selection (pinned; `orchestration.prune.seed_picks`, the rule the storage prune keeps checkpoints by): per budget, method and `config_ref`, the **best seed** is the run with the highest `final_score` (the training-episode score in `outputs/metrics/<phase>/runs.parquet`) and the **median seed** the lower median of `final_score` (index `(n - 1) // 2` in ascending order, as interpretation's `rules_16.txt`); ties go to the larger run id. Every checkpoint of both is kept, and of the seed with the highest `eval_stochastic_score` (the mean stochastic eval score of the last checkpoint), so an eval-ranked pick is still possible; other final runs keep only their final checkpoint and their case updates. Footage of a final checkpoint can come from any seed; footage of an earlier checkpoint only from these seeds or a case update.
+
 ## Storyboard: 3-minute video (16:9 and Short)
 
 Durations are on-screen seconds after crossfades; total 175 s, so the Short stays under 180 s. The Short uses the same scenes in the `vert` layout.

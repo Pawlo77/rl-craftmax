@@ -143,9 +143,10 @@ Needs `training/wrappers.py` ([[2026-10-20-craftax-method-ppo]] Task 2), which r
 - [x] **Step 4: Run** `uv run pytest tests/orchestration/test_profiles.py -q`; expected: pass.
 - [ ] **Step 5: Before the first cluster phase** (Phase 0 review I5, M11, M12; ctrl-metrics review):
   - Copy the main `mlruns.db` with its `mlruns/` to the cluster and pass it read-only as `SEED_FROM=<copy>/mlruns.db` to `scripts/cluster/run_array.sh`: each node then reuses and resumes the runs of its share. Rerun an array with the same size, or merge its stores first.
+  - Exception, the 1B phases (`final-1b`, `combo-1b`): start the first array without `SEED_FROM`. No 1B run is in the main store (1B names differ from 1M names), and seeding would copy its 457 GB tree; seed a rerun after a merge only from a store holding just the 1B runs ([[2026-10-20-craftax-compute-budget]] 1B storage).
   - On one GPU node: `uv sync --all-groups`, then `uv run python scripts/cluster/check_recompute.py` (cuda profile, 1B config, 3 updates; it fails loudly without a GPU). Record the largest log-prob and value gaps in the "Device verification" table of [[PPO-RNN design]].
   - Exit 0 (gaps below 1e-4, a tenth of the 1e-3 guard band): remove `ppo/ratio_first_mb` from `unmeasured_limits` in `configs/profiles/cuda.yaml`. Exit 1: rerun with `--precision highest`; if that passes, pinning the matmul precision on CUDA is a decision for [[Experiment decisions]]; until then hits stay retried once.
-  - After the array: `make merge-mlflow SRC=node-stores/mlruns-node-<i>.db` per node; reused runs bring back their new eval files and `eval/*` points.
+  - After the array: copy back only what is needed, `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json node-stores/ <laptop>:node-stores/` (`cuda.yaml` sets `drop_state_on_finish: true`, so a finished run has no `state/` left; an unfinished one keeps it on the cluster to resume), then `make merge-mlflow SRC=node-stores/mlruns-node-<i>.db` per node; reused runs bring back their new eval files and `eval/*` points. The merge refuses unfinished node runs without `state/`. Expected about 0.4-0.65 GB per finished 1B run.
 
 ### Task 7: Smoke phase end to end
 
