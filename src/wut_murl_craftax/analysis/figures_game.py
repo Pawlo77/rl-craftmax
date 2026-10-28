@@ -464,19 +464,16 @@ def _masked(frames: Frames, upto: int) -> Frames:
 
     The run stays in the race (its ``n`` is unchanged): it has only not unlocked yet.
     """
-    firsts = compare.first_unlocks(frames["curves"], frames["runs"])
+    curves = frames["curves"]
+    family = curves["metric"].str.startswith(("first_unlock/", "first_unlock_wall/"))
+    unlock = curves[family].copy()  # only these rows are masked, never the 12M others
+    firsts = compare.first_unlocks(unlock, frames["runs"])
     late = firsts[firsts["steps"] >= upto]
-    keys = set(zip(late["run_id"], late["achievement"], strict=True))
-    curves = frames["curves"].copy()
-    metric = curves["metric"]
-    ach = metric.str.split("/", n=1).str[1]
-    family = metric.str.startswith(("first_unlock/", "first_unlock_wall/"))
-    hit = [
-        bool(f) and (r, a) in keys
-        for f, r, a in zip(family, curves["run_id"], ach, strict=True)
-    ]
-    curves.loc[hit, "value"] = np.inf
-    return {**frames, "curves": curves}
+    keys = pd.MultiIndex.from_frame(late[["run_id", "achievement"]])
+    ach = unlock["metric"].str.split("/", n=1).str[1]
+    hit = pd.MultiIndex.from_arrays([unlock["run_id"], ach]).isin(keys)
+    unlock.loc[hit, "value"] = np.inf
+    return {**frames, "curves": pd.concat([curves[~family], unlock])}
 
 
 def _spread(
@@ -579,6 +576,24 @@ def _race_notes(
     short = [f"{m} {int(n)} of {count[m]}" for m, n in logged.items() if n < count[m]]
     if short:
         notes.append(f"Seeds that logged the race: {', '.join(short)}.")
+    return notes + _wall_notes(table, budget, clock)
+
+
+def _ineligible_note(table: pd.DataFrame, rows: Sequence[str], where: str) -> list[str]:
+    """Cells reached by fewer than half of a method's seeds: not drawn, said here."""
+    cells = table[table["achievement"].isin(rows)]
+    bad = cells[~cells["eligible"].astype(bool)]
+    if bad.empty:
+        return []
+    text = (
+        f"{where}: {len(bad)} of {len(cells)} method-achievement cells were reached "
+        "by fewer than half of the seeds (k < n/2) and are not drawn."
+    )
+    return [text]
+
+
+def _wall_notes(table: pd.DataFrame, budget: str, clock: str) -> list[str]:
+    notes: list[str] = []
     if clock == "wall":
         walls = sorted({w for w in table["wall_note"].dropna() if w})
         notes += [f"{_budget_name(budget)} wall-clock: {w}." for w in walls]
@@ -700,6 +715,11 @@ def race(
             mine[mine["method"].isin(in_block)],
             budget,
             clock,
+        )
+        notes += _ineligible_note(
+            of(full, budget, block),
+            rows[budget, block],
+            f"{_budget_name(budget)} {block} block",
         )
     names = list(dict.fromkeys(full["method"]))
     pending = _pending([b for b, _ in compare.budgets(tuned)])
@@ -885,16 +905,25 @@ def order_agreement(
 ) -> pd.DataFrame:
     """Kendall tau-b and edge Jaccard between the order graphs of every method pair.
 
-    Per benchmark and ordered pair of methods (a pair appears twice, once each way):
+    Per benchmark and ordered pair of methods (a pair appears twice, once each way;
+    the cells of two non-control methods of different blocks are NaN, never compared):
     ``tau`` over the mean normalised rank of the shared nodes with its permutation
     ``p`` (`PERMUTATIONS`), ``jaccard`` of the two edge sets (NaN when both are empty).
     """
     rows = []
     for ctx in _contexts(frames):
         graphs = {m: order_graph(ctx.eps[ctx.eps["method"] == m]) for m in ctx.names}
+        block = {m: b for b, m, role in compare.members(ctx.runs) if role == "method"}
         for a, b in itertools.permutations(ctx.names, 2):
             (na, ea), (nb, eb) = graphs[a], graphs[b]
             shared = na.merge(nb, on="achievement", suffixes=("_a", "_b"))
+            if a in block and b in block and block[a] != block[b]:
+                tau, p = float("nan"), float("nan")  # never across blocks
+                rows.append({
+                    "benchmark": ctx.budget, "method": a, "other": b, "tau": tau,
+                    "p": p, "n_shared": 0, "jaccard": float("nan"),
+                })  # fmt: skip
+                continue
             tau, p = kendall_permutation(
                 shared["rho_a"].to_numpy(), shared["rho_b"].to_numpy(), n_perm, seed
             )
@@ -1067,8 +1096,8 @@ def plot_order_agreement(
         _title(ax, th, _panel_title(ctx.budget, "Kendall tau-b of the unlock order"))
     note = (
         f"Mean normalised rank of the shared order-graph nodes; bold: permutation "
-        f"p < {TAU_ALPHA} ({n_perm:,} permutations). Descriptive: no cell ranks "
-        "methods."
+        f"p < {TAU_ALPHA} ({n_perm:,} permutations). Blank: methods of different "
+        "blocks are not compared (controls are, in both)."
     )
     _finish(fig, th, notes=[note, *_pending([c.budget for c in ctxs])])
     return _save(fig, th, out_dir, name)
@@ -1299,6 +1328,9 @@ def plot_funnel_training(
 CAUSE_SLOTS = 4
 """Causes drawn apart in a death bar (a ramp step each); the rest are ``other``."""
 OTHER = "other"
+NEW_TILES_NOTE = (
+    "New tiles: the episode mean stored by the replay, not a series over the episode."
+)
 
 
 def _death_shares(ctx: Ctx) -> pd.DataFrame:
@@ -1725,6 +1757,7 @@ def plot_coverage(
         theme,
         width,
         panels,
+        notes=[NEW_TILES_NOTE],
         n_boot=n_boot,
         seed=seed,
     )
@@ -2205,7 +2238,7 @@ def _radar_raw(eps: pd.DataFrame) -> pd.DataFrame:
         "crafter": _column(eps, "tech_depth").astype(float),
         "diver": _column(eps, "max_floor").astype(float),
         "efficient": _column(eps, "n_achievements") / length * 1000,
-        "mage": (eps[adv] > 0).mean(axis=1) if adv else nan,
+        "mage": eps[adv].gt(0).where(eps[adv].notna()).mean(axis=1) if adv else nan,
         "precise": 1 - _column(eps, "wasted_share"),
     }
     return (
@@ -2258,15 +2291,20 @@ def _radar_axes(ax: Axes, th: Theme, labels: Sequence[str]) -> None:
 def _radar_cell(
     ax: Axes, th: Theme, budget: str, method: str, values: np.ndarray, labels: list[str]
 ) -> None:
-    """One method's polygon on shared axes; an axis not recorded is drawn at 0."""
+    """One method's polygon on shared axes; a missing axis leaves a gap, never a 0."""
     angles = np.linspace(0, 2 * np.pi, len(values), endpoint=False)
-    shown = np.nan_to_num(values)
-    x, y = np.r_[angles, angles[:1]], np.r_[shown, shown[:1]]
+    x, y = np.r_[angles, angles[:1]], np.r_[values, values[:1]]
     style = _style_of(th, method)
     _radar_axes(ax, th, labels)
     (line,) = ax.plot(x, y, color=style["color"], lw=th.lw, ls=style["ls"])
     line.set_gid(_gid("radar", budget, method))
-    (fill,) = ax.fill(x, y, color=style["color"], alpha=0.2, lw=0)
+    (fill,) = ax.fill(
+        x,
+        np.nan_to_num(y),
+        color=style["color"],
+        alpha=0.0 if np.isnan(y).any() else 0.2,
+        lw=0,
+    )  # an incomplete polygon is not filled
     fill.set_gid(_gid("radar-fill", budget, method))
     ax.set_title(method, loc="left", fontsize=th.title, color=th.ink)
 
@@ -2315,6 +2353,9 @@ def plot_radar(
         notes.append(f"Axes: {names}.")
     notes.append(
         "Axes min-max scaled over the methods of the benchmark (0.5: all equal)."
+    )
+    notes.append(
+        "Survivor: 1 - the largest single-stat zero share, an upper bound of survival."
     )
     _finish(fig, th, notes=[*_unique(notes), *_pending(present)])
     return _save(fig, th, out_dir, name)

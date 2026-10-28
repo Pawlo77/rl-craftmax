@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from _compare_fixture import LEVEL
-from _game_fixture import ENTER, FLOOR_COLUMNS, game_frames
+from _game_fixture import FLOOR_COLUMNS, game_frames
 from matplotlib.artist import Artist
 from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
@@ -51,6 +51,7 @@ from wut_murl_craftax.analysis.figures_game import (
     transitive_reduction,
 )
 from wut_murl_craftax.analysis.hard import stall_stats
+from wut_murl_craftax.evaluation.stats import stratified_bootstrap_ci
 from wut_murl_craftax.visualisation.charts import METHOD_COLORS, METHOD_COLORS_LIGHT
 
 N = 100
@@ -638,7 +639,12 @@ def test_f10_boxes_are_the_quartiles_and_the_share_is_text(
     verts = box.get_path().vertices  # type: ignore[attr-defined]
     assert verts[:, 0].min() == pytest.approx(row["q1"])
     assert verts[:, 0].max() == pytest.approx(row["q3"])
-    assert any("%-" in t and "%" in t for t in texts(fig))
+    note = next(
+        a for a in artists(fig, "share") if a.get_gid() == "share/1m/all/collect_wood"
+    )
+    mine = table[table["milestone"] == "collect_wood"]["share"]
+    assert note.get_text() == f"{mine.min():.0%}-{mine.max():.0%}"  # type: ignore[attr-defined]
+    assert mine.min() < mine.max()  # the fixture's shares differ by method
 
 
 # --- F11 - F16: dots with intervals -------------------------------------------------
@@ -667,10 +673,24 @@ def test_f11_dots_are_the_median_of_the_seed_medians(
             else:
                 assert gid not in dots
     assert gids(fig, "tiles")
-    # the interval is the evaluation.stats bootstrap: it brackets the estimate
-    for a in artists(fig, "ci"):
-        lo, hi = a.get_segments()[0][:, 0]  # type: ignore[attr-defined]
-        assert lo <= hi
+    assert gids(fig, "coverage")
+
+
+def test_f11_intervals_are_bootstrapped_over_seeds_not_episodes(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_coverage(frames, tmp_path, n_boot=N)
+    seg = next(a for a in artists(fig, "ci") if a.get_gid() == "ci/1m/sil/overworld")
+    lo, hi = seg.get_segments()[0][:, 0]  # type: ignore[attr-defined]
+    seeds = _seed_median(frames, "sil", "coverage/overworld")  # one value per seed
+    assert len(seeds) == 10
+    want = stratified_bootstrap_ci(
+        {"seeds": seeds.tolist()}, lambda d: float(np.median(d["seeds"])), N, 0
+    )
+    assert (lo, hi) == (pytest.approx(want.lo), pytest.approx(want.hi))
+    episodes = _method_eps(frames, "sil", "1m")["coverage/overworld"].to_numpy(float)
+    assert len(episodes) == 40  # an episode-level resample would give another interval
+    assert (lo, hi) != (np.percentile(episodes, 2.5), np.percentile(episodes, 97.5))
 
 
 def test_f11_a_floor_never_visited_is_left_out_not_zero(
@@ -696,6 +716,25 @@ def test_f12_missing_replay_levels_say_not_recorded(
     assert any(g.startswith("share/1m/ppo/low_share/food") for g in gids(fig, "share"))
 
 
+def test_f12_dots_are_the_median_of_the_seed_medians_per_stat(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_survival(frames, tmp_path, n_boot=N)
+    share = {a.get_gid(): xdata(a) for a in artists(fig, "share")}
+    level = {a.get_gid(): xdata(a) for a in artists(fig, "level")}
+    for method in ("ppo", "sil", "dyna-q"):
+        for stat in ("food", "drink", "energy"):
+            for kind in ("low", "zero"):
+                column = f"{kind}_share/{stat}"
+                want = np.median(_seed_median(frames, method, column))
+                assert share[f"share/1m/{method}/{column}"] == pytest.approx(want)
+            column = f"survival/level/{stat}"
+            want = np.median(_seed_median(frames, method, column))
+            assert level[f"level/1m/{method}/{column}"] == pytest.approx(want)
+    # the fixture's low and zero shares differ per stat, so a swapped row would fail
+    assert share["share/1m/sil/low_share/food"] != share["share/1m/sil/low_share/drink"]
+
+
 def test_f13_kills_are_mean_per_episode_with_passive_last(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
@@ -704,9 +743,7 @@ def test_f13_kills_are_mean_per_episode_with_passive_last(
     cells = np.asarray(heat.get_array(), float)  # type: ignore[attr-defined]
     assert cells.shape == (3, 9)
     eps = _method_eps(frames, "sil", "1m")
-    col = 6  # sil: the sixth method of the fixture's order
     names = figures_game._contexts(frames)[0].names
-    assert names[col] == "sil" or "sil" in names
     j = names.index("sil")
     assert cells[0, j] == pytest.approx(
         eps.groupby("run_id")["kills/zombie"].mean().mean()
@@ -720,7 +757,12 @@ def test_f13_kills_are_mean_per_episode_with_passive_last(
     assert taken["damage/1m/sil"] == pytest.approx(
         eps.groupby("run_id")["damage_taken"].mean().mean()
     )
-    assert gids(fig, "fights")
+    fights = {a.get_gid(): xdata(a) for a in artists(fig, "fights")}
+    # the fixture stores `slot` fight records per episode (slots 0 to 3): mean 1.5
+    assert fights["fights/1m/sil/fights"] == pytest.approx(1.5)
+    assert fights["fights/1m/sil/fights"] == pytest.approx(
+        eps["fights"].map(len).groupby(eps["run_id"]).mean().mean()
+    )
 
 
 def test_f14_action_shares_sum_to_one_per_method(
@@ -731,7 +773,17 @@ def test_f14_action_shares_sum_to_one_per_method(
     cells = np.asarray(heat.get_array(), float)  # type: ignore[attr-defined]
     assert cells.shape == (5, 9)
     assert cells.sum(axis=0) == pytest.approx(np.ones(9))
-    assert (cells.argmax(axis=0) == cells.argmax(axis=0)[0]).any()
+    names = figures_game._contexts(frames)[0].names
+    columns = [
+        c for c in frames["eval_episodes"].columns if c.startswith("action_count/")
+    ]
+    for method in ("ppo", "sil"):
+        eps = _method_eps(frames, method, "1m")
+        counts = eps[columns].to_numpy(float)
+        share = pd.DataFrame(counts / counts.sum(axis=1, keepdims=True))
+        want = share.groupby(eps["run_id"].to_numpy()).mean().mean().to_numpy()
+        assert cells[:, names.index(method)] == pytest.approx(want)
+    assert not np.allclose(cells[:, 0], cells[:, 5])  # methods differ
 
 
 def test_f14_training_entropy_is_not_logged_for_the_reused_runs(
@@ -758,7 +810,8 @@ def test_f15_gathered_and_used_are_the_episode_means(
     eps = _method_eps(frames, "sil", "1m")
     assert xdata(dot) == pytest.approx(eps["gathered/wood"].mean())
     assert ydata(dot) == pytest.approx(eps["used/wood"].mean())
-    assert len(gids(fig, "use")) == 2 * 9 * 3 - 0 or len(gids(fig, "use")) >= 27
+    one_m = {g for g in gids(fig, "use") if g.startswith("use/1m/")}
+    assert len(one_m) == 9 * 3  # nine methods, three resources
     assert any("episodes reaching diamond" in t for t in texts(fig))
     t = next(a for a in artists(fig, "time") if a.get_gid() == "time/1m/sil/w2d")
     reach = eps[eps["wood_to_diamond"] >= 0]
@@ -777,7 +830,13 @@ def test_f16_reused_runs_are_not_logged_and_others_are_drawn(
         10 * (list(LEVEL).index("sil") + 1)
     )  # type: ignore[attr-defined]
     assert "ppo, ppo-rnn not logged" in said(fig)
-    assert len(gids(fig, "adv")) > 0
+    rates = {a.get_gid(): xdata(a) for a in artists(fig, "adv")}
+    want = 10 * (list(LEVEL).index("sil") + 1)
+    assert rates["adv/1m/sil/train/ach/cast_fireball"] == pytest.approx(want)
+    assert rates["adv/1m/dyna-q/train/ach/fire_bow"] == pytest.approx(
+        10 * (list(LEVEL).index("dyna-q") + 1)
+    )
+    assert sum(g.startswith("adv/1m/") for g in rates) == 7 * 9  # 7 methods x 9
 
 
 # --- F17 ------------------------------------------------------------------------
@@ -915,7 +974,139 @@ def test_the_three_controls_are_three_distinct_greys_in_the_race(
         a.get_gid().split("/")[2]: to_hex(a.get_color())  # type: ignore[attr-defined]
         for a in artists(fig, "race")
     }
-    assert len({seen[c] for c in ("pqn-rnn",)}) == 1
+    assert seen["pqn-rnn"] == to_hex(METHOD_COLORS_LIGHT["pqn-rnn"])
     controls = {to_hex(METHOD_COLORS_LIGHT[c]) for c in ("ppo", "ppo-rnn", "pqn-rnn")}
     assert len(controls) == 3
-    assert ENTER  # the fixture reaches the floor milestones the splits read
+
+
+# --- review fixes ---------------------------------------------------------------
+
+
+def test_f6_whiskers_bracket_the_median(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = race(frames, tmp_path)
+    whiskers = {
+        a.get_gid().removeprefix("iqr/"): a.get_segments()[0][:, 0]  # type: ignore[attr-defined]
+        for a in artists(fig, "iqr")
+    }
+    dots = {a.get_gid().removeprefix("race/"): xdata(a) for a in artists(fig, "race")}
+    assert dots.keys() == whiskers.keys()
+    for key, x in dots.items():
+        lo, hi = whiskers[key]
+        assert lo <= x <= hi, key
+    assert any(lo < hi for lo, hi in whiskers.values())
+
+
+def test_f6_says_how_many_cells_fewer_than_half_of_the_seeds_reached(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    runs = frames["runs"]
+    rare = runs[(runs["method"] == "sil") & (runs["budget"] == "1m")]["run_id"].iloc[:6]
+    curves = frames["curves"]
+    drop = curves["run_id"].isin(rare) & curves["metric"].str.endswith("/place_table")
+    partial = {**frames, "curves": curves[~drop]}  # sil unlocks it in 4 of 10 seeds
+    fig = race(partial, tmp_path)
+    assert "k < n/2) and are not drawn" in said(fig)
+    assert "1 of" in said(fig)
+    assert "race/1m/sil/place_table" not in gids(fig, "race")
+    assert "race/1m/sil/collect_wood" in gids(fig, "race")
+    assert "k < n/2" not in said(race(frames, tmp_path))
+
+
+def test_order_agreement_never_compares_methods_of_different_blocks(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    table = order_agreement(frames, n_perm=N)
+    one_m = table[table["benchmark"] == "1m"].set_index(["method", "other"])
+    for pair in (
+        ("sil", "smdp-skills"),
+        ("count-bonus-ppo-rnn", "dyna-q"),
+        ("dyna-q", "sil"),
+    ):
+        cell = one_m.loc[pair]
+        assert np.isnan(cell["tau"]), pair
+        assert np.isnan(cell["p"]), pair
+        assert np.isnan(cell["jaccard"])
+        assert cell["n_shared"] == 0
+    assert np.isfinite(one_m.loc[("sil", "ppo"), "tau"])  # a control: both blocks
+    assert np.isfinite(one_m.loc[("ppo", "smdp-skills"), "tau"])
+    assert np.isfinite(one_m.loc[("dyna-q", "smdp-skills"), "tau"])  # same block
+    assert np.isfinite(one_m.loc[("sil", "count-bonus-ppo-rnn"), "tau"])
+
+
+def test_the_agreement_matrix_leaves_cross_block_cells_blank(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_order_agreement(frames, tmp_path, n_perm=N)
+    heat = next(a for a in artists(fig, "tau") if a.get_gid() == "tau/1m/all")
+    cells = np.asarray(heat.get_array(), float)  # type: ignore[attr-defined]
+    names = figures_game._contexts(frames)[0].names
+    i, j = names.index("sil"), names.index("smdp-skills")
+    assert np.ma.is_masked(heat.get_array()[i, j]) or np.isnan(cells[i, j])
+    assert "different blocks are not compared" in said(fig)
+
+
+def _no_adv(frames: dict[str, pd.DataFrame], method: str) -> dict[str, pd.DataFrame]:
+    eps = frames["eval_episodes"].copy()
+    adv = [c for c in eps.columns if c.startswith("adv/")]
+    eps.loc[eps["method"] == method, adv] = np.nan
+    return {**frames, "eval_episodes": eps}
+
+
+def test_the_radar_leaves_an_axis_that_was_not_recorded_open_never_at_zero(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    broken = _no_adv(frames, "sil")
+    table = radar_table(broken).set_index(["benchmark", "method", "axis"])
+    assert np.isnan(table.loc[("1m", "sil", "mage"), "raw"])
+    assert np.isnan(table.loc[("1m", "sil", "mage"), "scaled"])
+    assert table.loc[("1m", "ppo", "mage"), "raw"] == pytest.approx(0.25)  # recorded
+    fig = plot_radar(broken, tmp_path)
+    line = next(a for a in artists(fig, "radar") if a.get_gid() == "radar/1m/sil")
+    y = np.asarray(line.get_ydata(), float)  # type: ignore[attr-defined]
+    assert np.isnan(y[figures_game.RADAR_AXES.index("mage")])
+    assert np.isfinite(np.delete(y, [6, 8])).all()
+    assert "sil: not recorded on mage" in said(fig)
+
+
+def test_radar_explorer_and_mage_follow_their_definitions(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    table = radar_table(frames).set_index(["benchmark", "method", "axis"])["raw"]
+    eps = _method_eps(frames, "combo", "1m")
+    cover = eps[[c for c in eps.columns if c.startswith("coverage/")]].mean(axis=1)
+    want = cover.groupby(eps["run_id"]).mean().mean()
+    assert table["1m", "combo", "explorer"] == pytest.approx(want)
+    adv = eps[[c for c in eps.columns if c.startswith("adv/")]]
+    mage = (adv > 0).mean(axis=1).groupby(eps["run_id"]).mean().mean()
+    assert table["1m", "combo", "mage"] == pytest.approx(mage)
+    assert mage == pytest.approx(0.25)  # fixture: only drink_potion, in slots 2 and 3
+
+
+def test_the_radar_says_survivor_is_an_upper_bound(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    assert "upper bound of survival" in said(plot_radar(frames, tmp_path))
+
+
+def test_f11_says_the_new_tile_rate_is_an_episode_mean(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    assert "not a series over the episode" in said(
+        plot_coverage(frames, tmp_path, n_boot=N)
+    )
+
+
+def test_the_race_mask_only_touches_the_first_unlock_rows(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    masked = figures_game._masked(frames, 10_000)
+    before, after = frames["curves"], masked["curves"]
+    assert len(before) == len(after)
+    other = ~after["metric"].str.startswith("first_unlock")
+    kept = after[other].sort_values(["run_id", "env_steps", "metric"])
+    base = before[~before["metric"].str.startswith("first_unlock")]
+    base = base.sort_values(["run_id", "env_steps", "metric"])
+    assert kept["value"].to_numpy() == pytest.approx(base["value"].to_numpy())
+    assert np.isinf(after.loc[~other, "value"]).any()

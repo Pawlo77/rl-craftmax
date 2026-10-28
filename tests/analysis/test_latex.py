@@ -199,12 +199,17 @@ def test_write_tables_writes_each_file_and_skips_a_missing_1b(
     paths = write_tables(frames_1m, tmp_path, tables=t)
     names = {p.name for p in paths}
     assert names == {
+        "main.tex",
+        "game_summary.tex",
         "main_1m.tex",
         "main_vs_1m.tex",
         "game_summary_1m.tex",
         "stability_hardware.tex",
     }  # fmt: skip
     assert not (tmp_path / "main_1b.tex").exists()
+    plan = {"main.tex": "main_1m.tex", "game_summary.tex": "game_summary_1m.tex"}
+    for plan_name, real in plan.items():  # the plan's names hold the 1M tables
+        assert (tmp_path / plan_name).read_text() == (tmp_path / real).read_text()
     for p in paths:
         text = p.read_text()
         assert r"\begin{tabular}" in text
@@ -219,6 +224,18 @@ def test_write_tables_with_1b_and_literature(
         "score_kind": "training", "benchmark": "1m", "name": "PPO (paper_x)",
         "protocol": "training-episode return", "seeds": 5, "score_pct": 11.5,
         "spread": 0.7, "spread_kind": "sd",
+        "ci_lo": float("nan"), "ci_hi": float("nan"),
+        "gate": "", "gap": float("nan"), "h": float("nan"),
+    }, {
+        "score_kind": "training", "benchmark": "1m", "name": "ppo-rnn",
+        "protocol": "training-episode return", "seeds": 10, "score_pct": 2.19,
+        "spread": 0.03, "spread_kind": "s.e.", "ci_lo": 2.12, "ci_hi": 2.26,
+        "gate": "fail", "gap": -0.4321, "h": 0.25,
+    }, {
+        "score_kind": "training", "benchmark": "1m", "name": "ppo",
+        "protocol": "training-episode return", "seeds": 10, "score_pct": 2.17,
+        "spread": 0.03, "spread_kind": "s.e.", "ci_lo": 2.11, "ci_hi": 2.24,
+        "gate": "pass", "gap": 0.05, "h": 0.25,
     }])  # fmt: skip
     paths = write_tables(frames, tmp_path, tables={**tables, "literature": lit})
     assert {"main_1b.tex", "game_summary_1b.tex", "literature.tex"} <= {
@@ -227,6 +244,12 @@ def test_write_tables_with_1b_and_literature(
     text = (tmp_path / "literature.tex").read_text()
     assert r"PPO (paper\_x)" in text
     assert r"11.50 $\pm$ 0.70 (sd)" in text
+    # our rows: CI of the mean, and the reproduction gate (status, gap and h)
+    assert r"2.19 [2.12, 2.26]" in text
+    assert r"fail (gap $-$0.43, h 0.25)" in text
+    assert r"pass (gap 0.05, h 0.25)" in text
+    line = next(ln for ln in text.splitlines() if ln.startswith("PPO (paper"))
+    assert line.rstrip().endswith(r"-- \\")  # a published row has no gate
     vs = (tmp_path / "main_vs_1m.tex").read_text()
     assert "PoI vs ppo-rnn" in vs
     assert "p Holm pqn-rnn" in vs
@@ -235,6 +258,36 @@ def test_write_tables_with_1b_and_literature(
 def test_write_tables_needs_frames_or_the_table(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="frames or the"):
         write_tables(None, tmp_path)
+
+
+def test_stability_hardware_carries_the_r97_note_and_ranks_no_sps(
+    tables: dict[str, pd.DataFrame],
+) -> None:
+    t5 = latex.stability_hardware(tables["stability"], tables["hardware"])
+    text = latex.stability_hardware_tex(t5)
+    heading = next(ln for ln in text.splitlines() if "multicolumn" in ln)
+    assert "two concurrent workers, context only" in heading
+    assert "laptop" in heading
+    row = next(ln for ln in text.splitlines() if ln.startswith("ppo &"))
+    sps = row.split("&")[5].strip()  # the SPS column
+    assert sps
+    assert "textbf" not in sps
+    sps_cells = [ln.split("&")[5] for ln in text.splitlines() if ln.count("&") == 8]
+    assert not any("textbf" in c for c in sps_cells)
+
+
+def test_a_1b_heading_states_the_seed_count_of_the_data(
+    tables: dict[str, pd.DataFrame],
+) -> None:
+    main = tables["main"].copy()
+    main.loc[main["benchmark"] == "1b", "seeds"] = 5
+    assert "indicative (5 seeds)" in main_tex(main, "1b")
+
+
+def test_negative_numbers_use_a_math_minus() -> None:
+    assert latex._fmt(-0.5) == "$-$0.50"
+    assert latex._fmt(0.5) == "0.50"
+    assert latex._p(0.0004) == "$<$0.001"
 
 
 def test_game_summary_says_not_logged_for_the_reused_runs(
@@ -255,7 +308,9 @@ def test_numbers_define_one_newcommand_per_reported_number(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "numbers.tex"
-    result = write_numbers(path, frames, tables=tables, complexity_root=complexity_root)
+    result = write_numbers(
+        path, frames, tables=tables, complexity_root=complexity_root, report=None
+    )
     lines = [
         ln for ln in path.read_text().splitlines() if ln.startswith(r"\newcommand")
     ]
@@ -300,7 +355,8 @@ def test_poi_and_holm_macros_name_the_control_and_exist_at_1m_only(
     row = tables["main"].query("benchmark == '1m' and method == 'sil'").iloc[0]
     assert got["poiOneMSilPpoRnn"] == f"{row['poi_ppo-rnn']:.2f}"
     p = row["p_holm_ppo-rnn"]
-    assert got["pHolmOneMSilPpoRnn"] == ("<0.001" if p < 0.001 else f"{p:.3f}")
+    assert got["pHolmOneMSilPpoRnn"] == ("$<$0.001" if p < 0.001 else f"{p:.3f}")
+    assert not any("<" in v.replace("$<$", "") for v in got.values())
     assert not any(k.startswith(("poiOneB", "pHolmOneB")) for k in got)
     assert "poiOneMPpoPpo" not in got  # a control against itself is NaN
 
@@ -336,8 +392,8 @@ def test_complexity_macros_include_leaves_fidelity_and_the_unreached_case(
     assert got["lNinetyFiveOneMSil"] == latex.NEVER  # inf: never reached
     assert got["fidSixteenOneMSil"] == "0.712"
     assert got["closedLoopOneMSil"] == "0.500"
-    assert got["depthNinetyOneMSil"] == "5.000"
-    assert got["spearmanScoreNinetyOneM"] == "-0.432"
+    assert got["depthNinetyOneMSil"] == "5"
+    assert got["spearmanScoreNinetyOneM"] == "$-$0.432"
     assert got["spearmanScoreNinetyOneMDagger"] == "0.100"
 
 
@@ -406,9 +462,28 @@ def test_every_macro_used_in_report_tex_is_defined(tmp_path: Path) -> None:
     ]
 
 
-def test_the_real_report_uses_no_number_macro_yet() -> None:
-    root = Path(__file__).resolve().parents[2] / "report" / "report.tex"
-    assert not latex.USED.findall(root.read_text())  # vacuous today (R75, R86)
+def test_the_real_report_defines_every_macro_it_uses() -> None:
+    root = Path(__file__).resolve().parents[2] / "report"
+    if not (root / "numbers.tex").exists():
+        pytest.skip("report/numbers.tex is not generated yet")
+    assert undefined_macros(root / "report.tex", root / "numbers.tex") == []
+
+
+def test_write_numbers_checks_the_report_macros(
+    frames: dict[str, pd.DataFrame],
+    tables: dict[str, pd.DataFrame],
+    complexity_root: Path,
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.tex"
+    report.write_text(r"We reach \scoreOneMSil and \iqmOneMNoSuchMethod.\n")
+    path = tmp_path / "numbers.tex"
+    kw = {"tables": tables, "complexity_root": complexity_root, "report": report}
+    with pytest.raises(ValueError, match="iqmOneMNoSuchMethod"):
+        write_numbers(path, frames, **kw)  # type: ignore[arg-type]
+    assert path.exists()  # written anyway, to inspect
+    report.write_text(r"We reach \scoreOneMSil.")
+    write_numbers(path, frames, **kw)  # type: ignore[arg-type]
 
 
 def test_copy_figures_takes_the_report_pdfs_only(tmp_path: Path) -> None:

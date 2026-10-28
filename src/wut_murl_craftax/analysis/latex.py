@@ -101,11 +101,13 @@ def _finite(v: object) -> bool:
 
 
 def _fmt(v: float, digits: int = 2) -> str:
-    return f"{v:.{digits}f}"
+    """``v`` with a math minus (a hyphen in text mode is too short)."""
+    return f"{v:.{digits}f}".replace("-", "$-$")
 
 
 def _p(v: float) -> str:
-    return "<0.001" if v < 0.001 else f"{v:.3f}"
+    """A p-value; ``$<$`` because ``<`` is an inverted "!" in OT1 text fonts."""
+    return "$<$0.001" if v < 0.001 else f"{v:.3f}"
 
 
 def _interval(lo: float, hi: float, digits: int = 2) -> str:
@@ -199,11 +201,8 @@ def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
             v = r.get(col)
             if v is None or (isinstance(v, float) and math.isnan(v)):
                 continue
-            text = (
-                _leaves(float(v))
-                if col.startswith(("l80", "l90", "l95"))
-                else _fmt(float(v), 3)
-            )
+            whole = col.startswith(("l80", "l90", "l95", "depth"))
+            text = _leaves(float(v)) if whole else _fmt(float(v), 3)
             out.append(
                 Number(
                     macro(quantity, r["budget"], r["method"], r["config_ref"], tail),
@@ -283,11 +282,16 @@ def write_numbers(
     complexity_root: Path = INTERPRETATION,
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
+    report: Path | None = REPORT_TEX,
 ) -> list[Number]:
     r"""Write ``numbers.tex``: one ``\newcommand`` per number; return the numbers.
 
+    With an existing ``report`` the file is checked afterwards: every macro of this
+    family that the report uses must be defined (`undefined_macros`).
+
     Raises:
-        ValueError: Without ``frames``, or as `collect_numbers`.
+        ValueError: Without ``frames``, as `collect_numbers`, or when ``report`` uses
+            a macro the written file does not define (the file is still written).
     """
     if frames is None:
         msg = "write_numbers needs the phase frames (analysis.load.load_phases)"
@@ -299,6 +303,11 @@ def write_numbers(
     lines += [f"\\newcommand{{\\{n.name}}}{{{n.text}}}" for n in numbers]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
+    if report is not None and report.exists():
+        missing = undefined_macros(report, path)
+        if missing:
+            msg = f"{report} uses macros that {path} does not define: {missing}"
+            raise ValueError(msg)
     return numbers
 
 
@@ -417,7 +426,7 @@ def _title(block: str) -> str:
 def main_tex(t1: pd.DataFrame, budget: str) -> str:
     """T1 of one benchmark: mean +- s.e., IQM (1M) or median (1B) with 95% CIs, evals.
 
-    A 1B table is marked indicative (3 seeds) in its first heading.
+    A 1B table is marked indicative, with its seed count, in its first heading.
     """
     significant = budget in compare.SIGNIFICANCE_BUDGETS
     centre = (
@@ -441,7 +450,12 @@ def main_tex(t1: pd.DataFrame, budget: str) -> str:
     ]
     groups = _group_rows(t1, budget)
     if not significant and groups:
-        groups[0] = (f"Craftax-1B, indicative (3 seeds): {groups[0][0]}", groups[0][1])
+        seeds = sorted({int(r["seeds"]) for _, rows in groups for r in rows})
+        count = "/".join(map(str, seeds))
+        groups[0] = (
+            f"Craftax-1B, indicative ({count} seeds): {groups[0][0]}",
+            groups[0][1],
+        )
     return tabular(columns, groups)
 
 
@@ -482,12 +496,18 @@ def versus_tex(t1: pd.DataFrame, budget: str = "1m") -> str:
 
 
 def literature_tex(t2: pd.DataFrame) -> str:
-    """T2: our rows beside the published ones (protocol, seeds, score, spread)."""
+    """T2: our rows beside the published ones, with our CI and the gate per control.
+
+    The gate cell is the reproduction-gate status of a control row, with the gap (our
+    mean minus the published value) and the band half-width h when they exist.
+    """
 
     def score(r: Mapping[str, Any]) -> str:
         if not _finite(r.get("score_pct")):
             return NOT_APPLICABLE
         text = _fmt(r["score_pct"])
+        if _finite(r.get("ci_lo")) and _finite(r.get("ci_hi")):
+            return f"{text} {_interval(r['ci_lo'], r['ci_hi'])}"
         if r.get("spread_kind") not in (None, "none", "") and _finite(r.get("spread")):
             text += f" $\\pm$ {_fmt(r['spread'])} ({escape(r['spread_kind'])})"
         return text
@@ -495,11 +515,21 @@ def literature_tex(t2: pd.DataFrame) -> str:
     def seeds(r: Mapping[str, Any]) -> str:
         return str(int(r["seeds"])) if _finite(r.get("seeds")) else NOT_APPLICABLE
 
+    def gate(r: Mapping[str, Any]) -> str:
+        status = r.get("gate")
+        if not isinstance(status, str) or not status:
+            return NOT_APPLICABLE
+        text = escape(status)
+        if _finite(r.get("gap")) and _finite(r.get("h")):
+            text += f" (gap {_fmt(r['gap'])}, h {_fmt(r['h'])})"
+        return text
+
     columns = [
         Column("Name", lambda r: escape(r["name"])),
         Column("Protocol", lambda r: escape(r["protocol"])),
         Column("n", seeds),
         Column("score (\\% of max)", score, lambda r: r["score_pct"]),
+        Column("gate", gate),
     ]
     groups = []
     for (kind, budget), g in t2.groupby(["score_kind", "benchmark"], sort=False):
@@ -564,7 +594,7 @@ def stability_hardware_tex(t5: pd.DataFrame) -> str:
                 else NOT_APPLICABLE
             ),
         ),
-        Column("SPS", _num_cell("steady_sps", 0), lambda r: r["steady_sps"]),
+        Column("SPS", _num_cell("steady_sps", 0)),  # context only, never ranked (R97)
         Column(
             "wall (h)",
             lambda r: (
@@ -582,10 +612,11 @@ def stability_hardware_tex(t5: pd.DataFrame) -> str:
             ),
         ),
     ]
-    groups = [
-        (f"Craftax-{str(b).upper()}, {p}", g.to_dict("records"))
-        for (b, p), g in t5.groupby(["benchmark", "profile"], sort=False)
-    ]
+    groups = []
+    for (b, p), g in t5.groupby(["benchmark", "profile"], sort=False):
+        notes = sorted({str(n) for n in g["note"] if isinstance(n, str) and n})
+        tail = f" ({'; '.join(notes)})" if notes else ""
+        groups.append((f"Craftax-{str(b).upper()}, {p}{tail}", g.to_dict("records")))
     return tabular(columns, groups)
 
 
@@ -626,6 +657,28 @@ def game_summary_tex(t6: pd.DataFrame, budget: str) -> str:
     return tabular(columns, _group_rows(t6, budget))
 
 
+def _table_texts(given: Mapping[str, pd.DataFrame]) -> dict[str, str]:
+    """The ``.tex`` text of every table that has rows, by file stem."""
+    texts: dict[str, str] = {}
+    for budget in BUDGET_NAMES:
+        if (given["main"]["benchmark"] == budget).any():
+            texts[f"main_{budget}"] = main_tex(given["main"], budget)
+        if (given["game"]["benchmark"] == budget).any():
+            texts[f"game_summary_{budget}"] = game_summary_tex(given["game"], budget)
+    if (given["main"]["benchmark"] == "1m").any():
+        texts["main_vs_1m"] = versus_tex(given["main"])
+    if len(given["literature"]):
+        texts["literature"] = literature_tex(given["literature"])
+    if len(given["hardware"]):
+        texts["stability_hardware"] = stability_hardware_tex(
+            stability_hardware(given["stability"], given["hardware"])
+        )
+    for plan, real in (("main", "main_1m"), ("game_summary", "game_summary_1m")):
+        if real in texts:  # the plan's names are the 1M tables (1M files come first)
+            texts[plan] = texts[real]
+    return texts
+
+
 def write_tables(
     frames: Frames | None = None,
     out_dir: Path = TABLES_DIR,
@@ -636,8 +689,9 @@ def write_tables(
 ) -> list[Path]:
     """Write the report tables (T1, T2, T5, T6) into ``out_dir``.
 
-    Files: ``main_<budget>.tex``, ``main_vs_1m.tex``, ``literature.tex``,
-    ``stability_hardware.tex`` and ``game_summary_<budget>.tex``.
+    Files: ``main_<budget>.tex`` and ``game_summary_<budget>.tex`` (also written as
+    ``main.tex`` and ``game_summary.tex``, the plan's names, holding the 1M table),
+    ``main_vs_1m.tex``, ``literature.tex`` and ``stability_hardware.tex``.
 
     ``tables`` takes precomputed ``main``, ``literature``, ``stability``,
     ``hardware`` and ``game`` frames (T1 to T4, T6); the others are computed from
@@ -661,20 +715,7 @@ def write_tables(
                 raise ValueError(msg)
             given[key] = build(frames)
     out_dir.mkdir(parents=True, exist_ok=True)
-    texts: dict[str, str] = {}
-    for budget in BUDGET_NAMES:
-        if (given["main"]["benchmark"] == budget).any():
-            texts[f"main_{budget}"] = main_tex(given["main"], budget)
-        if (given["game"]["benchmark"] == budget).any():
-            texts[f"game_summary_{budget}"] = game_summary_tex(given["game"], budget)
-    if (given["main"]["benchmark"] == "1m").any():
-        texts["main_vs_1m"] = versus_tex(given["main"])
-    if len(given["literature"]):
-        texts["literature"] = literature_tex(given["literature"])
-    if len(given["hardware"]):
-        texts["stability_hardware"] = stability_hardware_tex(
-            stability_hardware(given["stability"], given["hardware"])
-        )
+    texts = _table_texts(given)
     paths = []
     for stem, text in texts.items():
         path = out_dir / f"{stem}.tex"
