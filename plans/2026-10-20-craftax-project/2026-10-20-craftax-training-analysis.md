@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-29
 tags: [plan, analysis, training, failure-modes]
 ---
 # Craftax training analysis implementation plan
@@ -128,9 +128,9 @@ One table per method in its note, one row per detected obstacle; a row may also 
 - Create: `src/wut_murl_craftax/analysis/__init__.py`, `src/wut_murl_craftax/analysis/load.py`
 - Test: `tests/analysis/conftest.py` (a small synthetic export: 2 methods x 2 budgets x 3 seeds), `tests/analysis/test_load.py`
 
-- [ ] **Step 1: Write the failing tests**: `load_phase(dir)` returns `runs`, `curves` and `episodes` frames with the export schema; `load_phases(dirs)` concatenates several phases and keeps a run listed in two phases (MLflow tag `phases`) once; `select(frames, method=, budget=)` filters every frame consistently; `BASE_CONTROL` maps every registry method except the three controls; a missing column raises a clear error.
-- [ ] **Step 2: Implement** `load_phase`, `load_phases`, `select`, `BASE_CONTROL` and `final_checkpoint(episodes, run)`.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_load.py -q`.
+- [x] **Step 1: Write the failing tests**: `load_phase(dir)` returns `runs`, `curves` and `episodes` frames with the export schema; `load_phases(dirs)` concatenates several phases and keeps a run listed in two phases (MLflow tag `phases`) once; `select(frames, method=, budget=)` filters every frame consistently; `BASE_CONTROL` maps every registry method except the three controls; a missing column raises a clear error. (done 2026-10-24: 78721d6, review fixes to 8e0f5e0; `tests/analysis/test_load.py`)
+- [x] **Step 2: Implement** `load_phase`, `load_phases`, `select`, `BASE_CONTROL` and `final_checkpoint(episodes, run)`. (done 2026-10-24: 78721d6, 8e0f5e0)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_load.py -q`. (done 2026-10-24: 78721d6, review fixes to 8e0f5e0; `tests/analysis/test_load.py`)
 
 ### Task 2: Hard scenarios
 
@@ -138,10 +138,10 @@ One table per method in its note, one row per detected obstacle; a row may also 
 - Create: `src/wut_murl_craftax/analysis/hard.py`
 - Test: `tests/analysis/test_hard.py`
 
-- [ ] **Step 1: Write the failing tests** on the fixture: floor reach rates with bootstrap CIs over seeds; never-unlocked and rare lists follow the thresholds; cause-of-death shares sum to 1; stall statistics (stalls per episode, median length, escape rate, start floor histogram).
-- [ ] **Step 2: Implement** `floor_reach`, `achievement_status` (final rate, best rate over training, k of n seeds ever), `death_causes` (final and per eval checkpoint), `stall_stats`, each returning a DataFrame.
-- [ ] **Step 3: Implement** the plots `floor_reach.png`, `achievement_status.png` (rows grouped by tier and floor), `death_causes_over_training.png`, `stall_lengths.png` (CCDF), same dark style as `visualisation.charts`.
-- [ ] **Step 4: Run** `uv run pytest tests/analysis/test_hard.py -q`.
+- [x] **Step 1: Write the failing tests** on the fixture: floor reach rates with bootstrap CIs over seeds; never-unlocked and rare lists follow the thresholds; cause-of-death shares sum to 1; stall statistics (stalls per episode, median length, escape rate, start floor histogram). (done 2026-10-24: 970ecc6, review fixes to fde62dc; `tests/analysis/test_hard.py`)
+- [x] **Step 2: Implement** `floor_reach`, `achievement_status` (final rate, best rate over training, k of n seeds ever), `death_causes` (final and per eval checkpoint), `stall_stats`, each returning a DataFrame. (done 2026-10-24: 970ecc6, fde62dc)
+- [x] **Step 3: Implement** the plots `floor_reach.png`, `achievement_status.png` (rows grouped by tier and floor), `death_causes_over_training.png`, `stall_lengths.png` (CCDF), same dark style as `visualisation.charts`. (done 2026-10-24: 970ecc6, fde62dc)
+- [x] **Step 4: Run** `uv run pytest tests/analysis/test_hard.py -q`. (done 2026-10-24: 970ecc6, review fixes to fde62dc; `tests/analysis/test_hard.py`)
 
 ### Task 3: Case finder and replay export
 
@@ -149,11 +149,11 @@ One table per method in its note, one row per detected obstacle; a row may also 
 - Create: `src/wut_murl_craftax/analysis/cases.py`
 - Test: `tests/analysis/test_cases.py`
 
-- [ ] **Step 1: Write the failing tests**: in a fixture with a 400-step stall ended by an unlock, `find_cases` ranks it first among stall cases; deep-floor, rare-unlock and death cases follow the thresholds; an exported case rollout replays to the same final achievements as the stored eval episode; its GIF lasts at most 20 s.
-- [ ] **Step 2: Implement** `find_cases(frames, method, budget) -> cases DataFrame` (id, run, update, mode, seed, kind, start, end, peak, caption).
-- [ ] **Step 3: Implement** `export_case(case, out_dir)`: rollout file via `visualisation.eval_rollouts.as_rollout`, 16 px master via `visualisation.render.render_master`, GIF of the window around the peak via `visualisation.cuts.gif`, and for stall cases an agent-internals clip of the last 100 steps before the unlock via `visualisation.overlay.render_overlay`, which re-runs the method's network on the replayed observations for the action probabilities and the value (needs [[2026-10-20-craftax-visualisation-production]] Task 5 for methods other than PPO).
-- [ ] **Step 4: Implement** `describe_case(case) -> dict` with the facts the write-up needs: floor, stats and inventory at the stall start and at the unlock; action histogram inside the stall vs the whole episode; coverage gained during the stall; the last 50 actions before the unlock; damage taken and close calls inside the window.
-- [ ] **Step 5: Run** `uv run pytest tests/analysis/test_cases.py -q`.
+- [x] **Step 1: Write the failing tests**: in a fixture with a 400-step stall ended by an unlock, `find_cases` ranks it first among stall cases; deep-floor, rare-unlock and death cases follow the thresholds; an exported case rollout replays to the same final achievements as the stored eval episode; its GIF lasts at most 20 s. (done 2026-10-24: 8c81abe; `tests/analysis/test_cases.py`)
+- [x] **Step 2: Implement** `find_cases(frames, method, budget) -> cases DataFrame` (id, run, update, mode, seed, kind, start, end, peak, caption). (done 2026-10-24: 8c81abe)
+- [x] **Step 3: Implement** `export_case(case, out_dir)`: rollout file via `visualisation.eval_rollouts.as_rollout`, 16 px master via `visualisation.render.render_master`, GIF of the window around the peak via `visualisation.cuts.gif`, and for stall cases an agent-internals clip of the last 100 steps before the unlock via `visualisation.overlay.render_overlay`, which re-runs the method's network on the replayed observations for the action probabilities and the value (needs [[2026-10-20-craftax-visualisation-production]] Task 5 for methods other than PPO). (done 2026-10-24: 8c81abe)
+- [x] **Step 4: Implement** `describe_case(case) -> dict` with the facts the write-up needs: floor, stats and inventory at the stall start and at the unlock; action histogram inside the stall vs the whole episode; coverage gained during the stall; the last 50 actions before the unlock; damage taken and close calls inside the window. (done 2026-10-24: 8c81abe)
+- [x] **Step 5: Run** `uv run pytest tests/analysis/test_cases.py -q`. (done 2026-10-24: 8c81abe; `tests/analysis/test_cases.py`)
 
 ### Task 4: Obstacle detectors and table
 
@@ -163,11 +163,11 @@ One table per method in its note, one row per detected obstacle; a row may also 
 
 This task implements every detector of the project: the shared ones and the method detectors of the table above (the method plans list them under "detectors to add" and never modify this module).
 
-- [ ] **Step 1: Write the failing tests**: for every row of both detector tables (10 shared, 23 method-specific) one synthetic curve, metric or eval series that fires it and one that does not; detectors needing the base control get a synthetic base-control series through `BASE_CONTROL`; `DETECTORS[method]` returns the shared detectors plus that method's (`dyna-q` includes every `smdp-skills` detector, `count-bonus-pqn-rnn` adds Q overestimation, `combo` gets both components'); each detector declares `REQUIRED_METRICS` and a run missing one yields "not logged", not "absent"; `obstacles_table(rows)` renders exactly the template columns in Markdown.
-- [ ] **Step 2: Implement** the shared detectors, one function each, returning `Obstacle(name, run, start, end, evidence)`.
-- [ ] **Step 3: Implement** the method detectors, one function each, grouped by method (`count_bonus_detectors`, `sil_detectors`, `skill_detectors`, `dyna_detectors`), the registry `DETECTORS: dict[str, list[Detector]]` and `detect_all(frames, method, budget)`.
-- [ ] **Step 4: Implement** the repeated-cycle check for reward hacking and key cycling: the shortest action period of >= 50 consecutive steps in eval actions (autocorrelation of the action sequence).
-- [ ] **Step 5: Run** `uv run pytest tests/analysis/test_obstacles.py -q`.
+- [x] **Step 1: Write the failing tests**: for every row of both detector tables (10 shared, 23 method-specific) one synthetic curve, metric or eval series that fires it and one that does not; detectors needing the base control get a synthetic base-control series through `BASE_CONTROL`; `DETECTORS[method]` returns the shared detectors plus that method's (`dyna-q` includes every `smdp-skills` detector, `count-bonus-pqn-rnn` adds Q overestimation, `combo` gets both components'); each detector declares `REQUIRED_METRICS` and a run missing one yields "not logged", not "absent"; `obstacles_table(rows)` renders exactly the template columns in Markdown. (done 2026-10-24: 35b673c, review fixes to f2fc2be; `tests/analysis/test_obstacles.py`)
+- [x] **Step 2: Implement** the shared detectors, one function each, returning `Obstacle(name, run, start, end, evidence)`. (done 2026-10-24: 35b673c, f2fc2be)
+- [x] **Step 3: Implement** the method detectors, one function each, grouped by method (`count_bonus_detectors`, `sil_detectors`, `skill_detectors`, `dyna_detectors`), the registry `DETECTORS: dict[str, list[Detector]]` and `detect_all(frames, method, budget)`. (done 2026-10-24: 35b673c, f2fc2be)
+- [x] **Step 4: Implement** the repeated-cycle check for reward hacking and key cycling: the shortest action period of >= 50 consecutive steps in eval actions (autocorrelation of the action sequence). (done 2026-10-24: 35b673c, f2fc2be)
+- [x] **Step 5: Run** `uv run pytest tests/analysis/test_obstacles.py -q`. (done 2026-10-24: 35b673c, review fixes to f2fc2be; `tests/analysis/test_obstacles.py`)
 
 ### Task 5: Run the analysis for every method
 
@@ -175,10 +175,11 @@ This task implements every detector of the project: the shared ones and the meth
 - Create: `src/wut_murl_craftax/analysis/training.py` (CLI)
 - Test: `tests/analysis/test_training_cli.py`
 
-- [ ] **Step 1: Write the failing test** in `tests/analysis/test_training_cli.py`: the CLI on the fixture (phases `final-1m`, `final-1b`, `combo-1m`, `combo-1b`) writes `hard/`, `cases/`, `obstacles.md` and `plots/` for each method under `outputs/analysis/<budget>/<method>/`, the combination included, and logs them to a temporary MLflow store under `training-analysis-<budget>-<method>`.
-- [ ] **Step 2: Implement** `uv run python -m wut_murl_craftax.analysis.training --phases <phase> [<phase> ...] --method <method|all> --out outputs/analysis`; runs are grouped by their `budget` tag.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_training_cli.py -q`, then `uv run python -m wut_murl_craftax.analysis.training --phases final-1m final-1b combo-1m combo-1b --method all --out outputs/analysis`; check the MLflow runs in `make mlflow`.
-- [ ] **Step 4: Copy** every case rollout into `outputs/visualisation/runs/cases/` so [[2026-10-20-craftax-visualisation-production]] picks them up as highlight candidates.
+- [x] **Step 1: Write the failing test** in `tests/analysis/test_training_cli.py`: the CLI on the fixture (phases `final-1m`, `final-1b`, `combo-1m`, `combo-1b`) writes `hard/`, `cases/`, `obstacles.md` and `plots/` for each method under `outputs/analysis/<budget>/<method>/`, the combination included, and logs them to a temporary MLflow store under `training-analysis-<budget>-<method>`. (done 2026-10-25: 34448cb; `tests/analysis/test_training_cli.py`)
+- [x] **Step 2: Implement** `uv run python -m wut_murl_craftax.analysis.training --phases <phase> [<phase> ...] --method <method|all> --out outputs/analysis`; runs are grouped by their `budget` tag. (done 2026-10-25: 34448cb)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_training_cli.py -q`, then `uv run python -m wut_murl_craftax.analysis.training --phases final-1m combo-1m --method all --out outputs/analysis`; check the MLflow runs in `make mlflow`. (done 2026-10-28: 1M only: `--phases final-1m combo-1m --method all --skip-missing` ran 2026-10-28 10:30 to 11:19, 9 methods, 291 cases in `outputs/analysis/1m/cases.csv`, logged as `training-analysis-1m-<method>` (ledger); the 1B phases are Step 3b)
+- [ ] **Step 3b: Run** the same for `final-1b` and `combo-1b` once they exist: `uv run python -m wut_murl_craftax.analysis.training --phases final-1b combo-1b --method all --out outputs/analysis`; check the MLflow runs in `make mlflow`.
+- [x] **Step 4: Copy** every case rollout into `outputs/visualisation/runs/cases/` so [[2026-10-20-craftax-visualisation-production]] picks them up as highlight candidates. (done 2026-10-28: 306 `case-*.npz` rollouts sit flat in `outputs/visualisation/runs/` (not a `cases/` subfolder, where the video glob finds them; `cases.py`))
 
 ### Task 6: Per-method write-up
 
@@ -186,18 +187,20 @@ This task implements every detector of the project: the shared ones and the meth
 - Create: `knowledge/results/<Method> training analysis.md` for each method, the combination and the three controls (template `knowledge/_templates/concept.md`, `domain: analysis`, `parent: "[[2026-10-20-craftax-project]]"`)
 - Modify: `knowledge/AGENTS.md` (row for `results/`: one note per method plus the cross-method results notes)
 
-- [ ] **Step 1: Write** section "Hard scenarios": floors not reached, never and rare achievements, death causes, stall statistics, each bullet with its number and the MLflow run that holds it.
-- [ ] **Step 2: Write** section "How complex scenarios were solved": one paragraph per case (situation, behaviour during the stall, what broke it, outcome), facts from `describe_case`, the GIF and replay referenced by run name and artifact path.
-- [ ] **Step 3: Write** section "Obstacles" with the filled template table, one table per benchmark.
-- [ ] **Step 4: Write** section "Comparison with the controls": the same three questions answered for the three controls (PPO, PPO-RNN, PQN-RNN) in one line each, its base control first, linking their notes.
-- [ ] **Step 5: Check** every number against the MLflow UI for 3 random bullets per note; numbers come from executed output only.
-- [ ] **Step 6: Run** `uv run python scripts/check_vault.py` and `make check`.
+- [x] **Step 1: Write** section "Hard scenarios": floors not reached, never and rare achievements, death causes, stall statistics, each bullet with its number and the MLflow run that holds it. (done 2026-10-28: at 1M: `knowledge/results/<Method> training analysis.md` for all 9 methods and controls, a8d78f8, e94964d)
+- [x] **Step 2: Write** section "How complex scenarios were solved": one paragraph per case (situation, behaviour during the stall, what broke it, outcome), facts from `describe_case`, the GIF and replay referenced by run name and artifact path. (done 2026-10-28: at 1M: `knowledge/results/<Method> training analysis.md` for all 9 methods and controls, a8d78f8, e94964d)
+- [x] **Step 3: Write** section "Obstacles" with the filled template table, one table per benchmark. (done 2026-10-28: at 1M: `knowledge/results/<Method> training analysis.md` for all 9 methods and controls, a8d78f8, e94964d)
+- [x] **Step 4: Write** section "Comparison with the controls": the same three questions answered for the three controls (PPO, PPO-RNN, PQN-RNN) in one line each, its base control first, linking their notes. (done 2026-10-28: at 1M: `knowledge/results/<Method> training analysis.md` for all 9 methods and controls, a8d78f8, e94964d)
+- [x] **Step 5: Check** every number against the MLflow UI for 3 random bullets per note; numbers come from executed output only. (done 2026-10-28: the B6 spot-check review compared about 30 numbers with the outputs, 0 mismatches (ledger))
+- [x] **Step 6: Run** `uv run python scripts/check_vault.py` and `make check`. (done 2026-10-28: vault check green; full suite 2289 passed on 2026-10-28 (ledger))
+- [ ] **Step 6b (1B): Repeat** Steps 1 to 6 for the 1B results of `final-1b` and `combo-1b` (a `## Results at 1B` section in each note) after Task 5 Step 3b.
 
 ### Task 7: Hand-off to results, report and video
 
 **Files:**
 - Create: `knowledge/architecture/analysis.md` (template `knowledge/_templates/module.md`)
 
-- [ ] **Step 1: Write** a 5-bullet summary per method at the top of its note; [[2026-10-20-craftax-report]] (Discussion) and [[2026-10-20-craftax-comparison-and-results]] quote these bullets.
-- [ ] **Step 2: Mark** in `outputs/analysis/<budget>/cases.csv` the cases worth showing on video (column `video` = yes) for the reviewer of [[2026-10-20-craftax-visualisation-production]].
-- [ ] **Step 3: Write** the module note (responsibility, public surface, CLI) for the modules of this plan; run `make knowledge`.
+- [x] **Step 1: Write** a 5-bullet summary per method at the top of its note; [[2026-10-20-craftax-report]] (Discussion) and [[2026-10-20-craftax-comparison-and-results]] quote these bullets. (done 2026-10-28: at 1M: a 5-bullet `## Summary` on top of each note, 4a93123)
+- [x] **Step 2: Mark** in `outputs/analysis/<budget>/cases.csv` the cases worth showing on video (column `video` = yes) for the reviewer of [[2026-10-20-craftax-visualisation-production]]. (done 2026-10-28: at 1M: 36 of 291 cases flagged `video = yes`, listed in [[Video cases 1M]])
+- [x] **Step 3: Write** the module note (responsibility, public surface, CLI) for the modules of this plan; run `make knowledge`. (done 2026-10-28: `knowledge/architecture/analysis.md`)
+- [ ] **Step 4 (1B): Repeat** Steps 1 and 2 for the 1B cases (`outputs/analysis/1b/cases.csv`) after Task 5 Step 3b.

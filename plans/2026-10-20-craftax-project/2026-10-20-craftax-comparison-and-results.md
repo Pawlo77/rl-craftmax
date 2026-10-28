@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-29
 tags: [plan, analysis, results, statistics, figures]
 ---
 # Craftax comparison and results implementation plan
@@ -111,10 +111,10 @@ flowchart LR
 - Create: `configs/literature/existing_implementations.csv`, `src/wut_murl_craftax/analysis/literature.py`
 - Test: `tests/analysis/test_literature.py`
 
-- [ ] **Step 1: Copy** the rows of blocks A, A2 and D from [[Existing Implementations]] into the CSV (columns `block, implementation, note, env, observation, budget, protocol, score_pct, spread, spread_kind, seeds`), one row per table row, values exactly as written in the note.
-- [ ] **Step 2: Write the failing tests**: `comparable_rows(score_kind, budget)` maps training score at 1B to block A, at 1M to block D, stochastic eval at 1B to block A2; it raises for any other block or score kind; every `note` value names an existing file in `research/Existing Implementations/`.
-- [ ] **Step 3: Implement** `load_literature()` and `comparable_rows`.
-- [ ] **Step 4: Run** `uv run pytest tests/analysis/test_literature.py -q`.
+- [x] **Step 1: Copy** the rows of blocks A, A2 and D from [[Existing Implementations]] into the CSV (columns `block, implementation, note, env, observation, budget, protocol, score_pct, spread, spread_kind, seeds`), one row per table row, values exactly as written in the note. (done 2026-10-24: 11134fd, review fixes to d0e4df1; `tests/analysis/test_literature.py`)
+- [x] **Step 2: Write the failing tests**: `comparable_rows(score_kind, budget)` maps training score at 1B to block A, at 1M to block D, stochastic eval at 1B to block A2; it raises for any other block or score kind; every `note` value names an existing file in `research/Existing Implementations/`. (done 2026-10-24: 11134fd)
+- [x] **Step 3: Implement** `load_literature()` and `comparable_rows`. (done 2026-10-24: 11134fd)
+- [x] **Step 4: Run** `uv run pytest tests/analysis/test_literature.py -q`. (done 2026-10-24: 11134fd, review fixes to d0e4df1; `tests/analysis/test_literature.py`)
 
 ### Task 2: Result tables and tests
 
@@ -122,9 +122,9 @@ flowchart LR
 - Create: `src/wut_murl_craftax/analysis/compare.py`
 - Test: `tests/analysis/test_compare.py`
 
-- [ ] **Step 1: Write the failing tests** on the analysis fixture: `block_of(method, combo_pair)` returns `skills` for `smdp-skills`, `dyna-q` and a combination whose pair contains either, `main` otherwise; T1 has one row per (benchmark, block, method) with every column and the three controls in both blocks; the Holm correction covers exactly the 1M (method, control) pairs of one block and the two blocks are separate families; 1B rows carry mean, median and CIs but no IQM, PoI or p-value; the PoI matrix has no cross-block cell; `reproduction_gate` uses `evaluation.reproduction.band`, returns pass or (gap, h) per control and benchmark and never raises on a fail; T2 never mixes literature blocks; T6 picks the race winner by the rule of the metrics plan.
-- [ ] **Step 2: Implement** `SKILL_METHODS`, `block_of`, `main_table`, `literature_table`, `stability_table`, `hardware_table`, `game_summary_table`, `sensitivity_table`, `reproduction_gate`.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_compare.py -q`.
+- [x] **Step 1: Write the failing tests** on the analysis fixture: `block_of(method, combo_pair)` returns `skills` for `smdp-skills`, `dyna-q` and a combination whose pair contains either, `main` otherwise; T1 has one row per (benchmark, block, method) with every column and the three controls in both blocks; the Holm correction covers exactly the 1M (method, control) pairs of one block and the two blocks are separate families; 1B rows carry mean, median and CIs but no IQM, PoI or p-value; the PoI matrix has no cross-block cell; `reproduction_gate` uses `evaluation.reproduction.band`, returns pass or (gap, h) per control and benchmark and never raises on a fail; T2 never mixes literature blocks; T6 picks the race winner by the rule of the metrics plan. (done 2026-10-24: 9cab067; `tests/analysis/test_compare.py`)
+- [x] **Step 2: Implement** `SKILL_METHODS`, `block_of`, `main_table`, `literature_table`, `stability_table`, `hardware_table`, `game_summary_table`, `sensitivity_table`, `reproduction_gate`. (done 2026-10-24: 9cab067)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_compare.py -q`. (done 2026-10-24: 9cab067; `tests/analysis/test_compare.py`)
 
 ### Task 3: Core figures
 
@@ -132,9 +132,9 @@ flowchart LR
 - Create: `src/wut_murl_craftax/analysis/figures.py`
 - Test: `tests/analysis/test_figures.py`
 
-- [ ] **Step 1: Write the failing tests**: each of F1 to F5 and F18 to F20 on the fixture writes a PDF and a PNG, returns its `Figure`, has the expected axis labels, uses `METHOD_COLORS` (three distinct greys for the controls), F2 and F3 show the two blocks separately, and each renders in both themes (`theme="report"` light, `theme="video"` dark).
-- [ ] **Step 2: Implement** one function per figure; report figures are sized for one Interspeech column (80 mm: 170 mm text width minus the 10 mm column gap, halved) with fonts >= 7 pt; video figures for 1920 x 1080.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_figures.py -q`.
+- [x] **Step 1: Write the failing tests**: each of F1 to F5 and F18 to F20 on the fixture writes a PDF and a PNG, returns its `Figure`, has the expected axis labels, uses `METHOD_COLORS` (three distinct greys for the controls), F2 and F3 show the two blocks separately, and each renders in both themes (`theme="report"` light, `theme="video"` dark). (done 2026-10-25: 0b39296; since 2026-10-28 every figure is a one-panel PNG in `figures/1m/` (0db5fcc, c265134); `tests/analysis/test_figures.py`)
+- [x] **Step 2: Implement** one function per figure; report figures are sized for one Interspeech column (80 mm: 170 mm text width minus the 10 mm column gap, halved) with fonts >= 7 pt; video figures for 1920 x 1080. (done 2026-10-25: 0b39296)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_figures.py -q`. (done 2026-10-25: 0b39296; since 2026-10-28 every figure is a one-panel PNG in `figures/1m/` (0db5fcc, c265134); `tests/analysis/test_figures.py`)
 
 ### Task 4: In-game figures
 
@@ -142,9 +142,9 @@ flowchart LR
 - Create: `src/wut_murl_craftax/analysis/figures_game.py`
 - Test: `tests/analysis/test_figures_game.py`
 
-- [ ] **Step 1: Write the failing tests**: F6 to F17 on the fixture as in Task 3; the order-graph transitive reduction removes `a -> c` when `a -> b -> c` exist; radar axes are min-max scaled per benchmark over all methods and controls; funnel shares never increase with depth; `race(..., upto=t)` draws only first unlocks before env step `t` (frames of the race GIF of [[2026-10-20-craftax-visualisation-production]]).
-- [ ] **Step 2: Implement** the figures; the order graph is drawn with matplotlib only (no graph library): x = mean normalised rank, y = tier, edges as arrows.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_figures_game.py -q`.
+- [x] **Step 1: Write the failing tests**: F6 to F17 on the fixture as in Task 3; the order-graph transitive reduction removes `a -> c` when `a -> b -> c` exist; radar axes are min-max scaled per benchmark over all methods and controls; funnel shares never increase with depth; `race(..., upto=t)` draws only first unlocks before env step `t` (frames of the race GIF of [[2026-10-20-craftax-visualisation-production]]). (done 2026-10-28: 6b62439; `tests/analysis/test_figures_game.py`)
+- [x] **Step 2: Implement** the figures; the order graph is drawn with matplotlib only (no graph library): x = mean normalised rank, y = tier, edges as arrows. (done 2026-10-28: 6b62439)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_figures_game.py -q`. (done 2026-10-28: 6b62439; `tests/analysis/test_figures_game.py`)
 
 ### Task 5: LaTeX tables and number macros
 
@@ -152,9 +152,9 @@ flowchart LR
 - Create: `src/wut_murl_craftax/analysis/latex.py`
 - Test: `tests/analysis/test_latex.py`
 
-- [ ] **Step 1: Write the failing tests**: tables render as `tabular` with booktabs rules (`report/Interspeech.cls` loads `booktabs`), method names are escaped, the best value per column is bold; `numbers.tex` defines one `\newcommand` per reported number (for example `\scoreOneB<Method>`), including the complexity numbers of `outputs/interpretation/<budget>/complexity.csv` (a clear error names interpretation Task 6 when the file is missing), and every macro used in `report/report.tex` is defined.
-- [ ] **Step 2: Implement** `write_tables(out_dir)` (to `report/tables/`) and `write_numbers(path)` (to `report/numbers.tex`); figures for the report are copied to `report/figures/` as PDF.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_latex.py -q`.
+- [x] **Step 1: Write the failing tests**: tables render as `tabular` with booktabs rules (`report/Interspeech.cls` loads `booktabs`), method names are escaped, the best value per column is bold; `numbers.tex` defines one `\newcommand` per reported number (for example `\scoreOneB<Method>`), including the complexity numbers of `outputs/interpretation/<budget>/complexity.csv` (a clear error names interpretation Task 6 when the file is missing), and every macro used in `report/report.tex` is defined. (done 2026-10-28: cde96c2, review fixes to 6e408e2; generated files committed in 6eab5f5; `tests/analysis/test_latex.py`)
+- [x] **Step 2: Implement** `write_tables(out_dir)` (to `report/tables/`) and `write_numbers(path)` (to `report/numbers.tex`); figures for the report are copied to `report/figures/` as PDF. (done 2026-10-28: cde96c2, 6e408e2)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_latex.py -q`. (done 2026-10-28: cde96c2, review fixes to 6e408e2; generated files committed in 6eab5f5; `tests/analysis/test_latex.py`)
 
 ### Task 6: Run the comparison
 
@@ -164,9 +164,10 @@ flowchart LR
 
 Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 (Phase 4 order): the LaTeX export reads `outputs/interpretation/<budget>/complexity.csv`.
 
-- [ ] **Step 1: Write the failing test** in `tests/analysis/test_results_cli.py`: the CLI on the fixture (phases `final-1m final-1b combo-1m combo-1b`, tuning `tune-coarse tune-fine`, a fixture `complexity.csv`) writes every figure and table of the lists above, both blocks included, and logs `outputs/results/` to a temporary MLflow store as run `comparison-final`; a failing reproduction gate still writes everything.
-- [ ] **Step 2: Implement** `uv run python -m wut_murl_craftax.analysis.results --phases <phase> [<phase> ...] --tuning <phase> [<phase> ...] --out outputs/results`.
-- [ ] **Step 3: Run** `uv run pytest tests/analysis/test_results_cli.py -q`; check that `outputs/interpretation/1m/complexity.csv` and `outputs/interpretation/1b/complexity.csv` exist; then `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`. Read the reproduction gate first: on a fail, open the issue note, tell the user the gap and h, and continue.
+- [x] **Step 1: Write the failing test** in `tests/analysis/test_results_cli.py`: the CLI on the fixture (phases `final-1m final-1b combo-1m combo-1b`, tuning `tune-coarse tune-fine`, a fixture `complexity.csv`) writes every figure and table of the lists above, both blocks included, and logs `outputs/results/` to a temporary MLflow store as run `comparison-final`; a failing reproduction gate still writes everything. (done 2026-10-28: d523bae; `tests/analysis/test_results_cli.py`)
+- [x] **Step 2: Implement** `uv run python -m wut_murl_craftax.analysis.results --phases <phase> [<phase> ...] --tuning <phase> [<phase> ...] --out outputs/results`. (done 2026-10-28: d523bae, 719b0c0)
+- [x] **Step 3: Run** `uv run pytest tests/analysis/test_results_cli.py -q`; check that `outputs/interpretation/1m/complexity.csv` exists; then `uv run python -m wut_murl_craftax.analysis.results --phases final-1m combo-1m --tuning tune-coarse tune-fine --out outputs/results`. Read the reproduction gate first: on a fail, open the issue note, tell the user the gap and h, and continue. (done 2026-10-28: 1M only: `analysis.results --phases final-1m combo-1m --tuning tune-coarse tune-fine`, 33 stages, exit 0, rerun on main 2026-10-29 00:05 (ledger); the 1B complexity file and phases are Step 3b)
+- [ ] **Step 3b: Run** the comparison with the 1B phases once they exist and `outputs/interpretation/1b/complexity.csv` is written: `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`; read the reproduction gate first as in Step 3.
 - [ ] **Step 4: Check** 3 random cells of T1 and 3 points of F1 against the MLflow UI (`make mlflow`).
 
 ### Task 7: Results note
@@ -175,9 +176,9 @@ Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 (Phase 4 ord
 - Create: `knowledge/results/Final results.md` (template `knowledge/_templates/concept.md`, `domain: analysis`, `parent: "[[2026-10-20-craftax-project]]"`)
 - Modify: `knowledge/architecture/analysis.md` (add the modules of this plan, bump `updated`)
 
-- [ ] **Step 1: Write** the note: T1 (both blocks), T2 and T6 as Markdown tables, the reproduction-gate outcome per control (pass, or the gap and h, with the issue note link), the sensitivity summary (T7) in one bullet per method, the figure index (ID, file, one-line takeaway).
-- [ ] **Step 2: Link** each method's `knowledge/results/<Method> training analysis.md` from its row.
-- [ ] **Step 3: Run** `make knowledge` and `make check`.
+- [x] **Step 1: Write** the note: T1 (both blocks), T2 and T6 as Markdown tables, the reproduction-gate outcome per control (pass, or the gap and h, with the issue note link), the sensitivity summary (T7) in one bullet per method, the figure index (ID, file, one-line takeaway). (done 2026-10-28: at 1M: [[Final results]] (T1, PoI and Holm, reproduction check, T2, T3, T6, T7, figure index, 8b3206d, 30dcf0b))
+- [x] **Step 2: Link** each method's `knowledge/results/<Method> training analysis.md` from its row. (done 2026-10-28: the method rows link their `<Method> training analysis` notes)
+- [x] **Step 3: Run** `make knowledge` and `make check`. (done 2026-10-28: vault check green; full suite 2289 passed on 2026-10-28 (ledger))
 
 ### Task 8: 1B figure and table sets, 1M vs 1B comparison
 

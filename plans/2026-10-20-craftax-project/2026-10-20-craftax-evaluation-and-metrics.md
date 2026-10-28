@@ -5,7 +5,7 @@ domain: evaluation
 parent: "[[2026-10-20-craftax-project]]"
 status: in progress
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-29
 tags: [plan, evaluation, metrics, statistics]
 ---
 # Craftax evaluation and metrics implementation plan
@@ -256,9 +256,9 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Create: `src/wut_murl_craftax/evaluation/episode_records.py`
 - Test: `tests/evaluation/test_episode_records.py`
 
-- [ ] **Step 1: Write the failing tests** on synthetic numpy event, action and trace arrays: end type death vs timeout; cause of death picks the largest loss over the last 20 steps and splits needs drain by the zero stat; a 400-step gap ended by an unlock is one escaped stall with the right ending achievement; speedrun splits equal the unlock steps; fights bridge gaps under 5 steps; gathered and used totals; a pickaxe crafted when a better one is owned counts as a wasted craft; wood-to-diamond time.
-- [ ] **Step 2: Implement** `EpisodeRecord` (one dataclass, one row of the eval-episode table plus nested stall, fight and unlock lists) and `episode_record(events, actions, trace) -> EpisodeRecord` in plain numpy; `trace` holds the per-step state fields that replay rebuilds (inventory, intrinsics, health, position, floor, crafting-table positions near the player), since the stored eval files hold only actions and events.
-- [ ] **Step 3: Run** `uv run pytest tests/evaluation/test_episode_records.py -q`.
+- [x] **Step 1: Write the failing tests** on synthetic numpy event, action and trace arrays: end type death vs timeout; cause of death picks the largest loss over the last 20 steps and splits needs drain by the zero stat; a 400-step gap ended by an unlock is one escaped stall with the right ending achievement; speedrun splits equal the unlock steps; fights bridge gaps under 5 steps; gathered and used totals; a pickaxe crafted when a better one is owned counts as a wasted craft; wood-to-diamond time. (done 2026-10-24: f92a609, fixed in 649a085; `tests/evaluation/test_episode_records.py`)
+- [x] **Step 2: Implement** `EpisodeRecord` (one dataclass, one row of the eval-episode table plus nested stall, fight and unlock lists) and `episode_record(events, actions, trace) -> EpisodeRecord` in plain numpy; `trace` holds the per-step state fields that replay rebuilds (inventory, intrinsics, health, position, floor, crafting-table positions near the player), since the stored eval files hold only actions and events. (done 2026-10-24: f92a609, 649a085)
+- [x] **Step 3: Run** `uv run pytest tests/evaluation/test_episode_records.py -q`. (done 2026-10-24: `tests/evaluation/test_episode_records.py` green at merge)
 
 ### Task 5: Exploration coverage
 
@@ -266,9 +266,9 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Create: `src/wut_murl_craftax/evaluation/coverage.py`
 - Test: `tests/evaluation/test_coverage.py`
 
-- [ ] **Step 1: Write the failing tests**: 10 steps right on an open overworld add exactly 10 new view columns; tiles with `light_map <= 0.05` on a dark floor are not counted; returning to a visited position raises the revisit count; coverage per floor is in [0, 1]; Classic uses its own map size.
-- [ ] **Step 2: Implement** a jittable seen-mask update `(seen[floor, x, y], s2) -> seen` and `coverage_summary(seen, positions, floors)`.
-- [ ] **Step 3: Run** `uv run pytest tests/evaluation/test_coverage.py -q`.
+- [x] **Step 1: Write the failing tests**: 10 steps right on an open overworld add exactly 10 new view columns; tiles with `light_map <= 0.05` on a dark floor are not counted; returning to a visited position raises the revisit count; coverage per floor is in [0, 1]; Classic uses its own map size. (done 2026-10-24: 0142e18; `tests/evaluation/test_coverage.py`)
+- [x] **Step 2: Implement** a jittable seen-mask update `(seen[floor, x, y], s2) -> seen` and `coverage_summary(seen, positions, floors)`. (done 2026-10-24: 0142e18, 6458be0)
+- [x] **Step 3: Run** `uv run pytest tests/evaluation/test_coverage.py -q`. (done 2026-10-24: `tests/evaluation/test_coverage.py` green at merge)
 
 ### Task 6: Offline metrics from stored eval episodes
 
@@ -276,11 +276,11 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Create: `src/wut_murl_craftax/evaluation/rollout_metrics.py`
 - Test: `tests/evaluation/test_rollout_metrics.py`
 
-- [ ] **Step 1: Write the failing tests**: a Classic episode stored by `visualisation.eval_rollouts.evaluate` (infrastructure Task 5) and replayed from seed + actions gives `StepEvents` identical to the stored ones (a mismatch raises, naming run, update, mode and seed); the eval-episode table has the column schema `EPISODE_COLUMNS` and a `method` column; one row per (run, update, mode, seed).
-- [ ] **Step 2: Implement** replay of `<run>/eval/<mode>/<update>.npz` in chunks of 256 steps (the `visualisation.rollout.replay` path, actions until each episode's `length`), the stored events checked against the replayed ones, the `trace` of Task 4 taken from the replayed states, coverage and records per episode, written to `outputs/metrics/<run>/eval_<update>_<mode>.parquet`.
-- [ ] **Step 3: Implement** MLflow logging: the parquet files as artifacts under `eval_tables/`, per-mode summaries as `eval/<mode>/<metric>` with step = env steps of the checkpoint.
-- [ ] **Step 4: Implement** the CLI `uv run python -m wut_murl_craftax.evaluation.rollout_metrics --run <run name> [--updates all|<u,...>] [--mode stochastic|greedy|both]`; it skips (run, update, mode) tables that already exist, so it is resumable.
-- [ ] **Step 5: Run** `uv run pytest tests/evaluation/test_rollout_metrics.py -q`.
+- [x] **Step 1: Write the failing tests**: a Classic episode stored by `visualisation.eval_rollouts.evaluate` (infrastructure Task 5) and replayed from seed + actions gives `StepEvents` identical to the stored ones (a mismatch raises, naming run, update, mode and seed); the eval-episode table has the column schema `EPISODE_COLUMNS` and a `method` column; one row per (run, update, mode, seed). (done 2026-10-24: b2f7877; `tests/evaluation/test_rollout_metrics.py`)
+- [x] **Step 2: Implement** replay of `<run>/eval/<mode>/<update>.npz` in chunks of 256 steps (the `visualisation.rollout.replay` path, actions until each episode's `length`), the stored events checked against the replayed ones, the `trace` of Task 4 taken from the replayed states, coverage and records per episode, written to `outputs/metrics/<run>/eval_<update>_<mode>.parquet`. (done 2026-10-24: b2f7877, f0afd61 (R98 caps and episode columns); production replay of all 3786 units finished 2026-10-27 per the ledger)
+- [x] **Step 3: Implement** MLflow logging: the parquet files as artifacts under `eval_tables/`, per-mode summaries as `eval/<mode>/<metric>` with step = env steps of the checkpoint. (done 2026-10-24: b2f7877, f0afd61)
+- [x] **Step 4: Implement** the CLI `uv run python -m wut_murl_craftax.evaluation.rollout_metrics --run <run name> [--updates all|<u,...>] [--mode stochastic|greedy|both]`; it skips (run, update, mode) tables that already exist, so it is resumable. (done 2026-10-24: b2f7877; resumable, used for the production replay)
+- [x] **Step 5: Run** `uv run pytest tests/evaluation/test_rollout_metrics.py -q`. (done 2026-10-24: `tests/evaluation/test_rollout_metrics.py` green at merge)
 
 ### Task 7: Statistics
 
@@ -289,9 +289,9 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Modify: `pyproject.toml` (`uv add scipy pyarrow`, each with a justification comment)
 - Test: `tests/evaluation/test_stats.py`
 
-- [ ] **Step 1: Write the failing tests**: `iqm([1, ..., 8]) == 4.5`; probability of improvement is 0.5 for identical samples and 1.0 for disjoint ones; bootstrap CIs contain the point estimate and are identical for the same bootstrap seed; stratified resampling never mixes strata; Holm-Bonferroni on `[0.01, 0.04, 0.03]` gives `[0.03, 0.06, 0.06]`; Mann-Whitney matches `scipy.stats.mannwhitneyu` on a fixed case; `t_ci([10, 11, 12])` equals the t-based 95% interval 11 +- 2.484 (t 4.303 x s.e. 0.577).
-- [ ] **Step 2: Implement** `iqm`, `mean_se`, `stratified_bootstrap_ci(scores_by_stratum, statistic, n=10_000, seed=0)`, `probability_of_improvement`, `mann_whitney_holm`, `t_ci`, `seed_spread`, `curve_band`.
-- [ ] **Step 3: Run** `uv run pytest tests/evaluation/test_stats.py -q`.
+- [x] **Step 1: Write the failing tests**: `iqm([1, ..., 8]) == 4.5`; probability of improvement is 0.5 for identical samples and 1.0 for disjoint ones; bootstrap CIs contain the point estimate and are identical for the same bootstrap seed; stratified resampling never mixes strata; Holm-Bonferroni on `[0.01, 0.04, 0.03]` gives `[0.03, 0.06, 0.06]`; Mann-Whitney matches `scipy.stats.mannwhitneyu` on a fixed case; `t_ci([10, 11, 12])` equals the t-based 95% interval 11 +- 2.484 (t 4.303 x s.e. 0.577). (done 2026-10-24: af24188; `tests/evaluation/test_stats.py`)
+- [x] **Step 2: Implement** `iqm`, `mean_se`, `stratified_bootstrap_ci(scores_by_stratum, statistic, n=10_000, seed=0)`, `probability_of_improvement`, `mann_whitney_holm`, `t_ci`, `seed_spread`, `curve_band`. (done 2026-10-24: af24188, 251f16c)
+- [x] **Step 3: Run** `uv run pytest tests/evaluation/test_stats.py -q`. (done 2026-10-24: `tests/evaluation/test_stats.py` green at merge, 50 tests with Task 8)
 
 ### Task 8: Stability and hyperparameter sensitivity
 
@@ -299,9 +299,9 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Create: `src/wut_murl_craftax/evaluation/stability.py`
 - Test: `tests/evaluation/test_stability.py`
 
-- [ ] **Step 1: Write the failing tests** on synthetic curves: a 60% fall that never recovers is one collapse; a 25% dip lasting 3% of the budget is one drop and no collapse; noise of 5% without dips gives no drop; recovery time of a known dip; on a toy 2 x 3 grid where only `lr` matters, `S_lr` is large and `S_other` is below the noise floor.
-- [ ] **Step 2: Implement** `smoothed(curve, window_frac=0.01)`, `drawdowns`, `drops`, `collapsed`, `recovery_times`, `dispersion`, `sensitivity(tuning_table) -> DataFrame`.
-- [ ] **Step 3: Run** `uv run pytest tests/evaluation/test_stability.py -q`.
+- [x] **Step 1: Write the failing tests** on synthetic curves: a 60% fall that never recovers is one collapse; a 25% dip lasting 3% of the budget is one drop and no collapse; noise of 5% without dips gives no drop; recovery time of a known dip; on a toy 2 x 3 grid where only `lr` matters, `S_lr` is large and `S_other` is below the noise floor. (done 2026-10-24: 0ce1b2f; `tests/evaluation/test_stability.py`)
+- [x] **Step 2: Implement** `smoothed(curve, window_frac=0.01)`, `drawdowns`, `drops`, `collapsed`, `recovery_times`, `dispersion`, `sensitivity(tuning_table) -> DataFrame`. (done 2026-10-24: 0ce1b2f, 5712701; drawdown floor parameter in 2ae00e3 (R92))
+- [x] **Step 3: Run** `uv run pytest tests/evaluation/test_stability.py -q`. (done 2026-10-24: `tests/evaluation/test_stability.py` green at merge)
 
 ### Task 9: Hardware summaries
 
@@ -309,10 +309,11 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Create: `src/wut_murl_craftax/evaluation/hardware.py`
 - Test: `tests/evaluation/test_hardware.py`
 
-- [ ] **Step 1: Write the failing tests** on a temporary SQLite MLflow store with fake series: steady SPS, compile time, wall-clock across 2 resume segments, a constant 100 W for 10 s integrates to 1000 J, a run without power series gives NaN steps per joule.
-- [ ] **Step 2: Run** the smoke phase ([[2026-10-20-craftax-infrastructure]], Task 7) on the laptop and on one cluster node, then `uv run python -m wut_murl_craftax.evaluation.hardware --list-keys --run <smoke run>`; write the logged `system/*` keys into `HARDWARE_KEYS` per profile.
-- [ ] **Step 3: Implement** `hardware_summary(run) -> dict` for every hardware metric above.
-- [ ] **Step 4: Run** `uv run pytest tests/evaluation/test_hardware.py -q`.
+- [x] **Step 1: Write the failing tests** on a temporary SQLite MLflow store with fake series: steady SPS, compile time, wall-clock across 2 resume segments, a constant 100 W for 10 s integrates to 1000 J, a run without power series gives NaN steps per joule. (done 2026-10-24: 5d56f34; `tests/evaluation/test_hardware.py`)
+- [x] **Step 2: Run** the smoke phase ([[2026-10-20-craftax-infrastructure]], Task 7) on the laptop, then `uv run python -m wut_murl_craftax.evaluation.hardware --list-keys --run <smoke run>`; write the logged `system/*` keys into `HARDWARE_KEYS` per profile. (done 2026-10-24: laptop only: `HARDWARE_KEYS["laptop"]` written in 5d56f34 (Metal logs no GPU counters, so those read n.m.))
+- [ ] **Step 2b: Run** the same on one cluster node (`--list-keys`, then the logged `system/*` GPU keys into `HARDWARE_KEYS["cuda"]`); open until a cluster run exists (ledger, R75).
+- [x] **Step 3: Implement** `hardware_summary(run) -> dict` for every hardware metric above. (done 2026-10-24: 5d56f34, c014055)
+- [x] **Step 4: Run** `uv run pytest tests/evaluation/test_hardware.py -q`. (done 2026-10-24: `tests/evaluation/test_hardware.py` green at merge, 38 tests)
 
 ### Task 10: Export to tidy tables
 
@@ -320,11 +321,12 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - Create: `src/wut_murl_craftax/evaluation/export.py`
 - Test: `tests/evaluation/test_export.py`
 
-- [ ] **Step 1: Write the failing tests** on a temporary store with 2 methods x 2 seeds: `runs.parquet` has one row per run with the runner tags (`method`, `budget`, `phases`, `seed`, `config_hash`, `profile`), final score by the 2% rule, final eval scores per mode and the hardware summary; `curves.parquet` is long format (run, env_steps, metric, value); `eval_episodes.parquet` concatenates the Task 6 tables.
-- [ ] **Step 2: Implement** `export_phase(phase, out_dir)` and the CLI `uv run python -m wut_murl_craftax.evaluation.export --phase <phase> --out outputs/metrics/<phase>`; CSV copies beside every parquet file.
-- [ ] **Step 3: Implement** MLflow logging of the exported folder as artifacts of run `export-<phase>` in experiment `analysis`; runs belong to a phase by the MLflow tag `phases` ([[2026-10-20-craftax-infrastructure]] Task 2), so a run reused by a later phase is exported with each phase that lists it.
-- [ ] **Step 4: Run** `uv run pytest tests/evaluation/test_export.py -q`.
-- [ ] **Step 5: Run** after Phase 3, for each phase: `for p in tune-coarse tune-fine final-1m final-1b combo-1m combo-1b; do uv run python -m wut_murl_craftax.evaluation.export --phase $p --out outputs/metrics/$p; done`; `outputs/metrics/<phase>/runs.parquet` lists the three controls in every final phase.
+- [x] **Step 1: Write the failing tests** on a temporary store with 2 methods x 2 seeds: `runs.parquet` has one row per run with the runner tags (`method`, `budget`, `phases`, `seed`, `config_hash`, `profile`), final score by the 2% rule, final eval scores per mode and the hardware summary; `curves.parquet` is long format (run, env_steps, metric, value); `eval_episodes.parquet` concatenates the Task 6 tables. (done 2026-10-24: a9b8177; `tests/evaluation/test_export.py`)
+- [x] **Step 2: Implement** `export_phase(phase, out_dir)` and the CLI `uv run python -m wut_murl_craftax.evaluation.export --phase <phase> --out outputs/metrics/<phase>`; CSV copies beside every parquet file. (done 2026-10-25: a9b8177, b5e8ffb (atomic staging))
+- [x] **Step 3: Implement** MLflow logging of the exported folder as artifacts of run `export-<phase>` in experiment `analysis`; runs belong to a phase by the MLflow tag `phases` ([[2026-10-20-craftax-infrastructure]] Task 2), so a run reused by a later phase is exported with each phase that lists it. (done 2026-10-24: a9b8177; logged as run `export-<phase>` in experiment `analysis`)
+- [x] **Step 4: Run** `uv run pytest tests/evaluation/test_export.py -q`. (done 2026-10-24: `tests/evaluation/test_export.py` green at merge)
+- [x] **Step 5: Run** after Phase 3, for each phase: `for p in tune-coarse tune-fine final-1m combo-1m; do uv run python -m wut_murl_craftax.evaluation.export --phase $p --out outputs/metrics/$p; done`; `outputs/metrics/<phase>/runs.parquet` lists the three controls in every final phase. (done 2026-10-27: 1M phases only: `outputs/metrics/{tune-coarse,tune-fine,final-1m,combo-1m}` exported 2026-10-27 (ledger, R75); the 1B phases are Step 5b)
+- [ ] **Step 5b: Run** the same export for `final-1b` and `combo-1b` once they exist: `for p in final-1b combo-1b; do uv run python -m wut_murl_craftax.evaluation.export --phase $p --out outputs/metrics/$p; done`; `runs.parquet` lists the three controls in each.
 
 ### Task 11: End-to-end check on the smoke phase
 
@@ -333,5 +335,5 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 
 - [ ] **Step 1: Run** `make queue PHASE=smoke`, then `uv run python -m wut_murl_craftax.evaluation.rollout_metrics --run <each smoke run> --mode both`, then `uv run python -m wut_murl_craftax.evaluation.export --phase smoke --out outputs/metrics/smoke`.
 - [ ] **Step 2: Check** in `make mlflow` that every metric name of Task 3 and every `eval/<mode>/` summary exists for every smoke run; check that `runs.parquet` has no empty column.
-- [ ] **Step 3: Write** the module note (responsibility, public surface, metric names) and run `make knowledge`.
+- [x] **Step 3: Write** the module note (responsibility, public surface, metric names) and run `make knowledge`. (done 2026-10-28: `knowledge/architecture/evaluation.md` exists, last updated in 30dcf0b)
 - [ ] **Step 4: Run** `make check`.

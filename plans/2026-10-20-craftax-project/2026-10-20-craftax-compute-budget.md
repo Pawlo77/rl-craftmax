@@ -5,7 +5,7 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-24
+updated: 2026-10-29
 tags: [plan, compute, estimates]
 ---
 # Craftax compute budget
@@ -181,9 +181,10 @@ flowchart LR
 **Files:**
 - Modify: this file, the "Runs and laptop time estimate" table of each method plan
 
-- [ ] **Step 1:** after [[2026-10-20-craftax-infrastructure]] Task 7 and each method's smoke task, read each method's mean steps/s and eval steps per checkpoint (longest of the 128 eval episodes) from the `smoke` runs (`make status PHASE=smoke`, then the runs in `make mlflow`).
-- [ ] **Step 2:** recompute every table with the measured values (laptop hours with compile, GPU hours without); mark them "measured".
-- [ ] **Step 3:** after `tune-coarse` of each method, recheck its overhead factor against the PPO-RNN or PQN-RNN base and the eval episode length at its final checkpoint; after the first `final-1b` run, replace the 1B eval assumptions with its measured eval time.
+- [x] **Step 1:** after [[2026-10-20-craftax-infrastructure]] Task 7 and each method's smoke task, read each method's mean steps/s and eval steps per checkpoint (longest of the 128 eval episodes) from the `smoke` runs (`make status PHASE=smoke`, then the runs in `make mlflow`). (done 2026-10-23: measured steps/s and eval per checkpoint from the `smoke` and tuning runs, 5766500; see the note below the steps)
+- [x] **Step 2:** recompute every table with the measured values (laptop hours with compile, GPU hours without); mark them "measured". (done 2026-10-24: the 1M tables carry measured values (5766500; `final-1m` 9.7 h and `combo-1m` 1.2 h measured 2026-10-24); the 1B tables stay estimates until Step 3b)
+- [x] **Step 3:** after `tune-coarse` of each method, recheck its overhead factor against the PPO-RNN or PQN-RNN base and the eval episode length at its final checkpoint. (done 2026-10-23: the 1M part: overhead factors and eval episode length rechecked after tuning, 5766500, 6023167; the 1B eval assumption is Step 3b)
+- [ ] **Step 3b:** after the first `final-1b` run, replace the 1B eval assumptions with its measured eval time and the 1B estimate tables with measured values.
 - Note 2026-10-23: Steps 1 to 3 are done for what has run (tuning of the three controls and four Phase 1 methods; see "Laptop time"): run minutes, 2-worker throughput, eval per checkpoint and Craftax steps/s are measured; the `final-1m`, `combo-1m` and 1B numbers are recomputed estimates. Still open: Dyna-Q tuning (running), the first `final-1m` run times (replace the "Estimates" table), the first `final-1b` eval time.
 
 ## 1B storage
