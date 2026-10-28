@@ -1,4 +1,4 @@
-"""Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals."""
+"""Orchestration: JAX runtime, run queue, resumable runner, MLflow store, retention."""
 
 import importlib
 from typing import TYPE_CHECKING
@@ -7,6 +7,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
     from .abort import first_nonfinite, first_out_of_bounds, flag_hits
     from .finals import kappa_ablation
     from .profiles import Profile, load_profile
+    from .prune import plan_prune, seed_picks
     from .queue import (
         RunSpec,
         budget_steps,
@@ -35,7 +36,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         shard_envs,
         warm_texture_cache,
     )
-    from .store import merge_stores, phase_status
+    from .store import evaluation_complete, merge_stores, phase_status
     from .tracking import MlflowRunTracker, build_mlflow_tracker
     from .train_metrics import log_every, log_points, metric_points
 
@@ -57,6 +58,7 @@ _EXPORTS: dict[str, str] = {
     "configure_runtime": "runtime",
     "device_roles": "runtime",
     "env_mesh": "runtime",
+    "evaluation_complete": "store",
     "expand_fine": "queue",
     "expand_phase": "queue",
     "final_score": "runner",
@@ -75,7 +77,9 @@ _EXPORTS: dict[str, str] = {
     "metric_points": "train_metrics",
     "permanently_ended": "queue",
     "phase_status": "store",
+    "plan_prune": "prune",
     "resolve_config": "queue",
+    "seed_picks": "prune",
     "select_platforms": "runtime",
     "shard_envs": "runtime",
     "tuning_means": "queue",
@@ -103,6 +107,7 @@ __all__ = [
     "configure_runtime",
     "device_roles",
     "env_mesh",
+    "evaluation_complete",
     "expand_fine",
     "expand_phase",
     "final_score",
@@ -121,7 +126,9 @@ __all__ = [
     "metric_points",
     "permanently_ended",
     "phase_status",
+    "plan_prune",
     "resolve_config",
+    "seed_picks",
     "select_platforms",
     "shard_envs",
     "tuning_means",

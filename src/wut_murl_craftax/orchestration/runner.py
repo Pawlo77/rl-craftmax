@@ -3,12 +3,12 @@
 A run's directory is its MLflow artifact directory: ``config.json``, ``metrics.npz``,
 ``episodes.npz``, ``ckpt/`` (log-spaced params), ``state/`` (full resume state) and
 ``eval/``. A run name is looked up across the whole store: a FINISHED run only joins
-the phase (tag ``phases``) and gets its missing evaluations; any other run resumes
-from ``state/`` (or restarts in place without it); a new name starts in the phase's
-experiment. Each run trains in a fresh child process that builds its trainer from the
-registry name and config alone (`main`); the parent forwards SIGINT and SIGTERM, which
-end the chunk, save the state and mark the run KILLED. Trainers: `Trainer`, registered
-in ``training.interface.METHODS``; evaluation: ``eval_rollouts.evaluate_spec``.
+the phase (tag ``phases``) and gets its missing evaluations, never retrained; any
+other run resumes from ``state/`` (without it, restarts in place, refused past its
+first chunk); a new name starts in the phase's experiment. Each run trains in a fresh
+child process built from the registry name and config alone (`main`); the parent
+forwards SIGINT and SIGTERM, which end the chunk, save the state and mark the run
+KILLED. Trainers: `Trainer` (``training.interface.METHODS``); eval: `evaluate_spec`.
 """
 
 import functools
@@ -18,6 +18,7 @@ import logging
 import math
 import multiprocessing
 import os
+import shutil
 import signal
 import socket
 import sys
@@ -50,6 +51,7 @@ from ..training.checkpoints import (
     load_index,
     load_state_filling,
     missing_checkpoints,
+    pruned_updates,
     save_checkpoint,
     save_state,
     saved_update,
@@ -106,6 +108,7 @@ from .runtime import (
 from .store import (
     TAG_STATE_UNREADABLE,
     claim_node_store,
+    evaluation_complete,
     is_partial,
     merge_stores,
 )
@@ -489,11 +492,13 @@ def _repair_checkpoints(
     must not take the index's word). Update 0 is rebuilt from the same-seed initial
     state, the saved update from the saved state. Earlier ones cannot be rebuilt and
     stay lost: they are tagged `TAG_CKPT_MISSING` (also when an earlier call tagged
-    them) and returned.
+    them) and returned. Pruned ones (`pruned_updates`) were deleted on purpose: never
+    rebuilt, never lost.
     """
     drop_missing_checkpoints(out)
     update, ckpt_dir = saved["update"], out / "ckpt"
     on_disk = {u for u in ckpts if (ckpt_dir / f"{u:05d}.msgpack").is_file()}
+    on_disk |= pruned_updates(out)
     if 0 not in on_disk:
         save_checkpoint(out, 0, 0, 0.0, trainer.params(fresh["trainer"]))
     if update in ckpts and update and update not in on_disk:
@@ -705,6 +710,29 @@ def _resume(out: Path, fresh: dict[str, Any], spu: int) -> dict[str, Any]:
     return saved
 
 
+def _refuse_stateless(name: str, out: Path, first: int) -> None:
+    """Raise if ``out`` has no ``state/`` but checkpoints past the first chunk.
+
+    Without ``state/`` a run starts from update 0. That is one lineage only while its
+    checkpoints end at the first chunk (a kill before the first state save); later
+    ones, or pruned ones, belong to a lineage whose state is gone (deleted by storage
+    retention, or a stateless copy), and a new one beside them would mix the two.
+
+    Raises:
+        RuntimeError: Checkpoints past update ``first`` or a prune marker, no state.
+    """
+    if (out / STATE_FILE).exists():
+        return
+    past = [e["update"] for e in load_index(out) if e["update"] > first]
+    if past or pruned_updates(out):
+        msg = (
+            f"{name}: checkpoints up to update {max(past, default=first)} (or pruned "
+            "ones) but no state/: refusing to retrain it from update 0 beside them; "
+            "restore state/, or delete ckpt/ and eval/ to retrain it on purpose"
+        )
+        raise RuntimeError(msg)
+
+
 def _train(
     trainer: Trainer,
     spec: RunSpec,
@@ -723,7 +751,8 @@ def _train(
         _Aborted: A chunk reported a non-finite loss or a metric out of its bounds;
             nothing of it is saved.
         RuntimeError: The run is complete but checkpoints are lost for good (a lost
-            final one is rebuilt from ``state/``).
+            final one is rebuilt from ``state/``), or it has checkpoints past its
+            first chunk but no ``state/`` (`_refuse_stateless`).
     """
     spu = trainer.steps_per_update(spec.config)
     n_updates = spec.steps // spu
@@ -731,6 +760,9 @@ def _train(
         msg = f"{spec.name}: {spu} steps per update exceed the budget {spec.budget}"
         raise ValueError(msg)
     ckpts = checkpoint_schedule(n_updates, N_CHECKPOINTS)
+    _refuse_stateless(
+        spec.name, out, _chunk_size(0, n_updates, ckpts, profile.checkpoint_every)
+    )
     # a resume needs init too: it gives the tree, key implementations and placement
     config = {
         **spec.config,
@@ -957,6 +989,34 @@ def _train_to_score(
     return True
 
 
+def _decide_training(found: Any, out: Path) -> tuple[bool, list[int]]:
+    """Whether the run trains, and the lost checkpoints it cannot repair.
+
+    A new run trains, an unfinished one resumes (unless only its evaluation was cut).
+    A FINISHED run with a lost (not pruned) checkpoint file goes through `_train` to
+    rebuild it from ``state/`` without training; without ``state/`` it never trains
+    again, and its lost updates are returned for `_refuse_lost`.
+    """
+    lost, stateful = missing_checkpoints(out), (out / STATE_FILE).exists()
+    trains = (
+        found is None
+        or (found.info.status != "FINISHED" and TAG_EVAL_PENDING not in found.data.tags)
+        or bool(lost and stateful)
+    )
+    return trains, [] if trains else lost
+
+
+def _refuse_lost(name: str, lost: Sequence[int]) -> None:
+    """Raise for lost checkpoints of a run that will not train (`_decide_training`)."""
+    if lost:
+        msg = (
+            f"{name}: checkpoints {list(lost)} are lost and state/ is gone; a "
+            "finished run is never retrained: restore the files, or list them in "
+            "ckpt/pruned.json if they were deleted on purpose"
+        )
+        raise RuntimeError(msg)
+
+
 def _run_spec(
     spec: RunSpec,
     trainer: Trainer,
@@ -1003,13 +1063,9 @@ def _run_spec(
     out = tracker.artifact_dir
     owner = {"pid": os.getpid(), "host": socket.gethostname()}
     (out / OWNER_FILE).write_text(json.dumps(owner))
-    # a FINISHED run with a lost checkpoint file goes through `_train` to repair it
-    trains = (
-        found is None
-        or (found.info.status != "FINISHED" and TAG_EVAL_PENDING not in found.data.tags)
-        or bool(missing_checkpoints(out))
-    )
+    trains, lost = _decide_training(found, out)
     try:
+        _refuse_lost(spec.name, lost)
         if trains and not _train_to_score(trainer, spec, out, profile, stop, found):
             tracker.close("KILLED")  # the next call logs the score and evaluates
             return True
@@ -1034,11 +1090,30 @@ def _run_spec(
         _close(tracker, "FAILED", trains)
         raise
     else:
-        # evaluation may have stopped early
-        _close(tracker, "KILLED" if stop.signum is not None else "FINISHED", trains)
+        _finish(tracker, out, spec, profile.drop_state_on_finish, stop, trains)
         return trains
     finally:
         (out / OWNER_FILE).unlink(missing_ok=True)
+
+
+def _finish(
+    tracker: Any, out: Path, spec: RunSpec, drop_state: bool, stop: _Stop, trained: bool
+) -> None:
+    """Close a run whose evaluation returned: KILLED if it stopped, else FINISHED.
+
+    With ``drop_state`` (`Profile.drop_state_on_finish`), a FINISHED run whose
+    evaluation is complete and whose checkpoints are whole loses ``state/``; it goes
+    after the close, so a run left unfinished never lacks its state.
+    """
+    status = "KILLED" if stop.signum is not None else "FINISHED"  # eval may stop
+    _close(tracker, status, trained)
+    if status != "FINISHED" or not drop_state:
+        return
+    if evaluation_complete(out, spec.eval_mode == "log_spaced") and not (
+        missing_checkpoints(out)
+    ):
+        shutil.rmtree(out / "state", ignore_errors=True)
+        logger.info("%s finished: state/ deleted (drop_state_on_finish)", spec.name)
 
 
 @dataclass(frozen=True)

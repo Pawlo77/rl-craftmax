@@ -39,7 +39,12 @@ from ..orchestration import (
 from ..orchestration.queue import COMBINE_KEY, CONFIG_ARTIFACT, RunSpec
 from ..orchestration.runner import Trainer
 from ..training import ppo_rnn, pqn_rnn
-from ..training.checkpoints import CheckpointEntry, load_index, load_params
+from ..training.checkpoints import (
+    CheckpointEntry,
+    load_index,
+    load_params,
+    pruned_updates,
+)
 from ..training.interface import Policy, run_trainer
 from ..training.ppo import PPOPolicy, make_env, policy_value
 from ..training.records import achievement_weights, is_classic
@@ -409,7 +414,8 @@ def evaluate(
     """Write ``eval/<mode>/<update>.npz`` for each update without one.
 
     Returns early once ``should_stop()`` is true (checked before every checkpoint and
-    after every chunk), never leaving a partial file.
+    after every chunk), never leaving a partial file. A pruned checkpoint without an
+    eval file (`pruned_updates`) is skipped with a warning: its params are gone.
 
     Returns:
         A summary per file written now.
@@ -417,10 +423,13 @@ def evaluate(
     if mode not in MODES:
         msg = f"mode must be one of {MODES}, got {mode!r}"
         raise ValueError(msg)
-    written = []
+    written, pruned = [], pruned_updates(run.dir)
     for u in updates:
         path = _path(run.dir, u, mode)
         if path.exists():
+            continue
+        if u in pruned:
+            logger.warning("%s: checkpoint %d was pruned, not evaluated", run.dir, u)
             continue
         if should_stop():
             break
@@ -459,14 +468,21 @@ def evaluate_spec(
 
     Yields a summary per scheduled file: a new one as soon as it is written, an
     existing one read back (so a caller can log what a crashed call did not). Stops
-    early once ``should_stop()`` is true.
+    early once ``should_stop()`` is true. A pruned checkpoint without its file is
+    skipped (`evaluate`).
     """
     run = EvalRun.load(run_dir, methods)
     updates = run.updates if spec.eval_mode == "log_spaced" else run.updates[-1:]
+    pruned = pruned_updates(run.dir)
     for u in updates:
         for mode in MODES:
             if _path(run.dir, u, mode).exists():
                 yield _summary(run, u, mode, load_eval(run.dir, u, mode == "greedy"))
+                continue
+            if u in pruned:
+                logger.warning(
+                    "%s: checkpoint %d was pruned, not evaluated", run.dir, u
+                )
                 continue
             new = evaluate(
                 run, [u], mode, seeds=seeds, chunk=chunk, should_stop=should_stop

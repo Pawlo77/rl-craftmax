@@ -1,5 +1,7 @@
 """Tests for the checkpoint schedule, params round trip and full-state saves."""
 
+import datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +13,17 @@ import pytest
 
 from wut_murl_craftax.training import checkpoints
 from wut_murl_craftax.training.checkpoints import (
+    PRUNED_FILE,
+    PrunedCheckpointError,
     checkpoint_schedule,
     drop_missing_checkpoints,
     load_index,
     load_params,
     load_state,
     load_state_filling,
+    mark_pruned,
+    missing_checkpoints,
+    pruned_updates,
     save_checkpoint,
     save_state,
 )
@@ -238,3 +245,54 @@ def test_params_checkpoints_and_state_live_apart(tmp_path: Path) -> None:
         "index.json",
     ]
     assert [p.name for p in (tmp_path / "state").iterdir()] == ["state.npz"]
+
+
+# --- pruned checkpoints (storage retention) --------------------------------------
+
+
+def _three_checkpoints(run: Path) -> None:
+    for u in (0, 1, 3):
+        save_checkpoint(run, u, 10 * u, 0.0, {"w": jnp.full(2, float(u))})
+
+
+def test_pruned_checkpoints_are_known_absent_and_stay_in_the_index(
+    tmp_path: Path,
+) -> None:
+    _three_checkpoints(tmp_path)
+    before = (tmp_path / "ckpt" / "index.json").read_bytes()
+    assert pruned_updates(tmp_path) == frozenset()
+    mark_pruned(tmp_path, [1, 0], "storage retention")
+    (tmp_path / "ckpt" / "00000.msgpack").unlink()
+    (tmp_path / "ckpt" / "00001.msgpack").unlink()
+    assert pruned_updates(tmp_path) == frozenset({0, 1})
+    assert missing_checkpoints(tmp_path) == []
+    assert drop_missing_checkpoints(tmp_path) == []
+    assert (tmp_path / "ckpt" / "index.json").read_bytes() == before
+    marker = json.loads((tmp_path / PRUNED_FILE).read_text())
+    assert marker["updates"] == [0, 1]
+    assert marker["reason"] == "storage retention"
+    assert marker["date"] == datetime.date.today().isoformat()
+    with pytest.raises(PrunedCheckpointError, match=r"checkpoint 1 .*pruned"):
+        load_params(tmp_path, 1, {"w": jnp.zeros(2)})
+    assert float(load_params(tmp_path, 3, {"w": jnp.zeros(2)})["w"][0]) == 3.0
+
+
+def test_a_lost_checkpoint_beside_pruned_ones_is_still_missing(tmp_path: Path) -> None:
+    _three_checkpoints(tmp_path)
+    mark_pruned(tmp_path, [1], "a")
+    (tmp_path / "ckpt" / "00001.msgpack").unlink()
+    (tmp_path / "ckpt" / "00003.msgpack").unlink()  # lost, not pruned
+    assert missing_checkpoints(tmp_path) == [3]
+    assert drop_missing_checkpoints(tmp_path) == [3]
+    assert [e["update"] for e in load_index(tmp_path)] == [0, 1]
+    with pytest.raises(FileNotFoundError) as error:
+        load_params(tmp_path, 3, {"w": jnp.zeros(2)})
+    assert not isinstance(error.value, PrunedCheckpointError)
+
+
+def test_marking_more_updates_joins_the_marker(tmp_path: Path) -> None:
+    mark_pruned(tmp_path, [2], "first")
+    mark_pruned(tmp_path, [1, 2], "second")
+    marker = json.loads((tmp_path / PRUNED_FILE).read_text())
+    assert (marker["updates"], marker["reason"]) == ([1, 2], "second")
+    assert not list((tmp_path / "ckpt").glob("*.tmp"))

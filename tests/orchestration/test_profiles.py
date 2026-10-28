@@ -100,9 +100,15 @@ def test_the_cuda_group_gives_mlflow_gpu_metrics_on_linux_only() -> None:
         assert importlib.util.find_spec("pynvml") is None
 
 
+def test_only_the_cuda_profile_drops_state_on_finish() -> None:
+    """1B storage: a finished cluster run's 0.45-1.8 GB ``state/`` is never synced."""
+    assert load_profile(PROFILES / "cuda.yaml").drop_state_on_finish is True
+    assert load_profile(PROFILES / "laptop.yaml").drop_state_on_finish is False
+
+
 def test_profiles_hold_runtime_settings_only() -> None:
     keys = {"host_devices", "device_roles", "memory_limit_bytes", "checkpoint_every"}
-    keys.add("unmeasured_limits")
+    keys |= {"unmeasured_limits", "drop_state_on_finish"}
     for path in PROFILES.glob("*.yaml"):
         assert yaml.safe_load(path.read_text()).keys() == keys, path.name
 
@@ -171,6 +177,15 @@ def test_an_invalid_value_fails_loudly(
 
 def test_a_valid_profile_round_trips(tmp_path: Path) -> None:
     assert load_profile(_write(tmp_path)) == Profile(**GOOD)  # type: ignore[arg-type]
+
+
+def test_drop_state_on_finish_is_off_unless_set_and_a_boolean(tmp_path: Path) -> None:
+    assert load_profile(_write(tmp_path)).drop_state_on_finish is False
+    assert load_profile(
+        _write(tmp_path, drop_state_on_finish=True)
+    ).drop_state_on_finish
+    with pytest.raises(TypeError, match="drop_state_on_finish"):
+        load_profile(_write(tmp_path, drop_state_on_finish="yes"))
 
 
 # --- platform choice ------------------------------------------------------------

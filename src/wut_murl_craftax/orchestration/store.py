@@ -1,29 +1,30 @@
 """MLflow store tools: the status of a phase's runs and the merge of node stores.
 
 ``status`` lists each run of a phase file by its `STATES` name, counting only runs
-whose tag ``phases`` contains the phase; without
-``--expand-fine`` a ``configs: fine`` entry lists its runs in the store. ``merge``
-copies the runs and artifact directories of another SQLite store (a cluster node's)
-into the main one, keyed by run name: a run already there gets the ``phases`` merged
-and a FINISHED node copy's evaluation files and ``eval/*`` points it lacks, unless the
-node's copy is FINISHED and the main one is not (the finished run replaces it). The
-runner seeds a node's store the same way from the main one (``names``). CLI: ``status
---phase P [--method M] [--expand-fine SLUG]``, ``merge SRC``.
+whose tag ``phases`` contains the phase; without ``--expand-fine`` a ``configs: fine``
+entry lists its runs in the store. ``merge`` copies the runs and artifact directories
+of another SQLite store (a cluster node's) into the main one, keyed by run name: a run
+already there gets the ``phases`` merged and a FINISHED node copy's evaluation files
+and ``eval/*`` points it lacks, unless the node's copy is FINISHED and the main one is
+not (the finished run replaces it); a new unfinished one without ``state/`` is refused.
+The runner seeds a node's store the same way (``names``). CLI: ``status --phase P
+[--method M] [--expand-fine SLUG]``, ``merge SRC``.
 """
 
 import argparse
 import json
+import logging
 import shutil
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import mlflow
 import yaml
 from mlflow.entities import Metric, Param
 
 from ..config import load_experiment_config
-from ..training.checkpoints import load_index, saved_update
+from ..training.checkpoints import STATE_FILE, load_index, pruned_updates, saved_update
 from .queue import (
     EXPERIMENT_CONFIG,
     METHODS_DIR,
@@ -37,6 +38,8 @@ from .queue import (
     phase_specs,
 )
 from .tracking import _artifact_location, _resolve_tracking_uri, artifact_path
+
+logger = logging.getLogger(__name__)
 
 STATES = (
     "pending",
@@ -120,16 +123,26 @@ def _phases(run: Any | None) -> list[str]:
     return [p for p in tag.split(",") if p]
 
 
+def evaluation_complete(run_dir: Path, log_spaced: bool) -> bool:
+    """Whether both modes' eval files exist for every checkpoint or the final one.
+
+    ``eval/<mode>/<update>.npz`` of every checkpoint when ``log_spaced``, else of the
+    last; a pruned checkpoint (`pruned_updates`) is known-absent and needs none.
+    """
+    updates = [e["update"] for e in load_index(run_dir)]
+    pruned = pruned_updates(run_dir)
+    wanted = [u for u in (updates if log_spaced else updates[-1:]) if u not in pruned]
+    files = [run_dir / EVAL / m / f"{u:05d}.npz" for u in wanted for m in EVAL_MODES]
+    return bool(updates) and all(f.is_file() for f in files)
+
+
 def _evaluated(run: Any) -> bool:
-    """Whether the run has ``eval/<mode>/<update>.npz`` for every checkpoint and mode.
+    """`evaluation_complete` of every checkpoint of the run.
 
     I5 ruling: this also catches a hard kill between the start of a reused run's
     evaluation and its ``eval/pending`` tag.
     """
-    out = _dir(run)
-    updates = [e["update"] for e in load_index(out)]
-    files = [out / EVAL / m / f"{u:05d}.npz" for u in updates for m in EVAL_MODES]
-    return bool(files) and all(f.is_file() for f in files)
+    return evaluation_complete(_dir(run), log_spaced=True)
 
 
 def _state(run: Any, log_spaced: bool) -> str:
@@ -375,17 +388,61 @@ def claim_node_store(tracking_uri: str, num_workers: int) -> None:
     _write_array_file(db, num_workers, merged=False)
 
 
+class _MergePlan(NamedTuple):
+    """What `merge_stores` does with each source run, decided before any write."""
+
+    joins: list[tuple[Any, Any, Path | None, list[str]]]
+    copies: list[tuple[Any, Any | None, str, Path, list[str]]]
+    refused: list[str]
+
+
+def _merge_plan(
+    runs: dict[str, Any],
+    existing: dict[str, Any],
+    experiments: dict[str, str],
+    src_dir: Callable[[Any], Path],
+    target: Any,
+) -> _MergePlan:
+    """Sort the source ``runs`` (by name) into joins, copies and refusals."""
+    plan = _MergePlan([], [], [])
+    for name, run in runs.items():
+        here = existing.get(name)
+        phases = list(dict.fromkeys([*_phases(here), *_phases(run)]))
+        experiment = experiments[run.info.experiment_id]
+        finished = run.info.status == "FINISHED"
+        if here is None and not finished and not (src_dir(run) / STATE_FILE).is_file():
+            plan.refused.append(name)
+        elif here is None or (finished and here.info.status != "FINISHED"):
+            plan.copies.append((run, here, experiment, src_dir(run), phases))
+        elif finished or here.info.status == "FINISHED":
+            plan.joins.append((here, run, src_dir(run) if finished else None, phases))
+        elif _further(found := src_dir(run), here, target):
+            plan.copies.append((
+                run,
+                here,
+                experiment,
+                found,
+                phases,
+            ))  # both unfinished
+        else:
+            plan.joins.append((here, run, None, phases))
+    return plan
+
+
 def merge_stores(
     src: Path | str, dst: str | None = None, *, names: Collection[str] | None = None
 ) -> dict[str, int]:
     """Merge the runs of the SQLite store ``src`` into ``dst`` (default: the main one).
 
     Returns the runs ``copied`` (new to ``dst``, or replacing a copy that is not
-    FINISHED: a FINISHED one, or one with a later saved update, infra-6 review M2) and
+    FINISHED: a FINISHED one, or one with a later saved update, infra-6 review M2),
     ``joined`` (already in ``dst``: the ``phases`` tag merged, plus the evaluation of
-    a FINISHED ``src`` copy, `_join_evaluation`). ``names`` limits the merge to those
-    run names. Every needed source artifact directory is found before anything is
-    written; a replaced copy is deleted only once its replacement is whole.
+    a FINISHED ``src`` copy, `_join_evaluation`) and ``refused`` (new to ``dst``, not
+    FINISHED and without ``state/``: a copy would restart from update 0 beside its
+    checkpoints, so it is logged and left to resume where it ran). ``names`` limits
+    the merge to those run names. Every needed source artifact directory is found
+    before anything is written; a replaced copy is deleted only once its replacement
+    is whole.
 
     Raises:
         FileNotFoundError: ``src`` is no database, or a run to copy, a FINISHED run
@@ -400,39 +457,36 @@ def merge_stores(
     dst_uri = _main_uri(dst)
     target = mlflow.MlflowClient(tracking_uri=dst_uri)
     experiments = {e.experiment_id: e.name for e in source.search_experiments()}
-    existing = _whole_runs(target)
 
     def src_dir(run: Any) -> Path:
         return _source_artifacts(run, experiments[run.info.experiment_id], db)
 
-    joins: list[tuple[Any, Any, Path | None, list[str]]] = []
-    copies: list[tuple[Any, Any | None, str, Path, list[str]]] = []
-    for name, run in _by_name(_active_runs(source)).items():
-        if names is not None and name not in names:
-            continue
-        here = existing.get(name)
-        phases = list(dict.fromkeys([*_phases(here), *_phases(run)]))
-        experiment = experiments[run.info.experiment_id]
-        finished = run.info.status == "FINISHED"
-        if here is None or (finished and here.info.status != "FINISHED"):
-            copies.append((run, here, experiment, src_dir(run), phases))
-        elif finished or here.info.status == "FINISHED":
-            joins.append((here, run, src_dir(run) if finished else None, phases))
-        elif _further(found := src_dir(run), here, target):
-            copies.append((run, here, experiment, found, phases))  # both unfinished
-        else:
-            joins.append((here, run, None, phases))
-    for here, run, node_dir, phases in joins:
+    runs = {
+        name: run
+        for name, run in _by_name(_active_runs(source)).items()
+        if names is None or name in names
+    }
+    plan = _merge_plan(runs, _whole_runs(target), experiments, src_dir, target)
+    for here, run, node_dir, phases in plan.joins:
         target.set_tag(here.info.run_id, TAG_PHASES, ",".join(phases))
         if node_dir is not None:
             _join_evaluation(target, source, here, run, node_dir)
-    for run, here, experiment, artifacts, phases in copies:
+    for run, here, experiment, artifacts, phases in plan.copies:
         experiment_id = _experiment_id(target, experiment, dst_uri)
         _copy_run(target, source, run, experiment_id, artifacts, phases)
         if here is not None:
             target.delete_run(here.info.run_id)  # soft: the old artifacts stay on disk
+    if plan.refused:
+        logger.warning(
+            "not merged, unfinished without state/ (resume them where they ran): %s",
+            ", ".join(sorted(plan.refused)),
+        )
     _mark_merged(db)
-    return {"copied": len(copies), "joined": len(joins)}
+    return {
+        "copied": len(plan.copies),
+        "joined": len(plan.joins),
+        "refused": len(plan.refused),
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -457,7 +511,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "merge":
         counts = merge_stores(args.src, args.dst)
-        print(f"copied {counts['copied']}, joined {counts['joined']}")
+        refused = f", refused {counts['refused']}" if counts["refused"] else ""
+        print(f"copied {counts['copied']}, joined {counts['joined']}{refused}")
         return
     uri = args.tracking_uri
     if (uri or "").endswith(".db"):  # MLflow reads a plain path as a file store

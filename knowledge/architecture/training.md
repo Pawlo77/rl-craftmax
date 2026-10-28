@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, training]
 created: 2026-10-21
-updated: 2026-10-24
+updated: 2026-10-28
 related-code:
   - "[[src/wut_murl_craftax/training/__init__.py]]"
   - "[[src/wut_murl_craftax/training/ppo.py]]"
@@ -30,6 +30,7 @@ related-code:
 - `METHODS`, `Policy`: the trainer registry and the policy evaluation builds from it; `run_trainer(config)`: the trainer of a saved `config.json` (a combo run gets its own pair via `combo_pair`, never the live combo.yaml); `PPORNNConfig`, `PQNRNNConfig`, `learn`: the recurrent controls and the PQN-RNN learner other methods call.
 - `PPOConfig`, `make_network`, `train(config, out)`: the baseline PPO; CLI `python -m wut_murl_craftax.training.ppo` (`make train-ppo`).
 - `checkpoint_schedule`, `save_checkpoint`, `load_params`, `load_index`: log-spaced checkpoints (msgpack params + `index.json`).
+- `mark_pruned`, `pruned_updates`, `PRUNED_FILE` (`ckpt/pruned.json`: `updates`, `date`, `reason`), `PrunedCheckpointError`: checkpoints deleted on purpose by storage retention.
 - `RunLog`, `load_metrics`, `TrainingMetrics`, `load_episodes`, `Episodes`, `first_unlocks`, `achievement_names`, `achievement_weights`: training records ([[Recording training data]]).
 
 ## Modules
@@ -41,7 +42,7 @@ One line each; signatures and details: [[Modules]].
 - `hooks`: `HookFields`, the extension points of the recurrent controls (`None` hooks cost nothing).
 - `batch_renorm`: BatchRenorm of the PQN-RNN input.
 - `wrappers`: Craftax_Baselines env wrappers; the wrapper step also computes `StepEvents`.
-- `checkpoints`: log-spaced params-only checkpoints and the full resume state (`state/`).
+- `checkpoints`: log-spaced params-only checkpoints, the full resume state (`state/`) and the prune marker (`ckpt/pruned.json`).
 - `records`: per-update metrics, per-episode log and achievement tables.
 
 ## Data flow
@@ -54,6 +55,7 @@ One line each; signatures and details: [[Modules]].
 - Same seed, same config, same backend: same parameters and records.
 - Score is training-episode return as % of the game's maximum (226 or 22).
 - Per-checkpoint parquet files (`smdp_greedy_table.parquet`, `dyna_model_graph.parquet`) type their text columns explicitly, so a checkpoint without stored keys still joins later rows; `smdp.rebuild_greedy_table` rewrites one from `ckpt/` (ruling R81).
+- A pruned checkpoint (listed in `ckpt/pruned.json`) is known-absent, never lost: `missing_checkpoints` skips it, `drop_missing_checkpoints` keeps it in `index.json` (readers take `env_steps` of its eval files from there), `load_params` raises `PrunedCheckpointError` (a `FileNotFoundError`) and `smdp.rebuild_greedy_table` keeps its old rows without reading it.
 - A saved combo run replays the pair it trained with: its `combine` block, else the one registry pair its keys fit; zero or two fitting pairs raise (ruling R80a).
 
 ## Known issues
