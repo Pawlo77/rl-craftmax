@@ -30,7 +30,15 @@ import pandas as pd
 from scipy import stats
 
 from ..analysis.cases import run_dirs
-from ..analysis.figures import _figure, _finish, _labels, _save, _style, _style_of
+from ..analysis.figures import (
+    _figure,
+    _finish,
+    _labels,
+    _save,
+    _style,
+    _style_of,
+    _title,
+)
 from ..analysis.figures import _theme as figure_theme
 from ..analysis.load import METRICS_ROOT, load_phases
 from ..evaluation.select_pair import SKILL_METHODS
@@ -459,7 +467,10 @@ def _plot_fidelity(
     ax.set_xticks(LEAF_GRID[::2], [str(n) for n in LEAF_GRID[::2]])
     ax.set_ylim(0, 1.02)
     _labels(ax, th, "leaves (log2)", "test top-1 fidelity")
-    _finish(fig, th, handles, cols=2)
+    if len(handles) > 1:
+        _finish(fig, th, handles, cols=2)
+    else:  # one unit: the title names it, a one-entry legend would add nothing
+        _title(ax, th, f"{handles[0].get_label()}: test top-1 fidelity")
     _save(fig, th, out_dir, name)
     (out_dir / f"{name}.pdf").unlink(missing_ok=True)  # figures are PNG only now
 

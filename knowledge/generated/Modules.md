@@ -17,8 +17,8 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1403 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2454 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 876 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2544 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 882 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 805 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 433 | [[analysis]] |
@@ -44,7 +44,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 271 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/rules.py]] | Rules and importance of distilled trees, and the top-level rules of skill methods. |  |  | 510 | [[interpretation]] |
-| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 913 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 924 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/tree_policy.py]] | Decision trees played as policies, and their closed-loop fidelity. |  |  | 345 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals. |  |  | 139 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |

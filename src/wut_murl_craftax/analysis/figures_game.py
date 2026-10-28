@@ -994,11 +994,15 @@ def _label_pt(th: Theme, levels: Mapping[str, int]) -> float:
     return LABEL_BASE_PT + (max(levels.values(), default=0) + 1) * th.font * 1.4
 
 
-def _tier_pt(th: Theme, need_pt: float) -> float:
+def _tier_pt(th: Theme, need_pt: float, rows: int) -> float:
     """One tier row in points: the label stack of the busiest tier fits in it."""
     if th.height is not None:
-        return th.height * 72 * 0.8 / 4
-    return max(TIER_PT, need_pt + 12)
+        return th.height * 72 * 0.8 / (rows + 1.5)
+    return max(TIER_PT, need_pt + 12, 70.0 / rows)
+
+
+def _tier_names(tiers: Sequence[int]) -> list[str]:
+    return [TIERS[t].replace("_", " ") if t < len(TIERS) else "other" for t in tiers]
 
 
 def _order_panel(
@@ -1010,10 +1014,12 @@ def _order_panel(
     edges: pd.DataFrame,
     *,
     labels: bool,
+    tiers: Sequence[int],
 ) -> None:
-    """Nodes by mean rank (x) and tier (y), the reduced edges as arrows."""
+    """Nodes by mean rank (x) and tier (y, only the ``tiers`` drawn), arrows after."""
     color = _color(th, method)
-    pos = _node_positions(nodes)
+    row = {t: i for i, t in enumerate(tiers)}
+    pos = {k: (x, row[y]) for k, (x, y) in _node_positions(nodes).items()}
     for e in edges.itertuples():
         arrow = ax.annotate(
             "",
@@ -1054,9 +1060,9 @@ def _order_panel(
             )  # fmt: skip
     _style(ax, th, grid="both")
     ax.set_xlim(-0.05, 1.05)
-    row = _tier_pt(th, need)
-    ax.set_ylim(len(TIERS) - 0.5, -max(0.5, (need + 4) / row))
-    ax.set_yticks(range(len(TIERS)), [t.replace("_", " ") for t in TIERS])
+    height = _tier_pt(th, need, len(tiers))
+    ax.set_ylim(len(tiers) - 0.5, -max(0.5, (need + 4) / height))
+    ax.set_yticks(range(len(tiers)), _tier_names(tiers))
     ax.tick_params(axis="y", length=0)
     _labels(ax, th, "mean normalised rank (0 first, 1 last)", "tier")
 
@@ -1072,7 +1078,8 @@ def plot_order_graph(
     """F7 ``order_<method>``: the achievement order graph of one method per benchmark.
 
     Nodes: achievements unlocked in 5% of the final stochastic eval episodes, x their
-    mean normalised rank, y their tier; arrows: ``P(a before b) >= 0.9`` over 20
+    mean normalised rank, y their tier (only tiers with a node are drawn, the note
+    names the others); arrows: ``P(a before b) >= 0.9`` over 20
     co-occurring episodes after transitive reduction (`order_graph`). Node names are
     printed in the double-width and video versions.
     """
@@ -1081,19 +1088,24 @@ def plot_order_graph(
     if not ctxs:
         return _no_data(name, th, out_dir, f"no tuned runs of {method}")
     graphs = [order_graph(c.eps[c.eps["method"] == method]) for c in ctxs]
+    tiers = sorted({y for n, _ in graphs for _, y in _node_positions(n).values()})
+    tiers = tiers or [0]  # a graph with no node still draws its first tier
     need = max(
         (_label_pt(th, _label_levels(_node_positions(n), th)) for n, _ in graphs),
         default=0.0,
     )
     need = need if th.wide else 0.0
-    grow_mm = 0.0  # the video frame is fixed; a report figure grows with its tier rows
-    if th.height is None:
-        grow_mm = max(0.0, _tier_pt(th, need) * 3.5 + need - 134) / 72 * 25.4
-    fig = _figure(th, len(ctxs) * (4 * th.pitch_mm + 38 + grow_mm) + _legend_mm(th, 1))
+    row = _tier_pt(th, need, len(tiers))
+    axes_mm = row * (len(tiers) - 0.5 + max(0.5, (need + 4) / row)) / 72 * 25.4
+    # the title is the method's name, so there is no legend; the report figure is as
+    # tall as its drawn tier rows and label stacks need, the video frame is fixed
+    fig = _figure(th, len(ctxs) * (axes_mm + 14) + _legend_mm(th, 0))
     axes = _stack(fig, th, [1.0] * len(ctxs))
     notes = []
     for ax, ctx, (nodes, edges) in zip(axes, ctxs, graphs, strict=True):
-        _order_panel(ax, th, ctx.budget, method, nodes, edges, labels=th.wide)
+        _order_panel(
+            ax, th, ctx.budget, method, nodes, edges, labels=th.wide, tiers=tiers
+        )
         _title(ax, th, _panel_title(ctx.budget, f"{method} order graph"))
         if edges.empty:
             notes.append(
@@ -1101,10 +1113,12 @@ def plot_order_graph(
                 f"{ORDER_PAIRS} episodes."
             )
     notes.append("Arrow: a is unlocked before b in at least 90% of episodes with both.")
+    if missing := [t for t in range(len(TIERS)) if t not in tiers]:
+        notes.append(f"No node in the tiers: {', '.join(_tier_names(missing))}.")
     if not th.wide:
         notes.append("Node names: double-width and video figures.")
     pending = _pending([c.budget for c in ctxs])
-    _finish(fig, th, _method_handles(th, [method]), [*notes, *pending])
+    _finish(fig, th, notes=[*notes, *pending])
     return _save(fig, th, out_dir, name)
 
 
@@ -1231,12 +1245,17 @@ def _funnel_cats(ctx: Ctx, kind: str) -> Cats:
 
 def _funnel_panel(kind: str) -> Callable[[Axes, Theme, Ctx, list[str]], None]:
     def draw(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
+        shown, tail = _trim_zero_tail(ctx, _funnel_cats(ctx, kind))
+        if tail:
+            notes.append(
+                f"{_budget_name(ctx.budget)}: no episode reached {', '.join(tail)}."
+            )
         _dot_panel(
             ax,
             th,
             ctx,
             f"funnel-{kind}",
-            _funnel_cats(ctx, kind),
+            shown,
             "share of episodes",
             notes,
             how="mean",
@@ -1265,12 +1284,16 @@ def plot_funnel(
         Panel(
             "tech ladder reached",
             _funnel_panel("tech"),
-            lambda c: _dot_mm(c, len(LADDER_NAMES)),
+            lambda c: _dot_mm(
+                c, len(_trim_zero_tail(c, _funnel_cats(c, "tech"))[0].keys)
+            ),
         ),
         Panel(
             "deepest floor reached",
             _funnel_panel("floor"),
-            lambda c: _dot_mm(c, len(FLOOR_NAMES)),
+            lambda c: _dot_mm(
+                c, len(_trim_zero_tail(c, _funnel_cats(c, "floor"))[0].keys)
+            ),
         ),
     ]
     return _draw(
@@ -1644,13 +1667,26 @@ def split_table(eps: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=SPLIT_COLUMNS)
 
 
+def _split_rows(table: pd.DataFrame) -> list[str]:
+    """The milestones some method reached (the others are named in a note)."""
+    reached = set(table.loc[table["n"] > 0, "milestone"])
+    return [m for m in MILESTONES if m in reached]
+
+
 def _split_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
     """Box plots of the steps to each milestone per method, share reaching as text."""
     table = split_table(ctx.eps)
-    rows = [m for m in MILESTONES if (table["milestone"] == m).any()]
+    rows = _split_rows(table)
     if table.empty or not rows:
         _empty(ax, th, f"{NOT_RECORDED}: no split columns")
         return
+    missed = [
+        m for m in MILESTONES if (table["milestone"] == m).any() and m not in rows
+    ]
+    if missed:
+        _notes.append(
+            f"{_budget_name(ctx.budget)}: no episode reached {', '.join(missed)}."
+        )
     offsets = dict(zip(ctx.names, _dodge(len(ctx.names)), strict=True))
     for r in table.itertuples():
         if not r.n:
@@ -1725,7 +1761,10 @@ def plot_splits(
     panel = Panel(
         "speedrun splits",
         _split_panel,
-        lambda c: len(MILESTONES) * (len(c.names) * 0.9 + 2.0) + PANEL_MM,
+        lambda c: (
+            max(1, len(_split_rows(split_table(c.eps)))) * (len(c.names) * 0.9 + 2.0)
+            + PANEL_MM
+        ),
     )
     return _draw(
         GAME_NAMES["F10"],
@@ -1742,6 +1781,42 @@ def plot_splits(
 # ----------------------------------------------------------------- F11, F12, F14
 
 
+def _with_data(ctx: Ctx, cats: Cats) -> tuple[Cats, list[str]]:
+    """``cats`` without the rows no method has a value in, and those rows' labels."""
+    keep = [
+        i
+        for i, key in enumerate(cats.keys)
+        if any(np.isfinite(cats.values(m, key)).any() for m in ctx.names)
+    ]
+    dropped = [str(cats.labels[i]) for i in range(len(cats.keys)) if i not in keep]
+    return (
+        cats._replace(
+            keys=[cats.keys[i] for i in keep], labels=[cats.labels[i] for i in keep]
+        ),
+        dropped,
+    )
+
+
+def _trim_zero_tail(ctx: Ctx, cats: Cats) -> tuple[Cats, list[str]]:
+    """``cats`` up to one row past the last row any method is above zero in.
+
+    A funnel or a list of rare mechanics ends where nothing is left: the zero rows
+    after that point are not drawn (returned as labels, said in a note).
+    """
+
+    def mean(m: str, k: str) -> float:
+        v = cats.values(m, k)
+        return float(np.nanmean(v)) if np.isfinite(v).any() else 0.0
+
+    top = [max(mean(m, k) for m in ctx.names) for k in cats.keys]
+    last = max((i for i, v in enumerate(top) if v > 0), default=-1)
+    n = min(len(cats.keys), last + 2)
+    return (
+        cats._replace(keys=list(cats.keys[:n]), labels=list(cats.labels[:n])),
+        [str(x) for x in cats.labels[n:]],
+    )
+
+
 def _dots(
     kind: str,
     cats: Callable[[Ctx], Cats],
@@ -1750,16 +1825,29 @@ def _dots(
     how: str = "median",
     log: bool = False,
     missing: str = NOT_RECORDED,
+    trim: bool = False,
 ) -> Drawer:
-    """A dot panel of ``cats(ctx)`` as a panel drawer."""
+    """A dot panel of ``cats(ctx)`` as a panel drawer (``trim``: no zero tail)."""
 
     def draw(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
+        shown, dropped = _with_data(ctx, cats(ctx))
+        if trim:
+            shown, tail = _trim_zero_tail(ctx, shown)
+            if tail:
+                notes.append(
+                    f"{_budget_name(ctx.budget)}: nothing above zero in "
+                    f"{', '.join(tail)}."
+                )
+        if dropped and shown.keys:  # rows without any value are not drawn, but said
+            notes.append(
+                f"{_budget_name(ctx.budget)}: no value for {', '.join(dropped)}."
+            )
         _dot_panel(
             ax,
             th,
             ctx,
             kind,
-            cats(ctx),
+            shown,
             xlabel,
             notes,
             how=how,
@@ -1809,9 +1897,7 @@ def plot_coverage(
         Panel(
             "exploration coverage per floor",
             _dots("coverage", _coverage_cats, "share of the floor seen"),
-            lambda c: _dot_mm(
-                c, max(1, sum(x.startswith("coverage/") for x in c.eps.columns))
-            ),
+            lambda c: _dot_mm(c, max(1, len(_with_data(c, _coverage_cats(c))[0].keys))),
         ),
         Panel(
             "new tiles",
@@ -2257,8 +2343,12 @@ def plot_advanced(
         ),
         Panel(
             "final rate per achievement",
-            _dots("adv", _advanced_cats, "% of episodes", missing=NOT_LOGGED),
-            lambda c: _dot_mm(c, len(ADVANCED_ACHIEVEMENTS)),
+            _dots(
+                "adv", _advanced_cats, "% of episodes", missing=NOT_LOGGED, trim=True
+            ),
+            lambda c: _dot_mm(
+                c, len(_trim_zero_tail(c, _with_data(c, _advanced_cats(c))[0])[0].keys)
+            ),
         ),
     ]
     return _draw(

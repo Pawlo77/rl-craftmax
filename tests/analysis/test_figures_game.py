@@ -531,12 +531,18 @@ def test_f8_dots_are_the_funnel_shares(
         rows = table[table["kind"] == kind]
         for r in rows.itertuples():
             gid = f"funnel-{kind}/1m/{r.method}/{r.step}"
-            assert dots[gid] == pytest.approx(r.share), gid
+            if gid in dots:
+                assert dots[gid] == pytest.approx(r.share), gid
+            else:  # the all-zero tail is not drawn (named in a note)
+                assert r.share == 0, gid
         # along one method the drawn points never move right as the step grows
-        steps = sorted(rows["step"].unique())
+        steps = sorted({int(g.split("/")[-1]) for g in dots})
+        assert steps == sorted(rows["step"].unique())[: len(steps)]
         for m in ctx.names:
             xs = [dots[f"funnel-{kind}/1m/{m}/{s}"] for s in steps]
             assert all(a >= b - 1e-9 for a, b in itertools.pairwise(xs))
+    notes = " ".join(t.get_text() for t in fig.texts)
+    assert "no episode reached" in notes or len(dots) == len(rows)
 
 
 def test_f8_training_is_the_sum_of_the_logged_shares(
@@ -1108,3 +1114,36 @@ def test_the_race_mask_only_touches_the_first_unlock_rows(
     base = base.sort_values(["run_id", "env_steps", "metric"])
     assert kept["value"].to_numpy() == pytest.approx(base["value"].to_numpy())
     assert np.isinf(after.loc[~other, "value"]).any()
+
+
+def test_f7g_draws_only_the_tiers_with_a_node_and_has_no_legend(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_order_graph(frames, tmp_path, "report", width="double", method="sil")
+    nodes = artists(fig, "node")
+    used = {round(float(a.get_ydata()[0])) for a in nodes}
+    for ax in {a.axes for a in nodes}:  # every panel has one row per drawn tier only
+        assert used == set(range(len(ax.get_yticklabels())))
+    assert not fig.legends
+    notes = " ".join(t.get_text() for t in fig.texts)
+    assert ("No node in the tiers" in notes) == (len(used) < 4)
+
+
+def test_one_unit_plots_of_hard_have_no_one_entry_legend(tmp_path: Path) -> None:
+    from test_hard import floor_frame  # the hard fixtures
+
+    from wut_murl_craftax.analysis.hard import floor_reach, plot_floor_reach
+
+    seen: list[Figure] = []
+    plain = Figure.savefig
+
+    def keep(self: Figure, *args: object, **kwargs: object) -> None:
+        seen.append(self)
+        plain(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    one = floor_reach(floor_frame(), n=N)
+    one = one[one["config_ref"] == "tuned"]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Figure, "savefig", keep)
+        plot_floor_reach(one, tmp_path)
+    assert not seen[0].legends

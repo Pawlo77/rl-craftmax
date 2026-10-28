@@ -629,6 +629,12 @@ def _handle(label: str, marker: str = "o", **style: str) -> Line2D:
     return Line2D([], [], ls="", marker=marker, label=label, **style)  # type: ignore[arg-type]  # matplotlib kwargs are typed one by one
 
 
+def _unit_legend(ax: Axes) -> list[Artist]:
+    """The plot's lines as legend entries; none for one unit (the title names it)."""
+    handles = ax.get_legend_handles_labels()[0]
+    return handles if len(handles) > 1 else []
+
+
 def _legend(
     fig: Figure, th: charts.Theme, handles: Sequence[Artist], **kw: Any
 ) -> None:
@@ -692,7 +698,7 @@ def plot_floor_reach(table: pd.DataFrame, out_dir: Path, theme: str = "report") 
         f"{_subject(table)}: floor reach, {budget}, {_basis(table)} "
         "(dashed: 5% rare limit)",
     )
-    _legend(fig, th, ax.get_legend_handles_labels()[0])
+    _legend(fig, th, _unit_legend(ax))
     return _save(fig, out_dir, _file(name, th))
 
 
@@ -872,5 +878,5 @@ def plot_stall_lengths(
         th,
         f"{_subject(ccdf)}: stall lengths, {ccdf['budget'].iloc[0]}, {_basis(ccdf)}",
     )
-    _legend(fig, th, ax.get_legend_handles_labels()[0])
+    _legend(fig, th, _unit_legend(ax))
     return _save(fig, out_dir, _file(name, th))
