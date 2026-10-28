@@ -1,0 +1,21 @@
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & race wins & deepest floor & top death & coverage & wasted & adoption \\
+\midrule
+\multicolumn{7}{l}{\emph{Main block}} \\
+ppo & not logged & 0 (1.00) & zombie (0.61) & 0.11 & 0.66 & 0.00 \\
+ppo-rnn & not logged & 0 (1.00) & zombie (0.57) & 0.13 & 0.66 & 0.00 \\
+pqn-rnn & 3 & 0 (1.00) & zombie (0.47) & 0.11 & 0.83 & 0.00 \\
+count-bonus-ppo-rnn & \textbf{6} & 0 (1.00) & zombie (0.59) & \textbf{0.13} & \textbf{0.62} & 0.00 \\
+count-bonus-pqn-rnn & 5 & 0 (1.00) & zombie (0.50) & 0.09 & 0.76 & \textbf{0.00} \\
+sil & \textbf{6} & 0 (1.00) & zombie (0.55) & 0.12 & 0.67 & 0.00 \\
+combo & 3 & 0 (1.00) & zombie (0.57) & 0.12 & 0.66 & 0.00 \\
+\midrule
+\multicolumn{7}{l}{\emph{Uses hand-written skills block}} \\
+ppo & not logged & 0 (1.00) & zombie (0.61) & 0.11 & 0.66 & 0.00 \\
+ppo-rnn & not logged & 0 (1.00) & zombie (0.57) & \textbf{0.13} & \textbf{0.66} & 0.00 \\
+pqn-rnn & \textbf{9} & 0 (1.00) & zombie (0.47) & 0.11 & 0.83 & 0.00 \\
+dyna-q & 4 & 0 (1.00) & zombie (0.53) & 0.11 & 0.79 & 0.00 \\
+smdp-skills & 4 & 0 (1.00) & zombie (0.50) & 0.09 & 0.86 & \textbf{0.00} \\
+\bottomrule
+\end{tabular}

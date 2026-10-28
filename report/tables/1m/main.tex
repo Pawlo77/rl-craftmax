@@ -1,0 +1,21 @@
+\begin{tabular}{lrrrrr}
+\toprule
+Method & n & mean $\pm$ s.e. & IQM [95\% CI] & eval & greedy \\
+\midrule
+\multicolumn{6}{l}{\emph{Main block}} \\
+ppo & 10 & 2.17 $\pm$ 0.03 & 2.17 [2.11, 2.24] & 2.16 & 0.91 \\
+ppo-rnn & 10 & 2.19 $\pm$ 0.03 & 2.19 [2.12, 2.26] & 2.16 & \textbf{1.56} \\
+pqn-rnn & 10 & 1.36 $\pm$ 0.16 & 1.47 [1.03, 1.72] & 1.27 & 1.26 \\
+count-bonus-ppo-rnn & 10 & \textbf{2.27 $\pm$ 0.04} & \textbf{2.28 [2.18, 2.37]} & \textbf{2.24} & 1.53 \\
+count-bonus-pqn-rnn & 10 & 1.48 $\pm$ 0.12 & 1.56 [1.26, 1.73] & 1.47 & 1.47 \\
+sil & 10 & 2.14 $\pm$ 0.01 & 2.14 [2.10, 2.17] & 2.13 & 1.38 \\
+combo & 10 & 2.13 $\pm$ 0.03 & 2.12 [2.07, 2.19] & 2.14 & 1.38 \\
+\midrule
+\multicolumn{6}{l}{\emph{Uses hand-written skills block}} \\
+ppo & 10 & 2.17 $\pm$ 0.03 & 2.17 [2.11, 2.24] & \textbf{2.16} & 0.91 \\
+ppo-rnn & 10 & \textbf{2.19 $\pm$ 0.03} & \textbf{2.19 [2.12, 2.26]} & 2.16 & \textbf{1.56} \\
+pqn-rnn & 10 & 1.36 $\pm$ 0.16 & 1.47 [1.03, 1.72] & 1.27 & 1.26 \\
+dyna-q & 10 & 1.08 $\pm$ 0.20 & 1.20 [0.66, 1.54] & 1.08 & 1.07 \\
+smdp-skills & 10 & 0.83 $\pm$ 0.21 & 0.91 [0.39, 1.35] & 0.82 & 0.80 \\
+\bottomrule
+\end{tabular}

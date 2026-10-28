@@ -1,0 +1,26 @@
+\begin{tabular}{lrrrr}
+\toprule
+Name & Protocol & n & score (\% of max) & gate \\
+\midrule
+\multicolumn{5}{l}{\emph{Craftax-1M, training score}} \\
+ppo & training-episode return & 10 & 2.17 [2.12, 2.23] & pass (gap \ensuremath{-}0.03, h 0.13) \\
+ppo-rnn & training-episode return & 10 & 2.19 [2.12, 2.25] & pass (gap \ensuremath{-}0.11, h 0.14) \\
+pqn-rnn & training-episode return & 10 & 1.36 [1.04, 1.64] & pass \\
+count-bonus-ppo-rnn & training-episode return & 10 & 2.27 [2.20, 2.34] & -- \\
+count-bonus-pqn-rnn & training-episode return & 10 & 1.48 [1.24, 1.68] & -- \\
+sil & training-episode return & 10 & 2.14 [2.11, 2.16] & -- \\
+combo & training-episode return & 10 & 2.13 [2.08, 2.19] & -- \\
+ppo & training-episode return & 10 & 2.17 [2.12, 2.23] & pass (gap \ensuremath{-}0.03, h 0.13) \\
+ppo-rnn & training-episode return & 10 & 2.19 [2.12, 2.25] & pass (gap \ensuremath{-}0.11, h 0.14) \\
+pqn-rnn & training-episode return & 10 & 1.36 [1.04, 1.64] & pass \\
+dyna-q & training-episode return & 10 & 1.08 [0.70, 1.42] & -- \\
+smdp-skills & training-episode return & 10 & 0.83 [0.45, 1.20] & -- \\
+EASimulus (Peng 2026) & n.r. & -- & \textbf{7.23 $\pm$ 0.19 (sd)} & -- \\
+Simulus (Cohen 2025) & mean of 100 test episodes at the end of training & -- & 6.59 $\pm$ 0.49 (sd) & -- \\
+PPO-RNN (Matthews 2024) & training-episode return & -- & 2.30 & -- \\
+RND (Matthews 2024) & training-episode return & -- & 2.20 & -- \\
+PPO (Matthews 2024) & training-episode return & -- & 2.20 & -- \\
+ICM (Matthews 2024) & training-episode return & -- & 2.20 & -- \\
+E3B (Matthews 2024) & training-episode return & -- & 2.20 & -- \\
+\bottomrule
+\end{tabular}

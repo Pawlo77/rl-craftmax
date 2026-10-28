@@ -1,0 +1,15 @@
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & PoI vs ppo & p Holm ppo & PoI vs ppo-rnn & p Holm ppo-rnn & PoI vs pqn-rnn & p Holm pqn-rnn \\
+\midrule
+\multicolumn{7}{l}{\emph{Main block}} \\
+count-bonus-ppo-rnn & \textbf{0.74 [0.49, 0.93]} & 0.530 & \textbf{0.68 [0.42, 0.89]} & 1.000 & \textbf{1.00 [1.00, 1.00]} & \textbf{0.002} \\
+count-bonus-pqn-rnn & 0.00 [0.00, 0.00] & \textbf{0.002} & 0.00 [0.00, 0.00] & \textbf{0.002} & 0.56 [0.30, 0.82] & 1.000 \\
+sil & 0.35 [0.11, 0.62] & 1.000 & 0.33 [0.10, 0.60] & 1.000 & \textbf{1.00 [1.00, 1.00]} & \textbf{0.002} \\
+combo & 0.37 [0.13, 0.63] & 1.000 & 0.33 [0.10, 0.59] & 1.000 & \textbf{1.00 [1.00, 1.00]} & \textbf{0.002} \\
+\midrule
+\multicolumn{7}{l}{\emph{Uses hand-written skills block}} \\
+dyna-q & \textbf{0.00 [0.00, 0.00]} & \textbf{0.001} & \textbf{0.00 [0.00, 0.00]} & \textbf{0.001} & \textbf{0.35 [0.12, 0.61]} & 0.273 \\
+smdp-skills & \textbf{0.00 [0.00, 0.00]} & \textbf{0.001} & \textbf{0.00 [0.00, 0.00]} & \textbf{0.001} & 0.24 [0.06, 0.48] & \textbf{0.108} \\
+\bottomrule
+\end{tabular}
