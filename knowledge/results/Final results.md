@@ -233,7 +233,14 @@ Files in `outputs/results/figures/` (`.pdf` and `.png`; `_double` and `_video` v
 
 ## Interpretation (decision trees)
 
-Pending: filled from outputs/interpretation/1m after the distillation run (interpretation Task 7).
+Full write-up: [[Decision-tree interpretation]] (90 policies, 9 methods x 10 seeds, from `outputs/interpretation/1m/complexity.csv` and `policies.csv`).
+
+- No policy is distillable at 90%: L80, L90 and L95 are "> 4096" leaves for every method (R106); median test fidelity at 256 leaves is 0.385 (Dyna-Q) to 0.512 (SIL), 0.108 to 0.166 above the majority-action share, and falls for larger trees.
+- Score vs fidelity at 256 leaves: Spearman 0.308 (p 0.003, base); it follows the majority share, not extra structure (score vs gain over majority -0.027, derived).
+- Every recurrent policy's top feature is the previous action (importance 0.117 to 0.186); without it fidelity at 256 leaves drops by 0.036 to 0.071.
+- A 256-leaf tree keeps 0.183 (count-bonus PPO-RNN) to 0.490 (SMDP skills) of its network's greedy score in closed loop; one DAgger round raises this for all 9 methods.
+- SMDP skills and Dyna-Q: the lowest-scoring seeds have skill networks whose greedy action cannot succeed on floor 0 (`READ_BOOK`, `MAKE_DIAMOND_PICKAXE`, `MAKE_IRON_ARMOUR`); their top levels are lookup tables over 47 to 355 visited keys with values at the optimistic start.
+- Figure: `fidelity_vs_leaves_1m` (PNG); F27 `distil_score` and F28 `distil_features` come from the figure-angles branch.
 
 ## 1B (pending)
 
