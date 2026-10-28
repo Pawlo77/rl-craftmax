@@ -829,6 +829,11 @@ def _first_unlocks(curves: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
+def first_unlocks(curves: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
+    """Per run and achievement: ``steps`` and ``wall`` of the first unlock."""
+    return _first_unlocks(curves, runs)
+
+
 def _lower_median(v: pd.Series) -> float:
     return float(np.sort(v.to_numpy())[(len(v) - 1) // 2])
 
