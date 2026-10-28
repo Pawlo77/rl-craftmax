@@ -16,8 +16,10 @@ from _game_fixture import game_frames
 from wut_murl_craftax.analysis import compare, latex
 from wut_murl_craftax.analysis.latex import (
     MACRO_NAMES,
+    OWNED,
     collect_numbers,
     copy_figures,
+    copy_tables,
     escape,
     macro,
     main_tex,
@@ -515,17 +517,59 @@ def test_copy_figures_takes_the_report_pngs_of_each_benchmark_folder(
         (src / "1m" / name).write_bytes(b"x")
     (src / "1b" / "aggregate.png").write_bytes(b"x")
     (src / "captions.csv").write_text("stem,id,title,description\n")  # not a folder
-    (out / "aggregate.png").write_bytes(b"old flat")  # the old flat layout: removed
-    (out / "old.pdf").write_bytes(b"%PDF")
+    (out / "aggregate.png").write_bytes(b"old flat")  # an old flat stem: removed
+    (out / "combat_double.png").write_bytes(b"old flat")
+    (out / "old.pdf").write_bytes(b"%PDF")  # nobody's stem: stays
+    (out / "diagram.png").write_bytes(b"hand made")
     (out / "1m").mkdir()
     (out / "1m" / "aggregate.pdf").write_bytes(b"%PDF")  # an earlier vector file
     (out / "1m" / "handmade.pdf").write_bytes(b"%PDF")  # not a figure of this run
-    (out / "1m" / "gone.png").write_bytes(b"x")  # a stem the run no longer writes
+    (out / "1m" / "handmade.png").write_bytes(b"x")
     copied = copy_figures(src, out)
     names = sorted(str(p.relative_to(out)) for p in copied)
     assert names == ["1b/aggregate.png", "1m/aggregate.png", "1m/aggregate_double.png"]
-    left = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file())
-    assert left == [*names, "1m/handmade.pdf"]
+    left = sorted(
+        str(p.relative_to(out))
+        for p in out.rglob("*")
+        if p.is_file() and p.name != OWNED
+    )
+    assert left == [
+        *names, "1m/handmade.pdf", "1m/handmade.png", "diagram.png", "old.pdf",
+    ]  # fmt: skip
+
+
+def test_a_figure_the_run_stops_writing_goes_but_other_files_stay(
+    tmp_path: Path,
+) -> None:
+    src, out = tmp_path / "results", tmp_path / "report" / "figures"
+    (src / "1m").mkdir(parents=True)
+    for name in ("a.png", "b.png"):
+        (src / "1m" / name).write_bytes(b"x")
+    copy_figures(src, out)
+    (out / "1m" / "mine.png").write_bytes(b"hand made")
+    (src / "1m" / "b.png").unlink()
+    copy_figures(src, out)
+    assert sorted(p.name for p in (out / "1m").glob("*.png")) == ["a.png", "mine.png"]
+
+
+def test_copy_tables_removes_old_flat_tables_and_stale_ones_only(
+    tmp_path: Path,
+) -> None:
+    src, out = tmp_path / "results", tmp_path / "report" / "tables"
+    (src / "1m").mkdir(parents=True)
+    for name in ("main.tex", "literature.tex"):
+        (src / "1m" / name).write_text("x")
+    out.mkdir(parents=True)
+    (out / "main_1m.tex").write_text("old flat")  # an old flat table: removed
+    (out / "main.tex").write_text("old flat")
+    (out / "mine.tex").write_text("hand made")  # not a stem of the comparison
+    copy_tables(src, out)
+    (out / "1m" / "mine.tex").write_text("hand made")
+    (src / "1m" / "literature.tex").unlink()
+    copied = copy_tables(src, out)
+    assert [p.name for p in copied] == ["main.tex"]
+    left = sorted(str(p.relative_to(out)) for p in out.rglob("*.tex"))
+    assert left == ["1m/main.tex", "1m/mine.tex", "mine.tex"]
 
 
 def test_without_complexity_the_numbers_skip_those_macros_and_the_missing_file(

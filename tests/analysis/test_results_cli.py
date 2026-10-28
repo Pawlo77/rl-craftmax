@@ -415,10 +415,31 @@ def test_old_pdfs_are_removed_from_both_figure_folders(
     opts = _two_stub_figures(monkeypatch, base, tmp_path)
     for folder in (opts.out / "figures", opts.report_dir / "figures"):
         folder.mkdir(parents=True)
-        (folder / "F1_report_column.pdf").write_bytes(b"%PDF-1.4 stale")
+        (folder / "aggregate.pdf").write_bytes(b"%PDF-1.4 stale")  # an old flat stem
+        (folder / "handmade.pdf").write_bytes(b"%PDF-1.4 mine")
     run_comparison(opts)
-    assert not list(opts.out.rglob("*.pdf"))
-    assert not list(opts.report_dir.rglob("*.pdf"))
+    assert not list(opts.out.rglob("aggregate.pdf"))
+    assert not list(opts.report_dir.rglob("aggregate.pdf"))
+    assert (opts.report_dir / "figures" / "handmade.pdf").is_file()  # not ours
+
+
+def test_old_flat_figures_and_tables_go_from_the_results_folder_and_only_they(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opts = _two_stub_figures(monkeypatch, base, tmp_path)
+    figures, tables = opts.out / "figures", opts.out / "tables"
+    figures.mkdir(parents=True)
+    tables.mkdir(parents=True)
+    for name in ("combat.png", "combat_double.png", "actions_video.png", "mine.png"):
+        (figures / name).write_bytes(b"x")
+    for name in ("main.csv", "main_1m.tex", "mine.csv", "mine.tex"):
+        (tables / name).write_text("x")
+    run_comparison(opts)
+    assert not list(figures.glob("combat*")) + list(figures.glob("actions*"))
+    assert (figures / "mine.png").is_file()
+    assert not (tables / "main_1m.tex").exists()
+    assert (tables / "mine.csv").is_file()
+    assert (tables / "mine.tex").is_file()
 
 
 def test_a_deleted_output_redoes_its_stage(

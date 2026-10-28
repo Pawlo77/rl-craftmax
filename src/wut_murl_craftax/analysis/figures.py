@@ -1254,7 +1254,7 @@ def plot_stability(
                     _events_row(ax, th, budget, row, t3)
         _style(ax, th)
         _apply_rows(ax, th, rows)
-        ax.set_xlim(0, 1.02 if stem == "stability_drawdown" else 1.0)
+        ax.set_xlim(-0.03, 1.06)  # room for a marker at 0 or 1; both panels agree
         ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:g}"))
         _labels(ax, th, xlabel)
         _finish(fig, th, handles, cols=3)

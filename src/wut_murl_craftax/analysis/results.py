@@ -447,12 +447,14 @@ def write_table_files(tables: Mapping[str, pd.DataFrame], out: Path) -> list[Pat
 
     Each benchmark folder holds only that benchmark's rows (``1m/main.csv``); a table
     without a ``benchmark`` column is shared and sits in ``<out>/tables`` itself.
-    The flat ``*.csv`` and ``*.tex`` of the old layout are deleted.
+    The flat tables of the old layout (`latex.OLD_FLAT_TABLES`) are deleted, no other
+    file.
     """
+    from . import latex
+
     folder = out / "tables"
     folder.mkdir(parents=True, exist_ok=True)
-    for old in [*folder.glob("*.csv"), *folder.glob("*.tex")]:
-        old.unlink()
+    latex.drop_old_flat(folder, latex.OLD_FLAT_TABLES, (".csv", ".tex"))
     files: list[Path] = []
     budgets = sorted({
         str(b) for f in tables.values() if "benchmark" in f for b in f["benchmark"]
@@ -560,9 +562,15 @@ def draw(
 
 
 def drop_old_pdfs(folder: Path) -> None:
-    """Figures are PNG only: delete the ``*.pdf`` an earlier run left in ``folder``."""
+    """Delete what earlier runs left in ``folder`` that this layout replaces.
+
+    The flat multi-panel figures of the old layout (`latex.OLD_FLAT_FIGURES`, every
+    variant) and the ``*.pdf`` of any figure (figures are PNG only); other files stay.
+    """
     from . import latex
 
+    for path in latex.drop_old_flat(folder, latex.OLD_FLAT_FIGURES, (".png", ".pdf")):
+        logger.info("removed %s (old flat figure)", path)
     for path in [
         *latex.drop_pdfs(folder),
         *(p for sub in sorted(folder.glob("*/")) for p in latex.drop_pdfs(sub)),

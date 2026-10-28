@@ -121,7 +121,7 @@ SPLIT_ROWS = 6
 """Most milestones of the speedrun splits (the earliest on the ladder)."""
 HEAT_ROWS = 12
 """Most rows of a heat map (a creature or action list): the rest go to the caption."""
-KILL_MIN = 0.01
+KILL_MIN = 0.05
 """Mean kills per episode below which a creature is not a row (the caption names it)."""
 
 
@@ -2063,7 +2063,7 @@ def _kills_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
         return
     if never:
         notes.append(
-            "Not drawn (killed less than 0.01 times per episode by every method): "
+            f"Not drawn (killed under {KILL_MIN} times per episode by every method): "
             f"{', '.join(never)}."
         )
     _heat(ax, th, ctx, "kills", labels, matrix, annotate=True, solo=solo)

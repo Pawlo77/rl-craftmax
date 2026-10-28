@@ -264,7 +264,7 @@ Each visited key of the final greedy table is one top-level rule (`smdp-skills/t
 
 - No method's median policy reaches 80% agreement with its network at any size up to 4096 leaves: the L80, L90 and L95 medians are "> 4096" for every method and fit (`complexity.csv`, `l80_median` to `l95_median` = inf; `l90_censored` 10 of 10, SMDP skills 9 of 10). The one policy that does is SMDP skills seed 8 (L90 = 2 leaves), a collapsed one-action policy. The reason is a plateau, not a slow climb: median fidelity peaks at 0.398 (Dyna-Q) to 0.514 (SIL) at 32-256 leaves, near the size that maximises validation fidelity (`peak_val_leaves` 64 to 256), then falls by 0.06 to 0.11 up to 4096 leaves (`<method>/curve.csv`).
 - The median tree of every method beats the majority-class baseline: gain at 256 leaves from 0.108 (PPO) to 0.166 (PQN-RNN). Per policy it does not always: 11 of 270 fits at 256 leaves have gain <= 0, among them the two collapsed seeds SMDP skills 8 (0.918 vs majority 0.933) and Dyna-Q 9 (0.685 vs 0.747). The high-majority PPO-based policies have the higher raw fidelity; the gain is similar across methods (0.092 to 0.185 at 16 and 64 leaves).
-- Figure: `outputs/results/figures/fidelity_vs_leaves_1m.png` (median base curve per method, the 0.9 level as a solid line). Interpretation figures F27 `outputs/results/figures/distil_score.png` (score vs 256-leaf fidelity per policy) and F28 `outputs/results/figures/distil_features.png` (importance by feature) come from the figure-angles branch.
+- Figure: `outputs/results/figures/1m/fidelity_vs_leaves.png` (median base curve per method, the 0.9 level as a solid line; colours in `legend_methods`). Interpretation figures F27 `outputs/results/figures/1m/distil_score.png` (score vs 256-leaf fidelity per policy) and F28 `outputs/results/figures/1m/distil_features.png` (importance by feature) are written by the comparison's figure stage; captions in [[Figures 1M]].
 
 ### Is a higher-scoring policy more complex?
 
@@ -298,7 +298,7 @@ Each visited key of the final greedy table is one top-level rule (`smdp-skills/t
 
 ## Report draft (section 6, about 0.4 page)
 
-Draft for [[2026-10-20-craftax-report]] (Phase 5 copies it into `report/`). Macros are those of `report/numbers.tex` written by the 2026-10-28 comparison run; the figure is the PNG `fidelity_vs_leaves_1m`.
+Draft for [[2026-10-20-craftax-report]] (Phase 5 copies it into `report/`). Macros are those of `report/numbers.tex` written by the 2026-10-28 comparison run; the figure is the PNG `figures/1m/fidelity_vs_leaves.png`.
 
 ```latex
 \section{Interpretation}
@@ -333,7 +333,7 @@ and their highest values stay near the optimistic start.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\columnwidth]{figures/fidelity_vs_leaves_1m.png}
+  \includegraphics[width=\columnwidth]{figures/1m/fidelity_vs_leaves.png}
   \caption{Test top-1 fidelity of the distilled trees vs leaf count (median over
   10 seeds per method; Craftax-1M). The horizontal line is the L90 level.}
   \label{fig:fidelity}

@@ -10,6 +10,7 @@ error names interpretation Task 6), the 1B one is skipped when missing.
 @tested-by [[tests/analysis/test_latex.py]]
 """
 
+import json
 import logging
 import math
 import re
@@ -804,25 +805,85 @@ def write_tables(
     return paths
 
 
+OLD_FLAT_TABLES = frozenset({
+    "main", "main_1m", "main_1b", "main_vs_1m", "game_summary", "game_summary_1m",
+    "game_summary_1b", "literature", "stability_hardware", "ablation", "hardware",
+    "poi_matrix", "race", "reproduction_gate", "sensitivity", "stability",
+    "stability_runs", "tuning_optimism",
+})  # fmt: skip
+"""Stems of the flat tables (``.tex`` and ``.csv``) the comparison wrote before the
+per-benchmark folders; `drop_old_flat` removes these and no other file."""
+OLD_FLAT_FIGURES = frozenset({
+    "ablation_effects", "actions", "advanced", "aggregate", "aggregate_poi", "combat",
+    "coverage", "curves_score", "deaths", "distil_features", "distil_score",
+    "episode_spread", "fidelity_vs_leaves_1m", "fidelity_vs_leaves_1b", "funnel",
+    "funnel_training", "gatekeepers", "greedy_gap", "hardware", "order_agreement",
+    "order_combo", "order_count-bonus-ppo-rnn", "order_count-bonus-pqn-rnn",
+    "order_dyna-q", "order_ppo", "order_ppo-rnn", "order_pqn-rnn", "order_sil",
+    "order_smdp-skills", "poi_matrix", "race_steps", "race_wall", "radar_1m",
+    "radar_1b", "resources", "seed_fate", "seed_spread", "sensitivity", "splits",
+    "stability", "stalls", "success_heatmap", "survival", "tuning_optimism",
+})  # fmt: skip
+"""Stems of the flat figures of the old layout (before ``figures/<budget>/``)."""
+VARIANT_SUFFIXES = ("_double", "_video", "")
+OWNED = ".owned.json"
+"""What the comparison copied into a report folder last time (file names): the next
+run deletes the ones it no longer writes, never a file somebody else put there."""
+
+
+def drop_old_flat(
+    folder: Path, stems: Collection[str], suffixes: Collection[str]
+) -> list[Path]:
+    """Delete ``<stem>[_double|_video]<suffix>`` files of the old flat layout.
+
+    Only names built from ``stems`` go; any other file of ``folder`` stays.
+    """
+    gone = []
+    for stem in stems:
+        for variant in VARIANT_SUFFIXES:
+            for suffix in suffixes:
+                path = folder / f"{stem}{variant}{suffix}"
+                if path.is_file():
+                    path.unlink()
+                    gone.append(path)
+    return gone
+
+
+def replace_owned(folder: Path, written: Collection[str]) -> list[Path]:
+    """Delete what the last run copied into ``folder`` and this one does not; record.
+
+    ``<folder>/.owned.json`` lists the file names of the last copy; a file that is not
+    in it (a hand-made diagram) is never touched.
+    """
+    manifest = folder / OWNED
+    before: list[str] = []
+    if manifest.is_file():
+        before = [str(n) for n in json.loads(manifest.read_text())]
+    gone = []
+    for name in sorted(set(before) - set(written)):
+        if (folder / name).is_file():
+            (folder / name).unlink()
+            gone.append(folder / name)
+    manifest.write_text(json.dumps(sorted(written)) + "\n")
+    return gone
+
+
 def copy_tables(results_dir: Path, out_dir: Path) -> list[Path]:
     """Copy the ``.tex`` tables of each benchmark folder of ``results_dir`` over.
 
-    The flat ``<out_dir>/*.tex`` of the old layout and every ``.tex`` of a benchmark
-    folder that the run no longer writes are deleted; other files stay.
+    The flat ``.tex`` tables of the old layout (`OLD_FLAT_TABLES`) and the tables a
+    benchmark folder got from an earlier run and no longer gets are deleted; every
+    other file stays (`replace_owned`).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("*.tex"):
-        old.unlink()
+    drop_old_flat(out_dir, OLD_FLAT_TABLES, (".tex",))
     copied = []
     folders = results_dir.iterdir() if results_dir.is_dir() else []
     for folder in sorted(p for p in folders if p.is_dir()):
         dest = out_dir / folder.name
         dest.mkdir(parents=True, exist_ok=True)
         sources = sorted(folder.glob("*.tex"))
-        keep = {p.name for p in sources}
-        for old in dest.glob("*.tex"):
-            if old.name not in keep:
-                old.unlink()
+        replace_owned(dest, [p.name for p in sources])
         for src in sources:
             shutil.copy2(src, dest / src.name)
             copied.append(dest / src.name)
@@ -848,13 +909,13 @@ def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
     """Copy the report PNGs of ``results_dir`` to ``out_dir``, one folder per benchmark.
 
     ``<results_dir>/<budget>/<stem>[_double].png`` goes to ``<out_dir>/<budget>/`` (no
-    ``_video`` file). Stale files go: the flat ``<out_dir>/*.png`` and ``*.pdf`` of the
-    old layout, and in each benchmark folder every PNG the run no longer writes and
-    every ``<stem>.pdf`` of a copied figure; other files stay.
+    ``_video`` file). Stale files go: the flat figures of the old layout
+    (`OLD_FLAT_FIGURES`, png and pdf), the PNGs an earlier run copied into a benchmark
+    folder and this one does not (`replace_owned`) and the ``<stem>.pdf`` of a copied
+    figure; every other file stays.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    for old in [*out_dir.glob("*.png"), *out_dir.glob("*.pdf")]:
-        old.unlink()
+    drop_old_flat(out_dir, OLD_FLAT_FIGURES, (".png", ".pdf"))
     copied = []
     folders = results_dir.iterdir() if results_dir.is_dir() else []
     for folder in sorted(p for p in folders if p.is_dir()):
@@ -863,10 +924,7 @@ def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
         sources = [
             p for p in sorted(folder.glob("*.png")) if not p.stem.endswith("_video")
         ]
-        keep = {p.name for p in sources}
-        for old in dest.glob("*.png"):
-            if old.name not in keep:
-                old.unlink()
+        replace_owned(dest, [p.name for p in sources])
         drop_pdfs(dest, {p.stem for p in sources})
         for src in sources:
             shutil.copy2(src, dest / src.name)

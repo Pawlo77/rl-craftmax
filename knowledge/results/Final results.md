@@ -239,7 +239,7 @@ Full write-up: [[Decision-tree interpretation]] (90 policies, 9 methods x 10 see
 - Every recurrent policy's tree leans most on the previous action, a memory proxy (importance 0.117 to 0.186); without it fidelity at 256 leaves drops by 0.036 to 0.071.
 - A 256-leaf tree keeps 0.183 (count-bonus PPO-RNN) to 0.490 (SMDP skills) of its network's greedy score in closed loop; one DAgger round raises this for all 9 methods.
 - SMDP skills and Dyna-Q: the lowest-scoring seeds have skill networks whose greedy majority action cannot succeed given the policy's inventory (`READ_BOOK` with no book, `MAKE_DIAMOND_PICKAXE` and `MAKE_IRON_ARMOUR` with no diamond or iron ever collected); their top levels are lookup tables over 47 to 355 visited keys, and the median-score seed's 10 highest values lie within 0.08 of the optimistic start 10.
-- Figure: `fidelity_vs_leaves` (PNG, `figures/1m/`); F27 `distil_score` and F28 `distil_features` come from the figure-angles branch.
+- Figure: `fidelity_vs_leaves` (PNG, `figures/1m/`); F27 `distil_score` and F28 `distil_features` are in `figures/1m/` too (see [[Figures 1M]]).
 
 ## Deferred
 

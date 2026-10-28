@@ -298,6 +298,15 @@ def test_no_lone_y_tick_label_names_a_quantity(
 
 
 @pytest.mark.parametrize("case", CASES)
+def test_y_axis_labels_share_one_rotation(
+    case: str, saved: Callable[[str], Saves], request: pytest.FixtureRequest
+) -> None:
+    known(request, case, "ylabel rotation")
+    for f in saved(case):
+        assert set(f.ylabel_rotations) <= {90.0}, f"{f.path.name}: {f.ylabel_rotations}"
+
+
+@pytest.mark.parametrize("case", CASES)
 def test_only_ticks_labels_legends_titles_and_numbers_are_drawn(
     case: str, saved: Callable[[str], Saves], request: pytest.FixtureRequest
 ) -> None:

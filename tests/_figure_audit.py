@@ -3,7 +3,8 @@
 `audit_saves` wraps ``Figure.savefig`` and ``RendererAgg.draw_text`` for a ``with``
 block and records per file, never raising: text off the canvas, legends over an axes,
 overlapping texts (ticks included), layout warnings, wrapped titles, method legends,
-the number of data axes (colour bars excepted), a lone y tick label naming a quantity,
+the number of data axes (colour bars excepted), the rotation of their y labels, a
+lone y tick label naming a quantity,
 the text kinds (only ticks, axis labels, legends, a title and numbers; no figure-level
 text or sentence, no Craftax, 1B, pending, indicative), the declared size class and
 pixel size, and the captions registered inside the block (`charts.capture_captions`).
@@ -51,6 +52,8 @@ class Saved:
     """Visible axes that draw data (colour bars and text-only axes not counted)."""
     lone_yticks: list[str] = field(default_factory=list)
     """Axes whose only y tick label is a word (a category naming the quantity)."""
+    ylabel_rotations: list[float] = field(default_factory=list)
+    """Rotation in degrees of the y axis label of every data axes that has one."""
     figure_texts: list[str] = field(default_factory=list)
     """Texts attached to the figure rather than an axes: notes, suptitles."""
     sentences: list[str] = field(default_factory=list)
@@ -261,6 +264,11 @@ def audit_saves() -> Iterator[Saves]:
         data = _data_axes(self)
         record.data_axes = len(data)
         record.lone_yticks = _lone_yticks(data)
+        record.ylabel_rotations = [
+            float(a.yaxis.label.get_rotation())
+            for a in data
+            if a.yaxis.label.get_text() and a.yaxis.get_visible()
+        ]
         record.figure_texts, record.sentences, record.forbidden = _text_problems(
             self, list(drawn)
         )
