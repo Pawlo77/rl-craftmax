@@ -18,7 +18,7 @@ related-code:
 
 ## Scope
 
-- Craftax-1M only: 1B pending (`final-1b` not run, R75); the 1B sections below are placeholders for the same tables and figures at 1B.
+- Craftax-1M only.
 - Units: scores are the final training score, mean training-episode return in % of the 226-point maximum (last 2% of the budget, at least 100 episodes); eval scores are the fixed-seed final checkpoint, stochastic and greedy, same unit. 10 seeds per method, tuned config.
 - Phases: `final-1m` (tuned runs and the six ablations) and `combo-1m` (the combination of [[Count-Based Progress Bonus design]] and [[Self-Imitation Learning design]] on PPO-RNN, [[Experiment decisions]], 2026-10-24).
 - Numbers come from `outputs/results/tables/*.csv` and `report/numbers.tex`, written by the comparison run of 2026-10-28 (`wut_murl_craftax.analysis.results`, plan [[2026-10-20-craftax-comparison-and-results]]); each table section names its file. Figures are in `outputs/results/figures/`.
@@ -91,7 +91,6 @@ Each control against its published Craftax-1M value ([[Craftax Baselines]], [[Ex
 - All three controls pass at 1M, so no issue note was opened in `knowledge/issues/`; the comparison continues with our controls as the base.
 - PPO-RNN passes the gate while its 95% CI [2.125, 2.249] lies below the published 2.3 (`literature.csv`, `ours_below`); the gate band h (0.135) is wider than the CI half-width of the mean (0.062).
 - The published values are given to one decimal without a spread.
-- The 1B gate is pending.
 
 ## T2: literature
 
@@ -105,7 +104,6 @@ Our 1M training scores beside block D of [[Existing Implementations]]; training-
 | EASimulus (Peng 2026) | not reported | 5 (repo) | 7.23 | sd 0.19 | not classed |
 
 - Our best (count-bonus PPO-RNN, 2.274) sits at the level of the published PPO-family methods (2.2 to 2.3); the two model-based entries (6.59, 7.23) use another or unreported protocol and are context only.
-- Blocks A and A2 (1B) are pending.
 
 ## Ablations (R77)
 
@@ -242,10 +240,6 @@ Full write-up: [[Decision-tree interpretation]] (90 policies, 9 methods x 10 see
 - SMDP skills and Dyna-Q: the lowest-scoring seeds have skill networks whose greedy majority action cannot succeed given the policy's inventory (`READ_BOOK` with no book, `MAKE_DIAMOND_PICKAXE` and `MAKE_IRON_ARMOUR` with no diamond or iron ever collected); their top levels are lookup tables over 47 to 355 visited keys, and the median-score seed's 10 highest values lie within 0.08 of the optimistic start 10.
 - Figure: `fidelity_vs_leaves_1m` (PNG); F27 `distil_score` and F28 `distil_features` come from the figure-angles branch.
 
-## 1B (pending)
+## Deferred
 
-- Pending: T1 and the PoI table at 1B (mean, median, 95% CI; indicative, 3 seeds), from `final-1b` and `combo-1b`.
-- Pending: the 1B reproduction gate (the 3-seed band is wider, so indicative) and blocks A and A2 of T2.
-- Pending: the re-check of the combination pair with the 1B means (2026-10-24 decision, [[Experiment decisions]]).
-- Pending: the 1B panels of F1 and F2, the 1B radar and funnel, and the 1B rows of T3 and T6.
 - Deferred (R107): the obstacles table of the tuning runs (`tune-coarse`, `tune-fine`, 494 runs).

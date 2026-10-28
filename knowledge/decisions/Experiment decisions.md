@@ -325,4 +325,4 @@ Decision: Phase 4 (analysis) runs on the 1M finals only (`final-1m`, `combo-1m`)
 
 Why: the analysis was requested before the 1B finals (which need the cluster). The full ruling log with costs-if-wrong is the Phase 4 part of the project's SDD ledger (`.superpowers/sdd/2026-10-20-craftax-project/progress.md`, git-ignored).
 
-Consequences: 1B rows, the 1B combination re-check (2026-10-24 decision) and the tuning-runs obstacles table remain open; the 1M results notes in `knowledge/results/` state which numbers are 1M-only.
+Consequences: the tuning-runs obstacles table remains open; the 1M results notes in `knowledge/results/` state which numbers are 1M-only.

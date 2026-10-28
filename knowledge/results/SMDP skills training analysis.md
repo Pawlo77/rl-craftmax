@@ -28,7 +28,6 @@ related-code:
 - Numbers come from `outputs/analysis/1m/smdp-skills/` (written 2026-10-28 by `analysis.training`, logged as MLflow run `training-analysis-1m-smdp-skills`, id `57f6b5a4b8bd467c9309200d88d968d3`, experiment `analysis`) and from `outputs/metrics/final-1m` (`runs.parquet`: `final_score` is the training-episode score in % of the maximum, `eval_stochastic_score` the stochastic final eval). 73 case episodes, all replayed from the stored eval files.
 - Related analyses: [[Dyna-Q training analysis]] (same skill library; Dyna-Q runs on the tuned smdp-skills knobs).
 - Final eval = checkpoint 244 (999,424 env steps), stochastic mode, 64 eval seeds per run.
-- 1B: pending (final-1b not run, R75); sections marked 1B below are placeholders for the same tables at 1B.
 - Runs reused from tuning (`reused_from_tuning` in `outputs/metrics/final-1m/runs.parquet`): 3 of this method's 10 tuned runs (3 of 40 over all its units). A detector whose metric family a run never logged reads "not logged" (R78); detectors whose threshold assumes the 1B scale read "uninformative at 1M" (R79). Verdict counts of this method's detectors (all units): absent 443, detected 237, not logged 40; needs replay 0, needs eval actions 0.
 
 ## Hard scenarios
@@ -130,10 +129,6 @@ Caveat: skill forgetting, skill interference, deep-skill starvation, survival fa
 
 - Absent in every run: Entropy collapse, Numerical failure, Reward hacking, Exploration failure, Survival failure, Fallback collapse, Timeout dominance, Key aliasing, Blind skill test.
 - Detector verdicts over the tuned runs (180 run-detector pairs): absent 110, detected 60, not logged 10; needs replay 0; needs eval actions 0. Runs with a metric family not logged (R78, runs reused from tuning, or a base control that lacks it): 10.
-
-### 1B
-
-1B: pending (final-1b not run, R75). The 1B obstacles table (3 seeds) is added by rerunning `analysis.training` once the 1B finals exist.
 
 ## Comparison with the controls
 

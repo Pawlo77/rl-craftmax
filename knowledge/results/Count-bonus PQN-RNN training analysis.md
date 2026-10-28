@@ -28,7 +28,6 @@ related-code:
 - Numbers come from `outputs/analysis/1m/count-bonus-pqn-rnn/` (written 2026-10-28 by `analysis.training`, logged as MLflow run `training-analysis-1m-count-bonus-pqn-rnn`, id `72145fdfab084517b4f5f84e6543f4a0`, experiment `analysis`) and from `outputs/metrics/final-1m` (`runs.parquet`: `final_score` is the training-episode score in % of the maximum, `eval_stochastic_score` the stochastic final eval). 16 case episodes, all replayed from the stored eval files.
 - Related analyses: [[Count-bonus PPO-RNN training analysis]] (the other variant).
 - Final eval = checkpoint 244 (999,424 env steps), stochastic mode, 64 eval seeds per run.
-- 1B: pending (final-1b not run, R75); sections marked 1B below are placeholders for the same tables at 1B.
 - Runs reused from tuning (`reused_from_tuning` in `outputs/metrics/final-1m/runs.parquet`): 3 of this method's 10 tuned runs (3 of 10 over all its units). A detector whose metric family a run never logged reads "not logged" (R78); detectors whose threshold assumes the 1B scale read "uninformative at 1M" (R79). Verdict counts of this method's detectors (all units): absent 92, detected 38, not logged 10, uninformative at 1M 10; needs replay 0, needs eval actions 0.
 
 ## Hard scenarios
@@ -125,10 +124,6 @@ Caveat: skill forgetting fires on every seed of every method that runs it at 1M;
 
 - Absent in every run: Plateau, Entropy collapse, Numerical failure, Reward hacking, Exploration failure, Survival failure, Q overestimation.
 - Detector verdicts over the tuned runs (150 run-detector pairs): absent 92, detected 38, not logged 10, uninformative at 1M 10; needs replay 0; needs eval actions 0. Runs with a metric family not logged (R78, runs reused from tuning, or a base control that lacks it): 10.
-
-### 1B
-
-1B: pending (final-1b not run, R75). The 1B obstacles table (3 seeds) is added by rerunning `analysis.training` once the 1B finals exist.
 
 ## Comparison with the controls
 

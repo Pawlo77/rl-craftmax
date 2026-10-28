@@ -28,7 +28,6 @@ related-code:
 - Numbers come from `outputs/analysis/1m/combo/` (written 2026-10-28 by `analysis.training`, logged as MLflow run `training-analysis-1m-combo`, id `b75bca440ece446fa3fa7bcfeb2cbcfd`, experiment `analysis`) and from `outputs/metrics/final-1m` (`runs.parquet`: `final_score` is the training-episode score in % of the maximum, `eval_stochastic_score` the stochastic final eval). 21 case episodes, all replayed from the stored eval files.
 - Related analyses: [[Count-bonus PPO-RNN training analysis]] and [[SIL training analysis]] (its two components).
 - Final eval = checkpoint 244 (999,424 env steps), stochastic mode, 64 eval seeds per run.
-- 1B: pending (final-1b not run, R75); sections marked 1B below are placeholders for the same tables at 1B.
 - Runs reused from tuning (`reused_from_tuning` in `outputs/metrics/final-1m/runs.parquet`): 0 of this method's 10 tuned runs (0 of 10 over all its units). A detector whose metric family a run never logged reads "not logged" (R78); detectors whose threshold assumes the 1B scale read "uninformative at 1M" (R79). Verdict counts of this method's detectors (all units): absent 144, detected 36, not logged 10, uninformative at 1M 10; needs replay 0, needs eval actions 0.
 
 ## Hard scenarios
@@ -134,10 +133,6 @@ Caveat: skill forgetting, insertion overflow fires on every seed of every method
 
 - Absent in every run: Instability, Collapse, Entropy collapse, Value failure, Numerical failure, Reward hacking, Exploration failure, Survival failure, Bonus distraction, Hoarding or key cycling, Imitated unsafe play, Value overestimation, Dead SIL.
 - Detector verdicts over the tuned runs (200 run-detector pairs): absent 144, detected 36, not logged 10, uninformative at 1M 10; needs replay 0; needs eval actions 0. Runs with a metric family not logged (R78, runs reused from tuning, or a base control that lacks it): 10.
-
-### 1B
-
-1B: pending (final-1b not run, R75). The 1B obstacles table (3 seeds) and `combo-1b` is added by rerunning `analysis.training` once the 1B finals exist.
 
 ## Comparison with the controls
 
