@@ -167,9 +167,14 @@ def in_phase(runs: pd.DataFrame, phase: str) -> pd.Series:
 
 
 def _check(frames: Frames, phase: str) -> None:
-    """Raise `SchemaError` unless the three tables fit the contract and each other."""
+    """Raise `SchemaError` unless the loaded tables fit the contract and each other.
+
+    ``frames`` holds ``runs`` and any of the others (a runs-only load, `load_phases`).
+    """
     for name, required in _REQUIRED.items():
-        if missing := [c for c in required if c not in frames[name].columns]:
+        if name in frames and (
+            missing := [c for c in required if c not in frames[name].columns]
+        ):
             msg = f"{name} of {phase}: missing columns {', '.join(missing)}"
             raise SchemaError(msg)
     runs = frames["runs"]
@@ -183,9 +188,13 @@ def _check(frames: Frames, phase: str) -> None:
         )
         raise SchemaError(msg)
     for name in ("curves", "eval_episodes"):
-        if n := (~frames[name]["run_id"].isin(runs["run_id"])).sum():
+        if name in frames and (
+            n := (~frames[name]["run_id"].isin(runs["run_id"])).sum()
+        ):
             msg = f"{name} of {phase}: {n} rows with a run id not in runs"
             raise SchemaError(msg)
+    if "eval_episodes" not in frames:
+        return
     episodes = frames["eval_episodes"]
     for column in _EPISODE_KEYS:
         owner = runs.set_index("run_id")[column]
@@ -194,28 +203,44 @@ def _check(frames: Frames, phase: str) -> None:
             raise SchemaError(msg)
 
 
-def _gaps(phase_dir: Path) -> list[str]:
-    """The table files a phase directory lacks."""
+def _gaps(phase_dir: Path, tables: Sequence[str] = TABLES) -> list[str]:
+    """The files of ``tables`` that a phase directory lacks."""
     return [
-        f"{t}.parquet" for t in TABLES if not (phase_dir / f"{t}.parquet").is_file()
+        f"{t}.parquet" for t in tables if not (phase_dir / f"{t}.parquet").is_file()
     ]
 
 
-def load_phase(phase_dir: Path) -> Frames:
-    """The three tables of one phase directory, checked against the contract.
+def _tables(tables: Sequence[str]) -> tuple[str, ...]:
+    """``tables`` checked: known stems that include ``runs``, in `TABLES` order."""
+    if set(tables) - set(TABLES) or "runs" not in tables:
+        msg = f"tables must be stems of {TABLES} and include runs, got {list(tables)}"
+        raise ValueError(msg)
+    return tuple(t for t in TABLES if t in tables)
+
+
+def load_phase(phase_dir: Path, tables: Sequence[str] = TABLES) -> Frames:
+    """The tables of one phase directory, checked against the contract.
+
+    ``tables`` limits what is read (``runs`` is always needed); a table left out is an
+    empty frame with the contract columns.
 
     Raises:
         MissingPhaseError: If a table file is absent.
         SchemaError: If a column, the run key, the ``phases`` tag or the agreement of
             ``eval_episodes`` with ``runs`` is wrong.
+        ValueError: If ``tables`` names an unknown table or leaves out ``runs``.
     """
-    if gaps := _gaps(phase_dir):
+    tables = _tables(tables)
+    if gaps := _gaps(phase_dir, tables):
         raise MissingPhaseError(
             [phase_dir.name], f"{phase_dir} lacks {', '.join(gaps)}"
         )
-    frames = {t: pd.read_parquet(phase_dir / f"{t}.parquet") for t in TABLES}
+    frames = {t: pd.read_parquet(phase_dir / f"{t}.parquet") for t in tables}
     _check(frames, phase_dir.name)
-    return frames
+    return {
+        t: frames[t] if t in frames else pd.DataFrame(columns=_REQUIRED[t])
+        for t in TABLES
+    }
 
 
 def _warn_dropped(dropped: pd.DataFrame, kept: dict[str, tuple[str, str]]) -> None:
@@ -236,7 +261,11 @@ def _warn_dropped(dropped: pd.DataFrame, kept: dict[str, tuple[str, str]]) -> No
 
 
 def load_phases(
-    phases: Sequence[str], root: Path = METRICS_ROOT, *, skip_missing: bool = False
+    phases: Sequence[str],
+    root: Path = METRICS_ROOT,
+    *,
+    skip_missing: bool = False,
+    tables: Sequence[str] = TABLES,
 ) -> Frames:
     """The tables of several phases in one frame each.
 
@@ -247,17 +276,21 @@ def load_phases(
     phase: the other way round the control runs get their hash as ``config_ref``,
     which splits their (method, config_ref) unit. ``skip_missing`` leaves out phases
     with no export at all (``final-1b`` before 1B exists, R86); an incomplete export
-    still fails.
+    still fails. ``tables=("runs",)`` reads the run tables only (the others come back
+    empty): the tuning phases' curves and episodes are far larger than anything the
+    tuning tables need.
 
     Raises:
         MissingPhaseError: Naming every phase that lacks an export (those left out by
             ``skip_missing`` excepted, unless none is left).
+        ValueError: As `load_phase` for ``tables``; for no ``phases``.
     """
     if not phases:
         msg = "no phases given"
         raise ValueError(msg)
-    gaps = {p: _gaps(root / p) for p in phases}
-    absent = [p for p, g in gaps.items() if len(g) == len(TABLES)]
+    tables = _tables(tables)
+    gaps = {p: _gaps(root / p, tables) for p in phases}
+    absent = [p for p, g in gaps.items() if len(g) == len(tables)]
     bad = [p for p, g in gaps.items() if g and not (skip_missing and p in absent)]
     todo = [p for p in phases if not gaps[p]]
     if bad or not todo:
@@ -270,7 +303,7 @@ def load_phases(
     parts: dict[str, list[pd.DataFrame]] = {t: [] for t in TABLES}
     kept: dict[str, tuple[str, str]] = {}
     for phase in todo:
-        frames = load_phase(root / phase)
+        frames = load_phase(root / phase, tables)
         runs = frames["runs"]
         fresh = set(runs["run_id"]) - kept.keys()
         _warn_dropped(runs[~runs["run_id"].isin(fresh)], kept)

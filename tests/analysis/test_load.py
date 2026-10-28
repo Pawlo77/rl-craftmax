@@ -474,3 +474,28 @@ def test_the_same_phase_twice_loads_once_without_a_warning(
         runs = load_phases(["final-1m", "final-1m"], export_root)["runs"]
     assert len(runs) == N_FINAL
     assert not caplog.records
+
+
+def test_a_runs_only_load_never_reads_the_other_tables(
+    export_writer: Callable[..., Path], tmp_path: Path
+) -> None:
+    root = export_writer(tmp_path, ("final-1m", "tune-coarse"))
+    (root / "tune-coarse" / "curves.parquet").write_bytes(b"not parquet")
+    (root / "tune-coarse" / "eval_episodes.parquet").unlink()
+    got = load_phases(["tune-coarse"], root, tables=("runs",))
+    assert len(got["runs"]) == 6
+    assert list(got["curves"].columns) == ["run_id", "env_steps", "metric", "value"]
+    assert got["curves"].empty
+    assert got["eval_episodes"].empty
+    assert set(EPISODE_REQUIRED) <= set(got["eval_episodes"].columns)
+
+
+def test_a_runs_only_load_still_checks_the_runs_and_names_missing_runs(
+    export_writer: Callable[..., Path], tmp_path: Path
+) -> None:
+    root = export_writer(tmp_path, ("final-1m",))
+    (root / "final-1m" / "runs.parquet").unlink()
+    with pytest.raises(MissingPhaseError, match=r"runs\.parquet"):
+        load_phases(["final-1m"], root, tables=("runs",))
+    with pytest.raises(ValueError, match="runs"):
+        load_phases(["final-1m"], root, tables=("curves",))

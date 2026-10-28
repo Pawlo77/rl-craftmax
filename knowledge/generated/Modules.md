@@ -13,16 +13,17 @@ parent: "[[wut_murl_craftax]]"
 | Module | Summary | Domain | See | Lines | Architecture note |
 |---|---|---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. |  |  | 3 |  |
-| [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 445 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 456 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1103 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1541 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2391 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 853 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 739 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 747 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 388 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 421 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/obstacles.py]] | Obstacle detectors of the training analysis, their registry and the obstacles table. |  | [[2026-10-20-craftax-training-analysis]] | 1521 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/results.py]] | Run the method comparison: tables T1-T7, figures F1-F20, report files, MLflow run. |  | [[2026-10-20-craftax-comparison-and-results]] | 557 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/training.py]] | Training analysis of every method: hard scenarios, obstacles and case episodes. |  | [[2026-10-20-craftax-training-analysis]] | 554 | [[analysis]] |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. |  |  | 149 |  |
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, records, statistics, pair, export. |  |  | 418 | [[evaluation]] |

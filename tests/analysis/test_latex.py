@@ -502,3 +502,17 @@ def test_copy_figures_takes_the_report_pdfs_only(tmp_path: Path) -> None:
         "aggregate.pdf",
         "aggregate_double.pdf",
     ]
+
+
+def test_without_complexity_the_numbers_skip_those_macros_and_the_missing_file(
+    frames: dict[str, pd.DataFrame], tables: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    path = tmp_path / "n.tex"
+    write_numbers(
+        path, frames, tables=tables, complexity_root=tmp_path, complexity=False,
+        report=None,
+    )  # fmt: skip
+    text = path.read_text()
+    assert r"\scoreOneMPpo}" in text
+    assert "fidelity" not in text
+    assert "spearman" not in text

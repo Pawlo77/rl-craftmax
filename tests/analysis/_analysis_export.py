@@ -82,8 +82,13 @@ def _world(phases: tuple[str, ...]) -> list[dict[str, Any]]:
         groups = [("combo", "tuned")] if phase.startswith("combo") else FINAL_GROUPS
         for method, ref in groups:
             tag = phase
-            if method in ("ppo", "ppo-rnn") and phase == "final-1m":
+            fine = "tune-fine" in phases
+            if method in ("ppo", "ppo-rnn", *(("sil",) if fine else ())) and (
+                phase == "final-1m"
+            ):
                 tag = f"{CONTROL_RUNS_ALSO_IN},{phase}"
+                if method != "ppo" and fine:
+                    tag = f"{CONTROL_RUNS_ALSO_IN},tune-fine,{phase}"
             for seed in SEEDS:
                 name = f"{method}-{budget}-{_hex(f'{method}/{ref}', 8)}-s{seed}"
                 config = {"method": method, "budget": budget, "seed": seed}
@@ -281,7 +286,9 @@ def write_export(
 
     ``final-<b>`` and ``combo-<b>`` phases create their runs; ``tune-coarse`` holds the
     runs whose tag lists it (the ppo and ppo-rnn runs of ``final-1m``) with their
-    ``config_hash`` as `config_ref` (list ``final-1m`` too, which makes those runs).
+    ``config_hash`` as `config_ref` (list ``final-1m`` too, which makes those runs);
+    ``tune-fine`` (when listed) holds the ppo-rnn runs and adds the sil runs to both
+    tuning phases, so that a tuning phase has a method of its own (T7).
     """
     world = _world(phases)
     for phase in phases:

@@ -153,6 +153,11 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         skill_detectors,
         table_rows,
     )
+    from .results import (
+        ResultsOptions,
+        ResultsSummary,
+        run_comparison,
+    )
     from .training import (
         TrainingSummary,
         analyse_training,
@@ -254,6 +259,9 @@ _EXPORTS: dict[str, str] = {
     "stability_table": "compare",
     "TUNING_OPTIMISM_COLUMNS": "compare",
     "tuning_optimism": "compare",
+    "ResultsOptions": "results",
+    "ResultsSummary": "results",
+    "run_comparison": "results",
     "TrainingSummary": "training",
     "analyse_training": "training",
     "replay_frames": "training",
@@ -336,6 +344,8 @@ __all__ = [
     "Frames",
     "MissingPhaseError",
     "Obstacle",
+    "ResultsOptions",
+    "ResultsSummary",
     "SchemaError",
     "TrainingSummary",
     "ablation_table",
@@ -411,6 +421,7 @@ __all__ = [
     "repeated_cycle",
     "replay_frames",
     "reproduction_gate",
+    "run_comparison",
     "run_dirs",
     "run_stability",
     "select",
