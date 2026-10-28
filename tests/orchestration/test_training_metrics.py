@@ -446,12 +446,15 @@ def test_wall_clock_and_sps_wait_for_the_chunks_computation(
     """40 updates of `_work`, in chunks of up to 13: wall_s counts all of it."""
     a = jnp.full((512, 512), 1e-3)
     _work(a).block_until_ready()
-    naps = []
-    for _ in range(7):  # the fastest sample: load only ever makes `_work` slower
-        t0 = time.monotonic()
-        _work(a).block_until_ready()
-        naps.append(time.monotonic() - t0)
-    nap = min(naps)
+    naps: list[float] = []
+
+    def sample() -> None:  # the fastest sample: load only ever makes `_work` slower
+        for _ in range(7):
+            t0 = time.monotonic()
+            _work(a).block_until_ready()
+            naps.append(time.monotonic() - t0)
+
+    sample()
     profile = tmp_path / "long-chunks.yaml"
     profile.write_text(
         PROFILE.read_text().replace("checkpoint_every: 2", "checkpoint_every: 100")
@@ -466,6 +469,8 @@ def test_wall_clock_and_sps_wait_for_the_chunks_computation(
         methods={"toy": trainer},
         evaluate=store.evaluate,
     )
+    sample()  # parallel test workers change the load: sample after the run too
+    nap = min(naps)
     n = 1_000_000 // spu
     wall = load_metrics(store.run_dir(spec.name)).col("wall_s")
     # waiting for every chunk gives >= n * nap; counting only dispatch leaves out the
