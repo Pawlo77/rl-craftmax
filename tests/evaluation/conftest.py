@@ -1,6 +1,7 @@
 """Shared fixtures of the evaluation tests: real start states, a tiny skills run."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,16 @@ from craftax.craftax_env import make_craftax_env_from_name
 def _start(name: str) -> Any:
     env = make_craftax_env_from_name(name, auto_reset=False)
     return jax.jit(env.reset)(jax.random.PRNGKey(0), env.default_params)[1]
+
+
+@pytest.fixture(autouse=True)
+def _restore_xla_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo the host-device split a CLI's ``configure_runtime`` writes into XLA_FLAGS.
+
+    Without it the flag outlives the test and reaches later subprocess tests that copy
+    ``os.environ`` (8 CPU devices for a 2-env fixture).
+    """
+    monkeypatch.setenv("XLA_FLAGS", os.environ.get("XLA_FLAGS", ""))
 
 
 @pytest.fixture(scope="session")
