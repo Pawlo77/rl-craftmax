@@ -65,8 +65,8 @@ from .figures_game import (
     _method_handles,
     _unique,
 )
+from .latex import INTERPRETATION
 from .load import Frames
-from .results import INTERPRETATION
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +93,8 @@ GAP_COLUMNS = [
 ]
 """`greedy_gap`: per tuned run and checkpoint the mean episode score of each mode."""
 LIFT_COLUMNS = ["method", "run_id", "achievement", "at", "with_a", "without_a", "lift"]
-"""`gatekeepers`: per run and achievement, the step ``at`` (the method's median unlock
-step), the episodes alive then with and without it, and the lift in later unlocks."""
+"""`gatekeepers`: per run and achievement, the landmark step ``at`` (the method's median
+unlock step), the episodes alive then that hold it and do not yet, and the lift."""
 FATE_COLUMNS = ["budget", "method", "update", "env_steps", "seeds", "rho"]
 """`seed_fate`: Spearman of the seeds' checkpoint scores and final scores."""
 GATE_SHARE = 0.05
@@ -397,12 +397,15 @@ def _later(got: np.ndarray, steps: np.ndarray, skip: int, at: float) -> np.ndarr
 
 
 def gatekeepers(eps: pd.DataFrame) -> pd.DataFrame:
-    """Per run and achievement A: the lift in later unlocks among episodes alive at A.
+    """Per run and achievement A: a landmark comparison of the unlocks after A's step.
 
-    ``at`` is the method's median unlock step of A. Among the run's episodes still
-    alive then (``length > at``), the lift is the mean number of other achievements
-    unlocked after ``at`` in episodes that unlock A minus that in episodes that never
-    do; NaN when one group is empty. Survival to ``at`` is so held equal.
+    The landmark ``at`` is the method's median unlock step of A. Among the run's
+    episodes still alive then (``length > at``), the lift is the mean number of other
+    achievements unlocked after ``at`` in episodes that already hold A (unlocked at or
+    before ``at``) minus that in episodes that do not yet; NaN when a group is empty.
+    Grouping by "A ever" instead would put late unlockers, which survived longer by
+    construction, in the A group (immortal-time bias: a lift of about 1 in a world
+    where A does nothing).
     """
     names = _achievements(eps)
     if not names or eps.empty:
@@ -418,7 +421,8 @@ def gatekeepers(eps: pd.DataFrame) -> pd.DataFrame:
                 continue
             at = float(np.median(steps[got[:, i], i]))
             alive = length > at
-            later, has = _later(got, steps, i, at), got[:, i]
+            later = _later(got, steps, i, at)
+            has = got[:, i] & (steps[:, i] <= at)  # held at the landmark
             for run in np.unique(runs):
                 here = alive & (runs == run)
                 yes, no = later[here & has], later[here & ~has]
@@ -470,7 +474,7 @@ def _gate_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
         ctx,
         "gate",
         cats,
-        "extra later unlocks with it\n(episodes alive at its median step)",
+        "extra later unlocks if held\n(alive at its median step)",
         notes,
         how="mean",
         missing=f"has under {GATE_MIN} alive episodes with or without each",
@@ -486,26 +490,26 @@ def plot_gatekeepers(
     n_boot: int = BOOTSTRAP_N,
     seed: int = 0,
 ) -> Figure:
-    """F22 ``gatekeepers``: which achievements open up the rest of the run?
+    """F22 ``gatekeepers``: does an early unlock open up the rest of the run?
 
     Rows: achievements unlocked in 5% to 95% of the benchmark's final stochastic eval
-    episodes, the largest mean lift first. A dot is the mean over seeds of the lift of
-    `gatekeepers` (episodes alive at the method's median unlock step of the row, with
-    the achievement against without it) with a bootstrap interval; a method needs
-    `GATE_MIN` alive episodes in each group.
+    episodes, the largest mean lift first. A dot is the mean over seeds of the landmark
+    lift of `gatekeepers` (episodes alive at the method's median unlock step of the
+    row that hold the achievement against those that do not yet) with a bootstrap
+    interval; a method needs `GATE_MIN` alive episodes in each group.
     """
     panel = Panel(
-        "which achievements open up the rest of the run?",
+        "does an early unlock open up the rest of the run?",
         _gate_panel,
         lambda c: _dot_mm(c, max(1, len(_gate_cats(c)[0].keys))),
     )
     notes = [
         (
-            "Final stochastic eval episodes. For each achievement only the episodes "
-            "still alive at the method's median step of unlocking it count; a dot is "
-            "the mean over seeds of the later unlocks of the episodes that unlock it "
-            "minus those of the episodes that never do, with a 95% bootstrap interval. "
-            "Survival is held equal, skill is not: an association, not an effect."
+            "Final stochastic eval episodes. Landmark at the method's median step of "
+            "unlocking each achievement: among the episodes alive then, a dot is the "
+            "mean over seeds of the later unlocks of those that already hold it minus "
+            "those that do not yet, with a 95% bootstrap interval. Near 0 means the "
+            "early unlock buys nothing later; an association, not an effect."
         ),
     ]
     return _draw(
@@ -647,11 +651,14 @@ def plot_seed_fate(
 # --------------------------------------------------------------------------- F24
 
 
-def _effect_label(r: Any) -> str:
-    head = f"{r.method} ({r.config_ref})"
-    if np.isfinite(r.poi_tuned):
-        return f"{head}\nPoI {r.poi_tuned:.2f}, p {r.p_holm:.2g}"
-    return head
+STATS_OFFSET = 0.34
+"""Rows below its ablation's name where the PoI and p line sits (a minor tick)."""
+
+
+def _effect_stats(r: Any) -> str:
+    return (
+        f"PoI {r.poi_tuned:.2f}, p {r.p_holm:.2g}" if np.isfinite(r.poi_tuned) else ""
+    )
 
 
 def _effect_panel(
@@ -706,9 +713,14 @@ def _effect_panel(
             )
             cross.set_gid(_gid("fresh", *key))
     _style(ax, th)
-    ax.set_yticks(range(len(rows)), [_effect_label(r) for r in rows.itertuples()])
+    names = [f"{r.method} ({r.config_ref})" for r in rows.itertuples()]
+    ax.set_yticks(range(len(rows)), names)
+    # the PoI and p line hangs just under its own name, never midway to the next row
+    stats = [_effect_stats(r) for r in rows.itertuples()]
+    ax.set_yticks([y + STATS_OFFSET for y in range(len(rows))], stats, minor=True)
     ax.set_ylim(len(rows) - 0.5, -0.5)
-    ax.tick_params(axis="y", length=0)
+    ax.tick_params(axis="y", which="both", length=0)
+    ax.tick_params(axis="y", which="minor", labelcolor=th.muted, labelsize=th.font)
     blocks = rows["block"].to_numpy()
     for edge in np.flatnonzero(blocks[1:] != blocks[:-1]):
         ax.axhline(edge + 0.5, color=th.muted, lw=0.5)
@@ -742,7 +754,7 @@ def plot_ablation_effects(
     if not shown:
         return _no_data(NAMES["F24"], th, out_dir, "no ablation runs")
     sizes = [int((table["benchmark"] == b).sum()) for b in shown]
-    fig, axes = _budget_axes(th, [n * th.pitch_mm * 2.2 + PANEL_MM for n in sizes], 2)
+    fig, axes = _budget_axes(th, [n * th.pitch_mm * 2.6 + PANEL_MM for n in sizes], 2)
     for ax, budget in zip(axes, shown, strict=True):
         rows = table[table["benchmark"] == budget].reset_index(drop=True)
         runs = frames["runs"][frames["runs"]["budget"] == budget]
@@ -1174,7 +1186,9 @@ def plot_distil_score(
         (
             "One dot per distilled policy: base fit, test states of its final "
             "checkpoint. The pooled rho (R106) mostly compares methods; within "
-            f"methods: the mean rho over methods with {MIN_WITHIN} or more policies."
+            f"methods: the mean rho over methods with {MIN_WITHIN} or more policies. "
+            "The p value treats the policies as independent, though seeds cluster by "
+            "method."
         ),
     ]
     return _distil_figure(
@@ -1235,7 +1249,9 @@ def plot_distil_features(
             "compare within a column before across."
         ),
     ]
-    rows_mm = FEATURE_ROWS * CELL_MM + PANEL_MM + 18.0  # rotated method names below
+    longest = max((len(m) for m in order), default=0)
+    label_mm = longest * 0.55 * th.font * 25.4 / 72  # the rotated method names below
+    rows_mm = FEATURE_ROWS * CELL_MM + PANEL_MM + label_mm
     return _distil_figure(
         NAMES["F28"],
         frames,
