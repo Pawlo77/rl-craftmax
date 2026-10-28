@@ -92,7 +92,8 @@ def render_timeline(
     )
     title = ax.set_title("", loc="left", fontsize=fs * 1.3, color=th.ink)
     count = ax.set_title("", loc="right", fontsize=fs * 1.1, color=th.muted)
-    title.set_text("Achievements over training - 0.00M steps")
+    # lay out for the widest strings any frame shows: the last step count, all rows
+    title.set_text(f"Achievements over training - {x.max():.2f}M steps")
     count.set_text(f"unlocked at least once: {n_rows} / {n_rows}")
     settle(fig)
     fig.set_layout_engine("none")  # the layout is settled; frames only change data
