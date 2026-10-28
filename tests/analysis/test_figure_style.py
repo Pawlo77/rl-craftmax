@@ -17,13 +17,13 @@ from _figure_audit import Saved, audit_saves
 from _figures_fixture import figure_frames, tuning_frames
 from _game_fixture import game_frames
 from test_figures import draw as draw_core
+from test_figures_game import FIGS
 from test_figures_game import draw as draw_game
 from test_hard import achievement_frame, death_frame, floor_frame, stall_frame
 
 from wut_murl_craftax.analysis import hard
 from wut_murl_craftax.analysis.compare import literature_table
 from wut_murl_craftax.analysis.figures import NAMES
-from wut_murl_craftax.analysis.figures_game import GAME_NAMES
 from wut_murl_craftax.analysis.hard import (
     achievement_status,
     death_causes,
@@ -104,17 +104,10 @@ def _fidelity_case(out: Path) -> None:
 def _cases() -> dict[str, Callable[[Path], None]]:
     """Case name -> a function that draws it into a folder."""
     cases: dict[str, Callable[[Path], None]] = {}
-    skipped = (
-        "F6W",
-        "F7G",
-        "F8T",
-        "F9S",
-        "F17",
-    )  # drawn with their family, or templated
     for theme, width in VARIANTS:
         for fid, case in [
             *((f, _core_case) for f in NAMES),
-            *((f, _game_case) for f in GAME_NAMES if f not in skipped),
+            *((f, _game_case) for f in FIGS),  # F6 also saves F6W, the wall-clock race
         ]:
             cases[f"{fid}-{theme}-{width}"] = (
                 lambda out, f=fid, c=case, t=theme, w=width: c(f, t, w, out)
