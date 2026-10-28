@@ -76,6 +76,16 @@ def resolve_tracking_uri(tracking_uri: str) -> str:
     return str(resolved_path)
 
 
+def resolve_store_uri(tracking_uri: str) -> str:
+    """`resolve_tracking_uri` of the store part; a ``?timeout=<s>`` query is kept.
+
+    SQLAlchemy takes the busy timeout (R103) from that query, so it is split off
+    before the path is resolved and put back after.
+    """
+    base, _, query = tracking_uri.partition("?")
+    return resolve_tracking_uri(base) + (f"?{query}" if query else "")
+
+
 _resolve_tracking_uri = resolve_tracking_uri
 """The name the orchestration modules import (kept so they need no edit)."""
 
@@ -118,6 +128,25 @@ def _use_experiment(mlflow: Any, tracking_uri: str, name: str) -> None:
     mlflow.set_experiment(name)
 
 
+def _analysis_experiment(client: Any, uri: str) -> Any:
+    """The `ANALYSIS_EXPERIMENT` through ``client`` alone, created if no process has."""
+    import mlflow
+
+    exp = client.get_experiment_by_name(ANALYSIS_EXPERIMENT)
+    if exp is None:
+        location = _artifact_location(uri.partition("?")[0], ANALYSIS_EXPERIMENT)
+        try:
+            client.create_experiment(ANALYSIS_EXPERIMENT, artifact_location=location)
+        except mlflow.exceptions.MlflowException:  # another process created it
+            if client.get_experiment_by_name(ANALYSIS_EXPERIMENT) is None:
+                raise
+        exp = client.get_experiment_by_name(ANALYSIS_EXPERIMENT)
+    if exp is None:
+        msg = f"experiment {ANALYSIS_EXPERIMENT} is missing"
+        raise RuntimeError(msg)
+    return exp
+
+
 def log_analysis_run(
     folder: Path,
     paths: Sequence[Path],
@@ -142,16 +171,12 @@ def log_analysis_run(
     # imported here: the file-only paths of the analysis CLIs need no MLflow
     import mlflow
 
-    base, _, query = tracking_uri.partition("?")
-    resolved = resolve_tracking_uri(base)
-    uri = resolved + (f"?{query}" if query else "")  # SQLAlchemy takes ?timeout=
-    mlflow.set_tracking_uri(uri)
-    _use_experiment(mlflow, resolved, ANALYSIS_EXPERIMENT)
+    # only the client: the fluent set_tracking_uri / set_experiment write
+    # MLFLOW_TRACKING_URI and MLFLOW_EXPERIMENT_ID into os.environ, which then
+    # reaches every later subprocess of the process
+    uri = resolve_store_uri(tracking_uri)
     client = mlflow.MlflowClient(uri)
-    exp = client.get_experiment_by_name(ANALYSIS_EXPERIMENT)
-    if exp is None:  # _use_experiment just made it
-        msg = f"experiment {ANALYSIS_EXPERIMENT} is missing"
-        raise RuntimeError(msg)
+    exp = _analysis_experiment(client, uri)
     found = client.search_runs(
         [exp.experiment_id], filter_string=f"attributes.run_name = '{name}'"
     )

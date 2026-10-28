@@ -315,7 +315,7 @@ Outcome (`combo-1m`, 10 seeds, 2026-10-24 07:24 to 08:35): mean 2.13164, sd 0.09
 Decision: Phase 4 (analysis) runs on the 1M finals only (`final-1m`, `combo-1m`); every step that needs `final-1b` or `combo-1b` is built and tested and reruns with the same commands once 1B exists (ruling R75). The rulings below change how results are reported:
 
 - R77: runs belong to a phase by the `phases` tag, never the experiment name; statistics are per (method, `config_ref`), and the six ablations get their own table, never pooled with tuned runs.
-- R78: the 26 control runs reused from tuning lack the online metric families; detectors and figures report them as "not logged", never as 0 or "not detected".
+- R78: the 26 runs reused from tuning (ppo 10, ppo-rnn 10, pqn-rnn 3, count-bonus-ppo-rnn 3) lack the online metric families; detectors and figures report them as "not logged", never as 0 or "not detected".
 - R79 and R92: detector thresholds that assume 1B are relative to the run's own scale at 1M or reported "uninformative at 1M"; the drawdown floor at 1M is max(0.1, 0.25 x the run's max smoothed score).
 - R97: every laptop run trained with two queue workers, so wall-clock time, SPS and machine-wide hardware series are context only, never ranked.
 - R98: hoarding (`capped_steps`) counts only materials whose progress-key cap is above 1.

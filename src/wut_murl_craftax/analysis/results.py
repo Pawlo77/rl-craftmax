@@ -485,10 +485,9 @@ def _run_exists(tracking_uri: str, run_id: str) -> bool:
     """True if the logged run is still in the store (and not deleted)."""
     import mlflow
 
-    from ..orchestration.tracking import resolve_tracking_uri
+    from ..orchestration.tracking import resolve_store_uri
 
-    base, _, query = tracking_uri.partition("?")
-    uri = resolve_tracking_uri(base) + (f"?{query}" if query else "")
+    uri = resolve_store_uri(tracking_uri)
     try:
         run = mlflow.MlflowClient(uri).get_run(run_id)
     except mlflow.exceptions.MlflowException:

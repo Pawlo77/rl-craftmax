@@ -47,6 +47,24 @@ def isolated_mlflow(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     mp.undo()
 
 
+@pytest.fixture(autouse=True)
+def _restore_mlflow_env() -> Iterator[None]:
+    """Undo what MLflow's fluent setters write into ``os.environ`` during a test.
+
+    ``set_tracking_uri`` and ``set_experiment`` export MLFLOW_TRACKING_URI and
+    MLFLOW_EXPERIMENT_ID for subprocesses; without this they outlive the test and
+    reach later tests and the subprocesses those start.
+    """
+    keys = ("MLFLOW_TRACKING_URI", "MLFLOW_EXPERIMENT_ID")
+    before = {k: os.environ.get(k) for k in keys}
+    yield
+    for key, value in before.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 @pytest.fixture(autouse=True, scope="session")
 def repo_store_untouched() -> Iterator[None]:
     """Fail the session if a test changed the repo's ``mlruns.db`` or ``mlruns/``."""

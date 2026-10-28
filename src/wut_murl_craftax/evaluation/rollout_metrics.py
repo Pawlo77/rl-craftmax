@@ -704,7 +704,7 @@ def main(argv: list[str] | None = None) -> None:
     a = _parse(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     configure_runtime(host_devices=a.host_devices)  # before JAX starts its backend
-    from ..orchestration.tracking import resolve_tracking_uri
+    from ..orchestration.tracking import resolve_store_uri
     from ..visualisation.eval_rollouts import EvalRun
 
     runs = phase_runs(a.tracking_uri, a.phase)
@@ -720,7 +720,7 @@ def main(argv: list[str] | None = None) -> None:
     if not a.no_log:
         import mlflow
 
-        client = mlflow.MlflowClient(resolve_tracking_uri(a.tracking_uri))
+        client = mlflow.MlflowClient(resolve_store_uri(a.tracking_uri))
     todo = [
         j
         for j in plan_jobs(runs, ups, modes)

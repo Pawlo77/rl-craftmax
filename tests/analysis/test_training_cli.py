@@ -801,3 +801,17 @@ def test_the_real_replay_path_writes_a_case_folder(tmp_path: Path) -> None:
         assert facts["id"] == row.id
         assert {"floor", "stats", "inventory", "actions", "last_actions"} <= set(facts)
     assert (d / ".complete").is_file()
+
+
+def test_logging_an_analysis_run_leaves_the_global_mlflow_state_alone(
+    store: str, tmp_path: Path
+) -> None:
+    import os
+
+    from wut_murl_craftax.orchestration.tracking import log_analysis_run
+
+    keys = ("MLFLOW_TRACKING_URI", "MLFLOW_EXPERIMENT_ID")
+    before = ({k: os.environ.get(k) for k in keys}, mlflow.get_tracking_uri())
+    (tmp_path / "f.txt").write_text("1")
+    log_analysis_run(tmp_path, [tmp_path / "f.txt"], "r", {}, store)
+    assert ({k: os.environ.get(k) for k in keys}, mlflow.get_tracking_uri()) == before

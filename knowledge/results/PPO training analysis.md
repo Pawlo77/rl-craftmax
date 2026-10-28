@@ -121,7 +121,7 @@ Caveat: skill forgetting fires on every seed of every method that runs it at 1M;
 
 | Obstacle | Benchmark | Runs affected | When (env steps) | Evidence | Mitigation tried | Outcome | Replay or plot |
 |---|---|---|---|---|---|---|---|
-| Plateau | 1M | 7 / 10 | 500k to 999k | score gain -0.10 from 500k to the end (< 0.24) (run 22fa55cebeb140729639e8fb2a40c18b; 6 more) | not analysed (tuning runs, R107) | open at 1M | `gifs/1m-ppo-deep_floor-1.gif` |
+| Plateau | 1M | 7 / 10 | 500k to 999k | score gain -0.10 from 500k to the end (< 0.24) (run 22fa55cebeb140729639e8fb2a40c18b; 6 more) | not analysed (tuning runs, R107) | open at 1M | `outputs/results/figures/curves_score.pdf` (F1, learning curves) |
 | Reward hacking | 1M | not logged: 10 |  | not logged: train/ach_reward_share | - | - | - |
 | Exploration failure | 1M | not logged: 10 |  | not logged: first_unlock/ | - | - | - |
 | Skill forgetting | 1M | 10 / 10 | 24.6k to 963k | >= 20% to < 5%: collect_drink (81.9k to 135k), eat_cow (430k to 451k), make_wood_pickaxe (496k to 532k), make_wood_sword (471k to 684k) (run 22fa55cebeb140729639e8fb2a40c18b; 9 more) | not analysed (tuning runs, R107) | open at 1M | `plots/achievement_status.png` |

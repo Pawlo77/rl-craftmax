@@ -123,7 +123,7 @@ All 67 achievements of full Craftax (IDs 0-66) with their reward and the exact c
 |---|---|
 | 0 | all 25 basic achievements (IDs 0-24); `MAKE_IRON_ARMOUR` and `MAKE_DIAMOND_*` if enough ore is found |
 | 1 | `ENTER_DUNGEON`, orc kills, `EAT_SNAIL`, `OPEN_CHEST`, `FIND_BOW`, `FIRE_BOW`, `DRINK_POTION` |
-| 2 | `ENTER_GNOMISH_MINES`, gnome kills, `EAT_BAT`, `COLLECT_SAPPHIRE`, `COLLECT_RUBY` (diamond pickaxe) |
+| 2 | `ENTER_GNOMISH_MINES`, gnome kills, `EAT_BAT`, `COLLECT_SAPPHIRE`, `COLLECT_RUBY` |
 | 3 | `ENTER_SEWERS`, lizard and kobold kills, spells from the book, ice enchanting |
 | 4 | `ENTER_VAULT`, knight and archer kills, second book, fire enchanting |
 | 5 | `ENTER_TROLL_MINES`, troll and deep thing kills |

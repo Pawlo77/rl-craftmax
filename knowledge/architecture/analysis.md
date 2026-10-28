@@ -101,9 +101,9 @@ One line each; signatures and details: [[Modules]].
 | `eval_actions` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | `eval_actions(run_dir, ...)` from `eval/<mode>/<update>.npz` |
 | `eval_actions` | `actions` | int array | the episode's actions, padding cut at `length` | eval file |
 | `skill_ends` | `run_id`, `update`, `env_steps`, `mode`, `eval_seed` | str, int, int64, str, int | the eval episode and checkpoint | replay |
-| `skill_ends` | `start`, `end` | int | episode steps where the skill started and ended | replay |
+| `skill_ends` | `start`, `end` | int | episode steps where the skill started and ended | eval `extras/skill`, `extras/steps_in_skill` (no replay) |
 | `skill_ends` | `skill` | str | `skills.SKILLS` name | eval `extras/skill` |
-| `skill_ends` | `key` | int64 | `smdp.top_key` table row at the decision (`low_flags` as the run's config) | replay |
+| `skill_ends` | `key` | int64 | `smdp.top_key` table row at the decision (`low_flags` and granularity as the run's config) | replay |
 | `skill_ends` | `reason` | str | `skills.REASONS` name of the end (`success`, `failure`, `timeout`, `episode_end`, `floor_change`, `low_stat`) | replay |
 | `skill_ends` | `pair_count` | int | Dyna-Q only: real outcomes of (`key`, `skill`) in the checkpoint's model, `count` of `eval/dyna_model_graph.parquet` (0 if absent) | model graph of the checkpoint |
 | `eval_inventory` | `run_id`, `update`, `mode`, `eval_seed` | str, int, str, int | the eval episode | replay |
