@@ -11,7 +11,7 @@ The repository root is the Obsidian vault `wut_murl_craftax` (map: `wut_murl_cra
 | `wut_murl_craftax.md`, `Dashboard.md` | map of the vault; Dataview tables |
 | `architecture/` | one module note per package of `src/wut_murl_craftax`; a change under `src/wut_murl_craftax/<pkg>/` updates it (bump `updated`) in the same change |
 | `decisions/` | one log per domain, `<Domain> decisions.md`: a dated section per design choice, newest first |
-| `results/` | per-method training analysis, interpretation and final results notes (Phase 4) |
+| `results/` | Phase 4: one note per method, `<Method> training analysis` (1M; the three controls, the count-bonus variants and the combination included), plus the cross-method results notes (interpretation, final results) |
 | `issues/` | one note per open bug, `<id> - <title>.md`; fixed bugs become rows of `Fixed issues.md` |
 | `concepts/` | one note per term |
 | `handbook/` | how-to notes for people; `Solutions/<date> - <title>.md` for solved problems |
