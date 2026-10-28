@@ -618,7 +618,7 @@ def _save(
     path = out_dir / f"{stem}{th.suffix}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     charts.write_png(fig, path)
-    charts.register_caption(stem, title, description)
+    charts.register_caption(stem, title, description, charts.width_mm(th))
     return path
 
 

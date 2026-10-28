@@ -220,7 +220,7 @@ def test_each_figure_writes_its_files_as_png_with_captions(
     assert sorted(figs.figs) == sorted(STEMS[fid]) or fid == "F6"
     if fid == "F6":  # the wall-clock and the env-steps race, a file per block
         assert sorted(figs.figs) == sorted(STEMS[fid])
-    suffix = "_video" if theme == "video" else "_double" if width == "double" else ""
+    suffix = "_video" if theme == "video" else ""
     for name in STEMS[fid]:
         assert not (tmp_path / f"{name}{suffix}.pdf").exists()
         assert (tmp_path / f"{name}{suffix}.png").read_bytes().startswith(PNG)
@@ -261,7 +261,7 @@ def test_video_figures_fill_a_1080p_frame(
 
 
 @pytest.mark.parametrize("fid", FIGS)
-def test_only_the_figures_that_need_the_width_have_a_double_variant(
+def test_a_figure_has_one_report_image_at_its_own_width(
     fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     figs = draw(fid, frames, tmp_path, width="double")
@@ -271,9 +271,13 @@ def test_only_the_figures_that_need_the_width_have_a_double_variant(
         return
     for fig in figs.figs.values():
         assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    for name in STEMS[fid]:
-        assert (tmp_path / f"{name}_double.png").read_bytes().startswith(PNG)
-        assert not (tmp_path / f"{name}.png").exists()  # the column has no node names
+    for name in STEMS[fid]:  # the node names need 170 mm: the one image has no suffix
+        assert (tmp_path / f"{name}.png").read_bytes().startswith(PNG)
+        assert not (tmp_path / f"{name}_double.png").exists()
+    assert not draw(
+        fid, frames, tmp_path / "col", width="column"
+    ).figs  # no low-res copy
+    assert not list((tmp_path / "col").glob("*.png"))
     texts(figs)
     for fig in figs.figs.values():
         small = [
@@ -543,7 +547,8 @@ def test_f7_graph_figure_draws_the_reduced_edges_and_every_node(
         for s, t in zip(edges["source"], edges["target"], strict=True)
     }
     assert gids(fig, "node") == {f"node/1m/sil/{a}" for a in nodes["achievement"]}
-    assert (tmp_path / "order_sil_double.png").exists()
+    assert (tmp_path / "order_sil.png").exists()
+    assert not (tmp_path / "order_sil_double.png").exists()
     assert "Arrow: a is unlocked before b" in said(fig)
 
 

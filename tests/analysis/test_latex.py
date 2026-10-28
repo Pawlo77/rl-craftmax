@@ -20,6 +20,7 @@ from wut_murl_craftax.analysis.latex import (
     collect_numbers,
     copy_figures,
     copy_tables,
+    drop_double_files,
     escape,
     macro,
     main_tex,
@@ -508,12 +509,7 @@ def test_copy_figures_takes_the_report_pngs_of_each_benchmark_folder(
     (src / "1m").mkdir(parents=True)
     (src / "1b").mkdir()
     out.mkdir(parents=True)
-    for name in (
-        "aggregate.png",
-        "aggregate_double.png",
-        "aggregate_video.png",
-        "aggregate.pdf",
-    ):
+    for name in ("aggregate.png", "aggregate_video.png", "aggregate.pdf"):
         (src / "1m" / name).write_bytes(b"x")
     (src / "1b" / "aggregate.png").write_bytes(b"x")
     (src / "captions.csv").write_text("stem,id,title,description\n")  # not a folder
@@ -527,7 +523,7 @@ def test_copy_figures_takes_the_report_pngs_of_each_benchmark_folder(
     (out / "1m" / "handmade.png").write_bytes(b"x")
     copied = copy_figures(src, out)
     names = sorted(str(p.relative_to(out)) for p in copied)
-    assert names == ["1b/aggregate.png", "1m/aggregate.png", "1m/aggregate_double.png"]
+    assert names == ["1b/aggregate.png", "1m/aggregate.png"]
     left = sorted(
         str(p.relative_to(out))
         for p in out.rglob("*")
@@ -672,3 +668,38 @@ def test_the_r106_quantities_have_macros_and_nan_ones_have_none(
     assert "spearmanScoreFidTwoFiftySixOneMNoMemory" not in got  # NaN on that row
     old = frame[[c for c in frame.columns if c in OLD]]
     assert latex.complexity_numbers(old)  # a csv from before R106 still works
+
+
+def test_copy_figures_drops_the_second_width_files_of_the_older_layout(
+    tmp_path: Path,
+) -> None:
+    """A figure has one report image: ``<stem>_double.png`` goes, nothing else does."""
+    src, out = tmp_path / "results", tmp_path / "report" / "figures"
+    (src / "1m").mkdir(parents=True)
+    (out / "1m").mkdir(parents=True)
+    for name in ("greedy_gap.png", "order_ppo.png", "greedy_gap_video.png"):
+        (src / "1m" / name).write_bytes(b"new, 170 mm")
+    for name in (  # what the last copy wrote, plus a hand-made file
+        "greedy_gap.png", "greedy_gap_double.png", "order_ppo_double.png",
+        "lone_double.png", "diagram.png",
+    ):  # fmt: skip
+        (out / "1m" / name).write_bytes(b"old")
+    (out / "1m" / OWNED).write_text(
+        '["greedy_gap.png", "greedy_gap_double.png", "order_ppo_double.png"]\n'
+    )
+    copy_figures(src, out)
+    left = sorted(p.name for p in (out / "1m").iterdir() if p.name != OWNED)
+    assert left == ["diagram.png", "greedy_gap.png", "lone_double.png", "order_ppo.png"]
+    assert (out / "1m" / "greedy_gap.png").read_bytes() == b"new, 170 mm"
+
+
+def test_drop_double_files_needs_the_partner_and_ignores_other_names(
+    tmp_path: Path,
+) -> None:
+    for name in ("a.png", "a_double.png", "b_double.png", "c_double.pdf", "c.png"):
+        (tmp_path / name).write_bytes(b"x")
+    gone = drop_double_files(tmp_path)
+    assert [p.name for p in gone] == ["a_double.png"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "a.png", "b_double.png", "c.png", "c_double.pdf",
+    ]  # fmt: skip

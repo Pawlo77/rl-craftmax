@@ -1,9 +1,9 @@
 """Analysis-angle figures F21-F28: questions the core figures leave open.
 
-Each ``plot_*`` follows `analysis.figures` (report 80 mm or ``double``, dark ``video``,
-``<stem>[_double][_video].png``, one panel per file, no title or text on the image) and
-draws ONE benchmark (the results CLI cuts the frames per benchmark). Question, reading
-and numbers go to the caption each figure registers; method colours are in
+Each ``plot_*`` follows `analysis.figures` (report at the stem's one width, dark
+``video``, ``<stem>[_video].png``, one panel per file, no title or text on the image)
+and draws ONE benchmark (the results CLI cuts the frames per benchmark). Question,
+reading and numbers go to the caption each figure registers; method colours are in
 ``legend_methods`` (F24 keeps a hollow-dot against cross legend). Intervals are
 `evaluation.stats` bootstraps; F24 and F25 draw `compare` tables; F27 and F28 read the
 finished distillation policies (R106). Artist gid ``<kind>/<budget>/<method>[/<key>]``.

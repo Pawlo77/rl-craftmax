@@ -204,7 +204,7 @@ Every laptop run trained with two concurrent queue workers, so these figures are
 
 ## Figure index
 
-Files in `outputs/results/figures/1m/` (`.png` only; a `_video` variant beside each, `_double` for the order graphs and `legend_methods`). One panel per file; the description of each file is in [[Figures 1M]], the tables in [[Tables 1M]]. "Descriptive" = no table-backed headline; read the figure.
+Files in `outputs/results/figures/1m/` (`.png` only: one report image per figure at the width the report places it at, 80 mm or 170 mm, recorded as `width_mm` in `captions.csv`, and a `_video` file beside each). One panel per file; the description of each file is in [[Figures 1M]], the tables in [[Tables 1M]]. "Descriptive" = no table-backed headline; read the figure.
 
 | ID | Files | Takeaway |
 |---|---|---|

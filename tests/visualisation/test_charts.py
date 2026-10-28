@@ -135,12 +135,14 @@ def test_a_long_panel_title_is_wrapped_to_its_axes(tmp_path: Path) -> None:
 # --- captions and per-benchmark folders -------------------------------------------
 
 
-def _saved_figure(tmp_path: Path, name: str, **caption: str) -> Path:
-    th = charts.report_theme()
+def _saved_figure(
+    tmp_path: Path, name: str, th: charts.Theme | None = None, **caption: str
+) -> Path:
+    th = th or charts.report_theme()
     fig = charts.themed_figure(th, 30)
     charts.style_axes(fig.add_subplot(), th).plot([0, 1], [0, 1])
     charts.save_png(fig, th, tmp_path, name, **caption)
-    return tmp_path / f"{name}.png"
+    return tmp_path / f"{name}{th.suffix}.png"
 
 
 def test_a_saved_figure_registers_its_caption_under_the_stem(tmp_path: Path) -> None:
@@ -148,7 +150,7 @@ def test_a_saved_figure_registers_its_caption_under_the_stem(tmp_path: Path) -> 
         _saved_figure(tmp_path, "toy", title="Toy", description="A line from 0 to 1.")
         _saved_figure(tmp_path, "toy", title="Toy", description="The last one wins.")
         _saved_figure(tmp_path, "plain")  # no description: nothing registered
-    assert rows == [charts.Caption("toy", "Toy", "The last one wins.")]
+    assert rows == [charts.Caption("toy", "Toy", "The last one wins.", 80.0)]
 
 
 def test_a_caption_registered_outside_a_block_is_dropped() -> None:
@@ -167,10 +169,11 @@ def test_captions_csv_keeps_the_rows_of_the_other_figure_ids(tmp_path: Path) -> 
     rows = [charts.Caption("a", "A", "first"), charts.Caption("b", "B", "second")]
     charts.write_captions(tmp_path, "F1", rows)
     charts.write_captions(tmp_path, "F2", [charts.Caption("c", "C", "third")])
-    path = charts.write_captions(tmp_path, "F1", [charts.Caption("a", "A", "new")])
+    new = [charts.Caption("a", "A", "new", 170.0), charts.Caption("d", "D", "x", 80.0)]
+    path = charts.write_captions(tmp_path, "F1", new)
     lines = path.read_text().splitlines()
-    assert lines[0] == "stem,id,title,description"
-    assert sorted(lines[1:]) == ["a,F1,A,new", "c,F2,C,third"]
+    assert lines[0] == "stem,id,title,description,width_mm"
+    assert sorted(lines[1:]) == ["a,F1,A,new,170", "c,F2,C,third,", "d,F1,D,x,80"]
 
 
 def test_the_figure_folder_of_a_benchmark_is_a_subfolder() -> None:
@@ -180,16 +183,53 @@ def test_the_figure_folder_of_a_benchmark_is_a_subfolder() -> None:
 # --- size classes: widths, aspect ratios, tiling insets ------------------------------
 
 
-@pytest.mark.parametrize(
-    ("width", "mm"), [("column", 80.0), ("double", 170.0), ("tile", 39.0)]
-)
-def test_report_widths_are_exact_and_the_tile_is_half_a_column(
+@pytest.mark.parametrize(("width", "mm"), [("column", 80.0), ("double", 170.0)])
+def test_report_widths_are_exact_and_no_report_file_carries_a_suffix(
     width: str, mm: float
 ) -> None:
     th = charts.theme("report", width)
     assert th.width * 25.4 == pytest.approx(mm)
-    assert charts.TILE_MM == (charts.COLUMN_MM - 2) / 2
-    assert th.suffix == {"column": "", "double": "_double", "tile": "_tile"}[width]
+    assert th.suffix == ""
+    assert charts.width_mm(th) == mm
+    assert set(charts.WIDTHS) == {"column", "double"}  # no tile width
+    assert charts.width_mm(charts.theme("video")) is None
+    with pytest.raises(ValueError, match="width must be one of"):
+        charts.theme("report", "tile")
+
+
+@pytest.mark.parametrize(
+    ("stem", "width"),
+    [
+        ("order_ppo", "double"), ("order_combo", "double"),
+        ("legend_methods", "double"),
+        ("greedy_gap", "double"), ("distil_features", "double"),
+        ("order_agreement", "column"), ("aggregate", "column"),
+        ("radar_ppo", "column"), ("fidelity_vs_leaves", "column"),
+    ],
+)  # fmt: skip
+def test_a_stem_has_one_declared_report_width(stem: str, width: str) -> None:
+    assert charts.report_width(stem) == width
+    for w in ("column", "double"):
+        want = w == width
+        assert charts.wants(charts.theme("report", w), stem) is want
+    assert charts.wants(charts.theme("video"), stem)
+
+
+def test_a_report_render_at_the_wrong_width_is_neither_written_nor_captioned(
+    tmp_path: Path,
+) -> None:
+    kw = {"title": "O", "description": "A graph."}
+    with charts.capture_captions() as rows:
+        _saved_figure(tmp_path, "order_ppo", charts.theme("report"), **kw)
+        assert not (tmp_path / "order_ppo.png").exists()
+        _saved_figure(tmp_path, "order_ppo", charts.theme("report", "double"), **kw)
+        _saved_figure(tmp_path, "order_ppo", charts.theme("video"), **kw)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "order_ppo.png", "order_ppo_video.png",
+    ]  # fmt: skip
+    assert rows == [
+        charts.Caption("order_ppo", "O", "A graph.", 170.0)
+    ]  # not the video
 
 
 @pytest.mark.parametrize(

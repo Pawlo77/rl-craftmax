@@ -1,7 +1,7 @@
 """In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars.
 
-Each ``plot_*`` follows `analysis.figures` (report 80 mm or ``double``, dark ``video``,
-files ``<stem>[_double][_video]``, `METHOD_COLORS`; a missing benchmark is pending).
+Each ``plot_*`` follows `analysis.figures` (report at the stem's one width, dark
+``video``, files ``<stem>[_video]``, `METHOD_COLORS`; a missing benchmark is pending).
 Per method: the median over seeds of each seed's episode median (a share: its mean) of
 the final stochastic eval episodes, with an `evaluation.stats` bootstrap interval. The
 race is `compare.race_table` (``upto`` only masks later unlocks); a family never logged
@@ -1163,7 +1163,7 @@ def plot_order_graph(
     mean normalised rank, y their tier (only tiers with a node are drawn, the caption
     names the others); arrows: ``P(a before b) >= 0.9`` over 20 co-occurring episodes
     after transitive reduction (`order_graph`). Node names are printed, so the figure
-    is drawn at the double width and as video only (`figures.DOUBLE_ONLY`).
+    is drawn at the double width and as video only (`charts.DOUBLE_STEMS`).
     """
     th, name = _theme(theme, width), f"order_{method}"
     ctx = _ctx(frames)

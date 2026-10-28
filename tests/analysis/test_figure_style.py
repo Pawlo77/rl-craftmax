@@ -38,11 +38,18 @@ from wut_murl_craftax.analysis.hard import (
     stall_table,
 )
 from wut_murl_craftax.interpretation import run as distil
-from wut_murl_craftax.visualisation.charts import ASPECT, MAX_ROWS_MM, Shape
+from wut_murl_craftax.visualisation.charts import (
+    ASPECT,
+    MAX_ROWS_MM,
+    WIDTHS,
+    Shape,
+    report_width,
+)
 
 N = 100
 """Bootstrap resamples in tests."""
-VARIANTS = (("report", "column"), ("report", "double"), ("video", "column"))
+THEMES = ("report", "video")
+"""One report case (at the figure's own width) and one video case per figure."""
 ALLOWED_LEGEND_OVER_DATA: dict[str, str] = {}
 """File stem -> why its legend may sit over an axes (empty: legends stay outside)."""
 METHOD_LEGEND_STEMS = ("legend_methods",)
@@ -153,24 +160,23 @@ def _timeline_case(out: Path) -> None:
     shutil.copy(video.with_suffix(".png"), out / "timeline.png")
 
 
-DOUBLE_FIDS: set[str] = {"F7G"}
-"""Figure ids drawn at 170 mm and as video only (order graphs print node names): they
-have no column case. Every other figure is one column wide: no double-width case."""
+DOUBLE_FIDS: set[str] = {"LEG", "F7G", *ANGLE_FIGS}
+"""Figure ids whose one report image is 170 mm wide (`charts.DOUBLE_STEMS`); every
+other figure is one column wide. There is no second report case: no low-res copy."""
 
 
 def _cases() -> dict[str, Callable[[Path], None]]:
     """Case name -> a function that draws it into a folder."""
     cases: dict[str, Callable[[Path], None]] = {}
-    for theme, width in VARIANTS:
+    for theme in THEMES:
         for fid, case in [
             *((f, _core_case) for f in NAMES),
             *((f, _game_case) for f in FIGS),  # F6 also saves F6W, the wall-clock race
             *((f, _angle_case) for f in ANGLE_FIGS),
         ]:
-            if theme == "report" and (width == "double") != (fid in DOUBLE_FIDS):
-                continue
-            cases[f"{fid}-{theme}-{width}"] = (
-                lambda out, f=fid, c=case, t=theme, w=width: c(f, t, w, out)
+            width = "double" if fid in DOUBLE_FIDS else "column"
+            cases[f"{fid}-{theme}"] = lambda out, f=fid, c=case, t=theme, w=width: c(
+                f, t, w, out
             )
     return cases | {
         "hard": _hard_case,
@@ -213,8 +219,8 @@ def known(request: pytest.FixtureRequest, case: str, check: str) -> None:
 
 
 def stem_of(path: Path) -> str:
-    """File stem without the ``_double`` / ``_video`` suffix."""
-    return re.sub(r"(_double|_video)$", "", path.stem)
+    """File stem without the ``_video`` suffix."""
+    return re.sub(r"_video$", "", path.stem)
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -332,8 +338,8 @@ def test_every_figure_registers_a_caption(
         assert len(got.description.split()) >= 4, got
 
 
-REPORT_WIDTHS_MM = (80.0, 170.0, 39.0)
-"""Column, double and half-column widths: figures are included unscaled."""
+REPORT_WIDTHS_MM = (80.0, 170.0)
+"""Column and double widths: figures are included unscaled."""
 VIDEO_PIXELS = (1920, 1080)
 
 
@@ -350,6 +356,22 @@ def test_the_saved_pixels_match_the_declared_size(
             assert any(abs(width - w) < 0.1 for w in REPORT_WIDTHS_MM), (
                 f"{f.path.name}: {width:.2f} mm wide"
             )
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_a_report_figure_is_one_image_at_its_own_width(
+    case: str, saved: Callable[[str], Saves]
+) -> None:
+    """One report PNG per stem, ``<stem>.png``, 80 or 170 mm as the stem declares."""
+    captions = {c.stem: c for c in saved(case).captions}
+    for f in saved(case):
+        assert not re.search(r"_(double|tile)$", f.path.stem), f.path.name
+        if f.expected_px == VIDEO_PIXELS:
+            assert f.path.stem.endswith("_video") or f.path.stem == "timeline"
+            continue
+        want = WIDTHS[report_width(stem_of(f.path))]
+        assert abs(f.size_mm[0] - want) < 0.1, f"{f.path.name}: {f.size_mm[0]:.1f} mm"
+        assert captions[stem_of(f.path)].width_mm == want
 
 
 @pytest.mark.parametrize("case", CASES)

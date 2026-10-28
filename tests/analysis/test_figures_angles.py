@@ -132,10 +132,14 @@ def draw(
     frames: dict[str, pd.DataFrame],
     out_dir: Path,
     theme: str = "report",
-    width: str = "column",
+    width: str = "double",
     trees: Path | None = None,
 ) -> Figure:
-    """Call the figure of ``fid`` on Craftax-1M with test-sized bootstraps."""
+    """Call the figure of ``fid`` on Craftax-1M with test-sized bootstraps.
+
+    Every angle figure is one 170 mm report image: ``double`` saves it (and registers
+    its caption); a ``column`` draw saves nothing.
+    """
     frames = one_benchmark(frames)
     b = {"width": width, "n_boot": N}
     root = trees or out_dir / "no-interpretation"
@@ -217,8 +221,11 @@ def test_each_figure_writes_its_pngs_with_its_labels(
 def test_sizes_are_the_report_widths_and_1080p(
     fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path, trees=trees)
+    fig = draw(fid, frames, tmp_path, width="column", trees=trees)
     assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
+    assert not list(tmp_path.glob("*.png")), (
+        "every angle figure is 170 mm: no column file"
+    )
     fig.canvas.draw()
     small = [
         t.get_text()
@@ -228,8 +235,12 @@ def test_sizes_are_the_report_widths_and_1080p(
     assert not small, small
     wide = draw(fid, frames, tmp_path, width="double", trees=trees)
     assert wide.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    for stem in STEMS[fid]:
-        assert (tmp_path / f"{stem}_double.png").is_file()
+    for stem in STEMS[fid]:  # the figure's one report image, no suffix
+        png = (tmp_path / f"{stem}.png").read_bytes()
+        assert int.from_bytes(png[16:20], "big") == pytest.approx(
+            170 / 25.4 * 300, abs=1
+        )
+        assert not (tmp_path / f"{stem}_double.png").exists()
     video = draw(fid, frames, tmp_path, "video", trees=trees)
     w, h = video.get_size_inches() * video.dpi
     assert (round(w), round(h)) == (1920, 1080)

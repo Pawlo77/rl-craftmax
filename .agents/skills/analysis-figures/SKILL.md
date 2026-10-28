@@ -45,16 +45,15 @@ this folder, when it exists.
 - One quantity and one panel per file; one subfolder per benchmark or budget; LaTeX
   stacks the panels. Tables use the same folders.
 - No explanatory text on the image: no notes, question titles, benchmark names,
-  "pending". Keep axis and tick labels, short panel labels, data values. Single-panel
-  figures have no title; others one short line that never wraps.
-- Captions: each figure registers a description in a captions file beside its PNGs; a
-  generator writes the notes table (figure link | description).
+  "pending". Keep axis and tick labels, data values. Single-panel figures have no title.
+- Captions: each figure registers a description and its width in a captions file beside
+  its PNGs; a generator writes the notes table (link | width | description).
 - One fixed colour per category, shown once in a standalone legend figure; no repeated
   legends. Other legends sit outside the data.
 - Nothing cropped, no overlapping text, no lone category label; compact for the column.
-- Paper-ready proportions: exact column or double width, height from a small set of
-  aspect ratios, fonts sized for 1:1 inclusion (never scaled in LaTeX), tiled panels
-  identical in size.
+- Paper-ready proportions: height from a small set of aspect ratios, fonts sized for 1:1
+  inclusion (never scaled in LaTeX). One report variant per figure, at the width it is
+  placed at; no low-res duplicate; width recorded with the caption.
 - An automated audit over every figure kind, then look at every rendered PNG.
 
 ## Pitfalls
