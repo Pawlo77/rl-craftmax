@@ -67,10 +67,27 @@ COMPLEXITY_QUANTITIES = {
     "fidelity_256": "fidTwoFiftySix",
     "expected_fidelity_256": "expectedFidTwoFiftySix",
     "closed_loop_256": "closedLoop",
+    "majority": "majority",
+    "gain_16": "gainSixteen",
+    "gain_64": "gainSixtyFour",
+    "gain_256": "gainTwoFiftySix",
+    "peak_val_leaves": "peakValLeaves",
+    "group_noop": "groupNoop",
+    "group_move": "groupMove",
+    "group_do": "groupDo",
+    "group_rest": "groupRest",
+    "group_ladder": "groupLadder",
+    "group_combat": "groupCombat",
+    "group_upgrade": "groupUpgrade",
 }
 """``complexity.csv`` column -> quantity word (numbers spelled out, no digits)."""
-SPEARMAN = "spearmanScoreNinety"
-"""One cross-method value per (budget, variant); the macro has no method part."""
+SPEARMANS = {
+    "spearman_score_l90": "spearmanScoreNinety",
+    "spearman_score_fid256": "spearmanScoreFidTwoFiftySix",
+}
+"""Cross-method column -> macro word: one value per (budget, variant), no method part.
+The L90 one is NaN when every L90 is censored (R106 replaces it by the fidelity one)."""
+SPEARMAN = SPEARMANS["spearman_score_l90"]
 NEVER = r"\ensuremath{>}4096"
 """A leaf count that was never reached (``inf`` in ``complexity.csv``)."""
 NOT_APPLICABLE = "--"
@@ -78,7 +95,8 @@ MACRO = re.compile(r"^[A-Za-z]+$")
 USED = re.compile(
     r"\\((?:score|scoreSe|iqm|iqmLo|iqmHi|median|evalStoch|evalGreedy|poi|pHolm|"
     r"lEighty|lNinety|lNinetyFive|depthNinety|fid[A-Za-z]*|expectedFid[A-Za-z]*|"
-    r"closedLoop|spearman[A-Za-z]*)(?:OneM|OneB)[A-Za-z]*)"
+    r"closedLoop|majority|gain[A-Za-z]*|peakValLeaves|group[A-Za-z]*|"
+    r"spearman[A-Za-z]*)(?:OneM|OneB)[A-Za-z]*)"
 )
 """A control sequence of this module's macro family, as used in a ``.tex`` file."""
 _ESCAPES = {
@@ -215,7 +233,7 @@ def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
             v = r.get(col)
             if v is None or (isinstance(v, float) and math.isnan(v)):
                 continue
-            whole = col.startswith(("l80", "l90", "l95", "depth"))
+            whole = col.startswith(("l80", "l90", "l95", "depth", "peak"))
             text = _leaves(float(v)) if whole else _fmt(float(v), 3)
             out.append(
                 Number(
@@ -224,10 +242,11 @@ def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
                 )
             )
     for (budget, variant), g in frame.groupby(["budget", "variant"]):
-        v = g["spearman_score_l90"].dropna()
-        if len(v):
-            name = f"{SPEARMAN}{BUDGET_NAMES[str(budget)]}{_variant(variant)}"
-            out.append(Number(name, _fmt(float(v.iloc[0]), 3)))
+        for col, word in SPEARMANS.items():
+            v = g[col].dropna() if col in g else g.iloc[:0]
+            if len(v):
+                name = f"{word}{BUDGET_NAMES[str(budget)]}{_variant(variant)}"
+                out.append(Number(name, _fmt(float(v.iloc[0]), 3)))
     return out
 
 

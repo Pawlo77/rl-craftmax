@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import pickle  # nosec B403 - only trees this module wrote (scikit-learn persists by pickle)
 import shutil
 import statistics
@@ -45,7 +46,14 @@ from .dataset import (
     relabel,
 )
 from .distill import LEAF_GRID, FittedTree, complexity, fidelity_curve, fit_grid
-from .rules import TopLevel, failure_breakdown, importance, rules_text, top_level_rules
+from .rules import (
+    ACTION_GROUPS,
+    TopLevel,
+    failure_breakdown,
+    importance,
+    rules_text,
+    top_level_rules,
+)
 from .tree_policy import CLOSED_LOOP_LEAVES, closed_loop, tree_rollouts
 
 logger = logging.getLogger(__name__)
@@ -81,9 +89,15 @@ COLUMNS = [
     "depth_at_l90_median", "fidelity_16", "fidelity_64", "fidelity_256",
     "expected_fidelity_256", "closed_loop_256", "spearman_score_l90", "spearman_p",
     "top_keys", "top_skills", "top_l90", "top_optimistic_share", "l90_censored",
+    "majority", "gain_16", "gain_64", "gain_256", "peak_val_leaves",
+    *(f"group_{g}" for g in ACTION_GROUPS),
+    "spearman_score_fid256", "spearman_fid256_p",
 ]  # fmt: skip
 """`complexity.csv`: contracts section 3, then the optimistic share of the default
-top-level view and the seeds whose L90 is above the grid."""
+top-level view and the seeds whose L90 is above the grid, then the R106 numbers:
+the majority-class fidelity and each fidelity's gain over it, the leaf count at the
+validation peak, the 256-leaf recall per network action group and the Spearman of
+score vs fidelity at 256 leaves."""
 
 
 @dataclass(slots=True)
@@ -146,8 +160,15 @@ def _plain(value: Any) -> Any:
 
 def _write(path: Path, text: str) -> None:
     """Replace ``path`` atomically, so a file that exists is complete."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")  # one per process
     tmp.write_text(text)
+    tmp.replace(path)
+
+
+def _write_csv(frame: pd.DataFrame, path: Path) -> None:
+    """Replace ``path`` atomically with ``frame`` (a reader never sees half a CSV)."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    frame.to_csv(tmp, index=False)
     tmp.replace(path)
 
 
@@ -451,7 +472,7 @@ def sum_up_method(folder: Path) -> None:
     curves = _concat(folder, summaries, "curve")
     for table in TABLES:
         frame = curves if table == "curve" else _concat(folder, summaries, table)
-        frame.to_csv(folder / f"{table}.csv", index=False)
+        _write_csv(frame, folder / f"{table}.csv")
     _write_json(folder / SUMMARY, {"median_run": median["run_id"], "seeds": summaries})
     _write(folder / "rules_16.txt", _rules_text(folder, median))
     if median["top_level"] is not None:
@@ -504,9 +525,77 @@ def _top_columns(group: Sequence[Json]) -> dict[str, float]:
     }
 
 
-def _row(budget: str, variant: str, group: Sequence[tuple[Json, Json]]) -> Json:
+GROUP_COLUMNS = [f"group_{g}" for g in ACTION_GROUPS]
+EXTRA_KEYS = ("majority", "peak_val_leaves", *GROUP_COLUMNS)
+"""The per-policy numbers `policy_extras` reads from a policy's files."""
+
+
+def _median(values: Sequence[float]) -> float:
+    """Median ignoring NaN; NaN without values."""
+    arr = np.asarray(values, float)
+    arr = arr[~np.isnan(arr)]
+    return float(np.median(arr)) if len(arr) else math.nan
+
+
+def policy_extras(folder: Path, variant: str) -> dict[str, float]:
+    """R106 numbers of one policy and fit, from the files of its folder (NaN if absent).
+
+    ``majority``: the share of the commonest network action among the test states
+    (what a constant tree scores); ``peak_val_leaves``: the leaf count with the best
+    validation fidelity (the smaller one on a tie); ``group_<name>``: the 256-leaf
+    tree's recall on the states where the network chose an action of that group
+    (the diagonal of ``failure_<variant>.json``'s confusion over its row sums).
+    """
+    out = dict.fromkeys(EXTRA_KEYS, math.nan)
+    test = folder / "test.npz"
+    if test.is_file():
+        with np.load(test) as z:
+            label = z["label"]
+        if len(label):
+            out["majority"] = float(np.bincount(label).max() / len(label))
+    curve = folder / f"curve_{variant}.csv"
+    if curve.is_file():
+        frame = pd.read_csv(curve)
+        leaf = frame[frame["kind"] == "leaves"].dropna(subset=["val_top1"])
+        if len(leaf):  # idxmax is the first maximum: the smallest tree
+            out["peak_val_leaves"] = float(
+                leaf.loc[leaf["val_top1"].idxmax(), "leaves"]
+            )
+    failure = folder / f"failure_{variant}.json"
+    if failure.is_file():
+        data = _read_json(failure)
+        conf = np.asarray(data["confusion"], float)
+        rows = conf.sum(axis=1)
+        for i, name in enumerate(data["groups"]):
+            if rows[i]:
+                out[f"group_{name}"] = float(conf[i, i] / rows[i])
+    return out
+
+
+def _spearman_values(x: Sequence[float], y: Sequence[float]) -> tuple[float, float]:
+    """Spearman's rho and p of two lists without their NaN pairs; NaN for under 3."""
+    pairs = [
+        (a, b)
+        for a, b in zip(x, y, strict=True)
+        if not (math.isnan(a) or math.isnan(b))
+    ]
+    if len(pairs) < 3:
+        return math.nan, math.nan
+    res = stats.spearmanr(*zip(*pairs, strict=True))
+    return float(res.statistic), float(res.pvalue)
+
+
+def _row(
+    budget: str,
+    variant: str,
+    group: Sequence[tuple[Json, Json]],
+    extras: Mapping[tuple[str, str], Mapping[str, float]] | None = None,
+) -> Json:
     """The `complexity.csv` row of one unit and variant (no Spearman yet)."""
     fits = [f for _, f in group]
+    extra = [(extras or {}).get((s["run_id"], variant), {}) for s, _ in group]
+    nan = math.nan
+    majority = [e.get("majority", nan) for e in extra]
     lo, hi = _quantiles([f["L90"] for f in fits], budget)
     depths = [f["depth_L90"] for f in fits if f["depth_L90"] is not None]
 
@@ -534,13 +623,29 @@ def _row(budget: str, variant: str, group: Sequence[tuple[Json, Json]]) -> Json:
         "closed_loop_256": median(f"closed_loop_{CLOSED_LOOP_LEAVES}"),
         **_top_columns([s for s, _ in group]),
         "l90_censored": sum(f["L90"] is None for f in fits),
+        "majority": _median(majority),
+        **{
+            f"gain_{n}": _median([
+                f[f"fidelity_{n}"] - m for f, m in zip(fits, majority, strict=True)
+            ])
+            for n in FIDELITY_AT
+        },
+        "peak_val_leaves": _median([e.get("peak_val_leaves", nan) for e in extra]),
+        **{c: _median([e.get(c, nan) for e in extra]) for c in GROUP_COLUMNS},
     }
 
 
-def complexity_table(summaries: Sequence[Json], budget: str) -> pd.DataFrame:
+def complexity_table(
+    summaries: Sequence[Json],
+    budget: str,
+    extras: Mapping[tuple[str, str], Mapping[str, float]] | None = None,
+) -> pd.DataFrame:
     """One row per (method, config_ref, variant); Spearman over each variant's seeds.
 
     Key-tree levels stay in ``top_l90``, out of the L90 columns and the Spearman.
+    ``extras`` maps (``run_id``, variant) to `policy_extras`; without them the R106
+    columns are NaN. The Spearman of score vs fidelity at 256 leaves is R106's
+    replacement for the all-censored score vs L90 one.
     """
     rows = []
     for variant in VARIANTS:
@@ -550,33 +655,89 @@ def complexity_table(summaries: Sequence[Json], budget: str) -> pd.DataFrame:
         rho, p = spearman(
             [s["score"] for s, _ in fitted], [f["L90"] for _, f in fitted]
         )
+        rho_f, p_f = _spearman_values(
+            [s["score"] for s, _ in fitted],
+            [f[f"fidelity_{CLOSED_LOOP_LEAVES}"] for _, f in fitted],
+        )
         units: dict[tuple[str, str], list[tuple[Json, Json]]] = {}
         for s, f in fitted:
             units.setdefault((s["method"], s["config_ref"]), []).append((s, f))
         rows += [
-            _row(budget, variant, units[k])
-            | {"spearman_score_l90": rho, "spearman_p": p}
+            _row(budget, variant, units[k], extras)
+            | {
+                "spearman_score_l90": rho,
+                "spearman_p": p,
+                "spearman_score_fid256": rho_f,
+                "spearman_fid256_p": p_f,
+            }
             for k in sorted(units)
         ]
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
+def _read_curve(path: Path) -> pd.DataFrame | None:
+    """A method's ``curve.csv``; None (and a warning) if it is empty or half written."""
+    try:
+        return pd.read_csv(path)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError):
+        logger.warning("%s is empty or torn (being rewritten?): left out", path)
+        return None
+
+
+def _copy_atomic(src: Path, dst: Path) -> None:
+    tmp = dst.with_name(f"{dst.name}.{os.getpid()}.tmp")
+    shutil.copyfile(src, tmp)
+    tmp.replace(dst)
+
+
+def policy_table(summaries: Sequence[tuple[Json, Path]]) -> pd.DataFrame:
+    """One row per policy and variant: score, fidelities and the `policy_extras`."""
+    rows = []
+    for s, folder in summaries:
+        for variant in VARIANTS:
+            fit = _fit_of(s, variant)
+            if fit is None:
+                continue
+            ex = policy_extras(folder, BASE if _fit_is_base(s, variant) else variant)
+            rows.append({
+                **{k: s[k] for k in ("run_id", "seed", "method", "config_ref")},
+                "variant": variant,
+                "score": s["score"],
+                **{f"fidelity_{n}": fit[f"fidelity_{n}"] for n in FIDELITY_AT},
+                **ex,
+            })
+    return pd.DataFrame(rows)
+
+
+def _fit_is_base(summary: Json, variant: str) -> bool:
+    """A feed-forward policy's no-memory fit is its base fit (files included)."""
+    return variant == NO_MEMORY and not summary["recurrent"]
+
+
 def sum_up_budget(folder: Path, figures: Path) -> None:
-    """``complexity.csv`` and the budget figure from every policy under ``folder``."""
+    """``complexity.csv``, ``policies.csv`` and the budget figure from ``folder``."""
     budget = folder.name
-    summaries = [dict(_read_json(p)) for p in sorted(folder.glob(f"*/*/{SUMMARY}"))]
-    if not summaries:
+    paths = sorted(folder.glob(f"*/*/{SUMMARY}"))
+    if not paths:
         return
-    complexity_table(summaries, budget).to_csv(folder / "complexity.csv", index=False)
-    curves = pd.concat(
-        [pd.read_csv(p) for p in sorted(folder.glob("*/curve.csv"))],
-        ignore_index=True,
+    summaries = [(dict(_read_json(p)), p.parent) for p in paths]
+    extras = {
+        (s["run_id"], v): policy_extras(d, BASE if _fit_is_base(s, v) else v)
+        for s, d in summaries
+        for v in VARIANTS
+    }
+    _write_csv(
+        complexity_table([s for s, _ in summaries], budget, extras),
+        folder / "complexity.csv",
     )
+    _write_csv(policy_table(summaries), folder / "policies.csv")
+    parts = [_read_curve(p) for p in sorted(folder.glob("*/curve.csv"))]
+    curves = pd.concat([c for c in parts if c is not None], ignore_index=True)
     name = f"fidelity_vs_leaves_{budget}"
     _plot_fidelity(curves, folder, name, per_seed=False)
     figures.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
-        shutil.copyfile(folder / f"{name}.{ext}", figures / f"{name}.{ext}")
+        _copy_atomic(folder / f"{name}.{ext}", figures / f"{name}.{ext}")
 
 
 # ------------------------------------------------------------------------- driver

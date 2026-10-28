@@ -37,6 +37,9 @@ COMPLEXITY = [
         "fidelity_16": 0.71234, "fidelity_64": 0.8, "fidelity_256": 0.9,
         "expected_fidelity_256": 0.95, "closed_loop_256": 0.5,
         "spearman_score_l90": -0.4321, "spearman_p": 0.2,
+        "majority": 0.3123, "gain_16": 0.1, "gain_64": 0.2, "gain_256": 0.5877,
+        "peak_val_leaves": 128.0, "group_move": 0.91234, "group_noop": np.nan,
+        "spearman_score_fid256": 0.7, "spearman_fid256_p": 0.04,
     },
     {
         "budget": "1m", "method": "sil", "config_ref": "tuned", "variant": "no-memory",
@@ -558,3 +561,27 @@ def test_t5_ranks_inside_each_block_and_a_control_is_a_row_of_both(
         section = text.split("main block" if block == "main" else "skills block")[1]
         row = next(ln for ln in section.splitlines() if ln.startswith(f"{best} &"))
         assert "textbf" in row.split("&")[1]
+
+
+OLD = {
+    "budget", "method", "config_ref", "variant", "n_seeds", "l80_median", "l90_median",
+    "l95_median", "l90_lo", "l90_hi", "l90_spread", "depth_at_l90_median",
+    "fidelity_16", "fidelity_64", "fidelity_256", "expected_fidelity_256",
+    "closed_loop_256", "spearman_score_l90", "spearman_p",
+}  # fmt: skip
+
+
+def test_the_r106_quantities_have_macros_and_nan_ones_have_none(
+    complexity_root: Path,
+) -> None:
+    frame = pd.read_csv(complexity_root / "1m" / "complexity.csv")
+    got = {n.name: n.text for n in latex.complexity_numbers(frame)}
+    assert got["majorityOneMSil"] == "0.312"
+    assert got["gainTwoFiftySixOneMSil"] == "0.588"
+    assert got["peakValLeavesOneMSil"] == "128"
+    assert got["groupMoveOneMSil"] == "0.912"
+    assert "groupNoopOneMSil" not in got
+    assert got["spearmanScoreFidTwoFiftySixOneM"] == "0.700"
+    assert "spearmanScoreFidTwoFiftySixOneMNoMemory" not in got  # NaN on that row
+    old = frame[[c for c in frame.columns if c in OLD]]
+    assert latex.complexity_numbers(old)  # a csv from before R106 still works

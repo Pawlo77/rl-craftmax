@@ -61,7 +61,8 @@ BOOT_GAME = ("F8", "F8T", "F9", "F9S", "F10", "F11", "F12", "F13", "F14", "F15",
 TABLE_FILES = {"game": "game_summary"}
 """Table key -> CSV stem where they differ."""
 COMPLEXITY_MACRO = re.compile(
-    r"^(?:lEighty|lNinety|depthNinety|fid|expectedFid|closedLoop|spearman)"
+    r"^(?:lEighty|lNinety|depthNinety|fid|expectedFid|closedLoop|spearman|majority|"
+    r"gain|peakVal|group)"
     r"[A-Za-z]*?(?:OneM|OneB)"
 )
 """Names of the macros built from ``complexity.csv`` (`latex.COMPLEXITY_QUANTITIES`)."""

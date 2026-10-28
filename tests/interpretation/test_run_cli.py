@@ -3,6 +3,7 @@
 import json
 import math
 import pickle
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -163,7 +164,7 @@ def test_every_method_folder_holds_the_plan_files(world: World) -> None:
     assert {p.name for p in world.method("smdp-skills").iterdir()} >= SKILL_FILES
     assert not SKILL_FILES & {p.name for p in world.method("ppo").iterdir()}
     assert {p.name for p in (world.out / "1m").iterdir()} == {
-        "ppo", "smdp-skills", "complexity.csv",
+        "ppo", "smdp-skills", "complexity.csv", "policies.csv",
         "fidelity_vs_leaves_1m.pdf", "fidelity_vs_leaves_1m.png",
     }  # fmt: skip
     assert (world.figures / "fidelity_vs_leaves_1m.pdf").is_file()
@@ -314,3 +315,99 @@ def test_censored_levels_rank_above_the_grid_and_set_the_median() -> None:
     rho, _ = cli.spearman([1.0, 2.0, 3.0, 4.0], [16, 4096, None, None])
     assert rho == pytest.approx(cli.spearman([1, 2, 3, 4], [1, 2, 3, 3])[0])
     assert math.isnan(cli.spearman([1.0, 2.0], [4, 8])[0])  # too few seeds
+
+
+# --- R106 numbers --------------------------------------------------------------
+
+
+def test_the_r106_columns_are_computed_from_the_policy_files(world: World) -> None:
+    table = pd.read_csv(world.out / "1m" / "complexity.csv")
+    assert list(table.columns[len(CONTRACT) + 2 :]) == [
+        "majority", "gain_16", "gain_64", "gain_256", "peak_val_leaves",
+        *(f"group_{g}" for g in cli.ACTION_GROUPS),
+        "spearman_score_fid256", "spearman_fid256_p",
+    ]  # fmt: skip
+    for method in CONFIGS:
+        with np.load(world.policy(method) / "test.npz") as z:
+            label = z["label"]
+        share = np.bincount(label).max() / len(label)
+        rows = table[table["method"] == method]
+        assert rows["majority"].eq(share).all()
+        base = rows[rows["variant"] == "base"].iloc[0]
+        assert base["gain_256"] == pytest.approx(base["fidelity_256"] - share)
+        assert base["peak_val_leaves"] in cli.LEAF_GRID
+        groups = rows[[f"group_{g}" for g in cli.ACTION_GROUPS]]
+        assert ((groups >= 0) | groups.isna()).all().all()
+        assert groups.notna().any().any()  # the network played some group
+    assert table["spearman_score_fid256"].isna().all()  # one seed per method
+
+
+def test_policies_csv_has_a_row_per_policy_and_variant(world: World) -> None:
+    pol = pd.read_csv(world.out / "1m" / "policies.csv")
+    assert len(pol) == 6  # two policies x base, no-memory, dagger
+    assert {"run_id", "seed", "score", "majority", "peak_val_leaves"} <= set(
+        pol.columns
+    )
+    assert set(pol["run_id"]) == set(world.ids.values())
+
+
+def test_a_torn_curve_file_does_not_stop_the_budget_summary(
+    world: World, tmp_path: Path
+) -> None:
+    copy = tmp_path / "1m"
+    shutil.copytree(world.out / "1m", copy)
+    (copy / "ppo" / "curve.csv").write_text("")  # a writer caught mid-rewrite
+    cli.sum_up_budget(copy, tmp_path / "figures")
+    assert (copy / "complexity.csv").is_file()
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+def _summary(run_id: str, score: float, fid: float) -> dict[str, Any]:
+    fit = {
+        "L80": 8, "L90": 16, "L95": None, "depth_L90": 3, "fidelity_16": fid - 0.2,
+        "fidelity_64": fid - 0.1, "fidelity_256": fid, "expected_256": fid,
+        "closed_loop_256": 0.5,
+    }  # fmt: skip
+    return {
+        "run_id": run_id, "seed": 0, "method": "ppo", "config_ref": "tuned",
+        "score": score, "recurrent": False, "fits": {"base": fit}, "top_level": None,
+    }  # fmt: skip
+
+
+def test_the_spearman_of_score_against_fidelity_replaces_the_censored_one() -> None:
+    summaries = [_summary(f"r{i}", 1.0 + i, 0.5 + 0.1 * i) for i in range(4)]
+    extras = {
+        (s["run_id"], "base"): {"majority": 0.25, "peak_val_leaves": 64.0}
+        for s in summaries
+    }
+    row = cli.complexity_table(summaries, "1m", extras).set_index("variant").loc["base"]
+    assert row["spearman_score_fid256"] == pytest.approx(1.0)
+    assert row["majority"] == 0.25
+    assert row["gain_256"] == pytest.approx(np.median([0.25, 0.35, 0.45, 0.55]))
+    assert row["peak_val_leaves"] == 64
+    assert math.isnan(row["group_move"])  # no failure file for it
+    bare = cli.complexity_table(summaries, "1m").set_index("variant").loc["base"]
+    assert math.isnan(bare["majority"])
+    assert math.isnan(bare["gain_256"])
+
+
+def test_policy_extras_read_labels_the_validation_peak_and_group_recall(
+    tmp_path: Path,
+) -> None:
+    np.savez(tmp_path / "test.npz", label=np.array([0, 0, 0, 1]))
+    pd.DataFrame({
+        "kind": ["leaves"] * 3,
+        "leaves": [2, 4, 8],
+        "val_top1": [0.5, 0.7, 0.7],
+    }).to_csv(tmp_path / "curve_base.csv", index=False)
+    groups = list(cli.ACTION_GROUPS)
+    confusion = np.zeros((len(groups), len(groups)))
+    confusion[1, 1], confusion[1, 2] = 3, 1  # network "move" (index 1): 3 of 4 right
+    (tmp_path / "failure_base.json").write_text(
+        json.dumps({"groups": groups, "confusion": confusion.tolist()})
+    )
+    got = cli.policy_extras(tmp_path, "base")
+    assert got["majority"] == 0.75
+    assert got["peak_val_leaves"] == 4  # the smaller tree on a tie
+    assert got["group_move"] == 0.75
+    assert math.isnan(got["group_noop"])  # the network never chose it
