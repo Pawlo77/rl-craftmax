@@ -9,6 +9,12 @@ import pandas as pd
 import pytest
 
 from wut_murl_craftax.orchestration import prune
+from wut_murl_craftax.orchestration.queue import REPO_ROOT
+from wut_murl_craftax.orchestration.runner import (
+    OWNER_FILE,
+    TAG_CKPT_MISSING,
+    TAG_WARN_ARTIFACTS,
+)
 from wut_murl_craftax.orchestration.store import EVAL_MODES
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training.checkpoints import missing_checkpoints, pruned_updates
@@ -33,13 +39,14 @@ class Store:
     def add(
         self,
         name: str,
-        phases: str,
+        phases: str | None,
         updates: list[int],
         *,
         status: str = "FINISHED",
         log_spaced: bool = True,
+        tags: dict[str, str] | None = None,
     ) -> str:
-        experiment = phases.split(",")[-1]
+        experiment = phases.split(",")[-1] if phases else "analysis"
         found = self.client.get_experiment_by_name(experiment)
         exp_id = (
             found.experiment_id
@@ -49,7 +56,8 @@ class Store:
                 artifact_location=(self.root / "mlruns" / experiment).as_uri(),
             )
         )
-        run = self.client.create_run(exp_id, run_name=name, tags={"phases": phases})
+        tags = (tags or {}) | ({"phases": phases} if phases else {})
+        run = self.client.create_run(exp_id, run_name=name, tags=tags)
         out = artifact_path(run.info.artifact_uri)
         (out / "ckpt").mkdir(parents=True)
         index = []
@@ -85,6 +93,7 @@ class Store:
 def store(tmp_path: Path) -> Store:
     s = Store(tmp_path)
     s.add("T", "tune-coarse", [0, 1, 3], log_spaced=False)
+    s.add("S", "smoke", [0, 1, 2], log_spaced=False)  # keeps its final checkpoint
     ids = {n: s.add(n, "final-1m", [0, 1, 2, 3]) for n in ("F0", "F1", "F2", "F3")}
     ids["F4"] = s.add("F4", "tune-coarse,final-1m", [0, 1, 2, 3])
     s.add("U", "final-1m", [0, 1, 2, 3])  # not exported yet
@@ -134,8 +143,9 @@ def _ckpt(*updates: int) -> list[str]:
 
 def test_the_plan_keeps_what_later_steps_read(store: Store) -> None:
     got = _plan(store)
-    want = {(n, "state", "state") for n in ("T", "F0", "F1", "F2", "F3", "F4", "U")}
+    want = {(n, "state", "state") for n in (*"STU", "F0", "F1", "F2", "F3", "F4")}
     want |= {("T", "ckpt_tuning", f) for f in _ckpt(0, 1, 3)}
+    want |= {("S", "ckpt_tuning", f) for f in _ckpt(0, 1)}
     want |= {("F3", "ckpt_final", f) for f in _ckpt(0, 2)}  # last and case kept
     want |= {("F4", "ckpt_final", f) for f in _ckpt(0, 1, 2)}
     assert got == want
@@ -149,10 +159,12 @@ def test_a_dry_run_deletes_nothing_and_prints_the_sizes_per_class(
     assert store.files() == before
     out = capsys.readouterr().out
     assert "dry run" in out
-    assert re.search(r"state\s+7\s+7\s+35,000\s", out), out
-    assert re.search(r"ckpt_tuning\s+3\s+1\s+3,000\s", out), out
+    assert re.search(r"state\s+8\s+8\s+40,000\s", out), out
+    assert re.search(r"ckpt_tuning\s+5\s+2\s+5,000\s", out), out
     assert re.search(r"ckpt_final\s+5\s+2\s+5,000\s", out), out
-    assert re.search(r"total\s+15\s+7\s+43,000\s", out), out
+    assert re.search(r"total\s+18\s+8\s+50,000\s", out), out
+    assert f"export tables: 5 runs from {store.metrics}" in out
+    assert f"case updates: 1 in 1 runs from {store.analysis}" in out
     assert "kept whole: 3 runs" in out
     assert "not in the export tables, every checkpoint kept: U" in out
     assert "evaluation incomplete, skipped: P" in out
@@ -173,6 +185,7 @@ def test_apply_marks_then_deletes_and_keeps_the_index(
     assert pruned_updates(d["F3"]) == {0, 2}
     assert pruned_updates(d["F4"]) == {0, 1, 2}
     assert sorted(p.name for p in (d["F3"] / "ckpt").glob("*.msgpack")) == _ckpt(1, 3)
+    assert sorted(p.name for p in (d["S"] / "ckpt").glob("*.msgpack")) == _ckpt(2)
     for n in ("F0", "F1", "F2", "U"):
         assert sorted(p.name for p in (d[n] / "ckpt").glob("*.msgpack")) == _ckpt(
             0, 1, 2, 3
@@ -215,3 +228,106 @@ def test_seed_picks_rank_by_final_score_and_by_the_stochastic_eval() -> None:
         "a": {"best-eval"},
         "x": {"best", "median", "best-eval"},  # its own budget
     }
+
+
+def test_seed_picks_break_ties_by_the_larger_run_id() -> None:
+    runs = pd.DataFrame({
+        "run_id": ["a", "b", "c"],
+        "budget": ["1m"] * 3,
+        "method": ["m"] * 3,
+        "config_ref": ["tuned"] * 3,
+        "final_score": [1.0, 1.0, 1.0],
+        "eval_stochastic_score": [2.0, 2.0, 1.0],
+    })
+    assert prune.seed_picks(runs) == {"c": {"best"}, "b": {"median", "best-eval"}}
+
+
+def test_relative_inputs_resolve_against_the_repo_root() -> None:
+    args = prune.parse_args(["--analysis-root", "outputs/analysis"])
+    assert args.analysis_root == REPO_ROOT / "outputs" / "analysis"
+    assert args.metrics_root == REPO_ROOT / "outputs" / "metrics"
+    assert prune._db_path("sqlite:///mlruns.db?timeout=5") == REPO_ROOT / "mlruns.db"
+
+
+@pytest.mark.parametrize("missing", ["--analysis-root", "--metrics-root"])
+def test_apply_is_refused_when_cases_or_export_rows_do_not_load(
+    store: Store, tmp_path: Path, missing: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _args(store, "--apply")
+    args[args.index(missing) + 1] = str(tmp_path / "nowhere")
+    before = store.files()
+    with pytest.raises(SystemExit) as stop:
+        prune.main(args)
+    assert stop.value.code != 0
+    assert store.files() == before
+    assert "refusing --apply" in capsys.readouterr().err
+
+
+def test_runs_that_may_still_need_their_files_are_kept_apart(
+    store: Store, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store.add(
+        "W", "tune-coarse", [0, 1], log_spaced=False, tags={TAG_WARN_ARTIFACTS: "x"}
+    )
+    store.add(
+        "M", "tune-coarse", [0, 1], log_spaced=False, tags={TAG_CKPT_MISSING: "1"}
+    )
+    store.add("O", "tune-coarse", [0, 1], log_spaced=False)
+    (store.dirs["O"] / OWNER_FILE).write_text("{}")  # a live queue holds it
+    store.add("N", None, [0, 1], log_spaced=False)  # no phases tag
+    before = store.files()
+    got = _plan(store)
+    assert not {run for run, _, _ in got} & {"W", "M", "O", "N"}
+    prune.main(_args(store))
+    out = capsys.readouterr().out
+    assert "tagged warn/artifacts, ckpt/missing or warn/state_unreadable: M, W" in out
+    assert "held by a live queue (owner.json): O" in out
+    assert "no phases tag: N" in out
+    assert store.files() == before
+
+
+def test_links_and_paths_outside_ckpt_are_never_followed(
+    store: Store, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"keep me")
+    store.add("L", "tune-coarse", [0, 1], log_spaced=False)
+    link = store.dirs["L"] / "ckpt" / "00001.msgpack"
+    link.unlink()
+    link.symlink_to(outside)
+    store.add("E", "tune-coarse", [0, 1], log_spaced=False)
+    index = store.dirs["E"] / "ckpt" / "index.json"
+    entries = json.loads(index.read_text())
+    entries[1]["file"] = "../../../../outside.bin"
+    index.write_text(json.dumps(entries))
+    assert not {run for run, _, _ in _plan(store)} & {"L", "E"}
+    prune.main(_args(store, "--apply"))
+    assert "unsafe paths (links or outside ckpt/): E, L" in capsys.readouterr().out
+    assert outside.read_bytes() == b"keep me"
+    assert (store.dirs["E"] / "ckpt" / "00000.msgpack").is_file()
+
+
+def test_an_apply_cut_in_the_middle_leaves_a_consistent_store_and_reruns(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real, calls = Path.unlink, []
+
+    def cut(path: Path, missing_ok: bool = False) -> None:
+        calls.append(path)
+        if len(calls) == 2:  # the second file of the first run with checkpoints
+            raise KeyboardInterrupt
+        real(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", cut)
+    with pytest.raises(KeyboardInterrupt):
+        prune.main(_args(store, "--apply"))
+    monkeypatch.setattr(Path, "unlink", real)
+    run = calls[0].parent.parent
+    planned = {int(p.stem) for p in calls}
+    assert planned <= pruned_updates(run)  # marked before any deletion
+    assert (run / "ckpt" / calls[1].name).is_file()  # the cut left it
+    for d in store.dirs.values():
+        assert missing_checkpoints(d) == []
+    prune.main(_args(store, "--apply"))
+    assert _plan(store) == set()
+    assert not (run / "ckpt" / calls[1].name).exists()

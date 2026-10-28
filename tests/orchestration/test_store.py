@@ -548,15 +548,19 @@ def test_status_shows_a_finished_run_without_every_log_spaced_eval_apart(
     assert last == want
 
 
-def test_status_counts_a_pruned_run_as_finished(main_store: Node) -> None:
-    """Storage retention: a pruned checkpoint without eval files is known-absent."""
-    ppo, *_ = _names()
-    files = evaluated(1, 2, 3)
-    del files["eval/greedy/00002.npz"], files["eval/stochastic/00002.npz"]
-    files["ckpt/pruned.json"] = json.dumps({"updates": [1, 2], "reason": "test"})
-    main_store.add(ppo, "entries", files=files)
+def test_status_counts_a_pruned_run_by_its_eval_files(main_store: Node) -> None:
+    """Storage retention: the prune keeps every eval file, so a pruned run is
+    finished; a pruned checkpoint without its eval files is a gap (review M6)."""
+    ppo, pqn, *_ = _names()
+    marker = json.dumps({"updates": [1, 2], "reason": "test"})
+    main_store.add(
+        ppo, "entries", files=evaluated(1, 2, 3) | {"ckpt/pruned.json": marker}
+    )
+    gap = evaluated(1, 2, 3) | {"ckpt/pruned.json": marker}
+    del gap["eval/greedy/00002.npz"], gap["eval/stochastic/00002.npz"]
+    main_store.add(pqn, "entries", files=gap)
     status = phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)
-    assert status[ppo] == "finished"
+    assert (status[ppo], status[pqn]) == ("finished", "eval-incomplete")
 
 
 def test_evaluation_is_complete_with_both_modes_of_the_evaluated_updates(
@@ -569,9 +573,24 @@ def test_evaluation_is_complete_with_both_modes_of_the_evaluated_updates(
     (tmp_path / "eval" / "greedy" / "00001.npz").unlink()
     assert not evaluation_complete(tmp_path, log_spaced=True)
     assert evaluation_complete(tmp_path, log_spaced=False)  # the final one only
-    (tmp_path / "ckpt" / "pruned.json").write_text(json.dumps({"updates": [1]}))
-    assert evaluation_complete(tmp_path, log_spaced=True)
     assert not evaluation_complete(tmp_path / "none", log_spaced=False)
+
+
+def test_a_stateless_unfinished_copy_never_replaces_one_with_an_unreadable_state(
+    main_store: Node, node: Node
+) -> None:
+    """Review M8: -1 (unreadable) would lose to 0 (no state) in `_further`."""
+    name = "a-1b-aaaaaaaa-s0"
+    here = main_store.add(name, "final-1b", status="KILLED", files={"m.npz": "main"})
+    state = artifact_path(main_store.client.get_run(here).info.artifact_uri) / "state"
+    state.mkdir()
+    (state / "state.npz").write_bytes(b"PK truncated")
+    node.add(name, "final-1b,combo-1b", status="KILLED", files={"m.npz": "node"})
+    counts = merge_stores(node.uri, main_store.uri)
+    assert counts == {"copied": 0, "joined": 1, "refused": 0}
+    out = artifact_path(main_store.runs()[name].info.artifact_uri)
+    assert (out / "m.npz").read_text() == "main"
+    assert _phases(main_store.runs()[name]) == {"final-1b", "combo-1b"}
 
 
 def test_status_eval_modes_are_the_evaluations() -> None:

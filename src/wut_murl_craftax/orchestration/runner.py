@@ -751,8 +751,7 @@ def _train(
         _Aborted: A chunk reported a non-finite loss or a metric out of its bounds;
             nothing of it is saved.
         RuntimeError: The run is complete but checkpoints are lost for good (a lost
-            final one is rebuilt from ``state/``), or it has checkpoints past its
-            first chunk but no ``state/`` (`_refuse_stateless`).
+            final one is rebuilt from ``state/``).
     """
     spu = trainer.steps_per_update(spec.config)
     n_updates = spec.steps // spu
@@ -760,9 +759,6 @@ def _train(
         msg = f"{spec.name}: {spu} steps per update exceed the budget {spec.budget}"
         raise ValueError(msg)
     ckpts = checkpoint_schedule(n_updates, N_CHECKPOINTS)
-    _refuse_stateless(
-        spec.name, out, _chunk_size(0, n_updates, ckpts, profile.checkpoint_every)
-    )
     # a resume needs init too: it gives the tree, key implementations and placement
     config = {
         **spec.config,
@@ -989,25 +985,51 @@ def _train_to_score(
     return True
 
 
-def _decide_training(found: Any, out: Path) -> tuple[bool, list[int]]:
+def _schedule(trainer: Trainer, spec: RunSpec, profile: Profile) -> tuple[int, int]:
+    """The run's number of updates and the end of its first chunk (0, 0 if none)."""
+    n_updates = spec.steps // trainer.steps_per_update(spec.config)
+    if n_updates < 1:  # `_train` raises with the reason
+        return 0, 0
+    ckpts = checkpoint_schedule(n_updates, N_CHECKPOINTS)
+    return n_updates, _chunk_size(0, n_updates, ckpts, profile.checkpoint_every)
+
+
+def _decide_training(found: Any, out: Path, n_updates: int) -> tuple[bool, list[int]]:
     """Whether the run trains, and the lost checkpoints it cannot repair.
 
-    A new run trains, an unfinished one resumes (unless only its evaluation was cut).
-    A FINISHED run with a lost (not pruned) checkpoint file goes through `_train` to
-    rebuild it from ``state/`` without training; without ``state/`` it never trains
-    again, and its lost updates are returned for `_refuse_lost`.
+    A new run trains, an unfinished one resumes, unless only its evaluation was cut
+    (tag ``eval/pending``, or no ``state/`` but its final checkpoint indexed and its
+    score logged: a FINISHED run a cut queue call reopened, review M5). A FINISHED
+    run with a lost (not pruned) checkpoint goes through `_train` to rebuild it from
+    ``state/`` without training; without ``state/`` it never trains again, and its
+    lost updates are returned for `_refuse`.
     """
     lost, stateful = missing_checkpoints(out), (out / STATE_FILE).exists()
+    done = (
+        found is not None
+        and not stateful
+        and SCORE_METRIC in found.data.metrics
+        and n_updates in {e["update"] for e in load_index(out)}
+    )
     trains = (
         found is None
-        or (found.info.status != "FINISHED" and TAG_EVAL_PENDING not in found.data.tags)
+        or (
+            found.info.status != "FINISHED"
+            and TAG_EVAL_PENDING not in found.data.tags
+            and not done
+        )
         or bool(lost and stateful)
     )
     return trains, [] if trains else lost
 
 
-def _refuse_lost(name: str, lost: Sequence[int]) -> None:
-    """Raise for lost checkpoints of a run that will not train (`_decide_training`)."""
+def _refuse(name: str, out: Path, lost: Sequence[int], first: int | None) -> None:
+    """Raise before anything of the run is rewritten (review M5).
+
+    For lost checkpoints of a run that will not train (`_decide_training`), or, when
+    it trains (``first``: its first chunk's end), for checkpoints without ``state/``
+    (`_refuse_stateless`).
+    """
     if lost:
         msg = (
             f"{name}: checkpoints {list(lost)} are lost and state/ is gone; a "
@@ -1015,6 +1037,8 @@ def _refuse_lost(name: str, lost: Sequence[int]) -> None:
             "ckpt/pruned.json if they were deleted on purpose"
         )
         raise RuntimeError(msg)
+    if first is not None:
+        _refuse_stateless(name, out, first)
 
 
 def _run_spec(
@@ -1063,9 +1087,10 @@ def _run_spec(
     out = tracker.artifact_dir
     owner = {"pid": os.getpid(), "host": socket.gethostname()}
     (out / OWNER_FILE).write_text(json.dumps(owner))
-    trains, lost = _decide_training(found, out)
+    n_updates, first = _schedule(trainer, spec, profile)
+    trains, lost = _decide_training(found, out, n_updates)
     try:
-        _refuse_lost(spec.name, lost)
+        _refuse(spec.name, out, lost, first if trains else None)
         if trains and not _train_to_score(trainer, spec, out, profile, stop, found):
             tracker.close("KILLED")  # the next call logs the score and evaluates
             return True

@@ -424,21 +424,29 @@ def test_tuning_runs_evaluate_the_last_checkpoint_finals_every_one(
         assert s.score_pct == pytest.approx(s.ret / 22 * 100)
 
 
-def test_a_pruned_checkpoint_without_eval_files_is_skipped_and_never_loaded(
+def test_a_pruned_checkpoint_without_eval_files_raises_unless_skipped(
     fresh_ppo_run: Path,
 ) -> None:
-    """Storage retention: a pruned checkpoint is known-absent, never a crash."""
+    """Storage retention: a pruned checkpoint's params are gone; evaluating it is an
+    error unless the caller asks to skip pruned updates."""
     mark_pruned(fresh_ppo_run, [1], "test")
     (fresh_ppo_run / "ckpt" / "00001.msgpack").unlink()
     spec = _spec("final-1m", "log_spaced")
-    got = list(evaluate_spec(fresh_ppo_run, spec, lambda: False, seeds=EVAL_SEEDS))
+    with pytest.raises(PrunedCheckpointError, match="checkpoint 1 was pruned"):
+        list(evaluate_spec(fresh_ppo_run, spec, lambda: False, seeds=EVAL_SEEDS))
+    got = list(
+        evaluate_spec(
+            fresh_ppo_run, spec, lambda: False, seeds=EVAL_SEEDS, skip_pruned=True
+        )
+    )
     assert [(s.update, s.mode) for s in got] == [
         (u, m) for u in (0, 2, 4) for m in MODES
     ]
     run = EvalRun.load(fresh_ppo_run)
     assert run.updates == [0, 1, 2, 4]  # the index stays whole
-    with pytest.raises(PrunedCheckpointError, match="checkpoint 1 was pruned"):
-        run.params(1)
+    with pytest.raises(PrunedCheckpointError):
+        evaluate(run, [1], "greedy", seeds=EVAL_SEEDS)
+    assert evaluate(run, [1], "greedy", seeds=EVAL_SEEDS, skip_pruned=True) == []
 
 
 def test_an_interrupted_evaluation_skips_the_files_already_written(

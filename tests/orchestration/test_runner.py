@@ -1487,11 +1487,35 @@ def test_a_run_with_checkpoints_but_no_state_refuses_to_start_from_scratch(
     out = store.run_dir(spec.name)
     shutil.rmtree(out / "state")
     ckpt = {p.name: p.read_bytes() for p in (out / "ckpt").iterdir()}
+    config = (out / "config.json").stat().st_mtime_ns
+    segments = store.runs()[spec.name].data.tags["code/segments"]
     trainer = FakeTrainer(steps_per_update=spu)
     with pytest.raises(RuntimeError, match="no state/: refusing to retrain"):
         store.run([spec], trainer)
     assert trainer.updates == []
     assert {p.name: p.read_bytes() for p in (out / "ckpt").iterdir()} == ckpt
+    assert (out / "config.json").stat().st_mtime_ns == config  # refused before it
+    assert store.runs()[spec.name].data.tags["code/segments"] == segments
+
+
+def test_a_pruned_run_reopened_by_a_cut_queue_call_is_only_evaluated(
+    store: Store,
+) -> None:
+    """Review M5: a hard kill between the reopening of a FINISHED run and its
+    ``eval/pending`` tag leaves it RUNNING; with its final checkpoint indexed and
+    its score logged it is evaluated again, never trained or refused."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    out = store.run_dir(spec.name)
+    _prune(out, [0, 1, 2, 3])
+    shutil.rmtree(out / "state")
+    store.client.update_run(store.runs()[spec.name].info.run_id, status="RUNNING")
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.updates == []
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert _files(out, *KEPT) == before
 
 
 def test_a_run_cut_before_its_first_state_save_restarts(store: Store) -> None:
@@ -1572,6 +1596,49 @@ def test_a_drop_state_profile_keeps_state_of_unevaluated_killed_or_failed_runs(
         store.run([killed], FakeTrainer(), profile=profile)
     assert store.runs()[killed.name].info.status == "FAILED"
     assert (store.run_dir(killed.name) / "state" / "state.npz").is_file()
+
+
+def test_a_stateless_finished_node_run_merged_back_is_reused_without_training(
+    store: Store, tmp_path: Path
+) -> None:
+    """1B storage (audit D3): a cluster run that dropped its state on finishing is
+    copied into the main store and reused there, never retrained."""
+    (spec,) = store.phase("final-1m", ["published"])
+    node_uri = f"sqlite:///{tmp_path / 'node' / 'mlruns-node-0.db'}"
+    runner.main(
+        [spec],
+        _drop_profile(tmp_path),
+        experiment_config=store.config,
+        tracking_uri=node_uri,
+        methods={"toy": FakeTrainer()},
+        evaluate=_writing_eval,
+    )
+    assert merge_stores(node_uri, store.tracking_uri)["copied"] == 1
+    out = store.run_dir(spec.name)
+    assert not (out / "state").exists()
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    store.evaluate = _writing_eval  # type: ignore[method-assign]
+    store.run([spec], trainer)
+    assert trainer.updates == []
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert _files(out, *KEPT) == before
+
+
+def test_a_drop_state_profile_keeps_state_when_a_checkpoint_is_lost(
+    store: Store, tmp_path: Path
+) -> None:
+    profile = _drop_profile(tmp_path)
+    (spec,) = store.phase("final-1m", ["published"])
+
+    def losing_eval(run_dir: Path, spec: RunSpec, stop: Callable[[], bool]) -> None:
+        _writing_eval(run_dir, spec, stop)
+        (run_dir / "ckpt" / "00001.msgpack").unlink(missing_ok=True)
+
+    store.evaluate = losing_eval  # type: ignore[method-assign]
+    store.run([spec], FakeTrainer(), profile=profile)
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert (store.run_dir(spec.name) / "state" / "state.npz").is_file()
 
 
 def _crashing_eval(

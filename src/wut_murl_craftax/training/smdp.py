@@ -1273,6 +1273,9 @@ def rebuild_greedy_table(run_dir: Path) -> Path:
     replaced as a whole, atomically, so a broken one never joins the new rows. A
     pruned checkpoint (`pruned_updates`) is never read: its old rows are carried
     over, and with every checkpoint pruned the old file stays as it is.
+
+    Raises:
+        FileNotFoundError: Every checkpoint is pruned and there is no old file.
     """
     run_dir = Path(run_dir)
     cfg = json.loads((run_dir / "config.json").read_text())
@@ -1287,7 +1290,10 @@ def rebuild_greedy_table(run_dir: Path) -> Path:
         data = (run_dir / "ckpt" / e["file"]).read_bytes()
         cols = greedy_table(serialization.msgpack_restore(data), q_init)
         write_update_rows(part, e["update"], cols, GREEDY_TYPES)
-    if not part.is_file():
+    if not part.is_file():  # every checkpoint pruned: the old rows are all there is
+        if not path.is_file():
+            msg = f"{run_dir}: every checkpoint is pruned and there is no {path.name}"
+            raise FileNotFoundError(msg)
         return path
     if pruned and path.is_file():
         _carry_rows(path, part, pruned)

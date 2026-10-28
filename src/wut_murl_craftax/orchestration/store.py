@@ -24,7 +24,7 @@ import yaml
 from mlflow.entities import Metric, Param
 
 from ..config import load_experiment_config
-from ..training.checkpoints import STATE_FILE, load_index, pruned_updates, saved_update
+from ..training.checkpoints import STATE_FILE, load_index, saved_update
 from .queue import (
     EXPERIMENT_CONFIG,
     METHODS_DIR,
@@ -127,11 +127,11 @@ def evaluation_complete(run_dir: Path, log_spaced: bool) -> bool:
     """Whether both modes' eval files exist for every checkpoint or the final one.
 
     ``eval/<mode>/<update>.npz`` of every checkpoint when ``log_spaced``, else of the
-    last; a pruned checkpoint (`pruned_updates`) is known-absent and needs none.
+    last. A pruned checkpoint needs its files too: the prune keeps them, so a gap
+    there (a pruned run joined to a new log-spaced phase) shows as incomplete.
     """
     updates = [e["update"] for e in load_index(run_dir)]
-    pruned = pruned_updates(run_dir)
-    wanted = [u for u in (updates if log_spaced else updates[-1:]) if u not in pruned]
+    wanted = updates if log_spaced else updates[-1:]
     files = [run_dir / EVAL / m / f"{u:05d}.npz" for u in wanted for m in EVAL_MODES]
     return bool(updates) and all(f.is_file() for f in files)
 
@@ -403,19 +403,30 @@ def _merge_plan(
     src_dir: Callable[[Any], Path],
     target: Any,
 ) -> _MergePlan:
-    """Sort the source ``runs`` (by name) into joins, copies and refusals."""
+    """Sort the source ``runs`` (by name) into joins, copies and refusals.
+
+    An unfinished source run without ``state/`` is never copied: refused when new,
+    joined (phases only) when the target has an unfinished copy, whose state may be
+    unreadable (review M8).
+    """
     plan = _MergePlan([], [], [])
+
+    def stateless(run: Any) -> bool:
+        return not (src_dir(run) / STATE_FILE).is_file()
+
     for name, run in runs.items():
         here = existing.get(name)
         phases = list(dict.fromkeys([*_phases(here), *_phases(run)]))
         experiment = experiments[run.info.experiment_id]
         finished = run.info.status == "FINISHED"
-        if here is None and not finished and not (src_dir(run) / STATE_FILE).is_file():
+        if here is None and not finished and stateless(run):
             plan.refused.append(name)
         elif here is None or (finished and here.info.status != "FINISHED"):
             plan.copies.append((run, here, experiment, src_dir(run), phases))
         elif finished or here.info.status == "FINISHED":
             plan.joins.append((here, run, src_dir(run) if finished else None, phases))
+        elif stateless(run):  # both unfinished: a stateless copy never replaces
+            plan.joins.append((here, run, None, phases))
         elif _further(found := src_dir(run), here, target):
             plan.copies.append((
                 run,

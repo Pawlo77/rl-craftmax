@@ -55,7 +55,7 @@ One line each; signatures and details: [[Modules]].
 - Same seed, same config, same backend: same parameters and records.
 - Score is training-episode return as % of the game's maximum (226 or 22).
 - Per-checkpoint parquet files (`smdp_greedy_table.parquet`, `dyna_model_graph.parquet`) type their text columns explicitly, so a checkpoint without stored keys still joins later rows; `smdp.rebuild_greedy_table` rewrites one from `ckpt/` (ruling R81).
-- A pruned checkpoint (listed in `ckpt/pruned.json`) is known-absent, never lost: `missing_checkpoints` skips it, `drop_missing_checkpoints` keeps it in `index.json` (readers take `env_steps` of its eval files from there), `load_params` raises `PrunedCheckpointError` (a `FileNotFoundError`) and `smdp.rebuild_greedy_table` keeps its old rows without reading it.
+- A pruned checkpoint (listed in `ckpt/pruned.json`) is known-absent, never lost: `missing_checkpoints` skips it, `drop_missing_checkpoints` keeps it in `index.json` (readers take `env_steps` of its eval files from there), `load_params` raises `PrunedCheckpointError` (a `FileNotFoundError`) and `smdp.rebuild_greedy_table` keeps its old rows without reading it (with every checkpoint pruned and no old file it raises `FileNotFoundError`).
 - A saved combo run replays the pair it trained with: its `combine` block, else the one registry pair its keys fit; zero or two fitting pairs raise (ruling R80a).
 
 ## Known issues

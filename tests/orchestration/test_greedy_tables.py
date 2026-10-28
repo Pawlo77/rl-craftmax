@@ -109,3 +109,16 @@ def test_a_rebuild_keeps_the_rows_of_pruned_checkpoints_and_never_reads_them(
     mark_pruned(out, [0], "test")
     (out / "ckpt" / "00000.msgpack").unlink()
     assert pq.read_table(smdp.rebuild_greedy_table(out)).equals(before)
+
+
+def test_a_rebuild_with_every_checkpoint_pruned_and_no_table_fails_clearly(
+    store: tuple[str, mlflow.MlflowClient, dict[str, str]],
+) -> None:
+    """Review M7: nothing to read and nothing to keep is a clear error."""
+    _, client, ids = store
+    out = artifact_path(client.get_run(ids["untouched"]).info.artifact_uri)
+    mark_pruned(out, [0, 5], "test")
+    for u in (0, 5):
+        (out / "ckpt" / f"{u:05d}.msgpack").unlink()
+    with pytest.raises(FileNotFoundError, match="every checkpoint is pruned"):
+        smdp.rebuild_greedy_table(out)
