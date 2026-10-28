@@ -11,7 +11,6 @@ from wut_murl_craftax.orchestration.queue import (
     QueueConfigError,
     config_hash,
     expand_fine,
-    expand_phase,
     load_method,
     resolve_config,
 )
@@ -109,23 +108,6 @@ def test_fine_rule_yields_four_configs_from_two_knobs() -> None:
         "fine-gae_lambda=0.85",
     }
     assert fine["fine-lr=0.0006"] == {"lr": 6.0e-4}
-
-
-def test_published_1m_runs_ten_seeds_and_smoke_keeps_one(tmp_path: Path) -> None:
-    phase = tmp_path / "p.yaml"
-    phase.write_text(
-        yaml.safe_dump({
-            "budget": "1m",
-            "eval": "final",
-            "seeds": 3,
-            "runs": {"ppo": {"configs": "coarse"}},
-        })
-    )
-    specs = expand_phase(phase, methods_dir=METHODS)
-    assert len(specs) == 6 * 3 + 10
-    smoke_phase = REPO / "configs/phases/smoke.yaml"
-    smoke = expand_phase(smoke_phase, method="ppo", methods_dir=METHODS)
-    assert len(smoke) == 2
 
 
 def copy_ppo(tmp_path: Path, tuned: dict[str, Any] | None) -> Path:

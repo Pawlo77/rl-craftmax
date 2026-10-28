@@ -32,14 +32,21 @@ def pooled_iqm(resampled: dict[str, np.ndarray]) -> float:
 # --- point estimates --------------------------------------------------------------
 
 
-def test_iqm_of_eight_scores() -> None:
+def test_iqm_is_the_mean_of_the_middle_half() -> None:
     assert iqm([1, 2, 3, 4, 5, 6, 7, 8]) == 4.5
+    assert iqm([100, 1, 2, 3, 4, 5, 6, 7, 8, -100]) == pytest.approx(4.5)
 
 
-def test_probability_of_improvement_extremes() -> None:
+def test_iqm_needs_a_score() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        iqm([])
+
+
+def test_probability_of_improvement_counts_wins_and_half_ties() -> None:
     assert probability_of_improvement([1, 2, 3], [1, 2, 3]) == 0.5
-    assert probability_of_improvement([4, 5, 6], [1, 2, 3]) == 1.0
-    assert probability_of_improvement([1, 2, 3], [4, 5, 6]) == 0.0
+    assert probability_of_improvement([4, 5], [1, 2, 3]) == 1.0
+    assert probability_of_improvement([1, 2], [4, 5]) == 0.0
+    assert probability_of_improvement([2], [1, 2, 3]) == 0.5
 
 
 def test_mean_se() -> None:

@@ -17,6 +17,7 @@ def test_load_default_experiment_yaml() -> None:
     assert config.name == "craftax"
     assert config.mlflow.experiment_name == "craftax"
     assert config.mlflow.enabled is True
+    assert config.mlflow.run_name is None
 
 
 def test_experiment_config_requires_name() -> None:

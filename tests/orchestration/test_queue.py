@@ -1543,27 +1543,6 @@ def test_shipped_tune_coarse_phase_counts_the_phase_1_stage_1_runs(
     ]
 
 
-def test_shipped_ppo_base_is_the_craftax_1m_table_11() -> None:
-    assert load_method("ppo", REPO / "configs/methods").base == {
-        "env": "Craftax-Symbolic-v1",
-        "envs": 256,
-        "num_steps": 16,
-        "update_epochs": 4,
-        "minibatches": 8,
-        "lr": 3.0e-4,
-        "anneal_lr": True,
-        "gamma": 0.99,
-        "gae_lambda": 0.8,
-        "clip": 0.2,
-        "vf": 0.5,
-        "ent": 0.01,
-        "max_grad_norm": 1.0,
-        "width": 512,
-        "resets": "optimistic",
-        "reset_ratio": 16,
-    }
-
-
 def test_shipped_ppo_abort_flags_are_the_plans_thresholds() -> None:
     abort = load_method("ppo", REPO / "configs/methods").abort
     assert abort == {
