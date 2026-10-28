@@ -168,15 +168,4 @@ UNCONVERTED: dict[str, tuple[str, ...]] = {
         "caption",
         "size class",
     ),
-    "hard": (
-        "text kinds",
-        "caption",
-        "size class",
-    ),
-    "hard-variants": (
-        "one axes",
-        "text kinds",
-        "caption",
-        "size class",
-    ),
 }

@@ -444,8 +444,8 @@ def add_panel(
     fig: Figure,
     *,
     left_mm: float,
-    bottom_mm: float = 9.0,
-    right_mm: float = 2.0,
+    bottom_mm: float = 11.0,
+    right_mm: float = 4.0,
     top_mm: float = 2.0,
     **kwargs: Any,
 ) -> Axes:

@@ -40,6 +40,7 @@ from wut_murl_craftax.analysis.hard import (
 )
 from wut_murl_craftax.analysis.load import load_phases, units
 from wut_murl_craftax.evaluation.stats import Interval, stratified_bootstrap_ci
+from wut_murl_craftax.visualisation import charts
 
 N = 200
 """Bootstrap resamples in the tests (the default is 10,000)."""
@@ -691,25 +692,38 @@ def assert_png(path: Path) -> None:
     assert len(data) > 2_000
 
 
-def test_plots_write_pngs(tmp_path: Path) -> None:
+def test_plots_write_one_png_per_panel_with_a_caption(tmp_path: Path) -> None:
     episodes = pd.concat([achievement_frame(), stall_frame(), death_frame()])
     tuned = floor_reach(floor_frame(), n=N)
     ablation = tuned.assign(config_ref="simhash", rate=tuned["rate"] / 2)
     both = pd.concat([tuned, ablation], ignore_index=True)
-    paths = [
-        plot_floor_reach(both, tmp_path),
-        plot_achievement_status(achievement_status(achievement_frame()), tmp_path),
-        plot_death_causes(death_causes(death_frame()), tmp_path),
-        plot_stall_lengths(stall_ccdf(stall_table(episodes)), tmp_path),
+    status = achievement_status(achievement_frame())
+    variants = pd.concat([status, status.assign(config_ref="no-flags")])
+    deaths = death_causes(death_frame())
+    with charts.capture_captions() as caps:
+        paths = {
+            **plot_floor_reach(both, tmp_path),
+            **plot_achievement_status(variants, tmp_path),
+            **plot_death_causes(
+                pd.concat([deaths, deaths.assign(config_ref="no-flags")]), tmp_path
+            ),
+            **plot_stall_lengths(stall_ccdf(stall_table(episodes)), tmp_path),
+        }
+    assert sorted(paths) == [
+        "achievement_status_no-flags",
+        "achievement_status_tuned",
+        "death_causes_over_training_no-flags",
+        "death_causes_over_training_tuned",
+        "floor_reach",
+        "stall_lengths",
     ]
-    assert [p.name for p in paths] == [
-        "floor_reach.png",
-        "achievement_status.png",
-        "death_causes_over_training.png",
-        "stall_lengths.png",
-    ]
-    for path in paths:
+    for stem, path in paths.items():
+        assert path.name == f"{stem}.png"
         assert_png(path)
+    assert sorted(c.stem for c in caps) == sorted(paths)
+    assert all(len(c.description.split()) > 8 for c in caps)
+    video = plot_floor_reach(both, tmp_path, "video")
+    assert video["floor_reach"].name == "floor_reach_video.png"
 
 
 def test_plots_of_empty_tables_say_so(tmp_path: Path) -> None:
@@ -719,7 +733,8 @@ def test_plots_of_empty_tables_say_so(tmp_path: Path) -> None:
         (plot_death_causes, death_causes(death_frame().iloc[:0])),
         (plot_stall_lengths, stall_ccdf(stall_table(stall_frame()).iloc[:0])),
     ):
-        assert_png(fn(table, tmp_path))
+        (path,) = fn(table, tmp_path).values()
+        assert_png(path)
 
 
 def test_plots_refuse_several_budgets(tmp_path: Path) -> None:
@@ -736,7 +751,7 @@ def test_plot_images_differ_by_data(tmp_path: Path) -> None:
     one = plot_floor_reach(floor_reach(floor_frame(), n=N), tmp_path / "a")
     flat = floor_reach(floor_frame(), n=N).assign(rate=0.2, lo=0.1, hi=0.3)
     two = plot_floor_reach(flat, tmp_path / "b")
-    assert one.read_bytes() != two.read_bytes()
+    assert one["floor_reach"].read_bytes() != two["floor_reach"].read_bytes()
 
 
 def test_never_and_never_in_eval_are_drawn_apart(
@@ -762,17 +777,14 @@ def test_never_and_never_in_eval_are_drawn_apart(
     dots = [c for c in ax.collections if c.get_label() not in labels]
     assert never.get_zorder() > max(c.get_zorder() for c in dots)  # never under a dot
     assert unknown.get_zorder() > max(c.get_zorder() for c in dots)
-    # and the legend of the saved figure lists both
-    seen: list[str] = []
-
-    def capture(fig: Figure, th: Any, handles: list[Any], **kw: Any) -> None:
-        seen.extend(h.get_label() for h in handles)
-
-    monkeypatch.setattr(hard, "_legend", capture)
+    # and the caption of the saved figure names both
     status = achievement_status(achievement_frame())  # no curves: never in eval
     assert (status["status"] == NEVER_EVAL).any()
-    plot_achievement_status(status, tmp_path)
-    assert {MARK_LABELS[NEVER], MARK_LABELS[NEVER_EVAL]} <= set(seen)
+    with charts.capture_captions() as caps:
+        plot_achievement_status(status, tmp_path)
+    (caption,) = caps
+    assert MARK_LABELS[NEVER] in caption.description
+    assert MARK_LABELS[NEVER_EVAL] in caption.description
 
 
 def test_summaries_record_their_basis() -> None:
@@ -795,43 +807,55 @@ def test_summaries_record_their_basis() -> None:
         assert set(derived["scope"]) == {"final"}
 
 
-def test_plot_titles_name_the_basis(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_captions_name_the_basis_and_there_are_no_titles_but_the_variant(
+    tmp_path: Path,
 ) -> None:
-    figures: list[Figure] = []
-
-    def keep(fig: Figure, out_dir: Path, name: str) -> Path:
-        figures.append(fig)
-        return out_dir / name
-
-    monkeypatch.setattr(hard, "_save", keep)
     tables = [
         floor_reach(floor_frame(), n=N),
         stall_ccdf(stall_table(stall_frame(), final=False)),
         achievement_status(achievement_frame()),
         death_causes(death_frame()),
     ]
-    plot_floor_reach(tables[0], tmp_path)
-    plot_stall_lengths(tables[1], tmp_path)
-    plot_achievement_status(tables[2], tmp_path)
-    plot_death_causes(tables[3], tmp_path)
-    reach, stalls, achievements, deaths = figures
+    with charts.capture_captions() as caps:
+        figs = {
+            **plot_floor_reach(tables[0], tmp_path),
+            **plot_stall_lengths(tables[1], tmp_path),
+            **plot_achievement_status(tables[2], tmp_path),
+            **plot_death_causes(tables[3], tmp_path),
+        }
+    text = {c.stem: c.description for c in caps}
+    assert "stochastic eval, final checkpoint" in text["floor_reach"]
+    assert "1m" in text["floor_reach"]
+    assert "stochastic eval, all checkpoints" in text["stall_lengths"]
+    assert "stochastic eval" in text["achievement_status_tuned"]
+    assert "best rate over all checkpoints" in text["achievement_status_tuned"]
+    assert (
+        "stochastic eval, every checkpoint" in text["death_causes_over_training_tuned"]
+    )
+    assert len(figs) == 4
 
-    def title(fig: Figure) -> str:
-        return " ".join(fig.axes[0].get_title(loc="left").split())
 
-    assert "stochastic eval, final checkpoint" in title(reach)
-    assert "1m" in title(reach)
-    assert "stochastic eval, all checkpoints" in title(stalls)
-    assert "stochastic eval" in title(achievements)
-    assert "best over all checkpoints" in title(achievements)
-    assert "stochastic eval, every checkpoint" in title(deaths)
-    for fig, table in zip(figures, tables, strict=True):
+def test_a_plot_shows_one_panel_and_no_figure_title(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[Figure] = []
+    plain = charts.write_png
+
+    def keep(fig: Figure, path: Path) -> None:
+        seen.append(fig)
+        plain(fig, path)
+
+    monkeypatch.setattr(charts, "write_png", keep)
+    plot_floor_reach(floor_reach(floor_frame(), n=N), tmp_path)
+    plot_achievement_status(achievement_status(achievement_frame()), tmp_path)
+    plot_death_causes(death_causes(death_frame()), tmp_path)
+    plot_stall_lengths(stall_ccdf(stall_table(stall_frame(), final=False)), tmp_path)
+    assert len(seen) == 4
+    for fig in seen:
         assert fig._suptitle is None  # type: ignore[attr-defined]  # matplotlib private
-        methods = tuple(table["method"].unique())
-        panels = [a for a in fig.axes if a.get_title(loc="left")]
-        assert panels  # one left-aligned title per panel, starting with the method
-        assert all(a.get_title(loc="left").startswith(methods) for a in panels)
+        assert not fig.texts
+        assert len([a for a in fig.axes if a.has_data()]) == 1
+        assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
 
 
 def test_plots_refuse_mixed_modes_and_scopes(tmp_path: Path) -> None:
@@ -876,10 +900,12 @@ def test_summaries_on_the_export_fixture(export_root: Path, tmp_path: Path) -> N
     }
     sil = episodes[episodes["method"] == "sil"]
     assert not sil.empty
-    assert_png(
-        plot_stall_lengths(stall_ccdf(stalls[stalls["method"] == "sil"]), tmp_path)
-    )
-    assert_png(plot_death_causes(death_causes(sil), tmp_path))
+    (stall_png,) = plot_stall_lengths(
+        stall_ccdf(stalls[stalls["method"] == "sil"]), tmp_path
+    ).values()
+    assert_png(stall_png)
+    for path in plot_death_causes(death_causes(sil), tmp_path).values():
+        assert_png(path)
 
 
 def test_import_is_light() -> None:
@@ -893,39 +919,38 @@ def test_import_is_light() -> None:
     assert out.stdout.split() == ["False", "False"]
 
 
-def test_several_variants_share_one_title_and_fold_never_unlocked_tiers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_variants_share_rows_and_the_never_unlocked_go_to_the_caption(
+    tmp_path: Path,
 ) -> None:
-    figures: list[Figure] = []
-
-    def keep(fig: Figure, out_dir: Path, name: str) -> Path:
-        figures.append(fig)
-        return out_dir / name
-
-    monkeypatch.setattr(hard, "_save", keep)
     status = achievement_status(achievement_frame())
     refs = ("tuned", "monte-carlo", "no-flags", "random-top")
     table = pd.concat([status.assign(config_ref=r) for r in refs])
-    plot_achievement_status(table, tmp_path)
-    (fig,) = figures
-    title = fig._suptitle.get_text()  # type: ignore[attr-defined]  # matplotlib private
-    assert title.startswith(f"{table['method'].iloc[0]}: stochastic eval")
-    panels = [a.get_title(loc="left") for a in fig.axes]
-    assert panels == list(refs)  # the variant only, the shared part is above
-    legend = fig.legends[0]
-    note = legend.get_title().get_text().replace("\n", " ")
-    never = table[table["status"] == NEVER]
-    folded = note.split(": ", 1)[1].rstrip(".").split(", ") if "variant" in note else []
-    assert "by any variant" in note or not folded
-    shown = {t.get_text() for t in fig.axes[0].get_yticklabels()}
-    for group in folded:  # a folded tier is all never in every variant and not drawn
-        tier, floor = group.rsplit(" f", 1)
-        names = set(
-            table[
-                (table["tier"] == tier.replace(" ", "_"))
-                & (table["floor"] == int(floor))
-            ]["achievement"]
-        )
-        assert names
-        assert not names & shown
-        assert set(never[never["achievement"].isin(names)]["achievement"]) == names
+    with charts.capture_captions() as caps:
+        paths = plot_achievement_status(table, tmp_path)
+    assert sorted(paths) == sorted(f"achievement_status_{r}" for r in refs)
+    ever = table.groupby("achievement")["status"].apply(lambda s: (s != NEVER).any())
+    never = sorted(a for a, seen in ever.items() if not seen)
+    rows = [
+        [t.get_text() for t in fig.axes[0].get_yticklabels()]
+        for fig in _drawn(tmp_path, table)
+    ]
+    assert all(r == rows[0] for r in rows)  # the files line up
+    assert set(rows[0]) == set(ever[ever].index)
+    for c in caps:
+        assert all(a in c.description for a in never)
+        assert ("Never unlocked by any variant" in c.description) == bool(never)
+
+
+def _drawn(tmp_path: Path, table: pd.DataFrame) -> list[Figure]:
+    """The figures `plot_achievement_status` draws, kept before they are written."""
+    seen: list[Figure] = []
+    plain = charts.write_png
+
+    def keep(fig: Figure, path: Path) -> None:
+        seen.append(fig)
+        plain(fig, path)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(charts, "write_png", keep)
+        plot_achievement_status(table, tmp_path / "again")
+    return seen
