@@ -126,7 +126,7 @@ related-code:
 ## Known issues
 
 - `depth_at_l90_median` is the median over the seeds that reach L90 only: at 1M it is 1 for `smdp-skills` (its one uncensored seed, seed 8) while `l90_median` is inf (deferred A7 minor).
-- `spearman_score_l90` ranks censored L90 above 4096: at 1M 269 of 270 fits are censored, so its 0.182 reflects one policy; the write-up uses `spearman_score_fid256` instead (R106, [[Decision-tree interpretation]]).
+- `spearman_score_l90` ranks censored L90 above 4096: at 1M 89 of 90 base policies (267 of 270 fits) are censored, so the statistic rests on one uncensored policy (SMDP skills seed 8) and is not reported as a result; the write-up uses `spearman_score_fid256` instead (R106, [[Decision-tree interpretation]]).
 
 ## Tests
 
