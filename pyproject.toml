@@ -139,7 +139,7 @@ no_implicit_reexport = true
 disallow_any_generics = true
 
 [[tool.mypy.overrides]]
-module = ['craftax', 'craftax.*', 'optax', 'optax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*', 'pandas', 'pandas.*', 'pyarrow', 'pyarrow.*', 'scipy', 'scipy.*', 'sklearn', 'sklearn.*']
+module = ['craftax', 'craftax.*', 'optax', 'optax.*', 'mlflow', 'mlflow.*', 'yaml', 'yaml.*', 'pandas', 'pandas.*', 'pyarrow', 'pyarrow.*', 'scipy', 'scipy.*', 'sklearn', 'sklearn.*', 'seaborn', 'seaborn.*']
 ignore_missing_imports = true
 
 [tool.bandit]

@@ -3,7 +3,7 @@ r"""LaTeX export of the report: booktabs tables, number macros and report figure
 `write_tables` renders T1, T2, T5 and T6 of `compare` as booktabs ``tabular`` (best
 value per column bold within a benchmark and block), `write_numbers` one ``\newcommand``
 per number named ``<quantity><Budget><Method>[<Ref>][<Control>]`` in letters only
-(contracts.md section 7), `copy_figures` the report PDFs. A budget without runs (no
+(contracts.md section 7), `copy_figures` the report PNGs. A budget without runs (no
 ``final-1b`` yet, R75, R86) emits nothing; the 1M ``complexity.csv`` is required (the
 error names interpretation Task 6), the 1B one is skipped when missing.
 @see [[2026-10-20-craftax-comparison-and-results]]
@@ -14,7 +14,7 @@ import logging
 import math
 import re
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -775,13 +775,31 @@ def write_tables(
 # ---------------------------------------------------------------------- figures
 
 
+def drop_pdfs(folder: Path, stems: Collection[str] | None = None) -> list[Path]:
+    """Delete the ``*.pdf`` of an old figure folder; the figures are PNG only.
+
+    With ``stems``, only the pdfs of those figures (a folder shared with other files
+    keeps the rest); without, every pdf (a folder only the figures write to).
+    """
+    gone = [p for p in sorted(folder.glob("*.pdf")) if stems is None or p.stem in stems]
+    for path in gone:
+        path.unlink()
+    return gone
+
+
 def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
-    """Copy the report PDFs of ``results_dir`` (no ``_video`` file) to ``out_dir``."""
+    """Copy the report PNGs of ``results_dir`` (no ``_video`` file) to ``out_dir``.
+
+    Figures were PDF and PNG once: the ``<stem>.pdf`` of every copied figure is deleted
+    from ``out_dir`` so the report never includes a stale vector file; other files stay.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
+    sources = [
+        p for p in sorted(results_dir.glob("*.png")) if not p.stem.endswith("_video")
+    ]
+    drop_pdfs(out_dir, {p.stem for p in sources})
     copied = []
-    for src in sorted(results_dir.glob("*.pdf")):
-        if src.stem.endswith("_video"):
-            continue
+    for src in sources:
         shutil.copy2(src, out_dir / src.name)
         copied.append(out_dir / src.name)
     return copied

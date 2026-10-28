@@ -1,11 +1,11 @@
 """Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware.
 
-Each ``plot_*`` draws one figure per theme, writes ``<name>.pdf`` and ``.png`` into
-``out_dir`` (``_video`` suffix for the video) and returns the `Figure`. ``report`` is
-light, 80 mm wide (one Interspeech column), fonts of 7 pt or more; ``video`` is dark,
-1920 x 1080. Colours: `charts.METHOD_COLORS`; controls dashed, ablations dotted, hollow.
-Numbers come from the `compare` tables and `evaluation.stats`. A budget without runs is
-"pending" in the note (R86); laptop timings carry R97's note. Artists carry a ``gid``.
+Each ``plot_*`` draws one figure per theme, writes ``<name>.png`` into ``out_dir``
+(``_video`` suffix for the video) and returns the `Figure`. ``report`` is light, 80 mm
+wide (one Interspeech column) at 300 dpi, fonts of 7 pt or more; ``video`` is dark,
+1920 x 1080. Look: `charts.Theme`; colours `charts.METHOD_COLORS`; controls dashed,
+ablations dotted, hollow; legends outside the axes; nothing cropped. Numbers: `compare`
+and `evaluation.stats`; a budget without runs is "pending" (R86); artists carry a gid.
 
 @see [[2026-10-20-craftax-comparison-and-results]]
 @tested-by [[tests/analysis/test_figures.py]]
@@ -13,19 +13,15 @@ Numbers come from the `compare` tables and `evaluation.stats`. A budget without 
 
 import itertools
 import logging
-import textwrap
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, NamedTuple
 
-import matplotlib as mpl
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import Colormap, LinearSegmentedColormap, to_rgba
 from matplotlib.figure import Figure, SubFigure
-from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter
@@ -41,9 +37,6 @@ from .obstacles import SCORE
 
 logger = logging.getLogger(__name__)
 
-COLUMN_MM = 80.0
-"""One Interspeech column: (170 mm text width - 10 mm gap) / 2."""
-MM = 1 / 25.4
 BUDGETS = ("1m", "1b")
 """The benchmarks of the project; a missing one is pending, never an empty panel."""
 PENDING = "Craftax-{} pending"
@@ -63,9 +56,7 @@ NAMES = {
     "F20": "hardware",
     "F2F3": "aggregate_poi",
 }
-"""Figure id -> file stem (``.pdf`` and ``.png``; ``_video`` is added for the video)."""
-WIDTHS = {"column": COLUMN_MM, "double": 170.0}
-"""Report figure widths in mm: one column, or two columns (F1 per the report plan)."""
+"""Figure id -> file stem (``.png``; ``_double`` and ``_video`` mark the variants)."""
 STEPS = {"m": 1e6, "b": 1e9}
 LIT_LABEL = 34
 """Characters of a literature name shown beside its mark."""
@@ -99,66 +90,11 @@ SERIES_MARKERS = ("o", "D", "^")
 """Marker of the first, second and third series of a hardware panel."""
 
 
-class Theme(NamedTuple):
-    """Surface, inks, method colours and sizes of one output (report or video)."""
-
-    name: str
-    surface: str
-    ink: str
-    ink2: str
-    muted: str
-    grid: str
-    colors: Mapping[str, str]
-    seq: Sequence[str]
-    """Heat-map ramp, low to high."""
-    div: Sequence[str]
-    """Diverging ramp: below, at and above the midpoint."""
-    width: float
-    """Figure width in inches."""
-    height: float | None
-    """Fixed height in inches (video); None: from the rows (report)."""
-    dpi: int
-    font: float
-    title: float
-    pitch_mm: float
-    """Row pitch in mm (report); the video fills its frame."""
-    lw: float
-    ms: float
-    suffix: str
-    legend_cols: int
-    wrap: int
-    """Characters per line of a note."""
-    wide: bool
-    """Double-column report width: panels sit side by side as in the video."""
-
-
-def _report(width: str) -> Theme:
-    mm = WIDTHS[width]
-    return Theme(
-        "report", charts.SURFACE_LIGHT, charts.INK_LIGHT, charts.INK2_LIGHT,
-        charts.MUTED_LIGHT, charts.GRID_LIGHT, charts.METHOD_COLORS_LIGHT,
-        charts.SEQUENTIAL_LIGHT, charts.DIVERGING_LIGHT, mm * MM, None, 300, 7.0, 7.5,
-        3.3, 0.9, 3.0, "_double" if width == "double" else "",
-        4 if width == "double" else 1, round(56 * mm / COLUMN_MM), width == "double",
-    )  # fmt: skip
-
-
-VIDEO = Theme(
-    "video", charts.SURFACE, charts.INK, charts.INK2, charts.MUTED, charts.GRID,
-    charts.METHOD_COLORS, charts.SEQUENTIAL_DARK, charts.DIVERGING_DARK, 19.2, 10.8,
-    100, 14.0, 17.0, 0.0, 2.2, 7.0, "_video", 5, 170, True,
-)  # fmt: skip
-
-
-def _theme(name: str, width: str = "column") -> Theme:
-    """The theme of ``name``; ``width`` (column or double) sizes the report only."""
-    if name not in ("report", "video"):
-        msg = f"theme must be 'report' or 'video', got {name!r}"
-        raise ValueError(msg)
-    if width not in WIDTHS:
-        msg = f"width must be one of {sorted(WIDTHS)}, got {width!r}"
-        raise ValueError(msg)
-    return VIDEO if name == "video" else _report(width)
+Theme = charts.Theme
+_theme = charts.theme
+_report = charts.report_theme
+VIDEO = charts.VIDEO
+COLUMN_MM, MM, WIDTHS = charts.COLUMN_MM, charts.MM, charts.WIDTHS
 
 
 # ----------------------------------------------------------------------- plumbing
@@ -190,48 +126,12 @@ def _style_of(th: Theme, method: str, ref: str = compare.TUNED) -> dict[str, Any
     }  # fmt: skip
 
 
-def _figure(th: Theme, height_mm: float) -> Figure:
-    """A constrained-layout figure on the theme surface (report height: the rows)."""
-    height = th.height or height_mm * MM
-    fig = Figure(
-        figsize=(th.width, height), dpi=th.dpi, facecolor=th.surface,
-        layout="constrained",
-    )  # fmt: skip
-    FigureCanvasAgg(fig)
-    pad = 2 / 72 if th.name == "report" else 8 / 72
-    engine = fig.get_layout_engine()
-    if isinstance(engine, ConstrainedLayoutEngine):
-        engine.set(w_pad=pad, h_pad=pad, hspace=0.04, wspace=0.04)
-    return fig
-
-
-def _style(ax: Axes, th: Theme, *, grid: Literal["x", "y", "both"] = "x") -> Axes:
-    """Surface, muted ticks and labels, faint grid, left and bottom spines only."""
-    ax.set_facecolor(th.surface)
-    ax.tick_params(colors=th.muted, labelsize=th.font, length=2, width=0.5)
-    for side, spine in ax.spines.items():
-        spine.set_visible(side in ("left", "bottom"))
-        spine.set_color(th.muted)
-        spine.set_linewidth(0.5)
-    ax.grid(axis=grid, color=th.grid, lw=0.5)
-    ax.set_axisbelow(True)
-    return ax
-
-
-def _labels(ax: Axes, th: Theme, x: str | None = None, y: str | None = None) -> None:
-    if x is not None:
-        ax.set_xlabel(x, fontsize=th.font, color=th.ink2)
-    if y is not None:
-        ax.set_ylabel(y, fontsize=th.font, color=th.ink2)
-
-
-def _title(
-    ax: Axes, th: Theme, text: str, *, narrow: bool = False, width: int | None = None
-) -> None:
-    """Left-aligned title; ``narrow`` wraps it into a panel with long row labels."""
-    width = width or int(th.wrap * (0.45 if narrow else 0.8))
-    wrapped = "\n".join(textwrap.wrap(text, width))
-    ax.set_title(wrapped, loc="left", fontsize=th.title, color=th.ink)
+# The figure plumbing lives in `charts` (one theme for every producer); these names
+# are what `figures_game` and the other figure modules import.
+_figure = charts.themed_figure
+_style = charts.style_axes
+_labels = charts.set_labels
+_title = charts.set_title
 
 
 def _budget_name(budget: str) -> str:
@@ -249,51 +149,9 @@ def _pending(present: Sequence[str]) -> list[str]:
     return [PENDING.format(b.upper()) for b in BUDGETS if b not in present]
 
 
-def _save(fig: Figure, th: Theme, out_dir: Path, name: str) -> Figure:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Type 42 keeps the PDF's text as real fonts, which the venue requires
-    with mpl.rc_context({"pdf.fonttype": 42}):
-        for ext in ("pdf", "png"):
-            fig.savefig(
-                out_dir / f"{name}{th.suffix}.{ext}", facecolor=fig.get_facecolor(),
-                dpi=th.dpi,
-            )  # fmt: skip
-    return fig
-
-
-def _finish(
-    fig: Figure | SubFigure,
-    th: Theme,
-    handles: Sequence[Any] = (),
-    notes: Sequence[str] = (),
-    cols: int | None = None,
-) -> None:
-    """Legend above the panels, the wrapped notes below them."""
-    if handles:
-        fig.legend(
-            handles=list(handles), loc="outside upper center",
-            ncol=cols or th.legend_cols, fontsize=th.font, frameon=False,
-            labelcolor=th.ink2,
-        )  # fmt: skip
-    text = "\n".join(textwrap.fill(n, th.wrap) for n in notes if n)
-    if text:
-        fig.supxlabel(
-            text, x=0.01, ha="left", fontsize=th.font, color=th.muted,
-            fontweight="normal",
-        )  # fmt: skip
-
-
-def _placeholder(fig_name: str, th: Theme, out_dir: Path, text: str) -> Figure:
-    """A figure that only says why there is nothing to draw (still written to disk)."""
-    fig = _figure(th, 30)
-    ax = fig.add_subplot()
-    ax.set_axis_off()
-    shown = "\n".join(textwrap.wrap(text, th.wrap * 4 // 5))
-    ax.text(
-        0.5, 0.5, shown, ha="center", va="center", fontsize=th.title, color=th.muted,
-        transform=ax.transAxes,
-    )  # fmt: skip
-    return _save(fig, th, out_dir, fig_name)
+_save = charts.save_png
+_finish = charts.finish
+_placeholder = charts.placeholder
 
 
 def _no_data(name: str, th: Theme, out_dir: Path, what: str) -> Figure:
@@ -730,11 +588,10 @@ def _poi_panel(
     """One block's matrix: colour by PoI, bold where the CI excludes 0.5."""
     poi, lo, hi = _poi_cells(rows, names)
     cmap = _cmap(th, *th.div)
-    image = ax.imshow(poi, cmap=cmap, vmin=0.0, vmax=1.0, aspect="auto")
-    image.set_gid(_gid("poi", "1m", block))
+    charts.heatmap(ax, th, poi, cmap, vmin=0.0, vmax=1.0, gid=_gid("poi", "1m", block))
     n = len(names)
-    ax.set_xticks(range(n), names, rotation=90)
-    ax.set_yticks(range(n), names)
+    ax.set_xticks(np.arange(n) + 0.5, names, rotation=90)
+    ax.set_yticks(np.arange(n) + 0.5, names)
     for i in range(n):
         for j in range(n):
             if np.isnan(poi[i, j]):
@@ -744,7 +601,7 @@ def _poi_panel(
             if th.name == "video":  # the report's cells are too narrow for a CI
                 text += f"\n[{lo[i, j]:.2f}, {hi[i, j]:.2f}]"
             ax.text(
-                j, i, text, ha="center", va="center", fontsize=th.font,
+                j + 0.5, i + 0.5, text, ha="center", va="center", fontsize=th.font,
                 color=_ink_on(cmap(poi[i, j])),
                 fontweight="bold" if excluded else "normal",
                 gid="poi-cell/bold" if excluded else "poi-cell/plain",
@@ -839,6 +696,7 @@ def _poi_controls(
         cells, cmap=cmap, vmin=0.0, vmax=1.0, aspect="auto", interpolation="nearest"
     )
     image.set_gid(_gid("poi", "1m", "controls"))
+    ax.grid(False)
     for i, j in zip(*np.where(np.isfinite(cells)), strict=True):
         excluded = lo[i, j] > 0.5 or hi[i, j] < 0.5
         ax.text(
@@ -893,7 +751,7 @@ def plot_aggregate_poi(
     grid = fig.add_gridspec(
         len(layouts),
         2,
-        width_ratios=[2.6 if th.wide else 1.2, 1.0],
+        width_ratios=[2.6 if th.wide else 0.9, 1.0],
         height_ratios=counts,
     )
     for i, (budget, rows) in enumerate(layouts.items()):
@@ -1042,7 +900,10 @@ def _tier_spans(status: pd.DataFrame) -> list[tuple[str, int, int]]:
 def _floor_labels(
     ax: Axes, th: Theme, floors: Sequence[int], tiers: Sequence[str] = ()
 ) -> None:
-    """Right-hand floor labels (``<tier> F<n>`` with ``tiers``) per run of a floor."""
+    """Right-hand floor labels (``<tier> F<n>`` with ``tiers``) per run of a floor.
+
+    Rows are heat-map cells: row ``i`` spans ``i`` to ``i + 1``.
+    """
     runs: list[tuple[int, int, int]] = []
     for i, floor in enumerate(floors):
         if runs and runs[-1][0] == floor:
@@ -1052,7 +913,7 @@ def _floor_labels(
     gap = 2.0
     ticks, labels, last = [], [], -gap
     for floor, a, b in runs:
-        mid = (a + b) / 2
+        mid = (a + b + 1) / 2
         if mid - last >= gap:
             ticks.append(mid)
             labels.append(f"{tiers[a]} F{floor}" if tiers else f"F{floor}")
@@ -1079,24 +940,23 @@ def _heat_panel(
         by_name[m].to_numpy(dtype=float) if m in by_name else np.full(n, np.nan)
         for m in names
     ])
-    image = ax.imshow(
-        cells, cmap=_cmap(th, *th.seq), vmin=0.0, vmax=1.0, aspect="auto",
-        interpolation="nearest",
+    charts.heatmap(
+        ax, th, cells, _cmap(th, *th.seq), vmin=0.0, vmax=1.0,
+        gid=_gid("heat", budget, block),
     )  # fmt: skip
-    image.set_gid(_gid("heat", budget, block))
-    ax.set_xticks(range(len(names)), names, rotation=90)
+    ax.set_xticks(np.arange(len(names)) + 0.5, names, rotation=90)
     ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
     spans = _tier_spans(ref)
     for _, _, last in spans[:-1]:
-        ax.axhline(last + 0.5, color=th.ink2, lw=0.6)
+        ax.axhline(last + 1, color=th.ink2, lw=0.6)  # row i spans i to i + 1
     video = th.name == "video"
     if first and video:  # 13 px a row: every achievement gets its name
-        ax.set_yticks(range(n), [str(a) for a in ref["achievement"]])
+        ax.set_yticks(np.arange(n) + 0.5, [str(a) for a in ref["achievement"]])
         for tick in ax.get_yticklabels():
             tick.set_fontsize(8)
             tick.set_gid("heat/achievement")
     elif first:
-        ax.set_yticks([(a + b) / 2 for _, a, b in spans], [t for t, _, _ in spans])
+        ax.set_yticks([(a + b + 1) / 2 for _, a, b in spans], [t for t, _, _ in spans])
         for tick in ax.get_yticklabels():
             tick.set_gid("heat/tier")
     else:
@@ -1381,6 +1241,8 @@ def plot_stability(
         _apply_rows(ax_dd, th, rows)
         ax_dd.set_xlim(0, 1.02)
         ax_bar.set_xlim(0, 1.0)
+        for ax in (ax_dd, ax_bar):
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:g}"))
         _labels(ax_dd, th, "max drawdown")
         _labels(ax_bar, th, "share of runs")
         _title(

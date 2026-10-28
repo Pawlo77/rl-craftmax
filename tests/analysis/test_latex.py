@@ -499,21 +499,25 @@ def test_write_numbers_checks_the_report_macros(
     write_numbers(path, frames, **kw)  # type: ignore[arg-type]
 
 
-def test_copy_figures_takes_the_report_pdfs_only(tmp_path: Path) -> None:
+def test_copy_figures_takes_the_report_pngs_only(tmp_path: Path) -> None:
     src, out = tmp_path / "results", tmp_path / "report" / "figures"
     src.mkdir()
+    out.mkdir(parents=True)
     for name in (
-        "aggregate.pdf",
-        "aggregate_double.pdf",
-        "aggregate_video.pdf",
         "aggregate.png",
-    ):
-        (src / name).write_bytes(b"%PDF")
-    copied = copy_figures(src, out)
-    assert sorted(p.name for p in copied) == ["aggregate.pdf", "aggregate_double.pdf"]
-    assert sorted(p.name for p in out.iterdir()) == [
+        "aggregate_double.png",
+        "aggregate_video.png",
         "aggregate.pdf",
-        "aggregate_double.pdf",
+    ):
+        (src / name).write_bytes(b"x")
+    (out / "aggregate.pdf").write_bytes(b"%PDF")  # an earlier build's vector file
+    (out / "handmade.pdf").write_bytes(b"%PDF")  # not a figure of this run: kept
+    copied = copy_figures(src, out)
+    assert sorted(p.name for p in copied) == ["aggregate.png", "aggregate_double.png"]
+    assert sorted(p.name for p in out.iterdir()) == [
+        "aggregate.png",
+        "aggregate_double.png",
+        "handmade.pdf",
     ]
 
 

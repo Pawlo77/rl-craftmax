@@ -1,6 +1,11 @@
 """Tests of the shared chart palette: method colours in both themes (contracts.md 6)."""
 
+from pathlib import Path
+from typing import Any
+
+import matplotlib as mpl
 import pytest
+from matplotlib.figure import Figure
 
 from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.visualisation import charts
@@ -75,3 +80,53 @@ def test_heat_map_ramps_never_reuse_a_method_colour(seq: str, div: str) -> None:
         assert not {c.lower() for c in ramp} & methods
         assert len(set(ramp)) == len(ramp)
     assert len(getattr(charts, div)) == 3
+
+
+# --- the figure theme ---------------------------------------------------------------
+
+
+def test_the_figure_is_drawn_under_its_own_rc_values(tmp_path: Path) -> None:
+    th = charts.theme("video")
+    fig = charts.themed_figure(th, 0)
+    fig.add_subplot().plot([0, 1])
+    seen: list[float] = []
+    plain = Figure.savefig
+
+    def spy(self: Figure, *args: Any, **kwargs: Any) -> None:
+        seen.append(mpl.rcParams["xtick.labelsize"])  # lazily read while drawing
+        plain(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Figure, "savefig", spy)
+        charts.save_png(fig, th, tmp_path, "x")
+    assert seen == [th.font]
+    assert mpl.rcParams["xtick.labelsize"] != th.font  # nothing leaked
+
+
+def test_a_note_wider_than_the_canvas_is_wrapped(tmp_path: Path) -> None:
+    th = charts.theme("report")
+    fig = charts.themed_figure(th, 60)
+    fig.add_subplot().plot([0, 1])
+    fig.supxlabel("word " * 60, x=0.01, ha="left", fontsize=th.font)
+    charts.settle(fig)
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+    (note,) = fig.texts
+    assert note.get_window_extent(renderer).width <= fig.get_size_inches()[0] * fig.dpi
+    assert "\n" in note.get_text()
+
+
+def test_a_long_panel_title_is_wrapped_to_its_axes(tmp_path: Path) -> None:
+    th = charts.theme("report", "double")
+    fig = charts.themed_figure(th, 60)
+    left, right = fig.subplots(1, 2)
+    charts.set_title(left, th, "a very long title " * 6, width=400)
+    charts.set_title(right, th, "short")
+    charts.settle(fig)
+    title = charts._left_title(left)
+    assert title is not None
+    assert title.get_window_extent(fig.canvas.get_renderer()).x1 <= (  # type: ignore[attr-defined]
+        right.get_tightbbox(fig.canvas.get_renderer()).x0  # type: ignore[attr-defined]
+    )
+    empty = charts._left_title(fig.add_subplot(3, 1, 3))
+    assert empty is not None
+    assert empty.get_text() == ""

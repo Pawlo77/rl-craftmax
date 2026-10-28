@@ -1,6 +1,6 @@
 """Tests of the in-game figures F6-F17 on the game fixture (10 seeds at 1M, 3 at 1B).
 
-Like `test_figures.py`: every figure writes a PDF and a PNG, is sized for one
+Like `test_figures.py`: every figure writes a PNG (and no PDF), is sized for one
 Interspeech column or a 1080p frame, takes its colours from `METHOD_COLORS`, and the
 drawn artists (found by their ``gid`` ``<kind>/<budget>/<method>[/<category>]``) are
 compared with the tables they come from. The fixture's values are deterministic
@@ -57,7 +57,7 @@ from wut_murl_craftax.visualisation.charts import METHOD_COLORS, METHOD_COLORS_L
 N = 100
 """Bootstrap resamples and permutations in tests."""
 THEMES = ("report", "video")
-PDF, PNG = b"%PDF", b"\x89PNG\r\n\x1a\n"
+PNG = b"\x89PNG\r\n\x1a\n"
 NOT_LOGGED = ("ppo", "ppo-rnn")
 """The reused runs without the online families (R78)."""
 FIGS = ["F6", "F7", "F7G", "F8", "F8T", "F9", "F9S"] + [f"F{i}" for i in range(10, 18)]
@@ -169,13 +169,13 @@ def ydata(artist: Artist) -> float:
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", FIGS)
-def test_each_figure_writes_a_pdf_and_a_png(
+def test_each_figure_writes_a_png_and_no_pdf(
     fid: str, theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = draw(fid, frames, tmp_path, theme)
     assert isinstance(fig, Figure)
     name = stem(fid) + ("_video" if theme == "video" else "")
-    assert (tmp_path / f"{name}.pdf").read_bytes().startswith(PDF)
+    assert not (tmp_path / f"{name}.pdf").exists()
     assert (tmp_path / f"{name}.png").read_bytes().startswith(PNG)
     for want in LABELS[fid]:
         assert want in axis_labels(fig), (fid, want, axis_labels(fig))
@@ -218,7 +218,7 @@ def test_double_width_is_170_mm_with_its_own_files(
 ) -> None:
     fig = draw(fid, frames, tmp_path, width="double")
     assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert (tmp_path / f"{stem(fid)}_double.pdf").read_bytes().startswith(PDF)
+    assert not (tmp_path / f"{stem(fid)}_double.pdf").exists()
     assert (tmp_path / f"{stem(fid)}_double.png").read_bytes().startswith(PNG)
     fig.canvas.draw()
     small = [
@@ -263,7 +263,7 @@ def test_the_1b_radar_without_1b_runs_is_a_pending_placeholder(
 ) -> None:
     fig = plot_radar(frames_1m, tmp_path, budget="1b")
     assert any("Craftax-1B pending" in t for t in texts(fig))
-    assert (tmp_path / "radar_1b.pdf").exists()
+    assert (tmp_path / "radar_1b.png").exists()
 
 
 @pytest.mark.parametrize("fid", FIGS)
@@ -273,7 +273,7 @@ def test_no_run_data_gives_a_labelled_placeholder(
     empty = {k: v.iloc[:0] for k, v in frames.items()}
     fig = draw(fid, empty, tmp_path)
     assert any("no data" in t or "pending" in t for t in texts(fig))
-    assert (tmp_path / f"{stem(fid)}.pdf").exists()
+    assert (tmp_path / f"{stem(fid)}.png").exists()
 
 
 # --- F6 -------------------------------------------------------------------------
@@ -318,7 +318,7 @@ def test_f6_wall_clock_is_a_second_file_with_its_winners(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = race(frames, tmp_path, clock="wall")
-    assert (tmp_path / "race_wall.pdf").exists()
+    assert (tmp_path / "race_wall.png").exists()
     won = compare.race_table(frames)
     assert not won["winner_wall"].any()  # R97: every run is a laptop run, no ring
     assert gids(fig, "winner") == set()
@@ -493,7 +493,7 @@ def test_f7_graph_figure_draws_the_reduced_edges_and_every_node(
     assert nodes_1m == {f"node/1m/sil/{a}" for a in nodes["achievement"]}
     assert any(g.startswith("node/1b/") for g in gids(fig, "node"))
     assert any("no edge reaches" in t and "1B" in t for t in texts(fig))
-    assert (tmp_path / "order_sil_double.pdf").exists()
+    assert (tmp_path / "order_sil_double.png").exists()
 
 
 def test_f7_agreement_matrix_is_the_table_one_panel_per_benchmark(
@@ -531,12 +531,18 @@ def test_f8_dots_are_the_funnel_shares(
         rows = table[table["kind"] == kind]
         for r in rows.itertuples():
             gid = f"funnel-{kind}/1m/{r.method}/{r.step}"
-            assert dots[gid] == pytest.approx(r.share), gid
+            if gid in dots:
+                assert dots[gid] == pytest.approx(r.share), gid
+            else:  # the all-zero tail is not drawn (named in a note)
+                assert r.share == 0, gid
         # along one method the drawn points never move right as the step grows
-        steps = sorted(rows["step"].unique())
+        steps = sorted({int(g.split("/")[-1]) for g in dots})
+        assert steps == sorted(rows["step"].unique())[: len(steps)]
         for m in ctx.names:
             xs = [dots[f"funnel-{kind}/1m/{m}/{s}"] for s in steps]
             assert all(a >= b - 1e-9 for a, b in itertools.pairwise(xs))
+    notes = " ".join(t.get_text() for t in fig.texts)
+    assert "no episode reached" in notes or len(dots) == len(rows)
 
 
 def test_f8_training_is_the_sum_of_the_logged_shares(
@@ -910,7 +916,7 @@ def test_f17_draws_one_polygon_per_method_at_the_scaled_values(
     assert len(axes) == 9
     assert all(ax.name == "polar" for ax in axes)
     assert all(ax.get_ylim() == (0.0, 1.0) for ax in axes)
-    assert (tmp_path / "radar_1m.pdf").exists()
+    assert (tmp_path / "radar_1m.png").exists()
 
 
 # --- colours --------------------------------------------------------------------
@@ -1108,3 +1114,36 @@ def test_the_race_mask_only_touches_the_first_unlock_rows(
     base = base.sort_values(["run_id", "env_steps", "metric"])
     assert kept["value"].to_numpy() == pytest.approx(base["value"].to_numpy())
     assert np.isinf(after.loc[~other, "value"]).any()
+
+
+def test_f7g_draws_only_the_tiers_with_a_node_and_has_no_legend(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_order_graph(frames, tmp_path, "report", width="double", method="sil")
+    nodes = artists(fig, "node")
+    used = {round(float(a.get_ydata()[0])) for a in nodes}
+    for ax in {a.axes for a in nodes}:  # every panel has one row per drawn tier only
+        assert used == set(range(len(ax.get_yticklabels())))
+    assert not fig.legends
+    notes = " ".join(t.get_text() for t in fig.texts)
+    assert ("No node in the tiers" in notes) == (len(used) < 4)
+
+
+def test_one_unit_plots_of_hard_have_no_one_entry_legend(tmp_path: Path) -> None:
+    from test_hard import floor_frame  # the hard fixtures
+
+    from wut_murl_craftax.analysis.hard import floor_reach, plot_floor_reach
+
+    seen: list[Figure] = []
+    plain = Figure.savefig
+
+    def keep(self: Figure, *args: object, **kwargs: object) -> None:
+        seen.append(self)
+        plain(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    one = floor_reach(floor_frame(), n=N)
+    one = one[one["config_ref"] == "tuned"]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Figure, "savefig", keep)
+        plot_floor_reach(one, tmp_path)
+    assert not seen[0].legends

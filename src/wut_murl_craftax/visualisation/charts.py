@@ -1,9 +1,31 @@
-"""Matplotlib frames for the learning-process charts: dark theme, colours, smoothing."""
+"""Chart colours, the seaborn figure theme and the dark animation frames.
 
+Two jobs. `Theme` is the one visual standard of every static figure: report (light,
+80 or 170 mm wide, 300 dpi) and video (dark, 1920 x 1080), built on seaborn
+(`rc_params`: ``sns.axes_style`` plus ``sns.plotting_context``) and applied per figure
+through ``rc_context`` (`themed_figure`), never as global state. `style_axes`,
+`set_labels`, `set_title`, `finish` and `save_png` are what ``analysis.figures``,
+``analysis.hard``, ``interpretation.run`` and ``visualisation.timeline`` draw with:
+legends sit outside the axes, figures are PNG only. `figure`, `style` and `frame` are
+the pixel-sized dark frames of the animated learning-process videos.
+"""
+
+import functools
+import logging
+import textwrap
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Literal, NamedTuple
+
+import matplotlib as mpl
 import numpy as np
+import seaborn as sns
+from cycler import cycler
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.figure import Figure
+from matplotlib.figure import Figure, FigureBase
+from matplotlib.layout_engine import ConstrainedLayoutEngine
+from matplotlib.text import Text
 
 SURFACE = "#1a1a19"
 """Chart background (dark surface)."""
@@ -108,3 +130,455 @@ DIVERGING_LIGHT = ("#9a8700", "#f1f0ec", "#00306f")
 """Below, at and above the midpoint on `SURFACE_LIGHT` (probability of improvement)."""
 DIVERGING_DARK = ("#d4bd2a", "#2c2c2a", "#2e5fb0")
 """Below, at and above the midpoint on `SURFACE`."""
+
+
+# ------------------------------------------------------------------------- theme
+
+logger = logging.getLogger(__name__)
+
+COLUMN_MM = 80.0
+"""One Interspeech column: (170 mm text width - 10 mm gap) / 2."""
+MM = 1 / 25.4
+WIDTHS = {"column": COLUMN_MM, "double": 170.0}
+"""Report figure widths in mm: one column, or two columns."""
+SERIES_LIGHT = ("#1c5cab", "#a8411a", "#127552", "#8f5f00")
+"""`SERIES` on `SURFACE_LIGHT`: checkpoints and units of one method, report theme."""
+FONT = "DejaVu Sans"
+"""Bundled with matplotlib, so every machine measures the same text widths."""
+
+
+class Theme(NamedTuple):
+    """Surface, inks, method colours and sizes of one output (report or video)."""
+
+    name: str
+    surface: str
+    ink: str
+    ink2: str
+    muted: str
+    grid: str
+    colors: Mapping[str, str]
+    seq: Sequence[str]
+    """Heat-map ramp, low to high."""
+    div: Sequence[str]
+    """Diverging ramp: below, at and above the midpoint."""
+    width: float
+    """Figure width in inches."""
+    height: float | None
+    """Fixed height in inches (video); None: from the rows (report)."""
+    dpi: int
+    font: float
+    title: float
+    pitch_mm: float
+    """Row pitch in mm (report); the video fills its frame."""
+    lw: float
+    ms: float
+    suffix: str
+    legend_cols: int
+    wrap: int
+    """Characters per line of a note."""
+    wide: bool
+    """Double-column report width: panels sit side by side as in the video."""
+    series: Sequence[str] = SERIES
+    """Categorical colours for units that are not methods (checkpoints, ablations)."""
+
+
+def report_theme(width: str = "column") -> Theme:
+    """The light report theme at one column or the double width."""
+    mm = WIDTHS[width]
+    return Theme(
+        "report", SURFACE_LIGHT, INK_LIGHT, INK2_LIGHT, MUTED_LIGHT, GRID_LIGHT,
+        METHOD_COLORS_LIGHT, SEQUENTIAL_LIGHT, DIVERGING_LIGHT, mm * MM, None, 300,
+        7.0, 7.5, 3.3, 0.9, 3.0, "_double" if width == "double" else "",
+        4 if width == "double" else 2, round(56 * mm / COLUMN_MM), width == "double",
+        SERIES_LIGHT,
+    )  # fmt: skip
+
+
+VIDEO = Theme(
+    "video", SURFACE, INK, INK2, MUTED, GRID, METHOD_COLORS, SEQUENTIAL_DARK,
+    DIVERGING_DARK, 19.2, 10.8, 100, 14.0, 17.0, 0.0, 2.2, 7.0, "_video", 5, 170,
+    True, SERIES,
+)  # fmt: skip
+
+
+def theme(name: str, width: str = "column") -> Theme:
+    """The theme of ``name``; ``width`` (column or double) sizes the report only.
+
+    Raises:
+        ValueError: If ``name`` is not report or video, or ``width`` is unknown.
+    """
+    if name not in ("report", "video"):
+        msg = f"theme must be 'report' or 'video', got {name!r}"
+        raise ValueError(msg)
+    if width not in WIDTHS:
+        msg = f"width must be one of {sorted(WIDTHS)}, got {width!r}"
+        raise ValueError(msg)
+    return VIDEO if name == "video" else report_theme(width)
+
+
+def rc_params(th: Theme) -> dict[Any, Any]:
+    """The seaborn style and context of ``th`` as matplotlib rc parameters.
+
+    ``sns.axes_style`` gives the base (white grid on paper, dark grid on the video),
+    ``sns.plotting_context`` the sizes (paper, talk); the theme's inks, fonts and
+    method colours go on top. Pass the result to ``mpl.rc_context``.
+    """
+    dark = th.name == "video"
+    style = sns.axes_style(
+        "darkgrid" if dark else "whitegrid",
+        rc={
+            "axes.facecolor": th.surface, "figure.facecolor": th.surface,
+            "savefig.facecolor": th.surface, "axes.edgecolor": th.muted,
+            "axes.labelcolor": th.ink2, "text.color": th.ink,
+            "xtick.color": th.muted, "ytick.color": th.muted, "grid.color": th.grid,
+            "grid.linestyle": "-", "axes.spines.top": False,
+            "axes.spines.right": False, "axes.axisbelow": True,
+            "font.sans-serif": [FONT], "legend.frameon": False,
+            "legend.labelcolor": th.ink2, "legend.title_fontsize": th.font,
+            "axes.prop_cycle": cycler(color=list(th.colors.values())),
+        },
+    )  # fmt: skip
+    context = sns.plotting_context(
+        "talk" if dark else "paper",
+        rc={
+            "font.size": th.font, "axes.labelsize": th.font,
+            "axes.titlesize": th.title, "xtick.labelsize": th.font,
+            "ytick.labelsize": th.font, "legend.fontsize": th.font,
+            "axes.linewidth": 0.5, "grid.linewidth": 0.5, "lines.linewidth": th.lw,
+            "lines.markersize": th.ms, "xtick.major.size": 2.0,
+            "ytick.major.size": 2.0, "xtick.major.width": 0.5,
+            "ytick.major.width": 0.5, "figure.titlesize": th.title,
+        },
+    )  # fmt: skip
+    return {**style, **context}
+
+
+_CREATORS = (
+    "add_axes", "add_subplot", "legend", "text", "suptitle", "supxlabel", "supylabel",
+    "colorbar",
+)  # fmt: skip
+"""Figure methods that read the rc parameters when they create an artist."""
+
+
+def _bind(fig: FigureBase, rc: Any) -> None:
+    """Make the artist-creating methods of ``fig`` (and its subfigures) use ``rc``."""
+
+    def wrap(plain: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(plain)
+        def themed(*args: Any, **kwargs: Any) -> Any:
+            with mpl.rc_context(rc):
+                return plain(*args, **kwargs)
+
+        return themed
+
+    for name in _CREATORS:
+        setattr(fig, name, wrap(getattr(fig, name)))
+
+    plain_sub = fig.subfigures
+
+    @functools.wraps(plain_sub)
+    def subfigures(*args: Any, **kwargs: Any) -> Any:
+        subs = plain_sub(*args, **kwargs)
+        for sub in np.atleast_1d(subs).ravel():
+            _bind(sub, rc)
+        return subs
+
+    fig.subfigures = subfigures  # type: ignore[method-assign]  # per-instance wrapper
+
+
+def themed_figure(th: Theme, height_mm: float) -> Figure:
+    """A constrained-layout figure on the theme surface (report height: the rows).
+
+    Axes, legends and texts created on it (and on its subfigures) read the theme's
+    seaborn rc parameters; the global ``rcParams`` stay untouched.
+    """
+    rc = rc_params(th)
+    fig = Figure(
+        figsize=(th.width, th.height or height_mm * MM), dpi=th.dpi,
+        facecolor=th.surface, layout="constrained",
+    )  # fmt: skip
+    FigureCanvasAgg(fig)
+    _bind(fig, rc)
+    fig.theme_rc = rc  # type: ignore[attr-defined]  # read back by `settle`, `write_png`
+    pad = 2 / 72 if th.name == "report" else 8 / 72
+    engine = fig.get_layout_engine()
+    if isinstance(engine, ConstrainedLayoutEngine):
+        engine.set(w_pad=pad, h_pad=pad, hspace=0.04, wspace=0.04)
+    return fig
+
+
+def style_axes(ax: Axes, th: Theme, *, grid: Literal["x", "y", "both"] = "x") -> Axes:
+    """Surface, muted ticks and labels, faint grid, left and bottom spines only."""
+    ax.set_facecolor(th.surface)
+    ax.tick_params(colors=th.muted, labelsize=th.font, length=2, width=0.5)
+    sns.despine(ax=ax, top=True, right=True)
+    for spine in ax.spines.values():
+        spine.set_color(th.muted)
+        spine.set_linewidth(0.5)
+    ax.grid(axis=grid, color=th.grid, lw=0.5)
+    ax.set_axisbelow(True)
+    return ax
+
+
+def heatmap(
+    ax: Axes,
+    th: Theme,
+    data: np.ndarray,
+    cmap: Any,
+    *,
+    norm: Any = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    gid: str | None = None,
+) -> Any:
+    """Cells of ``data`` with ``sns.heatmap`` (NaN is the colormap's ``bad``).
+
+    No colour bar, tick labels, grid or cell edges: the caller labels the axes with
+    ticks at ``i + 0.5`` (the cell centres) and adds its own cell texts.
+    """
+    with mpl.rc_context(rc_params(th)):
+        sns.heatmap(
+            data, ax=ax, cmap=cmap, norm=norm, vmin=vmin, vmax=vmax, cbar=False,
+            xticklabels=False, yticklabels=False, linewidths=0, mask=np.isnan(data),
+        )  # fmt: skip
+    ax.grid(False)
+    ax.set_aspect("auto")
+    mesh = ax.collections[-1]
+    mesh.set_gid(gid)
+    return mesh
+
+
+def set_labels(ax: Axes, th: Theme, x: str | None = None, y: str | None = None) -> None:
+    """Axis labels in the theme's secondary ink."""
+    if x is not None:
+        ax.set_xlabel(x, fontsize=th.font, color=th.ink2)
+    if y is not None:
+        ax.set_ylabel(y, fontsize=th.font, color=th.ink2)
+
+
+def set_title(
+    ax: Axes, th: Theme, text: str, *, narrow: bool = False, width: int | None = None
+) -> None:
+    """Left-aligned title; ``narrow`` wraps it into a panel with long row labels."""
+    width = width or int(th.wrap * (0.45 if narrow else 0.8))
+    wrapped = "\n".join(textwrap.wrap(text, width))
+    ax.set_title(wrapped, loc="left", fontsize=th.title, color=th.ink)
+
+
+TITLE_GAP_PX = 6.0
+"""Space kept between a wrapped title and the panel or canvas edge to its right."""
+FIT_PASSES = 4
+"""Layout passes `fit_canvas` may take to bring every artist onto the canvas."""
+
+
+def _px_width(renderer: Any, text: str, font: Any) -> float:
+    return float(renderer.get_text_width_height_descent(text, font, False)[0])
+
+
+def _wrap_px(renderer: Any, text: str, font: Any, limit: float) -> str:
+    """``text`` broken into lines no wider than ``limit`` pixels (words stay whole)."""
+    lines: list[str] = []
+    for word in text.split():
+        if lines and _px_width(renderer, f"{lines[-1]} {word}", font) <= limit:
+            lines[-1] += f" {word}"
+        else:
+            lines.append(word)
+    return "\n".join(lines)
+
+
+def _left_title(ax: Axes) -> Text | None:
+    """The ``loc="left"`` title text of ``ax`` (matplotlib has no accessor for it).
+
+    Found among the axes' children as the text at the axes' top left corner that
+    carries the title string; None if the axes has no left title.
+    """
+    wanted = ax.get_title(loc="left")
+    for child in ax.get_children():
+        if (
+            isinstance(child, Text)
+            and child is not ax.title
+            and child.get_text() == wanted
+            and child.get_position() == (0.0, 1.0)
+        ):
+            return child
+    return None
+
+
+def wrap_titles(fig: Figure) -> bool:
+    """Re-wrap panel titles that run into the next panel or off the canvas.
+
+    Titles are left-aligned and the layout engine does not count their width, so a
+    long title of a narrow panel would spill sideways. Each is broken at word
+    boundaries to the room the panel has: up to the tight box of the nearest axes on
+    its right (same rows), else the canvas edge. True if any title changed.
+    """
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]  # Agg canvas
+    width = renderer.width
+    axes = [ax for ax in fig.axes if ax.get_visible()]
+    changed = False
+    for ax in axes:
+        title = _left_title(ax)
+        if title is None or not title.get_text().strip():
+            continue
+        text = title.get_text()
+        box = title.get_window_extent(renderer)
+        area = ax.get_window_extent(renderer)
+        limit = width - TITLE_GAP_PX
+        for other in axes:
+            near = other.get_tightbbox(renderer)
+            if (
+                other is not ax
+                and near is not None
+                and near.x0 >= area.x1
+                and near.y1 > area.y0
+                and near.y0 < box.y1
+            ):
+                limit = min(limit, near.x0 - TITLE_GAP_PX)
+        if box.x1 <= limit:
+            continue
+        room = max(limit - box.x0, 1.0)
+        wrapped = _wrap_px(
+            renderer, " ".join(text.split()), title.get_fontproperties(), room
+        )
+        if wrapped != text:
+            title.set_text(wrapped)
+            changed = True
+    return changed
+
+
+def _overflow_px(fig: Figure, margin_px: float) -> tuple[float, float, float, float]:
+    """Pixels by which the artists leave the canvas: left, bottom, right, top."""
+    fig.draw_without_rendering()
+    box = fig.get_tightbbox(fig.canvas.get_renderer())  # type: ignore[attr-defined]  # Agg canvas
+    w, h = fig.get_size_inches() * fig.dpi
+    x0, y0, x1, y1 = (
+        box.x0 * fig.dpi,
+        box.y0 * fig.dpi,
+        box.x1 * fig.dpi,
+        box.y1 * fig.dpi,
+    )
+    return (
+        max(0.0, margin_px - x0), max(0.0, margin_px - y0),
+        max(0.0, x1 - (w - margin_px)), max(0.0, y1 - (h - margin_px)),
+    )  # fmt: skip
+
+
+def _wrap_wide_texts(fig: Figure, margin_px: float) -> bool:
+    """Wrap figure-level texts (notes, titles) wider than the canvas; True if any."""
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]  # Agg canvas
+    limit = fig.get_size_inches()[0] * fig.dpi - 2 * margin_px
+    changed = False
+    for text in fig.texts:
+        if text.get_window_extent(renderer).width <= limit or not text.get_text():
+            continue
+        lines = [
+            _wrap_px(renderer, line, text.get_fontproperties(), limit)
+            for line in text.get_text().splitlines()
+        ]
+        text.set_text("\n".join(lines))
+        changed = True
+    return changed
+
+
+def fit_canvas(fig: Figure, margin_px: float = 2.0) -> None:
+    """Shrink the layout area until every artist (ticks, legends, notes) is on canvas.
+
+    The constrained layout normally keeps everything inside, but it ignores the width
+    of titles and can leave a tick label half a glyph outside; the figure size is
+    fixed (80 mm, 170 mm, 1080p), so the rest of the figure gives way, a few pixels.
+    After the last pass the result is measured again: a note or title wider than the
+    canvas is wrapped (shrinking cannot help it); anything still outside is logged.
+    """
+    engine = fig.get_layout_engine()
+    if not isinstance(engine, ConstrainedLayoutEngine):
+        return
+    w, h = fig.get_size_inches() * fig.dpi
+    for attempt in range(2):
+        for _ in range(FIT_PASSES):
+            over = _overflow_px(fig, margin_px)
+            if max(over) <= 0.5:
+                return
+            left, bottom, rw, rh = engine.get()["rect"]
+            engine.set(
+                rect=(
+                    left + over[0] / w, bottom + over[1] / h,
+                    rw - (over[0] + over[2]) / w, rh - (over[1] + over[3]) / h,
+                )
+            )  # fmt: skip
+        if attempt == 0 and not _wrap_wide_texts(fig, margin_px):
+            break
+    if max(_overflow_px(fig, margin_px)) > 0.5:
+        logger.warning("figure still has artists outside its canvas after fitting")
+
+
+def settle(fig: Figure) -> None:
+    """Lay ``fig`` out for good: titles wrapped to their panels, all of it on canvas."""
+    with mpl.rc_context(_rc_of(fig)):
+        _wrap_wide_texts(fig, 2.0)  # before any layout: a wider text cannot be solved
+        if wrap_titles(fig):
+            fig.draw_without_rendering()
+        fit_canvas(fig)
+
+
+def _rc_of(fig: Figure) -> dict[Any, Any]:
+    """The rc parameters of a themed figure (empty for any other figure)."""
+    return dict(getattr(fig, "theme_rc", {}))
+
+
+def write_png(fig: Figure, path: Path) -> None:
+    """`settle` ``fig`` and save it as ``path``, drawing under its theme's rc values.
+
+    Ticks, title and label pads are created lazily while drawing: they must read the
+    seaborn values, so the draw happens inside the figure's ``rc_context`` too.
+    """
+    settle(fig)
+    with mpl.rc_context(_rc_of(fig)):
+        fig.savefig(path, facecolor=fig.get_facecolor(), dpi=fig.dpi)
+
+
+def save_png(fig: Figure, th: Theme, out_dir: Path, name: str) -> Figure:
+    """Write ``<name><suffix>.png`` into ``out_dir`` (PNG only) and return ``fig``.
+
+    Titles are wrapped to their panels and the layout is fitted to the canvas first
+    (`wrap_titles`, `fit_canvas`), so nothing is cropped and the report widths and
+    the 1080p frame stay exact.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    write_png(fig, out_dir / f"{name}{th.suffix}.png")
+    return fig
+
+
+def finish(
+    fig: Figure | FigureBase,
+    th: Theme,
+    handles: Sequence[Any] = (),
+    notes: Sequence[str] = (),
+    cols: int | None = None,
+    loc: Any = "outside upper center",
+) -> None:
+    """Legend outside the axes (``loc``: above them by default), notes below them."""
+    if handles:
+        fig.legend(
+            handles=list(handles), loc=loc, ncol=cols or th.legend_cols,
+            fontsize=th.font, frameon=False, labelcolor=th.ink2,
+        )  # fmt: skip
+    text = "\n".join(textwrap.fill(n, th.wrap) for n in notes if n)
+    if text:
+        fig.supxlabel(
+            text, x=0.01, ha="left", fontsize=th.font, color=th.muted,
+            fontweight="normal",
+        )  # fmt: skip
+
+
+def placeholder(fig_name: str, th: Theme, out_dir: Path, text: str) -> Figure:
+    """A figure that only says why there is nothing to draw (still written to disk)."""
+    fig = themed_figure(th, 30)
+    ax = fig.add_subplot()
+    ax.set_axis_off()
+    shown = "\n".join(textwrap.wrap(text, th.wrap * 4 // 5))
+    ax.text(
+        0.5, 0.5, shown, ha="center", va="center", fontsize=th.title, color=th.muted,
+        transform=ax.transAxes,
+    )  # fmt: skip
+    return save_png(fig, th, out_dir, fig_name)

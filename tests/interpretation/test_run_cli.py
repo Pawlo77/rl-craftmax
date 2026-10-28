@@ -165,9 +165,9 @@ def test_every_method_folder_holds_the_plan_files(world: World) -> None:
     assert not SKILL_FILES & {p.name for p in world.method("ppo").iterdir()}
     assert {p.name for p in (world.out / "1m").iterdir()} == {
         "ppo", "smdp-skills", "complexity.csv", "policies.csv",
-        "fidelity_vs_leaves_1m.pdf", "fidelity_vs_leaves_1m.png",
+        "fidelity_vs_leaves_1m.png",
     }  # fmt: skip
-    assert (world.figures / "fidelity_vs_leaves_1m.pdf").is_file()
+    assert (world.figures / "fidelity_vs_leaves_1m.png").is_file()
 
 
 def test_only_tuned_runs_are_distilled_at_their_final_checkpoint(world: World) -> None:

@@ -21,7 +21,7 @@ from typing import Any
 import matplotlib as mpl
 import numpy as np
 import pandas as pd
-import seaborn as sns  # type: ignore[import-untyped]  # ships no stubs
+import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D

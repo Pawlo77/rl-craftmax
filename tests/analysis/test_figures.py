@@ -1,9 +1,10 @@
 """Tests of the core figures F1-F5 and F18-F20 on the comparison fixture.
 
-Every figure writes a PDF and a PNG, is sized for one Interspeech column (report) or a
-1920 x 1080 frame (video), takes its colours from `METHOD_COLORS` and its numbers from
-the comparison tables; the tests read the drawn artists back (found by their ``gid``,
-``<kind>/<budget or phase>/<block>/<method>/<ref>``) and compare them with the tables.
+Every figure writes a PNG (and no PDF), is sized for one Interspeech column (report)
+or a 1920 x 1080 frame (video), takes its colours from `METHOD_COLORS` and its numbers
+from the comparison tables; the tests read the drawn artists back (found by their
+``gid``, ``<kind>/<budget or phase>/<block>/<method>/<ref>``) and compare them with the
+tables.
 """
 
 from collections.abc import Callable
@@ -53,7 +54,7 @@ N = 200
 """Bootstrap resamples in tests (the protocol's 10,000 only slow them down)."""
 THEMES = ("report", "video")
 CONTROLS = ("ppo", "ppo-rnn", "pqn-rnn")
-PDF, PNG = b"%PDF", b"\x89PNG\r\n\x1a\n"
+PNG = b"\x89PNG\r\n\x1a\n"
 LABELS = {
     "F1": ("env steps", "score (% of max)"),
     "F2": ("final score (% of max)",),
@@ -167,7 +168,7 @@ def with_gid(fig: Figure, kind: str, *parts: str) -> Artist:
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", list(NAMES))
-def test_each_figure_writes_a_pdf_and_a_png(
+def test_each_figure_writes_a_png_and_no_pdf(
     fid: str,
     theme: str,
     frames: dict[str, pd.DataFrame],
@@ -178,7 +179,7 @@ def test_each_figure_writes_a_pdf_and_a_png(
     fig = draw(fid, frames, tuning, literature, tmp_path, theme)
     assert isinstance(fig, Figure)
     stem = NAMES[fid] + ("_video" if theme == "video" else "")
-    assert (tmp_path / f"{stem}.pdf").read_bytes().startswith(PDF)
+    assert not (tmp_path / f"{stem}.pdf").exists()
     assert (tmp_path / f"{stem}.png").read_bytes().startswith(PNG)
     assert FIGURES[fid] is getattr(figures, FIGURES[fid].__name__)
     for want in LABELS[fid]:
@@ -192,9 +193,7 @@ def test_the_two_themes_are_two_files_and_two_surfaces(
     dark = plot_aggregate(frames, tmp_path, "video", n_boot=N)
     assert light.get_facecolor() != dark.get_facecolor()
     assert {p.name for p in tmp_path.iterdir()} == {
-        "aggregate.pdf",
         "aggregate.png",
-        "aggregate_video.pdf",
         "aggregate_video.png",
     }
 
@@ -284,7 +283,7 @@ def test_no_run_data_gives_a_labelled_placeholder(
         else draw(fid, empty, tuning, pd.DataFrame(), tmp_path)
     )
     assert any("no data" in t for t in texts(fig))
-    assert (tmp_path / f"{NAMES[fid]}.pdf").exists()
+    assert (tmp_path / f"{NAMES[fid]}.png").exists()
 
 
 # --- F1 ----------------------------------------------------------------------------
@@ -477,7 +476,7 @@ def test_f3_cells_are_the_poi_table_one_panel_per_block(
 def _cell_texts(fig: Figure, image: Artist) -> dict[tuple[int, int], Text]:
     """The PoI text of each (row, column) cell of ``image``, found by its position."""
     return {
-        (round(t.get_position()[1]), round(t.get_position()[0])): t
+        (int(t.get_position()[1]), int(t.get_position()[0])): t
         for t in fig.findobj(Text)
         if (t.get_gid() or "").startswith("poi-cell/") and t.axes is image.axes
     }
@@ -844,7 +843,7 @@ def test_double_width_is_170_mm_with_its_own_files_and_7pt_fonts(
 ) -> None:
     fig = draw(fid, frames, tuning, literature, tmp_path, width="double")
     assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert (tmp_path / f"{NAMES[fid]}_double.pdf").read_bytes().startswith(PDF)
+    assert not (tmp_path / f"{NAMES[fid]}_double.pdf").exists()
     assert (tmp_path / f"{NAMES[fid]}_double.png").read_bytes().startswith(PNG)
     fig.canvas.draw()
     small = {
@@ -914,7 +913,7 @@ def test_f2f3_puts_the_poi_against_each_control_beside_the_intervals(
     assert [t.get_text() for t in right.get_xticklabels()] == list(CONTROLS)
     labels = [t.get_text() for t in left.get_yticklabels()]
     cells = {
-        (round(t.get_position()[1]), round(t.get_position()[0])): t for t in right.texts
+        (int(t.get_position()[1]), int(t.get_position()[0])): t for t in right.texts
     }
     one_1m = poi[poi["benchmark"] == "1m"]
     n_cells = 0
