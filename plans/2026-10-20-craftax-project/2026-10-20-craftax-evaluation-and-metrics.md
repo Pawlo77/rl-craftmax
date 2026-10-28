@@ -333,7 +333,7 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 **Files:**
 - Create: `knowledge/architecture/evaluation.md` (template `knowledge/_templates/module.md`)
 
-- [ ] **Step 1: Run** `make queue PHASE=smoke`, then `uv run python -m wut_murl_craftax.evaluation.rollout_metrics --run <each smoke run> --mode both`, then `uv run python -m wut_murl_craftax.evaluation.export --phase smoke --out outputs/metrics/smoke`.
-- [ ] **Step 2: Check** in `make mlflow` that every metric name of Task 3 and every `eval/<mode>/` summary exists for every smoke run; check that `runs.parquet` has no empty column.
+- [x] **Step 1: Run** `make queue PHASE=smoke`, then `uv run python -m wut_murl_craftax.evaluation.rollout_metrics --run <each smoke run> --mode both`, then `uv run python -m wut_murl_craftax.evaluation.export --phase smoke --out outputs/metrics/smoke`. (done 2026-10-29: the 12 smoke runs were already finished; `rollout_metrics --phase smoke --mode both` replayed 24 checkpoint evaluations, `export --phase smoke` wrote outputs/metrics/smoke, logs p4-smoke-replay.log and p4-smoke-export.log)
+- [x] **Step 2: Check** in `make mlflow` that every metric name of Task 3 and every `eval/<mode>/` summary exists for every smoke run; check that `runs.parquet` has no empty column. (done 2026-10-29 by script: 12 runs, 39 columns; the only empty columns are `gpu_util_mean`, `gpu_util_p95`, `peak_device_mem_mb`, `energy_j`, `steps_per_joule` (no GPU or energy meter on the laptop) and `eval_s` (not logged by these pre-timing smoke runs, R78))
 - [x] **Step 3: Write** the module note (responsibility, public surface, metric names) and run `make knowledge`. (done 2026-10-28: `knowledge/architecture/evaluation.md` exists, last updated in 30dcf0b)
-- [ ] **Step 4: Run** `make check`.
+- [x] **Step 4: Run** `make check`. (done 2026-10-29: full suite 3654 passed with xdist, `make vault-check` clean)

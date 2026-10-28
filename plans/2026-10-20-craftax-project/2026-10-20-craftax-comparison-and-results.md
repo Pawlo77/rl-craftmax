@@ -168,7 +168,7 @@ Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 (Phase 4 ord
 - [x] **Step 2: Implement** `uv run python -m wut_murl_craftax.analysis.results --phases <phase> [<phase> ...] --tuning <phase> [<phase> ...] --out outputs/results`. (done 2026-10-28: d523bae, 719b0c0)
 - [x] **Step 3: Run** `uv run pytest tests/analysis/test_results_cli.py -q`; check that `outputs/interpretation/1m/complexity.csv` exists; then `uv run python -m wut_murl_craftax.analysis.results --phases final-1m combo-1m --tuning tune-coarse tune-fine --out outputs/results`. Read the reproduction gate first: on a fail, open the issue note, tell the user the gap and h, and continue. (done 2026-10-28: 1M only: `analysis.results --phases final-1m combo-1m --tuning tune-coarse tune-fine`, 33 stages, exit 0, rerun on main 2026-10-29 00:05 (ledger); the 1B complexity file and phases are Step 3b)
 - [ ] **Step 3b: Run** the comparison with the 1B phases once they exist and `outputs/interpretation/1b/complexity.csv` is written: `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`; read the reproduction gate first as in Step 3.
-- [ ] **Step 4: Check** 3 random cells of T1 and 3 points of F1 against the MLflow UI (`make mlflow`).
+- [x] **Step 4: Check** 3 random cells of T1 and 3 points of F1 against the MLflow UI (`make mlflow`). (done 2026-10-29 at 1M, against the store by script instead of the UI: T1 sil mean 2.136867, count-bonus-ppo-rnn eval stochastic 2.243501, ppo-rnn eval greedy 1.555586 equal the seed means of `final_score` / `eval/*/score_pct`; 3 random `train/score_pct` curve points equal the stored metric at the same step)
 
 ### Task 7: Results note
 
