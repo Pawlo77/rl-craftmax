@@ -826,6 +826,7 @@ OLD_FLAT_FIGURES = frozenset({
 })  # fmt: skip
 """Stems of the flat figures of the old layout (before ``figures/<budget>/``)."""
 VARIANT_SUFFIXES = ("_double", "_video", "")
+"""Variants of an old flat file name (``_double``: the earlier 170 mm copy)."""
 OWNED = ".owned.json"
 """What the comparison copied into a report folder last time (file names): the next
 run deletes the ones it no longer writes, never a file somebody else put there."""
@@ -846,6 +847,21 @@ def drop_old_flat(
                 if path.is_file():
                     path.unlink()
                     gone.append(path)
+    return gone
+
+
+def drop_double_files(folder: Path) -> list[Path]:
+    """Delete the ``<stem>_double.png`` an earlier run wrote beside ``<stem>.png``.
+
+    A figure has one report image now, written as ``<stem>.png`` at its own width; the
+    ``_double`` file of the older layout goes once its ``<stem>.png`` is there. A
+    ``_double`` file without such a partner is not ours and stays.
+    """
+    gone = []
+    for path in sorted(folder.glob("*_double.png")):
+        if path.with_name(f"{path.stem.removesuffix('_double')}.png").is_file():
+            path.unlink()
+            gone.append(path)
     return gone
 
 
@@ -908,11 +924,13 @@ def drop_pdfs(folder: Path, stems: Collection[str] | None = None) -> list[Path]:
 def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
     """Copy the report PNGs of ``results_dir`` to ``out_dir``, one folder per benchmark.
 
-    ``<results_dir>/<budget>/<stem>[_double].png`` goes to ``<out_dir>/<budget>/`` (no
-    ``_video`` file). Stale files go: the flat figures of the old layout
-    (`OLD_FLAT_FIGURES`, png and pdf), the PNGs an earlier run copied into a benchmark
-    folder and this one does not (`replace_owned`) and the ``<stem>.pdf`` of a copied
-    figure; every other file stays.
+    ``<results_dir>/<budget>/<stem>.png`` goes to ``<out_dir>/<budget>/`` (no ``_video``
+    file; one report image per figure). Stale files go: the flat figures of the old
+    layout (`OLD_FLAT_FIGURES`, png and pdf), the PNGs an earlier run copied into a
+    benchmark folder and this one does not (`replace_owned`, which takes the old
+    ``<stem>_double.png`` files too), the ``<stem>_double.png`` beside a copied
+    ``<stem>.png`` (`drop_double_files`) and the ``<stem>.pdf`` of a copied figure;
+    every other file stays.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     drop_old_flat(out_dir, OLD_FLAT_FIGURES, (".png", ".pdf"))
@@ -925,6 +943,7 @@ def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
             p for p in sorted(folder.glob("*.png")) if not p.stem.endswith("_video")
         ]
         replace_owned(dest, [p.name for p in sources])
+        drop_double_files(dest)
         drop_pdfs(dest, {p.stem for p in sources})
         for src in sources:
             shutil.copy2(src, dest / src.name)

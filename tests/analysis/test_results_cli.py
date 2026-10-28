@@ -50,17 +50,26 @@ CORE_STEMS = [
     "actions_entropy", "actions_wasted", "resources_use", "resources_time",
     "advanced_mean", "advanced_final", *(f"radar_{m}" for m in METHODS),
 ]  # fmt: skip
-"""One-panel figures: a column and a video file each (no double width). The synthetic
-export has no first-unlock curves, so the two races are placeholders."""
+"""One-panel figures: one report PNG and one video file each. The synthetic export has
+no first-unlock curves, so the two races are placeholders."""
 ORDER_STEMS = [f"order_{m}" for m in METHODS]
-"""The order graphs print node names: 170 mm and video files, no column file."""
+"""The order graphs print node names: one 170 mm report PNG and a video file."""
 ANGLE_STEMS = [
     "greedy_gap", "gatekeepers", "seed_fate", "ablation_effects", "tuning_optimism",
     "episode_spread", "achievements_vs_length", "distil_score", "distil_features",
 ]  # fmt: skip
 """The analysis-angle figures F21-F28 (PNG; F27 and F28 say distillation pending)."""
-VARIANTS = ("", "_double", "_video")
-"""Column report figure, double-width report figure, dark video figure."""
+VARIANTS = ("", "_video")
+"""The one report figure (at its own width) and the dark video figure."""
+DOUBLE_PX = 170 / 25.4 * 300
+"""Pixel width of a 170 mm report image at 300 dpi (a column one is 80 mm)."""
+
+
+def _png_width(path: Path) -> int:
+    """Width in pixels from the PNG header."""
+    return int.from_bytes(path.read_bytes()[16:20], "big")
+
+
 TABLES = [
     "main", "literature", "stability", "hardware", "game_summary", "sensitivity",
     "ablation", "tuning_optimism", "race", "poi_matrix", "reproduction_gate",
@@ -158,24 +167,26 @@ def _files(folder: Path, stems: list[str], suffixes: tuple[str, ...]) -> list[Pa
 # --- outputs ----------------------------------------------------------------------
 
 
-def test_a_full_run_writes_every_figure_in_both_themes_and_widths(
+def test_a_full_run_writes_one_report_image_and_one_video_per_figure(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
     folder = base.out / "figures" / "1m"
     missing = [
-        p.name for p in _files(folder, CORE_STEMS, ("", "_video")) if not p.is_file()
-    ]
-    missing += [
         p.name
-        for p in _files(folder, ORDER_STEMS, ("_double", "_video"))
+        for p in _files(folder, [*CORE_STEMS, *ORDER_STEMS], VARIANTS)
         if not p.is_file()
     ]
     assert not missing, str(missing)
-    doubled = {p.stem[:-7] for p in folder.glob("*_double.png")}
-    assert {"legend_methods", *ORDER_STEMS} <= doubled
-    wide = {"legend_methods", "race_steps", "race_wall"}  # a placeholder has every size
-    assert not doubled & (set(CORE_STEMS) - wide)
-    assert not [p for p in folder.glob("order_*.png") if p.stem in ORDER_STEMS]
+    assert not list(folder.glob("*_double.png")), "no second report width"
+    assert not list(folder.glob("*_tile.png"))
+    wide = {"legend_methods", *ORDER_STEMS, *ANGLE_STEMS}
+    for path in folder.glob("*.png"):
+        if path.stem.endswith("_video") or path.stem == "fidelity_vs_leaves":
+            continue
+        if path.stem in wide:
+            assert _png_width(path) == pytest.approx(DOUBLE_PX, abs=1), path.name
+        else:
+            assert _png_width(path) < DOUBLE_PX, path.name
     assert not full.problems
 
 
@@ -190,7 +201,13 @@ def test_each_benchmark_has_its_own_figure_folder_and_captions(
     assert not list((root / "1b").glob("poi_matrix*"))  # the PoI needs 10 seeds
     for budget in ("1m", "1b"):
         captions = pd.read_csv(root / budget / "captions.csv")
-        assert list(captions.columns) == ["stem", "id", "title", "description"]
+        assert list(captions.columns) == [
+            "stem", "id", "title", "description", "width_mm"
+        ]  # fmt: skip
+    widths = pd.read_csv(root / "1m" / "captions.csv").set_index("stem")["width_mm"]
+    assert widths["curves_score_main"] == 80
+    assert widths["order_ppo"] == 170
+    assert widths["legend_methods"] == 170
 
 
 def test_a_full_run_writes_the_analysis_angle_figures(
@@ -236,7 +253,9 @@ def test_each_table_folder_has_its_captions(
     for budget in ("1m", "1b"):
         folder = base.out / "tables" / budget
         captions = pd.read_csv(folder / "captions.csv")
-        assert list(captions.columns) == ["stem", "id", "title", "description"]
+        assert list(captions.columns) == [
+            "stem", "id", "title", "description", "width_mm"
+        ]  # fmt: skip
         for stem in captions["stem"]:  # a described table is a file of the folder
             assert (folder / f"{stem}.csv").is_file() or (
                 folder / f"{stem}.tex"
@@ -273,7 +292,8 @@ def test_the_report_folder_gets_tables_numbers_and_report_figures(
     assert r"\closedLoopOneMSilNoMemory}" in numbers
     figures = {p.name for p in (report / "figures" / "1m").glob("*.png")}
     assert "curves_score_main.png" in figures
-    assert "order_ppo_double.png" in figures
+    assert "order_ppo.png" in figures
+    assert not [n for n in figures if n.endswith("_double.png")]
     assert "fidelity_vs_leaves.png" in figures
     assert not [n for n in figures if n.endswith("_video.png")]
     assert not list((report / "figures").glob("*.png")), "no flat figure files"
@@ -395,8 +415,8 @@ def test_a_figure_stage_draws_each_benchmark_alone_and_writes_its_captions(
     for budget in ("1m", "1b"):
         rows = (opts.out / "figures" / budget / "captions.csv").read_text()
         lines = rows.splitlines()
-        assert lines[0] == "stem,id,title,description"
-        assert f"toy,F1,Toy,Drawn at {budget}." in lines
+        assert lines[0] == "stem,id,title,description,width_mm"
+        assert f"toy,F1,Toy,Drawn at {budget}.," in lines  # no width registered
 
 
 def test_changed_inputs_redo_the_tables_and_the_figures(
@@ -440,6 +460,34 @@ def test_old_flat_figures_and_tables_go_from_the_results_folder_and_only_they(
     assert not (tables / "main_1m.tex").exists()
     assert (tables / "mine.csv").is_file()
     assert (tables / "mine.tex").is_file()
+
+
+def test_the_second_width_files_of_the_older_layout_go_once_their_partner_is_drawn(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wut_murl_craftax.visualisation import charts
+
+    def stub(frames: dict, folder: Path, theme: str, *, width: str, **kw: object):  # type: ignore[type-arg]
+        folder.mkdir(parents=True, exist_ok=True)
+        if theme == "report" and width == "double":  # the figure's one report image
+            (folder / "order_toy.png").write_bytes(b"new")
+            charts.register_caption("order_toy", "Toy", "A toy.", 170.0)
+
+    monkeypatch.setattr(results, "figure_functions", lambda: {"F1": stub})
+    opts = replace(base, out=tmp_path / "r", report_dir=tmp_path / "p", log=False)
+    folder = opts.out / "figures" / "1m"
+    folder.mkdir(parents=True)
+    for name in ("order_toy_double.png", "lone_double.png", "mine.png"):
+        (folder / name).write_bytes(b"old")
+    run_comparison(opts)
+    assert not (folder / "order_toy_double.png").exists()
+    assert (folder / "order_toy.png").read_bytes() == b"new"
+    assert (folder / "lone_double.png").is_file()  # no partner: not ours
+    assert (folder / "mine.png").is_file()
+    assert (opts.report_dir / "figures" / "1m" / "order_toy.png").is_file()
+    shown = {p.name for p in (opts.report_dir / "figures" / "1m").glob("*.png")}
+    assert {"lone_double.png", "mine.png", "order_toy.png"} <= shown  # as in results
+    assert "order_toy_double.png" not in shown
 
 
 def test_a_deleted_output_redoes_its_stage(

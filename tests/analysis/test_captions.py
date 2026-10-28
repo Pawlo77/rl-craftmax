@@ -10,7 +10,9 @@ from wut_murl_craftax.visualisation import charts
 
 
 def _write(folder: Path, fid: str, *rows: tuple[str, str, str]) -> None:
-    charts.write_captions(folder, fid, [charts.Caption(s, t, d) for s, t, d in rows])
+    wide = charts.WIDTHS
+    caps = [charts.Caption(s, t, d, wide[charts.report_width(s)]) for s, t, d in rows]
+    charts.write_captions(folder, fid, caps)
 
 
 @pytest.fixture
@@ -68,7 +70,7 @@ def test_each_row_is_a_figure_link_and_the_title_with_the_description(
     row = next(ln for ln in text.splitlines() if "curves_score_main" in ln)
     assert row == (
         "| [curves_score_main](../../report/figures/1m/curves_score_main.png) | "
-        "**Training score.** Mean score. |"
+        "80 mm | **Training score.** Mean score. |"
     )
     plot = next(ln for ln in text.splitlines() if "floor_reach" in ln)
     assert "(../../outputs/analysis/1m/ppo/plots/floor_reach.png)" in plot
@@ -109,18 +111,33 @@ def test_write_notes_writes_both_files(stages: dict[str, Path], tmp_path: Path) 
         assert p.read_text().startswith("---\n")
 
 
-def test_a_double_width_only_figure_links_its_double_file(
+def test_every_figure_links_its_one_png_and_names_its_width(
     stages: dict[str, Path],
 ) -> None:
     folder = stages["repo"] / "report" / "figures" / "1m"
-    (folder / "order_ppo_double.png").write_bytes(b"x")
+    (folder / "order_ppo.png").write_bytes(b"x")
     _write(
         stages["results"] / "figures" / "1m",
         "F7G",
         ("order_ppo", "Order graph", "A graph."),
     )
     text = captions.figures_note("1m", **stages, today="2026-10-28")
-    assert "order_ppo_double.png" in text
+    assert "_double" not in text
+    assert "| Figure | Width | Description |" in text
+    assert "(../../report/figures/1m/order_ppo.png) | 170 mm | **Order graph.**" in text
+    assert "(../../report/figures/1m/splits.png) | 80 mm | **Speedrun splits.**" in text
+
+
+def test_a_caption_without_a_recorded_width_shows_a_dash(
+    stages: dict[str, Path],
+) -> None:
+    charts.write_captions(
+        stages["results"] / "figures" / "1m",
+        "TL",
+        [charts.Caption("timeline", "T", "A.")],
+    )
+    text = captions.figures_note("1m", **stages, today="2026-10-28")
+    assert "| `report/figures/1m/timeline.png` | - | **T.** A. |" in text
 
 
 def test_a_missing_captions_file_is_an_empty_group(tmp_path: Path) -> None:

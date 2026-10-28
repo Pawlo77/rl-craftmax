@@ -133,7 +133,7 @@ flowchart LR
 - Test: `tests/analysis/test_figures.py`
 
 - [ ] **Step 1: Write the failing tests**: each of F1 to F5 and F18 to F20 on the fixture writes a PDF and a PNG, returns its `Figure`, has the expected axis labels, uses `METHOD_COLORS` (three distinct greys for the controls), F2 and F3 show the two blocks separately, and each renders in both themes (`theme="report"` light, `theme="video"` dark).
-- [ ] **Step 2: Implement** one function per figure; report figures are sized for one Interspeech column (80 mm: 170 mm text width minus the 10 mm column gap, halved) with fonts >= 7 pt; video figures for 1920 x 1080.
+- [ ] **Step 2: Implement** one function per figure; report figures are sized for one Interspeech column (80 mm: 170 mm text width minus the 10 mm column gap, halved) with fonts >= 7 pt (a figure that needs the width is 170 mm instead; one report image per figure, no second low-res copy); video figures for 1920 x 1080.
 - [ ] **Step 3: Run** `uv run pytest tests/analysis/test_figures.py -q`.
 
 ### Task 4: In-game figures

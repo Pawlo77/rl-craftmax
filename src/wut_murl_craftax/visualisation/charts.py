@@ -17,6 +17,7 @@ import functools
 import logging
 import textwrap
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -143,12 +144,27 @@ logger = logging.getLogger(__name__)
 COLUMN_MM = 80.0
 """One Interspeech column: (170 mm text width - 10 mm gap) / 2."""
 MM = 1 / 25.4
-TILE_MM = (COLUMN_MM - 2) / 2
-"""Two panels side by side in one column (2 mm gap); only if a panel reads at 39 mm."""
-WIDTHS = {"column": COLUMN_MM, "double": 170.0, "tile": TILE_MM}
-"""Report figure widths in mm: one column, two columns, half a column.
+WIDTHS = {"column": COLUMN_MM, "double": 170.0}
+"""Report figure widths in mm: one column, two columns.
 
-Figures are included at ``width=\\linewidth`` with no scaling, so these are final."""
+Figures are included at ``width=\\linewidth`` with no scaling, so these are final. A
+figure has one report image, at the width it is placed at (`report_width`)."""
+DOUBLE_STEMS: tuple[str, ...] = (
+    "order_*", "legend_methods", "ablation_effects", "achievements_vs_length",
+    "distil_features", "distil_score", "episode_spread", "gatekeepers", "greedy_gap",
+    "seed_fate", "tuning_optimism",
+)  # fmt: skip
+"""``fnmatch`` patterns of the stems whose one report image spans two columns (170 mm);
+every other stem is one column (80 mm). The video is a separate theme, one size."""
+COLUMN_STEMS: tuple[str, ...] = ("order_agreement",)
+"""Stems that match `DOUBLE_STEMS` but fit the column."""
+
+
+def report_width(stem: str) -> str:
+    """``double`` for a stem of `DOUBLE_STEMS`, else ``column``: its report width."""
+    if stem in COLUMN_STEMS:
+        return "column"
+    return "double" if any(fnmatch(stem, p) for p in DOUBLE_STEMS) else "column"
 
 
 class Shape(enum.StrEnum):
@@ -251,8 +267,8 @@ def report_theme(width: str = "column") -> Theme:
     return Theme(
         "report", SURFACE_LIGHT, INK_LIGHT, INK2_LIGHT, MUTED_LIGHT, GRID_LIGHT,
         METHOD_COLORS_LIGHT, SEQUENTIAL_LIGHT, DIVERGING_LIGHT, mm * MM, None, 300,
-        7.0, 7.5, 3.3, 0.9, 3.0, {"double": "_double", "tile": "_tile"}.get(width, ""),
-        4 if width == "double" else 1 if width == "tile" else 2,
+        7.0, 7.5, 3.3, 0.9, 3.0, "",
+        4 if width == "double" else 2,
         round(56 * mm / COLUMN_MM), width == "double",
         SERIES_LIGHT,
     )  # fmt: skip
@@ -278,6 +294,20 @@ def theme(name: str, width: str = "column") -> Theme:
         msg = f"width must be one of {sorted(WIDTHS)}, got {width!r}"
         raise ValueError(msg)
     return VIDEO if name == "video" else report_theme(width)
+
+
+def wants(th: Theme, stem: str) -> bool:
+    """Whether ``stem`` is written in the variant ``th``.
+
+    The video always; the report only at the stem's own width (`report_width`), so a
+    figure has one report image and a render at the other width is not saved.
+    """
+    return th.name == "video" or th.wide == (report_width(stem) == "double")
+
+
+def width_mm(th: Theme) -> float | None:
+    """The report width of ``th`` in mm; None for the video (its size is the frame)."""
+    return None if th.name == "video" else round(th.width / MM, 1)
 
 
 def rc_params(th: Theme) -> dict[Any, Any]:
@@ -688,11 +718,14 @@ class Caption(NamedTuple):
     """What the report says about one figure; the image itself carries no sentence."""
 
     stem: str
-    """File stem without the ``_double`` / ``_video`` suffix (``combat_kills``)."""
+    """File stem without the ``_video`` suffix (``combat_kills``)."""
     title: str
     """A few words that name the figure (the first cell of its row in the notes)."""
     description: str
     """What is drawn and how to read it, with the details the image leaves out."""
+    width_mm: float | None = None
+    """Width the report places the image at (80 or 170 mm); None for a video frame or
+    a table."""
 
 
 _CAPTURES: list[dict[str, Caption]] = []
@@ -703,9 +736,9 @@ _CAPTURES: list[dict[str, Caption]] = []
 def capture_captions() -> Iterator[list[Caption]]:
     """Collect the `Caption` of every figure saved inside the block (one per stem).
 
-    The list fills while the block runs; a stem saved in several variants (column,
-    double, video) or twice keeps its last caption. Blocks may nest: each sees the
-    figures saved inside it.
+    The list fills while the block runs; a stem saved in both themes (report,
+    video) or twice keeps its last caption (and the report width). Blocks may nest:
+    each sees the figures saved inside it.
     """
     found: dict[str, Caption] = {}
     out: list[Caption] = []
@@ -717,8 +750,13 @@ def capture_captions() -> Iterator[list[Caption]]:
         out.extend(found.values())
 
 
-def register_caption(stem: str, title: str, description: str) -> None:
+def register_caption(
+    stem: str, title: str, description: str, width_mm: float | None = None
+) -> None:
     """Record the caption of figure ``stem`` in every open `capture_captions` block.
+
+    ``width_mm`` is the report width of the image (`width_mm` of its theme); a later
+    registration without one (the video) keeps the width already recorded.
 
     Raises:
         ValueError: If the title or the description is empty, or a text has a line
@@ -729,7 +767,8 @@ def register_caption(stem: str, title: str, description: str) -> None:
             msg = f"caption of {stem!r} needs one-line text without '|', got {text!r}"
             raise ValueError(msg)
     for found in _CAPTURES:
-        found[stem] = Caption(stem, title, description)
+        kept = found[stem].width_mm if stem in found else None
+        found[stem] = Caption(stem, title, description, width_mm or kept)
 
 
 def figure_dir(out_dir: Path, budget: str) -> Path:
@@ -740,15 +779,16 @@ def figure_dir(out_dir: Path, budget: str) -> Path:
     return out_dir / budget
 
 
-CAPTION_COLUMNS = ("stem", "id", "title", "description")
+CAPTION_COLUMNS = ("stem", "id", "title", "description", "width_mm")
 """Columns of ``captions.csv``, which every figure stage keeps next to its PNGs."""
 
 
 def write_captions(folder: Path, fid: str, rows: Sequence[Caption]) -> Path:
     """Replace the ``fid`` rows of ``<folder>/captions.csv`` by ``rows``; return it.
 
-    The file lists every figure of the folder (``stem,id,title,description``), the id
-    being the figure id of the stage (``F13``). Rows of other ids are kept, so one
+    The file lists every figure of the folder (``stem,id,title,description,width_mm``),
+    the id being the figure id of the stage (``F13``); ``width_mm`` is empty for a
+    table or a video frame. Rows of other ids are kept, so one
     stage rerun never loses the captions of the others.
     """
     path = folder / "captions.csv"
@@ -757,7 +797,13 @@ def write_captions(folder: Path, fid: str, rows: Sequence[Caption]) -> Path:
         with path.open(newline="") as f:
             keep = [r for r in csv.DictReader(f) if r["id"] != fid]
     keep += [
-        {"stem": r.stem, "id": fid, "title": r.title, "description": r.description}
+        {
+            "stem": r.stem,
+            "id": fid,
+            "title": r.title,
+            "description": r.description,
+            "width_mm": "" if r.width_mm is None else f"{r.width_mm:g}",
+        }
         for r in rows
     ]
     folder.mkdir(parents=True, exist_ok=True)
@@ -777,7 +823,10 @@ def save_png(
     title: str | None = None,
     description: str | None = None,
 ) -> Figure:
-    """Write ``<name><suffix>.png`` into ``out_dir`` (PNG only) and return ``fig``.
+    """Write ``<name>[_video].png`` into ``out_dir`` (PNG only) and return ``fig``.
+
+    A report render at a width other than the stem's own (`wants`) is not written and
+    registers no caption: a figure has one report image.
 
     Titles are wrapped to their panels and the layout is fitted to the canvas first
     (`wrap_titles`, `fit_canvas`), so nothing is cropped and the report widths and
@@ -785,10 +834,14 @@ def save_png(
     `Caption` (``title`` and ``description``, stem ``name``): that is where the text
     that is not on the image goes.
     """
+    if not wants(th, name):
+        return fig
     out_dir.mkdir(parents=True, exist_ok=True)
     write_png(fig, out_dir / f"{name}{th.suffix}.png")
     if description is not None:
-        register_caption(name, title or name.replace("_", " "), description)
+        register_caption(
+            name, title or name.replace("_", " "), description, width_mm(th)
+        )
     return fig
 
 

@@ -46,6 +46,7 @@ from wut_murl_craftax.analysis.figures import (
 )
 from wut_murl_craftax.evaluation.stability import config_scores
 from wut_murl_craftax.evaluation.stats import curve_band, step_grid
+from wut_murl_craftax.visualisation import charts
 from wut_murl_craftax.visualisation.charts import (
     METHOD_COLORS,
     METHOD_COLORS_LIGHT,
@@ -233,8 +234,9 @@ def test_each_figure_writes_its_files_as_png_with_captions(
     literature: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
+    width = "double" if fid == "LEG" else "column"  # the legend spans both columns
     with capture_captions() as caps:
-        figs = draw(fid, frames, tuning, literature, tmp_path, theme)
+        figs = draw(fid, frames, tuning, literature, tmp_path, theme, width)
     assert sorted(figs.figs) == sorted(STEMS[fid])
     suffix = "_video" if theme == "video" else ""
     for stem in STEMS[fid]:
@@ -306,27 +308,29 @@ def test_video_figures_fill_a_1080p_frame(
 
 
 @pytest.mark.parametrize("fid", [f for f in NAMES if f != "LEG"])
-def test_a_one_panel_figure_has_no_double_width_variant(
+def test_a_column_figure_is_not_drawn_at_the_double_width(
     fid: str,
     frames: dict[str, pd.DataFrame],
     tuning: dict[str, pd.DataFrame],
     literature: pd.DataFrame,
     tmp_path: Path,
 ) -> None:
-    """Every core figure fits the column: only a listed stem gets ``_double``."""
-    assert not figures.DOUBLE_STEMS
+    """Every core figure but the legend fits the column: one image, no 170 mm copy."""
     figs = draw(fid, frames, tuning, literature, tmp_path, width="double")
     assert not figs.figs
     assert not list(tmp_path.iterdir())
 
 
-def test_a_listed_stem_gets_a_170_mm_variant(
+def test_a_listed_stem_is_one_170_mm_image_without_a_column_copy(
     frames: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(figures, "DOUBLE_STEMS", ("aggregate",))
+    monkeypatch.setattr(charts, "DOUBLE_STEMS", ("aggregate",))
+    plot_aggregate(frames, tmp_path / "col", width="column", n_boot=N)
+    assert not list((tmp_path / "col").glob("*.png"))
     fig = plot_aggregate(frames, tmp_path, width="double", n_boot=N)["aggregate"]
     assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert (tmp_path / "aggregate_double.png").read_bytes().startswith(PNG)
+    assert (tmp_path / "aggregate.png").read_bytes().startswith(PNG)
+    assert not (tmp_path / "aggregate_double.png").exists()
 
 
 def test_the_width_option_is_refused_when_unknown(
@@ -1020,7 +1024,7 @@ def test_legend_methods_adds_the_ablation_style_when_runs_have_ablations(
     )
 
 
-def test_legend_methods_has_a_caption_and_the_three_variants(
+def test_legend_methods_has_a_caption_one_report_image_and_the_video(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     with capture_captions() as rows:
@@ -1032,8 +1036,10 @@ def test_legend_methods_has_a_caption_and_the_three_variants(
             plot_legend_methods(frames, tmp_path, theme, width=width)
     assert {p.name for p in tmp_path.iterdir()} == {
         "legend_methods.png",
-        "legend_methods_double.png",
         "legend_methods_video.png",
     }
+    png = (tmp_path / "legend_methods.png").read_bytes()
+    assert int.from_bytes(png[16:20], "big") == pytest.approx(170 / 25.4 * 300, abs=1)
     assert [c.stem for c in rows] == ["legend_methods"]
+    assert rows[0].width_mm == 170.0
     assert "colour" in rows[0].description

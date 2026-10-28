@@ -1,11 +1,11 @@
 """Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware.
 
 Each ``plot_*`` draws one figure per theme, writes ``<name>.png`` into ``out_dir``
-(``_video`` suffix for the video) and returns the `Figure`. ``report`` is light, 80 mm
-wide (one Interspeech column) at 300 dpi, fonts of 7 pt or more; ``video`` is dark,
-1920 x 1080. Look: `charts.Theme`; colours `charts.METHOD_COLORS`; controls dashed,
-ablations dotted, hollow; legends outside the axes; nothing cropped. Numbers: `compare`
-and `evaluation.stats`; a budget without runs is "pending" (R86); artists carry a gid.
+(``_video`` for the video) and returns the `Figure`. ``report`` is light, 300 dpi, fonts
+of 7 pt or more, one image per figure at its width (80 mm column or 170 mm,
+`charts.report_width`); ``video`` is dark, 1920 x 1080. Look: `charts.Theme`, colours
+`charts.METHOD_COLORS`; controls dashed, ablations dotted; legends outside the axes.
+Numbers: `compare`, `evaluation.stats`; a budget without runs is "pending" (R86).
 
 @see [[2026-10-20-craftax-comparison-and-results]]
 @tested-by [[tests/analysis/test_figures.py]]
@@ -14,7 +14,6 @@ and `evaluation.stats`; a budget without runs is "pending" (R86); artists carry 
 import itertools
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -59,7 +58,7 @@ NAMES = {
     "F20": "hardware",
     "LEG": "legend_methods",
 }
-"""Figure id -> file stem (``.png``; ``_double`` and ``_video`` mark the variants)."""
+"""Figure id -> file stem (``.png``; ``_video`` marks the video variant)."""
 STEPS = {"m": 1e6, "b": 1e9}
 LIT_LABEL = 26
 """Characters of a literature name shown beside its mark."""
@@ -168,14 +167,6 @@ def _no_data(name: str, th: Theme, out_dir: Path, what: str) -> Figure:
 Figs = dict[str, Figure]
 """What a figure function returns: file stem -> figure (one panel per file)."""
 Shape = charts.Shape
-DOUBLE_STEMS: tuple[str, ...] = ()
-"""``fnmatch`` patterns of the stems that also get a 170 mm variant: a one-panel figure
-fits the column, so only a figure that needs the width lists itself."""
-DOUBLE_ONLY: tuple[str, ...] = ("order_*",)
-"""Stems drawn at 170 mm and as video only (their node names do not fit a column);
-every other report figure is one column wide. The video is always drawn."""
-COLUMN_STEMS: tuple[str, ...] = ("order_agreement",)
-"""Stems that match `DOUBLE_ONLY` but fit the column."""
 PROFILE_NAMES = {
     "laptop": "Apple Silicon laptop, 48 GB (CPU actors, Metal updates)",
     "cuda": "CUDA GPU machine",
@@ -183,18 +174,8 @@ PROFILE_NAMES = {
 """Hardware profile -> the machine it names, for the captions."""
 
 
-def wants(th: Theme, stem: str) -> bool:
-    """Whether ``stem`` is drawn in this variant.
-
-    The video always; a column figure unless it is `DOUBLE_ONLY`; a ``_double`` file
-    only for a `DOUBLE_ONLY` or `DOUBLE_STEMS` figure (others fit the column).
-    """
-    if th.name == "video":
-        return True
-    only = any(fnmatch(stem, p) for p in DOUBLE_ONLY) and stem not in COLUMN_STEMS
-    if th.suffix == "_double":
-        return only or any(fnmatch(stem, p) for p in DOUBLE_STEMS)
-    return not only
+wants = charts.wants
+"""Whether a stem is written in this theme variant (its one report width, the video)."""
 
 
 def _single_budget(runs: pd.DataFrame) -> str:

@@ -55,7 +55,9 @@ VARIANTS: tuple[tuple[str, str], ...] = (
     ("report", "double"),
     ("video", "column"),
 )
-"""(theme, width) of every figure; the video theme has one size and ignores width."""
+"""(theme, width) every figure function is called with; the figure writes only the
+report variant at its own width (`charts.report_width`) and the video, which has one
+size and ignores width."""
 BOOT_GAME = ("F8", "F8T", "F9", "F9S", "F10", "F11", "F12", "F13", "F14", "F15", "F16")
 """In-game figures that bootstrap over seeds (the others take no resampling)."""
 TABLE_FILES = {"game": "game_summary"}
@@ -578,6 +580,20 @@ def drop_old_pdfs(folder: Path) -> None:
         logger.info("removed %s (figures are PNG only)", path)
 
 
+def drop_double_files(folder: Path) -> None:
+    """Delete the ``<stem>_double.png`` of each benchmark folder once ``<stem>.png`` is.
+
+    A figure has one report image, written as ``<stem>.png`` at its own width; the
+    second ``_double`` image of the older layout is stale. Run after the figures are
+    drawn; a ``_double`` file without a ``<stem>.png`` stays.
+    """
+    from . import latex
+
+    for sub in sorted(folder.glob("*/")):
+        for path in latex.drop_double_files(sub):
+            logger.info("removed %s (one report image per figure)", path)
+
+
 def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) -> None:
     """One stage per figure id; F18 reads the tuning phases, the rest the finals."""
     o = inputs.o
@@ -645,7 +661,7 @@ def copy_fidelity(
         charts.write_captions(
             dest,
             "FID",
-            [charts.Caption(FIDELITY, "Distillation fidelity", text)],
+            [charts.Caption(FIDELITY, "Distillation fidelity", text, charts.COLUMN_MM)],
         )
         copied.append(dest / f"{FIDELITY}.png")
     return copied
@@ -822,6 +838,7 @@ def run_comparison(o: ResultsOptions) -> ResultsSummary:
     drop_old_pdfs(o.out / "figures")
     s.failed_gates = _gate_lines(t["reproduction_gate"])
     draw_figures(inputs, st, t)
+    drop_double_files(o.out / "figures")
     if o.complexity:
         budgets = sorted(set(inputs.runs["runs"]["budget"]))
         copy_fidelity(o, o.out / "figures", budgets)
