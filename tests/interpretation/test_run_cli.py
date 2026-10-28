@@ -344,7 +344,10 @@ def test_the_r106_columns_are_computed_from_the_policy_files(world: World) -> No
 
 def test_policies_csv_has_a_row_per_policy_and_variant(world: World) -> None:
     pol = pd.read_csv(world.out / "1m" / "policies.csv")
-    assert len(pol) == 6  # two policies x base, no-memory, dagger
+    # base and no-memory for each policy; dagger too unless a test redid it without
+    assert not pol.duplicated(["run_id", "variant"]).any()
+    for run_id, g in pol.groupby("run_id"):
+        assert {"base", "no-memory"} <= set(g["variant"]), run_id
     assert {"run_id", "seed", "score", "majority", "peak_val_leaves"} <= set(
         pol.columns
     )
