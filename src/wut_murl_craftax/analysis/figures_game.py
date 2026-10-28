@@ -39,6 +39,7 @@ from ..evaluation.stats import (
     step_grid,
     stratified_bootstrap_ci,
 )
+from ..visualisation import charts
 from . import compare
 from .figures import (
     BLOCK_TITLES,
@@ -249,6 +250,15 @@ def _draw(
     return _save(fig, th, out_dir, name)
 
 
+def _legend_below(ax: Axes, th: Theme, handles: Sequence[Any], cols: int) -> None:
+    """A panel's own legend under its x label, never over the data."""
+    ax.legend(
+        handles=handles, loc="upper center", ncol=cols, fontsize=th.font,
+        bbox_to_anchor=(0.5, -0.28 if th.name == "report" else -0.2), frameon=False,
+        labelcolor=th.ink2,
+    )  # fmt: skip
+
+
 def _empty(ax: Axes, th: Theme, text: str) -> None:
     """Say why a panel has nothing to draw."""
     ax.set_axis_off()
@@ -382,6 +392,14 @@ def _steps_label(v: float, _pos: int | None = None) -> str:
     return f"{v:.0f}"
 
 
+def _cell_number(value: float, narrow: bool) -> str:
+    """``0.72``, or ``.72`` (and ``1.0``) where nine columns share an 80 mm panel."""
+    text = f"{value:.2f}"
+    if not narrow:
+        return text
+    return "1.0" if text == "1.00" else text.replace("0.", ".", 1)
+
+
 def _heat(
     ax: Axes,
     th: Theme,
@@ -397,18 +415,15 @@ def _heat(
     top = float(np.nanmax(matrix)) if np.isfinite(matrix).any() else 1.0
     norm = Normalize(0.0, vmax if vmax is not None else (top or 1.0))
     cmap = _cmap(th, *th.seq)
-    image = ax.imshow(
-        matrix, cmap=cmap, norm=norm, aspect="auto", interpolation="nearest"
-    )
-    image.set_gid(_gid("heat", ctx.budget, kind))
-    ax.set_xticks(range(len(ctx.names)), ctx.names, rotation=90)
-    ax.set_yticks(range(len(labels)), list(labels))
+    charts.heatmap(ax, th, matrix, cmap, norm=norm, gid=_gid("heat", ctx.budget, kind))
+    ax.set_xticks(np.arange(len(ctx.names)) + 0.5, ctx.names, rotation=90)
+    ax.set_yticks(np.arange(len(labels)) + 0.5, list(labels))
     ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
     if annotate:
         for i, j in zip(*np.where(np.isfinite(matrix)), strict=True):
             ax.text(
-                j,
-                i,
+                j + 0.5,
+                i + 0.5,
                 f"{matrix[i, j]:.2f}",
                 ha="center",
                 va="center",
@@ -942,6 +957,24 @@ def order_agreement(
     return pd.DataFrame(rows, columns=AGREEMENT_COLUMNS)
 
 
+def _label_levels(pos: Mapping[str, tuple[float, float]], th: Theme) -> dict[str, int]:
+    """A stacking level per node name so labels of one tier never overlap.
+
+    A label is placed on the lowest level where its estimated width (0.58 em a
+    character) clears the earlier labels there; nodes close in rank climb.
+    """
+    per_pt = 1.1 / (th.width * 72 * 0.75)  # x data units per point of axes width
+    levels: dict[str, int] = {}
+    ends: dict[tuple[float, int], float] = {}
+    for name, (x, y) in sorted(pos.items(), key=lambda kv: (kv[1][1], kv[1][0])):
+        level = 0
+        while ends.get((y, level), -1.0) > x:
+            level += 1
+        levels[name] = level
+        ends[y, level] = x + (len(name) * 0.58 * th.font + 6) * per_pt
+    return levels
+
+
 def _order_panel(
     ax: Axes,
     th: Theme,
@@ -976,18 +1009,27 @@ def _order_panel(
     for name, (x, y) in pos.items():
         (dot,) = ax.plot([x], [y], ls="", marker="o", ms=th.ms, color=color)
         dot.set_gid(_gid("node", budget, method, name))
-        if labels:
+    top = 0
+    if labels:
+        levels = _label_levels(pos, th)
+        top = max(levels.values(), default=0)
+        step = th.font * 1.4
+        for name, (x, y) in pos.items():
             ax.annotate(
                 name,
                 (x, y),
-                xytext=(3, 3),
+                xytext=(3, 4 + levels[name] * step),
                 textcoords="offset points",
                 fontsize=th.font,
                 color=th.ink2,
+                arrowprops={"arrowstyle": "-", "color": th.muted, "lw": 0.4}
+                if levels[name]
+                else None,
             )
     _style(ax, th, grid="both")
     ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(len(TIERS) - 0.5, -0.5)
+    row_pt = 33.0 if th.height is None else th.height * 72 * 0.8 / 4  # one tier row
+    ax.set_ylim(len(TIERS) - 0.5, -0.5 - top * th.font * 1.4 / row_pt)
     ax.set_yticks(range(len(TIERS)), [t.replace("_", " ") for t in TIERS])
     ax.tick_params(axis="y", length=0)
     _labels(ax, th, "mean normalised rank (0 first, 1 last)", "tier")
@@ -1073,13 +1115,14 @@ def plot_order_agreement(
         for r in table[table["benchmark"] == ctx.budget].itertuples():
             cells[index[r.method], index[r.other]] = r.tau
             sig[index[r.method], index[r.other]] = r.p < TAU_ALPHA
-        image = ax.imshow(cells, cmap=cmap, vmin=-1, vmax=1, aspect="auto")
-        image.set_gid(_gid("tau", ctx.budget, "all"))
+        charts.heatmap(
+            ax, th, cells, cmap, vmin=-1, vmax=1, gid=_gid("tau", ctx.budget, "all")
+        )
         for i, j in zip(*np.where(np.isfinite(cells)), strict=True):
             ax.text(
-                j,
-                i,
-                f"{cells[i, j]:.2f}",
+                j + 0.5,
+                i + 0.5,
+                _cell_number(cells[i, j], n > 6 and not th.wide),
                 ha="center",
                 va="center",
                 fontsize=th.font,
@@ -1087,8 +1130,8 @@ def plot_order_agreement(
                 fontweight="bold" if sig[i, j] else "normal",
                 gid="tau-cell/bold" if sig[i, j] else "tau-cell/plain",
             )
-        ax.set_xticks(range(n), ctx.names, rotation=90)
-        ax.set_yticks(range(n), ctx.names)
+        ax.set_xticks(np.arange(n) + 0.5, ctx.names, rotation=90)
+        ax.set_yticks(np.arange(n) + 0.5, ctx.names)
         ax.tick_params(colors=th.muted, labelsize=th.font, length=0)
         for spine in ax.spines.values():
             spine.set_visible(False)
@@ -1395,15 +1438,7 @@ def _death_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
         Patch(facecolor=th.seq[k], label=c.replace("_", " "))
         for k, c in enumerate(groups)
     ]
-    ax.legend(
-        handles=handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.28 if th.name == "report" else -0.2),
-        ncol=min(len(groups), 3 if not th.wide else 5),
-        fontsize=th.font,
-        frameon=False,
-        labelcolor=th.ink2,
-    )
+    _legend_below(ax, th, handles, min(len(groups), 3 if not th.wide else 5))
     _labels(ax, th, "share of deaths")
 
 
@@ -2082,13 +2117,7 @@ def _use_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
         )
         for k, r in enumerate(names)
     ]
-    ax.legend(
-        handles=handles,
-        loc="upper left",
-        fontsize=th.font,
-        frameon=False,
-        labelcolor=th.ink2,
-    )
+    _legend_below(ax, th, handles, min(len(names), 3 if not th.wide else 5))
 
 
 def _time_cats(ctx: Ctx) -> Cats:

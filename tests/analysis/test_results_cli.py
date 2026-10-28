@@ -77,7 +77,7 @@ def interpretation(tmp_path_factory: pytest.TempPathFactory) -> Path:
     pd.DataFrame([COMPLEXITY, NO_MEMORY]).to_csv(
         root / "1m" / "complexity.csv", index=False
     )
-    (root / "1m" / "fidelity_vs_leaves_1m.pdf").write_bytes(b"%PDF-1.4 fidelity")
+    (root / "1m" / "fidelity_vs_leaves_1m.png").write_bytes(b"PNG fidelity")
     return root
 
 
@@ -134,10 +134,7 @@ def full(base: ResultsOptions) -> ResultsSummary:
 
 def _files(folder: Path, stems: list[str], suffixes: tuple[str, ...]) -> list[Path]:
     return [
-        folder / f"{s}{v}.{ext}"
-        for s in stems
-        for v in suffixes
-        for ext in ("pdf", "png")
+        folder / f"{s}{v}.{ext}" for s in stems for v in suffixes for ext in ("png",)
     ]
 
 
@@ -177,7 +174,7 @@ def test_a_failing_reproduction_gate_still_writes_everything(
     assert row.loc[("ppo-rnn", "1m"), "status"] == "pass"
     assert row.loc[("ppo", "1m"), "gap"] == pytest.approx(-3.0)
     assert "ppo" in " ".join(full.failed_gates)
-    assert (base.out / "figures" / "curves_score.pdf").is_file()
+    assert (base.out / "figures" / "curves_score.png").is_file()
     assert (base.report_dir / "numbers.tex").is_file()
 
 
@@ -192,17 +189,17 @@ def test_the_report_folder_gets_tables_numbers_and_report_figures(
     assert r"\scoreOneMPpo}" in numbers
     assert r"\closedLoopOneMSil}" in numbers
     assert r"\closedLoopOneMSilNoMemory}" in numbers
-    figures = {p.name for p in (report / "figures").glob("*.pdf")}
-    assert "curves_score_double.pdf" in figures
-    assert "fidelity_vs_leaves_1m.pdf" in figures
-    assert not [n for n in figures if n.endswith("_video.pdf")]
+    figures = {p.name for p in (report / "figures").glob("*.png")}
+    assert "curves_score_double.png" in figures
+    assert "fidelity_vs_leaves_1m.png" in figures
+    assert not [n for n in figures if n.endswith("_video.png")]
 
 
 def test_the_fidelity_figure_is_copied_into_the_results_figures(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    got = base.out / "figures" / "fidelity_vs_leaves_1m.pdf"
-    assert got.read_bytes() == b"%PDF-1.4 fidelity"
+    got = base.out / "figures" / "fidelity_vs_leaves_1m.png"
+    assert got.read_bytes() == b"PNG fidelity"
 
 
 def test_no_text_output_has_the_long_dash(
@@ -240,7 +237,7 @@ def test_the_run_is_logged_as_comparison_final_in_experiment_analysis(
     tables = {a.path for a in client.list_artifacts(found.info.run_id, "tables")}
     assert "tables/main.csv" in tables
     figures = {a.path for a in client.list_artifacts(found.info.run_id, "figures")}
-    assert "figures/curves_score.pdf" in figures
+    assert "figures/curves_score.png" in figures
 
 
 # --- resume and idempotence ---------------------------------------------------------
@@ -250,12 +247,12 @@ def test_a_rerun_skips_finished_stages_and_keeps_the_outputs_and_the_run(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
     tables = base.out / "tables" / "main.csv"
-    pdf = base.out / "figures" / "curves_score.pdf"
-    before = (tables.read_bytes(), pdf.stat().st_mtime_ns)
+    fig = base.out / "figures" / "curves_score.png"
+    before = (tables.read_bytes(), fig.stat().st_mtime_ns)
     again = run_comparison(base)
     assert not again.done
     assert {"figures/F1", "log"} <= set(again.skipped)
-    assert (tables.read_bytes(), pdf.stat().st_mtime_ns) == before
+    assert (tables.read_bytes(), fig.stat().st_mtime_ns) == before
     assert again.run_id == full.run_id
     client = mlflow.MlflowClient(base.tracking_uri)
     exp = client.get_experiment_by_name("analysis")
@@ -280,7 +277,7 @@ def _two_stub_figures(
 
     def stub(fid: str) -> Callable[..., None]:
         def draw(frames: object, folder: Path, theme: str, *, width: str, **kw: object):
-            (folder / f"{fid}_{theme}_{width}.pdf").write_bytes(b"x")
+            (folder / f"{fid}_{theme}_{width}.png").write_bytes(b"x")
 
         return draw
 
@@ -299,12 +296,24 @@ def test_changed_inputs_redo_the_tables_and_the_figures(
     assert again.done == ["figures/F1", "figures/F6"]
 
 
+def test_old_pdfs_are_removed_from_both_figure_folders(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opts = _two_stub_figures(monkeypatch, base, tmp_path)
+    for folder in (opts.out / "figures", opts.report_dir / "figures"):
+        folder.mkdir(parents=True)
+        (folder / "aggregate.pdf").write_bytes(b"%PDF-1.4 stale")
+    run_comparison(opts)
+    assert not list(opts.out.rglob("*.pdf"))
+    assert not list(opts.report_dir.rglob("*.pdf"))
+
+
 def test_a_deleted_output_redoes_its_stage(
     base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     opts = _two_stub_figures(monkeypatch, base, tmp_path)
     run_comparison(opts)
-    (opts.out / "figures" / "F1_video_column.pdf").unlink()
+    (opts.out / "figures" / "F1_video_column.png").unlink()
     (opts.out / "tables" / "main.csv").unlink()
     again = run_comparison(opts)
     assert (opts.out / "tables" / "main.csv").is_file()  # tables are rewritten
@@ -389,7 +398,7 @@ def test_no_complexity_skips_only_what_depends_on_it(
     assert "spearman" not in numbers
     assert (out / "tables" / "main.csv").is_file()
     assert (out / "tables" / "sensitivity.csv").is_file()
-    assert (out / "figures" / "F1_report_column.pdf").is_file()
+    assert (out / "figures" / "F1_report_column.png").is_file()
     assert not list((out / "figures").glob("fidelity*"))
     assert not list((report / "figures").glob("fidelity*"))
     assert not (out / ".stages" / "log.json").exists()
@@ -502,8 +511,8 @@ def test_no_complexity_removes_stale_fidelity_files_and_does_not_copy_them(
 ) -> None:
     full_opts, partial = _stub_full_then_partial(base, tmp_path, monkeypatch)
     run_comparison(full_opts)
-    assert (full_opts.out / "figures" / "fidelity_vs_leaves_1m.pdf").is_file()
-    (full_opts.report_dir / "figures" / "fidelity_vs_leaves_1m.pdf").unlink()
+    assert (full_opts.out / "figures" / "fidelity_vs_leaves_1m.png").is_file()
+    (full_opts.report_dir / "figures" / "fidelity_vs_leaves_1m.png").unlink()
     run_comparison(partial)
     assert not list((partial.out / "figures").glob("fidelity*"))
     assert not list((partial.report_dir / "figures").glob("fidelity*"))

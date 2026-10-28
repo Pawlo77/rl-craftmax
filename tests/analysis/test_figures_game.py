@@ -1,6 +1,6 @@
 """Tests of the in-game figures F6-F17 on the game fixture (10 seeds at 1M, 3 at 1B).
 
-Like `test_figures.py`: every figure writes a PDF and a PNG, is sized for one
+Like `test_figures.py`: every figure writes a PNG (and no PDF), is sized for one
 Interspeech column or a 1080p frame, takes its colours from `METHOD_COLORS`, and the
 drawn artists (found by their ``gid`` ``<kind>/<budget>/<method>[/<category>]``) are
 compared with the tables they come from. The fixture's values are deterministic
@@ -57,7 +57,7 @@ from wut_murl_craftax.visualisation.charts import METHOD_COLORS, METHOD_COLORS_L
 N = 100
 """Bootstrap resamples and permutations in tests."""
 THEMES = ("report", "video")
-PDF, PNG = b"%PDF", b"\x89PNG\r\n\x1a\n"
+PNG = b"\x89PNG\r\n\x1a\n"
 NOT_LOGGED = ("ppo", "ppo-rnn")
 """The reused runs without the online families (R78)."""
 FIGS = ["F6", "F7", "F7G", "F8", "F8T", "F9", "F9S"] + [f"F{i}" for i in range(10, 18)]
@@ -169,13 +169,13 @@ def ydata(artist: Artist) -> float:
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", FIGS)
-def test_each_figure_writes_a_pdf_and_a_png(
+def test_each_figure_writes_a_png_and_no_pdf(
     fid: str, theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = draw(fid, frames, tmp_path, theme)
     assert isinstance(fig, Figure)
     name = stem(fid) + ("_video" if theme == "video" else "")
-    assert (tmp_path / f"{name}.pdf").read_bytes().startswith(PDF)
+    assert not (tmp_path / f"{name}.pdf").exists()
     assert (tmp_path / f"{name}.png").read_bytes().startswith(PNG)
     for want in LABELS[fid]:
         assert want in axis_labels(fig), (fid, want, axis_labels(fig))
@@ -218,7 +218,7 @@ def test_double_width_is_170_mm_with_its_own_files(
 ) -> None:
     fig = draw(fid, frames, tmp_path, width="double")
     assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert (tmp_path / f"{stem(fid)}_double.pdf").read_bytes().startswith(PDF)
+    assert not (tmp_path / f"{stem(fid)}_double.pdf").exists()
     assert (tmp_path / f"{stem(fid)}_double.png").read_bytes().startswith(PNG)
     fig.canvas.draw()
     small = [
@@ -263,7 +263,7 @@ def test_the_1b_radar_without_1b_runs_is_a_pending_placeholder(
 ) -> None:
     fig = plot_radar(frames_1m, tmp_path, budget="1b")
     assert any("Craftax-1B pending" in t for t in texts(fig))
-    assert (tmp_path / "radar_1b.pdf").exists()
+    assert (tmp_path / "radar_1b.png").exists()
 
 
 @pytest.mark.parametrize("fid", FIGS)
@@ -273,7 +273,7 @@ def test_no_run_data_gives_a_labelled_placeholder(
     empty = {k: v.iloc[:0] for k, v in frames.items()}
     fig = draw(fid, empty, tmp_path)
     assert any("no data" in t or "pending" in t for t in texts(fig))
-    assert (tmp_path / f"{stem(fid)}.pdf").exists()
+    assert (tmp_path / f"{stem(fid)}.png").exists()
 
 
 # --- F6 -------------------------------------------------------------------------
@@ -318,7 +318,7 @@ def test_f6_wall_clock_is_a_second_file_with_its_winners(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = race(frames, tmp_path, clock="wall")
-    assert (tmp_path / "race_wall.pdf").exists()
+    assert (tmp_path / "race_wall.png").exists()
     won = compare.race_table(frames)
     assert not won["winner_wall"].any()  # R97: every run is a laptop run, no ring
     assert gids(fig, "winner") == set()
@@ -493,7 +493,7 @@ def test_f7_graph_figure_draws_the_reduced_edges_and_every_node(
     assert nodes_1m == {f"node/1m/sil/{a}" for a in nodes["achievement"]}
     assert any(g.startswith("node/1b/") for g in gids(fig, "node"))
     assert any("no edge reaches" in t and "1B" in t for t in texts(fig))
-    assert (tmp_path / "order_sil_double.pdf").exists()
+    assert (tmp_path / "order_sil_double.png").exists()
 
 
 def test_f7_agreement_matrix_is_the_table_one_panel_per_benchmark(
@@ -910,7 +910,7 @@ def test_f17_draws_one_polygon_per_method_at_the_scaled_values(
     assert len(axes) == 9
     assert all(ax.name == "polar" for ax in axes)
     assert all(ax.get_ylim() == (0.0, 1.0) for ax in axes)
-    assert (tmp_path / "radar_1m.pdf").exists()
+    assert (tmp_path / "radar_1m.png").exists()
 
 
 # --- colours --------------------------------------------------------------------

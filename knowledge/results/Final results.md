@@ -206,7 +206,7 @@ Every laptop run trained with two concurrent queue workers, so these figures are
 
 ## Figure index
 
-Files in `outputs/results/figures/` (`.pdf` and `.png`; `_double` and `_video` variants beside each). "Descriptive" = no table-backed headline; read the figure.
+Files in `outputs/results/figures/` (`.png` only; `_double` and `_video` variants beside each). "Descriptive" = no table-backed headline; read the figure.
 
 | ID | File | Takeaway |
 |---|---|---|

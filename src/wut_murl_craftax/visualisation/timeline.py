@@ -3,6 +3,8 @@
 Rows (22 Classic, 67 Craftax) are sorted by first unlock: the first update in which
 any training episode earned the achievement; a ring marks it once the cursor passes.
 Colour is the EMA success rate on a square-root scale so 1-5% rates stay visible.
+The look is the shared video theme (`charts.Theme`, seaborn); the PNG of the last frame
+is written as it is, with every label inside the canvas.
 Usage: ``python -m wut_murl_craftax.visualisation.timeline RUN [--logx]``
 """
 
@@ -16,7 +18,7 @@ from matplotlib.colors import LinearSegmentedColormap, PowerNorm
 
 from ..training.records import first_unlocks, load_episodes, load_metrics
 from . import ffmpeg
-from .charts import INK, MUTED, SEQ, ema, figure, frame, style
+from .charts import VIDEO, ema, frame, set_labels, settle, style_axes, themed_figure
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +56,12 @@ def render_timeline(
     step0 = x[1] - x[0] if len(x) > 1 else x[0]
     edges = np.r_[x[0] / 2 if logx else x[0] - step0, x]
     fs = size[1] / (70 if n_rows <= 30 else 120)
-    fig = figure(*size)
-    ax = style(fig.add_axes((0.2, 0.1, 0.62, 0.82)), fs)
-    cax = fig.add_axes((0.86, 0.1, 0.015, 0.82))
-    cmap = LinearSegmentedColormap.from_list("seq", SEQ)
+    th = VIDEO._replace(
+        width=size[0] / VIDEO.dpi, height=size[1] / VIDEO.dpi, font=fs, title=fs * 1.3
+    )
+    fig = themed_figure(th, 0)
+    ax = style_axes(fig.add_subplot(), th, grid="x")
+    cmap = LinearSegmentedColormap.from_list("seq", th.seq)
     mesh = ax.pcolormesh(
         edges,
         np.arange(n_rows + 1),
@@ -74,17 +78,24 @@ def render_timeline(
     ax.set_yticks(np.arange(n_rows) + 0.5, names)
     ax.tick_params(axis="y", length=0)
     ax.grid(False)
-    ax.set_xlabel("environment steps (M)", fontsize=fs)
-    bar = fig.colorbar(mesh, cax=cax)
-    bar.set_label("success rate, % of episodes (sqrt scale)", color=MUTED, fontsize=fs)
-    cax.tick_params(colors=MUTED, labelsize=fs)
+    set_labels(ax, th, "environment steps (M)")
+    bar = fig.colorbar(mesh, ax=ax, fraction=0.03, pad=0.02)
+    bar.set_label(
+        "success rate, % of episodes (sqrt scale)", color=th.ink2, fontsize=fs
+    )
+    bar.ax.tick_params(colors=th.muted, labelsize=fs)
+    bar.outline.set_visible(False)
     fx = np.where(first < 0, np.nan, x[np.clip(first - 1, 0, None)])
     rows = np.arange(n_rows) + 0.5
     dots = ax.scatter(
-        fx, rows, s=fs * 2.2, facecolors="none", edgecolors=INK, linewidths=1.2
+        fx, rows, s=fs * 2.2, facecolors="none", edgecolors=th.ink, linewidths=1.2
     )
-    title = ax.set_title("", loc="left", fontsize=fs * 1.3, color=INK)
-    count = fig.text(0.82, 0.94, "", fontsize=fs * 1.1, color=MUTED, ha="right")
+    title = ax.set_title("", loc="left", fontsize=fs * 1.3, color=th.ink)
+    count = ax.set_title("", loc="right", fontsize=fs * 1.1, color=th.muted)
+    title.set_text("Achievements over training - 0.00M steps")
+    count.set_text(f"unlocked at least once: {n_rows} / {n_rows}")
+    settle(fig)
+    fig.set_layout_engine("none")  # the layout is settled; frames only change data
     cursor = _cursor(x, int(seconds * fps), int(hold * fps), logx)
     t0 = time.time()
     with ffmpeg.FrameWriter(out, *size, fps=fps) as writer:
@@ -97,7 +108,7 @@ def render_timeline(
             title.set_text(f"Achievements over training - {x[i]:.2f}M steps")
             count.set_text(f"unlocked at least once: {seen.sum()} / {n_rows}")
             writer.write(frame(fig))
-    fig.savefig(out.with_suffix(".png"), facecolor=fig.get_facecolor())
+    fig.savefig(out.with_suffix(".png"), facecolor=fig.get_facecolor(), dpi=th.dpi)
     logger.info("timeline %s: %d frames in %.1fs", out, len(cursor), time.time() - t0)
     return out
 

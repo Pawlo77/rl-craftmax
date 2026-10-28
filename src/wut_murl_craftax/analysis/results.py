@@ -369,6 +369,14 @@ def draw(
     return [p for p, m in _snapshot(folder).items() if before.get(p) != m]
 
 
+def drop_old_pdfs(folder: Path) -> None:
+    """Figures are PNG only: delete the ``*.pdf`` an earlier run left in ``folder``."""
+    from . import latex
+
+    for path in latex.drop_pdfs(folder):
+        logger.info("removed %s (figures are PNG only)", path)
+
+
 def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) -> None:
     """One stage per figure id; F18 reads the tuning phases, the rest the finals."""
     o = inputs.o
@@ -395,21 +403,16 @@ def copy_fidelity(
     """Copy the distillation's fidelity figures of ``budgets`` into ``folder``."""
     copied = []
     for budget in budgets:
-        stem = FIDELITY.format(budget=budget)
-        found = [
-            src
-            for ext in ("pdf", "png")
-            if (src := o.complexity_root / budget / f"{stem}.{ext}").is_file()
-        ]
-        if not found and budget == "1m":
-            logger.warning(
-                "%s is missing: the report's fidelity figure is not copied",
-                o.complexity_root / budget / f"{stem}.pdf",
-            )
-        for src in found:
-            folder.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, folder / src.name)
-            copied.append(folder / src.name)
+        src = o.complexity_root / budget / f"{FIDELITY.format(budget=budget)}.png"
+        if not src.is_file():
+            if budget == "1m":
+                logger.warning(
+                    "%s is missing: the report's fidelity figure is not copied", src
+                )
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, folder / src.name)
+        copied.append(folder / src.name)
     return copied
 
 
@@ -583,6 +586,7 @@ def run_comparison(o: ResultsOptions) -> ResultsSummary:
     o.out.mkdir(parents=True, exist_ok=True)
     t = build_tables(inputs)  # a few seconds; the figures and macros need it
     write_table_files(t, o.out)
+    drop_old_pdfs(o.out / "figures")
     s.failed_gates = _gate_lines(t["reproduction_gate"])
     draw_figures(inputs, st, t)
     if o.complexity:

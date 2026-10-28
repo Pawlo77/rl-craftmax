@@ -749,7 +749,7 @@ def test_never_and_never_in_eval_are_drawn_apart(
         "status": [NEVER, NEVER_EVAL, "common", "rare"],
     })  # fmt: skip
     ax = Figure().add_subplot()
-    hard._achievement_marks(ax, table, np.arange(4.0))
+    hard._achievement_marks(ax, hard._theme("report"), table, np.arange(4.0))
     labels = set(MARK_LABELS.values())
     marks = {c.get_label(): c for c in ax.collections if c.get_label() in labels}
     never, unknown = marks[MARK_LABELS[NEVER]], marks[MARK_LABELS[NEVER_EVAL]]
@@ -762,7 +762,7 @@ def test_never_and_never_in_eval_are_drawn_apart(
     # and the legend of the saved figure lists both
     seen: list[str] = []
 
-    def capture(fig: Figure, handles: list[Any], **kw: Any) -> None:
+    def capture(fig: Figure, th: Any, handles: list[Any], **kw: Any) -> None:
         seen.extend(h.get_label() for h in handles)
 
     monkeypatch.setattr(hard, "_legend", capture)

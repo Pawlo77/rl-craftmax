@@ -461,6 +461,7 @@ def _plot_fidelity(
     _labels(ax, th, "leaves (log2)", "test top-1 fidelity")
     _finish(fig, th, handles, cols=2)
     _save(fig, th, out_dir, name)
+    (out_dir / f"{name}.pdf").unlink(missing_ok=True)  # figures are PNG only now
 
 
 def sum_up_method(folder: Path) -> None:
@@ -736,8 +737,7 @@ def sum_up_budget(folder: Path, figures: Path) -> None:
     name = f"fidelity_vs_leaves_{budget}"
     _plot_fidelity(curves, folder, name, per_seed=False)
     figures.mkdir(parents=True, exist_ok=True)
-    for ext in ("pdf", "png"):
-        _copy_atomic(folder / f"{name}.{ext}", figures / f"{name}.{ext}")
+    _copy_atomic(folder / f"{name}.png", figures / f"{name}.png")
 
 
 # ------------------------------------------------------------------------- driver

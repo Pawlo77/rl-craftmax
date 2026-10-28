@@ -537,8 +537,8 @@ def stall_ccdf(stalls: pd.DataFrame) -> pd.DataFrame:
 
 PERCENT_TICKS = (0, 1, 10, 100)
 """Ticks of the symlog percent axes (the 5% limit is a dashed line)."""
-MARGIN_PX = {"left": 90, "right": 30, "top": 50, "bottom": 70}
-"""Figure margins in pixels, turned into fractions per figure size."""
+ROW_MM = 3.0
+"""Report height of one dot row of the achievement plot (7 pt text fits)."""
 
 
 def _label(method: str, ref: str) -> str:
@@ -581,37 +581,43 @@ def _rows_of(table: pd.DataFrame, key: tuple[str, str]) -> pd.DataFrame:
     return table[(table["method"] == key[0]) & (table["config_ref"] == key[1])]
 
 
-def _figure(width: int, height: int, **margins: int) -> Figure:
-    """A dark figure with pixel margins (``MARGIN_PX`` overridden by ``margins``)."""
-    fig = charts.figure(width, height)
-    m = MARGIN_PX | margins
-    fig.subplots_adjust(
-        left=m["left"] / width,
-        right=1 - m["right"] / width,
-        top=1 - m["top"] / height,
-        bottom=m["bottom"] / height,
-    )
-    return fig
+def _theme(theme: str) -> charts.Theme:
+    """The shared theme at the double report width (these plots are dense)."""
+    return charts.theme(theme, "double")
 
 
-def _title(ax: Axes, text: str) -> None:
-    ax.set_title(text, loc="left", fontsize=9, color=charts.INK)
+def _figure(th: charts.Theme, height_mm: float) -> Figure:
+    return charts.themed_figure(th, height_mm)
+
+
+def _title(ax: Axes, th: charts.Theme, text: str) -> None:
+    charts.set_title(ax, th, text)
 
 
 def _save(fig: Figure, out_dir: Path, name: str) -> Path:
+    """Write ``name`` (a ``.png``) into ``out_dir``; the video theme adds ``_video``."""
     path = out_dir / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, facecolor=fig.get_facecolor())
+    charts.settle(fig)
+    fig.savefig(path, facecolor=fig.get_facecolor(), dpi=fig.dpi)
     return path
 
 
-def _nothing(out_dir: Path, name: str, what: str) -> Path:
+def _file(name: str, th: charts.Theme) -> str:
+    """``name`` for the report theme, ``<stem>_video.png`` for the video theme."""
+    return name if th.name == "report" else f"{Path(name).stem}{th.suffix}.png"
+
+
+def _nothing(out_dir: Path, name: str, what: str, th: charts.Theme) -> Path:
     """A placeholder plot that says there is nothing to show."""
-    fig = charts.figure(640, 300)
-    ax = charts.style(fig.add_subplot())
+    fig = _figure(th, 40)
+    ax = fig.add_subplot()
     ax.set_axis_off()
-    ax.text(0.5, 0.5, f"no {what}", ha="center", va="center", color=charts.MUTED)
-    return _save(fig, out_dir, name)
+    ax.text(
+        0.5, 0.5, f"no {what}", ha="center", va="center", color=th.muted,
+        fontsize=th.title, transform=ax.transAxes,
+    )  # fmt: skip
+    return _save(fig, out_dir, _file(name, th))
 
 
 def _handle(label: str, marker: str = "o", **style: str) -> Line2D:
@@ -619,12 +625,11 @@ def _handle(label: str, marker: str = "o", **style: str) -> Line2D:
     return Line2D([], [], ls="", marker=marker, label=label, **style)  # type: ignore[arg-type]  # matplotlib kwargs are typed one by one
 
 
-def _legend(fig: Figure, handles: Sequence[Artist], **kw: Any) -> None:
-    legend = fig.legend(handles=handles, **kw)
-    legend.get_frame().set_facecolor(charts.SURFACE)
-    legend.get_frame().set_edgecolor(charts.GRID)
-    for text in legend.get_texts():
-        text.set_color(charts.INK2)
+def _legend(
+    fig: Figure, th: charts.Theme, handles: Sequence[Artist], **kw: Any
+) -> None:
+    """The plot's legend outside its axes (``loc`` and ``cols`` as `charts.finish`)."""
+    charts.finish(fig, th, handles, **kw)
 
 
 def steps_text(steps: float) -> str:
@@ -649,38 +654,37 @@ def _percent_axis(ax: Axes, which: str) -> None:
     getattr(ax, f"set_{which}ticks")(PERCENT_TICKS, [f"{p}%" for p in PERCENT_TICKS])
 
 
-def plot_floor_reach(table: pd.DataFrame, out_dir: Path) -> Path:
+def plot_floor_reach(table: pd.DataFrame, out_dir: Path, theme: str = "report") -> Path:
     """``floor_reach.png``: reach rate per floor (%, symlog) with the bootstrap band.
 
     One line per unit of ``table`` (one budget); the dashed line is the 5% rare limit.
     """
-    name = "floor_reach.png"
+    th, name = _theme(theme), "floor_reach.png"
     if table.empty:
-        return _nothing(out_dir, name, "floor reach rates")
+        return _nothing(out_dir, name, "floor reach rates", th)
     keys = _unit_keys(table)
-    fig = _figure(900, 520)
-    ax = charts.style(fig.add_subplot())
+    fig = _figure(th, 85)
+    ax = charts.style_axes(fig.add_subplot(), th, grid="both")
     for i, (method, ref) in enumerate(keys):
         t = _rows_of(table, (method, ref)).sort_values("floor")
-        color = charts.SERIES[i % len(charts.SERIES)]
+        color = th.series[i % len(th.series)]
         ax.fill_between(
-            t["floor"], t["lo"] * 100, t["hi"] * 100, color=color, alpha=0.18
+            t["floor"], t["lo"] * 100, t["hi"] * 100, color=color, alpha=0.18, lw=0
         )
         ax.plot(
-            t["floor"], t["rate"] * 100, "-o", color=color, ms=4,
-            label=_label(method, ref),
+            t["floor"], t["rate"] * 100, "-o", color=color, ms=th.ms,
+            lw=max(th.lw, 1.0), label=_label(method, ref),
         )  # fmt: skip
-    ax.axhline(RARE_RATE * 100, color=charts.MUTED, ls="--", lw=1)
+    ax.axhline(RARE_RATE * 100, color=th.muted, ls="--", lw=1)
     _percent_axis(ax, "y")
     floors = sorted(table["floor"].unique())
     names = table.drop_duplicates("floor").set_index("floor")["floor_name"]
     ax.set_xticks(floors, [f"{f}\n{names[f]}" for f in floors])
-    ax.set_xlabel("floor")
-    ax.set_ylabel("final eval episodes reaching the floor")
+    charts.set_labels(ax, th, "floor", "final eval episodes reaching the floor")
     budget = table["budget"].iloc[0]
-    _title(ax, f"Floor reach, {budget}, {_basis(table)} (dashed: 5% rare limit)")
-    _legend(fig, ax.get_legend_handles_labels()[0], loc="upper right")
-    return _save(fig, out_dir, name)
+    _title(ax, th, f"Floor reach, {budget}, {_basis(table)} (dashed: 5% rare limit)")
+    _legend(fig, th, ax.get_legend_handles_labels()[0])
+    return _save(fig, out_dir, _file(name, th))
 
 
 MARK_LABELS = {
@@ -691,30 +695,39 @@ MARK_LABELS = {
 eval`` is not (R78), so they are drawn apart."""
 
 
-def _achievement_marks(ax: Axes, t: pd.DataFrame, y: np.ndarray) -> None:
+def _achievement_marks(
+    ax: Axes, th: charts.Theme, t: pd.DataFrame, y: np.ndarray
+) -> None:
     """Final-rate dots (blue common, amber rare), zero marks for never, hollow best.
 
     ``never``: a solid cross; ``never in eval``: a hollow diamond (both at 0).
     """
+    blue, red, _, amber = th.series
     final, best = t["final_rate"] * 100, t["best_rate"] * 100
-    for status, color in ((COMMON, charts.SERIES[0]), (RARE, charts.SERIES[3])):
+    for status, color in ((COMMON, blue), (RARE, amber)):
         m = (t["status"] == status).to_numpy()
-        ax.hlines(y[m], final[m], best[m], color=charts.GRID)
-        ax.scatter(final[m], y[m], s=16, color=color, zorder=3)
+        ax.hlines(y[m], final[m], best[m], color=th.grid)
+        ax.scatter(final[m], y[m], s=th.ms**2, color=color, zorder=3)
     never = (t["status"] == NEVER).to_numpy()
     ax.scatter(
-        np.zeros(never.sum()), y[never], marker="x", s=18, color=charts.SERIES[1],
+        np.zeros(never.sum()), y[never], marker="x", s=th.ms**2, color=red,
         label=MARK_LABELS[NEVER],
     )  # fmt: skip
     unknown = (t["status"] == NEVER_EVAL).to_numpy()
     ax.scatter(
-        np.zeros(unknown.sum()), y[unknown], marker="D", s=14, facecolors="none",
-        edgecolors=charts.SERIES[1], linewidths=0.9, label=MARK_LABELS[NEVER_EVAL],
+        np.zeros(unknown.sum()), y[unknown], marker="D", s=th.ms**2 * 0.8,
+        facecolors="none", edgecolors=red, linewidths=0.9,
+        label=MARK_LABELS[NEVER_EVAL],
     )  # fmt: skip
-    ax.scatter(best, y, s=22, facecolors="none", edgecolors=charts.INK2, linewidths=0.8)
+    ax.scatter(
+        best, y, s=th.ms**2 * 1.3, facecolors="none", edgecolors=th.ink2,
+        linewidths=0.8,
+    )  # fmt: skip
 
 
-def plot_achievement_status(table: pd.DataFrame, out_dir: Path) -> Path:
+def plot_achievement_status(
+    table: pd.DataFrame, out_dir: Path, theme: str = "report"
+) -> Path:
     """``achievement_status.png``: a dot row per achievement, grouped by tier and floor.
 
     Filled dot: final rate; hollow: best rate over training; a solid cross at 0 marks an
@@ -724,75 +737,71 @@ def plot_achievement_status(table: pd.DataFrame, out_dir: Path) -> Path:
     panel per unit, the rate axis symlog in %; the group labels (tier and floor) stand
     right of the last panel.
     """
-    name = "achievement_status.png"
+    th, name = _theme(theme), "achievement_status.png"
     if table.empty:
-        return _nothing(out_dir, name, "achievement rates")
+        return _nothing(out_dir, name, "achievement rates", th)
     keys = _unit_keys(table)
     first = _rows_of(table, keys[0]).reset_index(drop=True)
     group = (first["tier"] + " f" + first["floor"].astype(str)).to_numpy()
     y = np.cumsum(np.r_[0.0, (group[1:] != group[:-1]) * 0.7 + 1.0])
-    fig = _figure(
-        260 * len(keys) + 330,
-        int(15 * (y[-1] + 1) + 160),
-        left=170,
-        right=150,
-        bottom=80,
-    )
+    fig = _figure(th, ROW_MM * (y[-1] + 2) + 45)
     axes = fig.subplots(1, len(keys), sharey=True, squeeze=False)[0]
-    fig.subplots_adjust(wspace=0.08)
+    rows_pt = (fig.get_figheight() * 72 * 0.8) / (y[-1] + 2)
+    label_pt = min(th.font, 0.85 * rows_pt)  # a video frame has fewer pt per row
     for ax, key in zip(axes, keys, strict=True):
-        charts.style(ax, size=7)
+        charts.style_axes(ax, th, grid="x")
         t = _rows_of(table, key).set_index("achievement").reindex(first["achievement"])
-        _achievement_marks(ax, t, y)
-        ax.axvline(RARE_RATE * 100, color=charts.MUTED, ls="--", lw=1)
+        _achievement_marks(ax, th, t, y)
+        ax.axvline(RARE_RATE * 100, color=th.muted, ls="--", lw=1)
         _percent_axis(ax, "x")
         ax.set_yticks(y, first["achievement"])
+        ax.tick_params(axis="y", labelsize=label_pt, length=0)
         ax.set_ylim(y[-1] + 1, -1)
-        _title(ax, _label(*key))
+        _title(ax, th, _label(*key))
     for g in dict.fromkeys(group):
         axes[-1].text(
             1.03, y[group == g].mean(), g.replace("_", " "),
-            transform=axes[-1].get_yaxis_transform(), fontsize=7, color=charts.MUTED,
-            va="center",
+            transform=axes[-1].get_yaxis_transform(), fontsize=label_pt,
+            color=th.muted, va="center",
         )  # fmt: skip
     _legend(
         fig,
+        th,
         [
-            _handle("final rate", color=charts.SERIES[0]),
-            _handle("best over training", mec=charts.INK2, mfc="none"),
-            _handle("rare (< 5%)", color=charts.SERIES[3]),
-            _handle(MARK_LABELS[NEVER], color=charts.SERIES[1], marker="x"),
-            _handle(
-                MARK_LABELS[NEVER_EVAL], marker="D", mec=charts.SERIES[1], mfc="none"
-            ),
+            _handle("final rate", color=th.series[0]),
+            _handle("best over training", mec=th.ink2, mfc="none"),
+            _handle("rare (< 5%)", color=th.series[3]),
+            _handle(MARK_LABELS[NEVER], color=th.series[1], marker="x"),
+            _handle(MARK_LABELS[NEVER_EVAL], marker="D", mec=th.series[1], mfc="none"),
         ],
-        loc="lower center",
-        ncol=3,
+        loc="outside lower center",
+        cols=3 if th.name == "video" else 5,
     )
     basis = f"{_basis(table)}: final rate, best over all checkpoints"
-    fig.suptitle(basis, x=0.01, ha="left", fontsize=9, color=charts.INK)
-    return _save(fig, out_dir, name)
+    fig.suptitle(basis, x=0.01, ha="left", fontsize=th.title, color=th.ink)
+    return _save(fig, out_dir, _file(name, th))
 
 
-def plot_death_causes(table: pd.DataFrame, out_dir: Path) -> Path:
+def plot_death_causes(
+    table: pd.DataFrame, out_dir: Path, theme: str = "report"
+) -> Path:
     """``death_causes_over_training.png``: stacked cause shares per checkpoint.
 
     The four most frequent causes of the table get a colour, the rest are ``other``; a
     checkpoint without deaths has no bar. One panel per unit.
     """
-    name = "death_causes_over_training.png"
+    th, name = _theme(theme), "death_causes_over_training.png"
     table = table[table["scope"] == "checkpoint"]
     deaths = table[table["n_deaths"] > 0] if len(table) else table
     if deaths.empty:
-        return _nothing(out_dir, name, "deaths")
+        return _nothing(out_dir, name, "deaths", th)
     keys = _unit_keys(table)
     top = list(deaths.groupby("cause")["n_deaths"].sum().nlargest(4).index)
-    colors = dict(zip(top, charts.SERIES, strict=False)) | {"other": charts.MUTED}
-    fig = _figure(330 * len(keys) + 260, 470, right=170, bottom=90)
+    colors = dict(zip(top, th.series, strict=False)) | {"other": th.muted}
+    fig = _figure(th, 85)
     axes = fig.subplots(1, len(keys), sharey=True, squeeze=False)[0]
-    fig.subplots_adjust(wspace=0.08)
     for ax, key in zip(axes, keys, strict=True):
-        charts.style(ax)
+        charts.style_axes(ax, th, grid="y")
         t = _rows_of(table, key)
         steps = t.groupby("update")["env_steps"].max()
         d = t[t["n_deaths"] > 0].assign(
@@ -814,40 +823,41 @@ def plot_death_causes(table: pd.DataFrame, out_dir: Path) -> Path:
         ticks = [steps_text(s) for s in steps]
         ax.set_xticks(range(len(steps)), ticks, rotation=60, ha="right")
         ax.set_ylim(0, 100)
-        ax.set_xlabel("env steps")
-        _title(ax, _label(*key))
-    axes[0].set_ylabel("share of deaths (%)")
-    fig.suptitle(_basis(table), x=0.01, ha="left", fontsize=9, color=charts.INK)
-    _legend(
-        fig,
-        [
-            Line2D([], [], marker="s", ls="", color=c, label=n)
-            for n, c in colors.items()
-        ],
-        loc="center right",
-    )
-    return _save(fig, out_dir, name)
+        charts.set_labels(ax, th, "env steps")
+        _title(ax, th, _label(*key))
+    charts.set_labels(axes[0], th, y="share of deaths (%)")
+    fig.suptitle(_basis(table), x=0.01, ha="left", fontsize=th.title, color=th.ink)
+    handles = [
+        Line2D([], [], marker="s", ls="", color=c, label=n) for n, c in colors.items()
+    ]
+    _legend(fig, th, handles, loc="outside center right", cols=1)
+    return _save(fig, out_dir, _file(name, th))
 
 
-def plot_stall_lengths(ccdf: pd.DataFrame, out_dir: Path) -> Path:
+def plot_stall_lengths(
+    ccdf: pd.DataFrame, out_dir: Path, theme: str = "report"
+) -> Path:
     """``stall_lengths.png``: CCDF of stall length (log-log), one line per unit."""
-    name = "stall_lengths.png"
+    th, name = _theme(theme), "stall_lengths.png"
     if ccdf.empty:
-        return _nothing(out_dir, name, "stalls")
-    fig = _figure(820, 520)
-    ax = charts.style(fig.add_subplot())
+        return _nothing(out_dir, name, "stalls", th)
+    fig = _figure(th, 85)
+    ax = charts.style_axes(fig.add_subplot(), th, grid="both")
     for i, key in enumerate(_unit_keys(ccdf)):
         t = _rows_of(ccdf, key).sort_values("length")
         ax.plot(
-            t["length"], t["ccdf"], drawstyle="steps-post", marker="o", ms=2.5,
-            color=charts.SERIES[i % len(charts.SERIES)], label=_label(*key),
+            t["length"], t["ccdf"], drawstyle="steps-post", marker="o",
+            ms=th.ms * 0.8, lw=max(th.lw, 1.0), color=th.series[i % len(th.series)],
+            label=_label(*key),
         )  # fmt: skip
     ax.set_xscale("log")
     ax.set_yscale("log")
     _plain_log(ax.xaxis)
     _plain_log(ax.yaxis)
-    ax.set_xlabel("stall length (steps without an unlock)")
-    ax.set_ylabel("share of stalls at least this long")
-    _title(ax, f"Stall lengths, {ccdf['budget'].iloc[0]}, {_basis(ccdf)}")
-    _legend(fig, ax.get_legend_handles_labels()[0], loc="upper right")
-    return _save(fig, out_dir, name)
+    charts.set_labels(
+        ax, th, "stall length (steps without an unlock)",
+        "share of stalls at least this long",
+    )  # fmt: skip
+    _title(ax, th, f"Stall lengths, {ccdf['budget'].iloc[0]}, {_basis(ccdf)}")
+    _legend(fig, th, ax.get_legend_handles_labels()[0])
+    return _save(fig, out_dir, _file(name, th))

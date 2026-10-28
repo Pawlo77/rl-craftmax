@@ -3,7 +3,7 @@ r"""LaTeX export of the report: booktabs tables, number macros and report figure
 `write_tables` renders T1, T2, T5 and T6 of `compare` as booktabs ``tabular`` (best
 value per column bold within a benchmark and block), `write_numbers` one ``\newcommand``
 per number named ``<quantity><Budget><Method>[<Ref>][<Control>]`` in letters only
-(contracts.md section 7), `copy_figures` the report PDFs. A budget without runs (no
+(contracts.md section 7), `copy_figures` the report PNGs. A budget without runs (no
 ``final-1b`` yet, R75, R86) emits nothing; the 1M ``complexity.csv`` is required (the
 error names interpretation Task 6), the 1B one is skipped when missing.
 @see [[2026-10-20-craftax-comparison-and-results]]
@@ -775,11 +775,24 @@ def write_tables(
 # ---------------------------------------------------------------------- figures
 
 
+def drop_pdfs(folder: Path) -> list[Path]:
+    """Delete the ``*.pdf`` files of an old figure folder; the figures are PNG only."""
+    gone = sorted(folder.glob("*.pdf"))
+    for path in gone:
+        path.unlink()
+    return gone
+
+
 def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
-    """Copy the report PDFs of ``results_dir`` (no ``_video`` file) to ``out_dir``."""
+    """Copy the report PNGs of ``results_dir`` (no ``_video`` file) to ``out_dir``.
+
+    Figures were PDF and PNG once: a ``*.pdf`` left in ``out_dir`` is deleted, so the
+    report never includes a stale vector file.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
+    drop_pdfs(out_dir)
     copied = []
-    for src in sorted(results_dir.glob("*.pdf")):
+    for src in sorted(results_dir.glob("*.png")):
         if src.stem.endswith("_video"):
             continue
         shutil.copy2(src, out_dir / src.name)
