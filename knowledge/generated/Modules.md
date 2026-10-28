@@ -17,7 +17,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1541 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1164 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1194 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2391 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 853 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 787 | [[analysis]] |

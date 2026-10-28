@@ -14,9 +14,11 @@ are seaborn on the theme's ramp. Artists carry ``<kind>/<budget>/<method>[/<key>
 import json
 import logging
 from collections.abc import Callable, Sequence
+from math import ceil
 from pathlib import Path
 from typing import Any
 
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
 import seaborn as sns  # type: ignore[import-untyped]  # ships no stubs
@@ -48,6 +50,8 @@ from .figures import (
     _title,
 )
 from .figures_game import (
+    LEGEND_MM,
+    LEGEND_ROW_MM,
     PANEL_MM,
     Cats,
     Ctx,
@@ -58,7 +62,6 @@ from .figures_game import (
     _empty,
     _grid,
     _height,
-    _legend_mm,
     _method_handles,
     _unique,
 )
@@ -107,6 +110,14 @@ FEATURE_ROWS = 12
 POLICY_SUMMARY = "complexity.json"
 """`interpretation.run.SUMMARY`, written last in a finished policy folder (that module
 is not imported here: it loads JAX)."""
+REPORT_LEGEND_COLS = 3
+"""Legend columns in the 80 mm report column; wide variants keep the theme's."""
+LEGEND_RC: dict[Any, Any] = {
+    "legend.handlelength": 1.4,
+    "legend.handletextpad": 0.4,
+    "legend.columnspacing": 0.9,
+}
+"""Tighter legend spacing, so `REPORT_LEGEND_COLS` method names fit in 80 mm."""
 CELL_MM = 3.6
 """Height of one heat-map row in the report."""
 SCATTER_MM = 62.0
@@ -136,23 +147,42 @@ def _draw(
         return _no_data(name, th, out_dir, "no tuned runs")
     mm = [[p.mm(c) for p in panels] for c in ctxs]
     names = list(dict.fromkeys(m for c in ctxs for m in c.names))
-    handles = [*_method_handles(th, names), *(h(th) for h in extra)]
-    fig = _figure(th, _height(th, mm, len(handles)))
+    # extra entries first: the two long count-bonus names then share a legend column
+    handles = [*(h(th) for h in extra), *_method_handles(th, names)]
+    fig = _figure(th, _height(th, mm, 0) + _legend_rows(th, len(handles)))
     added: list[str] = []
     for row, ctx in zip(_grid(fig, th, mm), ctxs, strict=True):
         for ax, panel in zip(row, panels, strict=True):
             panel.draw(ax, th, ctx, added)
             _title(ax, th, _panel_title(ctx.budget, panel.title), narrow=panel.narrow)
     pending = _pending([c.budget for c in ctxs])
-    _finish(fig, th, handles, [*notes, *_unique(added), *pending])
+    _close(fig, th, handles, [*notes, *_unique(added), *pending])
     return _done(fig, th, out_dir, name)
+
+
+def _legend_cols(th: Theme) -> int:
+    return th.legend_cols if th.wide else REPORT_LEGEND_COLS
+
+
+def _legend_rows(th: Theme, entries: int) -> float:
+    """Report height of a legend of ``entries`` in `_legend_cols` columns."""
+    return ceil(entries / _legend_cols(th)) * LEGEND_ROW_MM
+
+
+def _close(
+    fig: Figure, th: Theme, handles: Sequence[Any], notes: Sequence[str]
+) -> None:
+    """`figures._finish` with the legend in `_legend_cols` columns."""
+    with mpl.rc_context(LEGEND_RC):
+        _finish(fig, th, handles, notes, cols=_legend_cols(th))
 
 
 def _budget_axes(
     th: Theme, heights: Sequence[float], entries: int
 ) -> tuple[Figure, list[Axes]]:
     """A figure, one axes per benchmark: stacked in the column, side by side wide."""
-    total = (max(heights) if th.wide else sum(heights)) + _legend_mm(th, entries)
+    rows = max(heights) if th.wide else sum(heights)
+    total = rows + LEGEND_MM + _legend_rows(th, entries)
     fig = _figure(th, total)
     if th.wide:
         return fig, list(fig.subplots(1, len(heights), squeeze=False)[0])
@@ -578,7 +608,7 @@ def _fate_panel(table: pd.DataFrame) -> Callable[[Axes, Theme, Ctx, list[str]], 
 
 
 def _pooled_handle(th: Theme) -> Line2D:
-    return Line2D([], [], color=th.ink, lw=th.lw * 2.2, label="mean over methods")
+    return Line2D([], [], color=th.ink, lw=th.lw * 2.2, label="method mean")
 
 
 def plot_seed_fate(
@@ -711,7 +741,7 @@ def plot_ablation_effects(
         ),
         *_pending(present),
     ]
-    _finish(fig, th, notes=notes)
+    _close(fig, th, (), notes)
     return _done(fig, th, out_dir, NAMES["F24"])
 
 
@@ -817,7 +847,7 @@ def plot_tuning_optimism(
     for h in handles:
         shown_gaps = ", ".join(f"{g:+.2f}" for g in gaps[h.get_label()])
         h.set_label(f"{h.get_label()} ({shown_gaps})")
-    _finish(fig, th, handles, notes)
+    _close(fig, th, handles, notes)
     return _done(fig, th, out_dir, NAMES["F25"])
 
 
@@ -1044,7 +1074,7 @@ def _distil_figure(
     fig, axes = _budget_axes(th, [panel_mm] * len(found), len(entries))
     for ax, (budget, policies) in zip(axes, found.items(), strict=True):
         _title(ax, th, _panel_title(budget, draw(ax, budget, policies)))
-    _finish(fig, th, entries, [*notes, *pending, *_pending(present)])
+    _close(fig, th, entries, [*notes, *pending, *_pending(present)])
     return _done(fig, th, out_dir, name)
 
 
