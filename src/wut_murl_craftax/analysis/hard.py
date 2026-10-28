@@ -535,6 +535,8 @@ def stall_ccdf(stalls: pd.DataFrame) -> pd.DataFrame:
 
 # ----------------------------------------------------------------------- plots
 
+MIN_ROW_MM = 2.7
+"""Least row pitch of the achievement plot (a 7 pt text line is 2.5 mm)."""
 PERCENT_TICKS = (0, 1, 10, 100)
 """Ticks of the symlog percent axes (the 5% limit is a dashed line)."""
 
@@ -790,6 +792,9 @@ def plot_achievement_status(
     first = table.drop_duplicates("achievement").set_index("achievement").loc[shown]
     group = (first["tier"] + " f" + first["floor"].astype(str)).to_numpy()
     left = charts.label_inset_mm(th, shown)
+    base = charts.ROWS_BASE_MM + 3
+    # a long list is squeezed towards the 80 mm limit, never below one 7 pt text line
+    pitch = max(MIN_ROW_MM, min(th.pitch_mm, (charts.MAX_ROWS_MM - base) / len(shown)))
     paths = {}
     for key in keys:
         stem = f"achievement_status_{_stem_of(key, table)}"
@@ -797,7 +802,8 @@ def plot_achievement_status(
             th,
             shape=charts.Shape.ROWS,
             rows=len(shown),
-            base_mm=charts.ROWS_BASE_MM + 3,
+            base_mm=base,
+            pitch_mm=pitch,
         )
         ax = charts.add_panel(fig, left_mm=left, top_mm=5.0)
         charts.style_axes(ax, th, grid="x")
