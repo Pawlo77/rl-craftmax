@@ -182,11 +182,6 @@ FIDELITY = "fidelity_vs_leaves"
 
 The distillation writes ``<budget>/fidelity_vs_leaves.png`` (older runs
 ``fidelity_vs_leaves_<budget>.png``, still found)."""
-FIDELITY_CAPTION = (
-    "Test top-1 fidelity of the distilled decision trees against their number of "
-    "leaves, per method and variant: how much of the policy a tree of that size "
-    "reproduces."
-)
 
 
 @dataclass(slots=True)
@@ -623,8 +618,7 @@ def copy_fidelity(
     from ..interpretation import run as interpretation
     from ..visualisation import charts
 
-    # the distillation owns the caption text (FIDELITY_CAPTION: fallback before it did)
-    text = getattr(interpretation, "FIDELITY_DESCRIPTION", FIDELITY_CAPTION)
+    text = interpretation.FIDELITY_DESCRIPTION.format(seeds="")  # it owns the text
     copied = []
     for budget in budgets:
         root = o.complexity_root / budget

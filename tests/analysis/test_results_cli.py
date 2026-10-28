@@ -56,13 +56,8 @@ ORDER_STEMS = [f"order_{m}" for m in METHODS]
 """The order graphs print node names: 170 mm and video files, no column file."""
 ANGLE_STEMS = [
     "greedy_gap", "gatekeepers", "seed_fate", "ablation_effects", "tuning_optimism",
-    "episode_spread", "distil_score", "distil_features",
+    "episode_spread", "achievements_vs_length", "distil_score", "distil_features",
 ]  # fmt: skip
-if (
-    "achievements_vs_length"
-    in Path(results.__file__).with_name("figures_angles.py").read_text()
-):  # F26 is split into two files once the angle figures are converted
-    ANGLE_STEMS.append("achievements_vs_length")
 """The analysis-angle figures F21-F28 (PNG; F27 and F28 say distillation pending)."""
 VARIANTS = ("", "_double", "_video")
 """Column report figure, double-width report figure, dark video figure."""

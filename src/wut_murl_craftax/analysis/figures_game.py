@@ -13,7 +13,6 @@ reads "not logged" (R78), never 0. Artists carry ``<kind>/<budget>/<method>[/<ke
 import itertools
 import textwrap
 from collections.abc import Callable, Mapping, Sequence
-from math import ceil
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -559,61 +558,6 @@ def _per_seed_of(
         return found.get(method, np.empty(0))
 
     return values
-
-
-# ------------------------------------------------- legacy helpers (figures_angles)
-# The comparison figures above are one panel per file (`FigPanel`, `_draw`); the
-# analysis-angle figures still lay panels out the old way until they are converted.
-
-ROW_MM = 1.45
-"""Millimetres per method inside one category row of a legacy dot panel."""
-LEGEND_MM = 24.0
-"""Notes and margins of one legacy report figure (`_legend_mm` adds the legend)."""
-LEGEND_ROW_MM = 3.6
-"""Millimetres per row of a legend or of the notes."""
-PANEL_MM = 16.0
-"""Title and x axis allowance of one legacy report panel."""
-
-
-class Panel(NamedTuple):
-    """One panel of a legacy multi-panel figure, drawn once per benchmark."""
-
-    title: str
-    draw: Drawer
-    mm: Callable[[Ctx], float]
-    """Report height in millimetres, title and axis included."""
-    narrow: bool = True
-    """Wrap the title for row labels beside it."""
-
-
-def _dot_mm(ctx: Ctx, rows: int) -> float:
-    return rows * (len(ctx.names) * ROW_MM + 2.0) + PANEL_MM
-
-
-def _grid(fig: Figure, th: Theme, mm: Sequence[Sequence[float]]) -> list[list[Axes]]:
-    """Axes ``[row][col]``: stacked in the report column, a grid when wide."""
-    rows, cols = len(mm), len(mm[0])
-    if th.wide:
-        grid = fig.subplots(
-            rows, cols, squeeze=False, height_ratios=[max(r) for r in mm]
-        )
-        return [list(r) for r in grid]
-    flat = fig.subplots(
-        rows * cols, 1, squeeze=False, height_ratios=list(itertools.chain(*mm))
-    )
-    axes = [ax for r in flat for ax in r]
-    return [axes[i * cols : (i + 1) * cols] for i in range(rows)]
-
-
-def _legend_mm(th: Theme, entries: int) -> float:
-    """Report height of the notes and of a legend of ``entries`` methods."""
-    return LEGEND_MM + ceil(entries / th.legend_cols) * LEGEND_ROW_MM
-
-
-def _height(th: Theme, mm: Sequence[Sequence[float]], entries: int) -> float:
-    """Report figure height: every panel stacked, or the tallest of each row."""
-    rows = [max(r) for r in mm] if th.wide else [sum(r) for r in mm]
-    return sum(rows) + _legend_mm(th, entries)
 
 
 # --------------------------------------------------------------------------- F6

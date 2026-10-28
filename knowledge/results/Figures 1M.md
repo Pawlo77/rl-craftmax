@@ -147,7 +147,7 @@ Every figure is one panel in one PNG without text beyond axes, ticks and a legen
 | Figure | Description |
 |---|---|
 | `report/figures/1m/actions_entropy.png` | **Action entropy.** Entropy of the action distribution in nats, in the eval episodes and at the end of training: median over seeds, line = 95% bootstrap interval. ppo, ppo-rnn training entropy not logged (R78). |
-| `report/figures/1m/actions_share.png` | **Share of steps per action.** Share of the non-forced steps spent on each action, per method (mean over seeds). Not drawn (the 12 most used actions are): noop, place_stone, place_furnace, place_plant, make_stone_pickaxe, make_iron_pickaxe, make_stone_sword, make_iron_sword, rest, descend, ascend, make_diamond_sword, make_diamond_armour, shoot_arrow, make_arrow, cast_fireball, cast_iceball, place_torch, drink_potion_red, drink_potion_green, drink_potion_blue, drink_potion_pink, drink_potion_cyan, drink_potion_yellow, enchant_sword, enchant_armour, make_torch, level_up_dexterity, level_up_strength, level_up_intelligence, enchant_bow. |
+| `report/figures/1m/actions_share.png` | **Share of steps per action.** Share of the non-forced steps spent on each action, per method (mean over seeds). Only the 12 most used actions are drawn; not drawn: noop, place_stone, place_furnace, place_plant, make_stone_pickaxe, make_iron_pickaxe, make_stone_sword, make_iron_sword, rest, descend, ascend, make_diamond_sword, make_diamond_armour, shoot_arrow, make_arrow, cast_fireball, cast_iceball, place_torch, drink_potion_red, drink_potion_green, drink_potion_blue, drink_potion_pink, drink_potion_cyan, drink_potion_yellow, enchant_sword, enchant_armour, make_torch, level_up_dexterity, level_up_strength, level_up_intelligence, enchant_bow. |
 | `report/figures/1m/actions_wasted.png` | **Wasted steps.** Share of the steps that change nothing (a wasted action): median over seeds of the eval episodes, line = 95% bootstrap interval. |
 
 ### Resources
@@ -204,13 +204,62 @@ Every figure is one panel in one PNG without text beyond axes, ticks and a legen
 | `report/figures/1m/hardware_utilisation.png` | **Utilisation (%).** Utilisation (%): median over each method's tuned runs on the Apple Silicon laptop, 48 GB (CPU actors, Metal updates); a dot per method, controls once. Profiles are never compared. Timing note: two concurrent workers, context only. Not measured, so not drawn: steps per joule. |
 | `report/figures/1m/hardware_wall_clock.png` | **Wall-clock (h).** Wall-clock (h): median over each method's tuned runs on the Apple Silicon laptop, 48 GB (CPU actors, Metal updates); a dot per method, controls once. Profiles are never compared. Timing note: two concurrent workers, context only. Not measured, so not drawn: steps per joule. |
 
+### Greedy gap
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/greedy_gap.png` | **Greedy gap.** Does the argmax policy keep up with the sampled one? Mean over seeds of each seed's greedy minus stochastic mean eval score, in percentage points, at each checkpoint (env steps in millions, log axis), with a 95% bootstrap band; below 0 the argmax policy scores less than the sampled one. Value-based methods sample epsilon-greedy, so their gap closes partly by construction as epsilon decays; the policy-gradient gap compares the argmax with the policy's own distribution. Colours: method legend. |
+
+### Early unlocks
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/gatekeepers.png` | **Early unlock lift.** Does an early unlock open up the rest of the run? Final stochastic eval episodes. Landmark at the method's median step of unlocking each achievement: among the episodes alive then, a dot is the mean over seeds of the later unlocks of those that already hold it minus those that do not yet, with a 95% bootstrap interval. Near 0 means the early unlock buys nothing later; an association, not an effect. Rows: achievements unlocked in 5% to 95% of episodes, largest mean lift first (mean over methods: wake up +0.20, eat cow +0.14, collect wood +0.13, collect drink -0.22, collect sapling -0.32, place plant -0.65). Not drawn, smaller mean lift: make wood sword +0.01, make wood pickaxe -0.05, place table -0.09. |
+
+### Seed fate
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/seed_fate.png` | **Seed fate.** When is a seed's fate decided? Spearman rho between the seeds' mean stochastic eval score at a checkpoint and their final score (the training-episode score, so the last checkpoint also measures eval against training agreement): high early means a run could be stopped early. Thin lines: methods; bold black line: mean over methods; grey band: rho from -0.63 to 0.63, not significant at 5% with 10 seeds. Early checkpoints have many tied scores, which pull rho towards 0; the method mean is no test. |
+
+### Ablation effects
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/ablation_effects.png` | **Ablation effects.** Which component carries each method? Hollow dot: ablation minus tuned mean final score with its 95% bootstrap CI; faint dots: each ablation seed minus the tuned mean. Cross: the difference to the tuned seeds not reused from tuning; the reused ones were selected, so the baseline of the dots is optimistic (R102). PoI: P(ablation beats tuned); p: Mann-Whitney, Holm-adjusted per block: count-bonus-ppo-rnn (simhash) PoI 0.00, p 0.00037; sil (single-buffer) PoI 0.48, p 0.91; dyna-q (kappa0) PoI 0.30, p 0.42; smdp-skills (monte-carlo) PoI 0.32, p 0.42; smdp-skills (no-flags) PoI 0.34, p 0.42; smdp-skills (random-top) PoI 0.26, p 0.3. |
+
+### Tuning optimism
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/tuning_optimism.png` | **Tuning optimism.** Did tuning flatter the chosen configs? Dot: mean of the fresh final seeds (not reused from tuning, R102) with a 95% bootstrap CI against the tuning mean of the chosen config; below the dashed diagonal the tuning score was too high. Optimism, tuning minus fresh mean (R101): pqn-rnn -0.12, count-bonus-ppo-rnn +0.08, count-bonus-pqn-rnn +0.34, sil +0.00, dyna-q +0.41, smdp-skills +0.83. The tuning mean has 3 seeds and no interval; with seed noise alone it would still regress towards the fresh mean. never tuned: combo. selected on all its final seeds: ppo, ppo-rnn. |
+
+### Episode spread
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/achievements_vs_length.png` | **Achievements by length.** Does surviving longer buy achievements? Mean achievements per episode of each method over 8 equal-count bins of the episode length (final stochastic eval episodes, all seeds pooled; a bin needs 10 episodes of the method), at the bin's median length. Length and achievements are associated, not causal: eating, drinking and sleeping also keep an episode alive; the last length bin is open-ended. |
+| `report/figures/1m/episode_spread.png` | **Episode spread.** How uneven are a policy's episodes? Share of each method's final stochastic eval episodes (tuned runs, all seeds pooled) by the achievements they unlocked; the triangle marks the method's mean achievements per episode. The episode return is that count plus a small health term. |
+
 ## Interpretation
+
+### Distillation and score
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/distil_score.png` | **Distillation score.** Do policies that distil well score well? One dot per distilled policy: its final score against the test top-1 fidelity of its 256-leaf tree (base fit, test states of its final checkpoint). Pooled Spearman rho 0.31 (p 0.0032, 90 policies), within methods -0.26. The pooled rho (R106) mostly compares methods; within methods is the mean rho over methods with 5 or more policies. The p value treats the policies as independent, though seeds cluster by method. |
+
+### Distillation inputs
+
+| Figure | Description |
+|---|---|
+| `report/figures/1m/distil_features.png` | **Distillation inputs.** Which inputs do the distilled trees rely on? Permutation importance: drop in the 256-leaf tree's test fidelity when the input is shuffled, mean over a method's distilled seeds (base fit); the 12 inputs with the largest per-method mean; blank: not an input of that method. Methods differ in their inputs (memory proxies, skill flags), and correlated inputs split importance, so compare within a column before across. |
 
 ### Distillation fidelity
 
 | Figure | Description |
 |---|---|
-| `report/figures/1m/fidelity_vs_leaves.png` | **Distillation fidelity.** Test top-1 fidelity of the distilled decision trees against their number of leaves, per method and variant: how much of the policy a tree of that size reproduces. |
+| `report/figures/1m/fidelity_vs_leaves.png` | **Distillation fidelity.** Test top-1 fidelity of the distilled decision trees (base fit) against their number of leaves on a log2 axis: how much of the policy a tree of that size reproduces. One line per unit, the median over its seeds; the muted horizontal line is the 0.9 level (L90). Solid lines are tuned methods, dashed lines controls, dotted lines with hollow markers ablations; colours: method legend. |
 
 ## Training plots
 
