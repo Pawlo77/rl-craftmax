@@ -11,6 +11,7 @@ the pixel-sized dark frames of the animated learning-process videos.
 """
 
 import functools
+import logging
 import textwrap
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -24,6 +25,7 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure, FigureBase
 from matplotlib.layout_engine import ConstrainedLayoutEngine
+from matplotlib.text import Text
 
 SURFACE = "#1a1a19"
 """Chart background (dark surface)."""
@@ -131,6 +133,8 @@ DIVERGING_DARK = ("#d4bd2a", "#2c2c2a", "#2e5fb0")
 
 
 # ------------------------------------------------------------------------- theme
+
+logger = logging.getLogger(__name__)
 
 COLUMN_MM = 80.0
 """One Interspeech column: (170 mm text width - 10 mm gap) / 2."""
@@ -295,6 +299,7 @@ def themed_figure(th: Theme, height_mm: float) -> Figure:
     )  # fmt: skip
     FigureCanvasAgg(fig)
     _bind(fig, rc)
+    fig.theme_rc = rc  # type: ignore[attr-defined]  # read back by `settle`, `write_png`
     pad = 2 / 72 if th.name == "report" else 8 / 72
     engine = fig.get_layout_engine()
     if isinstance(engine, ConstrainedLayoutEngine):
@@ -381,6 +386,24 @@ def _wrap_px(renderer: Any, text: str, font: Any, limit: float) -> str:
     return "\n".join(lines)
 
 
+def _left_title(ax: Axes) -> Text | None:
+    """The ``loc="left"`` title text of ``ax`` (matplotlib has no accessor for it).
+
+    Found among the axes' children as the text at the axes' top left corner that
+    carries the title string; None if the axes has no left title.
+    """
+    wanted = ax.get_title(loc="left")
+    for child in ax.get_children():
+        if (
+            isinstance(child, Text)
+            and child is not ax.title
+            and child.get_text() == wanted
+            and child.get_position() == (0.0, 1.0)
+        ):
+            return child
+    return None
+
+
 def wrap_titles(fig: Figure) -> bool:
     """Re-wrap panel titles that run into the next panel or off the canvas.
 
@@ -395,10 +418,10 @@ def wrap_titles(fig: Figure) -> bool:
     axes = [ax for ax in fig.axes if ax.get_visible()]
     changed = False
     for ax in axes:
-        title = ax._left_title  # type: ignore[attr-defined]  # loc="left" has no accessor
-        text = title.get_text()
-        if not text.strip():
+        title = _left_title(ax)
+        if title is None or not title.get_text().strip():
             continue
+        text = title.get_text()
         box = title.get_window_extent(renderer)
         area = ax.get_window_extent(renderer)
         limit = width - TITLE_GAP_PX
@@ -424,43 +447,94 @@ def wrap_titles(fig: Figure) -> bool:
     return changed
 
 
+def _overflow_px(fig: Figure, margin_px: float) -> tuple[float, float, float, float]:
+    """Pixels by which the artists leave the canvas: left, bottom, right, top."""
+    fig.draw_without_rendering()
+    box = fig.get_tightbbox(fig.canvas.get_renderer())  # type: ignore[attr-defined]  # Agg canvas
+    w, h = fig.get_size_inches() * fig.dpi
+    x0, y0, x1, y1 = (
+        box.x0 * fig.dpi,
+        box.y0 * fig.dpi,
+        box.x1 * fig.dpi,
+        box.y1 * fig.dpi,
+    )
+    return (
+        max(0.0, margin_px - x0), max(0.0, margin_px - y0),
+        max(0.0, x1 - (w - margin_px)), max(0.0, y1 - (h - margin_px)),
+    )  # fmt: skip
+
+
+def _wrap_wide_texts(fig: Figure, margin_px: float) -> bool:
+    """Wrap figure-level texts (notes, titles) wider than the canvas; True if any."""
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]  # Agg canvas
+    limit = fig.get_size_inches()[0] * fig.dpi - 2 * margin_px
+    changed = False
+    for text in fig.texts:
+        if text.get_window_extent(renderer).width <= limit or not text.get_text():
+            continue
+        lines = [
+            _wrap_px(renderer, line, text.get_fontproperties(), limit)
+            for line in text.get_text().splitlines()
+        ]
+        text.set_text("\n".join(lines))
+        changed = True
+    return changed
+
+
 def fit_canvas(fig: Figure, margin_px: float = 2.0) -> None:
     """Shrink the layout area until every artist (ticks, legends, notes) is on canvas.
 
     The constrained layout normally keeps everything inside, but it ignores the width
     of titles and can leave a tick label half a glyph outside; the figure size is
     fixed (80 mm, 170 mm, 1080p), so the rest of the figure gives way, a few pixels.
+    After the last pass the result is measured again: a note or title wider than the
+    canvas is wrapped (shrinking cannot help it); anything still outside is logged.
     """
     engine = fig.get_layout_engine()
     if not isinstance(engine, ConstrainedLayoutEngine):
         return
-    for _ in range(FIT_PASSES):
-        fig.draw_without_rendering()
-        box = fig.get_tightbbox(fig.canvas.get_renderer())  # type: ignore[attr-defined]  # Agg canvas
-        w, h = fig.get_size_inches()
-        pad = margin_px / fig.dpi
-        over = (
-            max(0.0, pad - box.x0) / w, max(0.0, pad - box.y0) / h,
-            max(0.0, box.x1 - (w - pad)) / w, max(0.0, box.y1 - (h - pad)) / h,
-        )  # fmt: skip
-        if not any(o * w * fig.dpi > 0.5 for o in over[::2]) and not any(
-            o * h * fig.dpi > 0.5 for o in over[1::2]
-        ):
-            return
-        left, bottom, rw, rh = engine.get()["rect"]
-        engine.set(
-            rect=(
-                left + over[0], bottom + over[1],
-                rw - over[0] - over[2], rh - over[1] - over[3],
-            )
-        )  # fmt: skip
+    w, h = fig.get_size_inches() * fig.dpi
+    for attempt in range(2):
+        for _ in range(FIT_PASSES):
+            over = _overflow_px(fig, margin_px)
+            if max(over) <= 0.5:
+                return
+            left, bottom, rw, rh = engine.get()["rect"]
+            engine.set(
+                rect=(
+                    left + over[0] / w, bottom + over[1] / h,
+                    rw - (over[0] + over[2]) / w, rh - (over[1] + over[3]) / h,
+                )
+            )  # fmt: skip
+        if attempt == 0 and not _wrap_wide_texts(fig, margin_px):
+            break
+    if max(_overflow_px(fig, margin_px)) > 0.5:
+        logger.warning("figure still has artists outside its canvas after fitting")
 
 
 def settle(fig: Figure) -> None:
     """Lay ``fig`` out for good: titles wrapped to their panels, all of it on canvas."""
-    if wrap_titles(fig):
-        fig.draw_without_rendering()
-    fit_canvas(fig)
+    with mpl.rc_context(_rc_of(fig)):
+        _wrap_wide_texts(fig, 2.0)  # before any layout: a wider text cannot be solved
+        if wrap_titles(fig):
+            fig.draw_without_rendering()
+        fit_canvas(fig)
+
+
+def _rc_of(fig: Figure) -> dict[Any, Any]:
+    """The rc parameters of a themed figure (empty for any other figure)."""
+    return dict(getattr(fig, "theme_rc", {}))
+
+
+def write_png(fig: Figure, path: Path) -> None:
+    """`settle` ``fig`` and save it as ``path``, drawing under its theme's rc values.
+
+    Ticks, title and label pads are created lazily while drawing: they must read the
+    seaborn values, so the draw happens inside the figure's ``rc_context`` too.
+    """
+    settle(fig)
+    with mpl.rc_context(_rc_of(fig)):
+        fig.savefig(path, facecolor=fig.get_facecolor(), dpi=fig.dpi)
 
 
 def save_png(fig: Figure, th: Theme, out_dir: Path, name: str) -> Figure:
@@ -471,10 +545,7 @@ def save_png(fig: Figure, th: Theme, out_dir: Path, name: str) -> Figure:
     the 1080p frame stay exact.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    settle(fig)
-    fig.savefig(
-        out_dir / f"{name}{th.suffix}.png", facecolor=fig.get_facecolor(), dpi=th.dpi
-    )
+    write_png(fig, out_dir / f"{name}{th.suffix}.png")
     return fig
 
 

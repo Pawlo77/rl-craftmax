@@ -603,8 +603,7 @@ def _save(fig: Figure, out_dir: Path, name: str) -> Path:
     """Write ``name`` (a ``.png``) into ``out_dir``; the video theme adds ``_video``."""
     path = out_dir / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    charts.settle(fig)
-    fig.savefig(path, facecolor=fig.get_facecolor(), dpi=fig.dpi)
+    charts.write_png(fig, path)
     return path
 
 
