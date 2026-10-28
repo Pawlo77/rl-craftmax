@@ -33,7 +33,7 @@ from matplotlib.figure import Figure
 from matplotlib.text import Text
 from scipy import stats as sps
 
-from wut_murl_craftax.analysis import compare
+from wut_murl_craftax.analysis import compare, figures_angles
 from wut_murl_craftax.analysis.figures_angles import (
     ANGLE_FIGURES,
     GATE_MIN,
@@ -353,6 +353,15 @@ def test_a_gatekeeper_dot_is_the_mean_lift_over_seeds(
         assert float(dot.get_xdata()[0]) == pytest.approx(want)  # type: ignore[attr-defined]
 
 
+def test_gatekeeper_rows_no_method_can_fill_are_named_not_drawn(
+    frames: dict[str, pd.DataFrame], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(figures_angles, "GATE_MIN", 10_000)
+    fig = plot_gatekeepers(frames, tmp_path, n_boot=N)
+    assert not artists(fig, "gate")
+    assert "no method has 10000 alive episodes" in said(fig)
+
+
 # --- F23 fate -----------------------------------------------------------------------
 
 
@@ -458,6 +467,16 @@ def test_a_legend_of_long_labels_drops_columns_to_fit(
     legend = fig.legends[0].get_window_extent(fig.canvas.get_renderer())  # type: ignore[attr-defined]
     assert legend.x0 >= 0
     assert legend.x1 <= fig.bbox.x1
+
+
+def test_a_one_entry_legend_becomes_a_note(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    table = optimism_table(frames)
+    table = table[table["method"] != "dyna-q"]
+    fig = plot_tuning_optimism(frames, tmp_path, n_boot=N, table=table)
+    assert not fig.legends
+    assert "Shown: sil (" in said(fig)
 
 
 # --- F26 episode spread -------------------------------------------------------------

@@ -159,7 +159,7 @@ def _draw(
             _title(ax, th, _panel_title(ctx.budget, panel.title), narrow=panel.narrow)
     pending = _pending([c.budget for c in ctxs])
     _close(fig, th, handles, [*notes, *_unique(added), *pending])
-    return _done(fig, th, out_dir, name)
+    return _save(fig, th, out_dir, name)
 
 
 def _legend_cols(th: Theme) -> int:
@@ -176,9 +176,14 @@ def _close(
 ) -> None:
     """`figures._finish` with the legend in `_legend_cols` columns, fewer if too wide.
 
+    A legend of one entry is dropped and named in the notes instead (figstyle's rule).
+
     Long labels (F25 carries its optimism in them) can make the columns wider than
     the figure, so the legend is measured and redrawn with one column less until fits.
     """
+    if len(handles) == 1:  # one entry: a note says what is drawn, no legend box
+        notes = [f"Shown: {handles[0].get_label()}.", *notes]
+        handles = ()
     renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
     for cols in range(_legend_cols(th), 0, -1):
         for old in list(fig.legends):
@@ -202,39 +207,6 @@ def _budget_axes(
         return fig, list(fig.subplots(1, len(heights), squeeze=False)[0])
     grid = fig.subplots(len(heights), 1, squeeze=False, height_ratios=list(heights))
     return fig, list(grid[:, 0])
-
-
-def _fit_titles(fig: Figure, th: Theme) -> None:
-    """Re-wrap each left title to the room from its axes to the next panel or the edge.
-
-    `figures._title` wraps to a share of the figure; beside long row labels or in a
-    side-by-side panel that can still run off the canvas, so the room is measured.
-    """
-    fig.canvas.draw()  # lay out once: the axes positions give the room
-    boxes = [(ax, ax.get_window_extent()) for ax in fig.axes]
-    char = 0.55 * th.title * fig.dpi / 72  # mean glyph width of the title font
-    for ax, box in boxes:
-        text = ax.get_title(loc="left")
-        if not text:
-            continue
-        right = min(
-            [
-                b.x0
-                for a, b in boxes
-                if b.x0 > box.x1
-                and b.y1 > box.y0
-                and b.y0 < box.y1
-                and a.get_title(loc="left")
-            ]
-            + [fig.bbox.x1],
-        )
-        chars = max(12, int((right - box.x0) / char) - 1)
-        _title(ax, th, " ".join(text.split()), width=chars)
-
-
-def _done(fig: Figure, th: Theme, out_dir: Path, name: str) -> Figure:
-    _fit_titles(fig, th)
-    return _save(fig, th, out_dir, name)
 
 
 def _log_steps(ax: Axes, th: Theme, ylabel: str) -> None:
@@ -455,8 +427,12 @@ def gatekeepers(eps: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=LIFT_COLUMNS)
 
 
-def _gate_cats(ctx: Ctx) -> Cats:
-    """Achievements of mid share, the largest mean lift over methods first."""
+def _gate_cats(ctx: Ctx) -> tuple[Cats, list[str]]:
+    """Achievements of mid share, the largest mean lift over methods first.
+
+    Returns:
+        The rows, and the mid-share achievements no method has a dot for (not drawn).
+    """
     table = gatekeepers(ctx.eps)
     names = _achievements(ctx.eps)
     share = {n: float(ctx.eps[f"ach/{n}"].mean()) for n in names}
@@ -465,7 +441,7 @@ def _gate_cats(ctx: Ctx) -> Cats:
     enough = sums.min(axis=1) >= GATE_MIN
     means = table.groupby(["method", "achievement"])["lift"].mean()[enough]
     order = means.groupby(level="achievement").mean().to_dict()
-    keys = sorted(keep, key=lambda n: -order.get(n, -np.inf))
+    keys = sorted((n for n in keep if n in order), key=lambda n: -order[n])
 
     def values(method: str, key: str) -> np.ndarray:
         if not enough.get((method, key), False):
@@ -474,11 +450,16 @@ def _gate_cats(ctx: Ctx) -> Cats:
         return np.asarray(mine["lift"], dtype=float)
 
     labels = [k.replace("_", " ") for k in keys]
-    return Cats(keys, labels, values)
+    return Cats(keys, labels, values), [n for n in keep if n not in order]
 
 
 def _gate_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
-    cats = _gate_cats(ctx)
+    cats, empty = _gate_cats(ctx)
+    if empty:  # rows no method can fill are not drawn, only named
+        notes.append(
+            f"{_budget_name(ctx.budget)}: no method has {GATE_MIN} alive episodes with "
+            f"and without {', '.join(n.replace('_', ' ') for n in empty)}."
+        )
     if not cats.keys:
         _empty(ax, th, "no achievement in the middle share of episodes")
         return
@@ -516,7 +497,7 @@ def plot_gatekeepers(
     panel = Panel(
         "which achievements open up the rest of the run?",
         _gate_panel,
-        lambda c: _dot_mm(c, max(1, len(_gate_cats(c).keys))),
+        lambda c: _dot_mm(c, max(1, len(_gate_cats(c)[0].keys))),
     )
     notes = [
         (
@@ -801,7 +782,7 @@ def plot_ablation_effects(
         *_pending(present),
     ]
     _close(fig, th, handles, notes)
-    return _done(fig, th, out_dir, NAMES["F24"])
+    return _save(fig, th, out_dir, NAMES["F24"])
 
 
 # --------------------------------------------------------------------------- F25
@@ -908,7 +889,7 @@ def plot_tuning_optimism(
         shown_gaps = ", ".join(f"{g:+.2f}" for g in gaps[h.get_label()])
         h.set_label(f"{h.get_label()} ({shown_gaps})")
     _close(fig, th, handles, notes)
-    return _done(fig, th, out_dir, NAMES["F25"])
+    return _save(fig, th, out_dir, NAMES["F25"])
 
 
 # --------------------------------------------------------------------------- F26
@@ -1156,7 +1137,7 @@ def _distil_figure(
     for ax, (budget, policies) in zip(axes, found.items(), strict=True):
         _title(ax, th, _panel_title(budget, draw(ax, budget, policies)))
     _close(fig, th, entries, [*notes, *pending, *_pending(present)])
-    return _done(fig, th, out_dir, name)
+    return _save(fig, th, out_dir, name)
 
 
 def _order(frames: Frames) -> list[str]:

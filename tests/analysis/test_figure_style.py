@@ -13,10 +13,13 @@ from pathlib import Path
 import matplotlib as mpl
 import pandas as pd
 import pytest
+from _angles_fixture import angle_frames, write_distillation
 from _figure_audit import Saved, audit_saves
 from _figures_fixture import figure_frames, tuning_frames
 from _game_fixture import game_frames
 from test_figures import draw as draw_core
+from test_figures_angles import FIGS as ANGLE_FIGS
+from test_figures_angles import draw as draw_angle
 from test_figures_game import FIGS
 from test_figures_game import draw as draw_game
 from test_hard import achievement_frame, death_frame, floor_frame, stall_frame
@@ -66,6 +69,19 @@ def _game() -> dict[str, pd.DataFrame]:
     return game_frames()
 
 
+@functools.cache
+def _angles() -> tuple[dict[str, pd.DataFrame], Path]:
+    """The angle fixture and its distillation folders (F27, F28)."""
+    frames = angle_frames()
+    trees = write_distillation(Path(tempfile.mkdtemp(prefix="trees_")), frames["runs"])
+    return frames, trees
+
+
+def _angle_case(fid: str, theme: str, width: str, out: Path) -> None:
+    frames, trees = _angles()
+    draw_angle(fid, frames, out, theme, width, trees)
+
+
 def _hard_case(out: Path) -> None:
     episodes = pd.concat([achievement_frame(), stall_frame(), death_frame()])
     tuned = floor_reach(floor_frame(), n=N)
@@ -108,6 +124,7 @@ def _cases() -> dict[str, Callable[[Path], None]]:
         for fid, case in [
             *((f, _core_case) for f in NAMES),
             *((f, _game_case) for f in FIGS),  # F6 also saves F6W, the wall-clock race
+            *((f, _angle_case) for f in ANGLE_FIGS),
         ]:
             cases[f"{fid}-{theme}-{width}"] = (
                 lambda out, f=fid, c=case, t=theme, w=width: c(f, t, w, out)
