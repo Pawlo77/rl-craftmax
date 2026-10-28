@@ -601,3 +601,41 @@ def test_an_unexpected_error_in_the_numbers_is_not_swallowed(
     )  # fmt: skip
     with pytest.raises(KeyError, match="no-memory"):
         run_comparison(opts)
+
+
+def test_markers_and_numbers_are_written_atomically_and_a_torn_marker_reruns(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opts = _two_stub_figures(monkeypatch, base, tmp_path)
+    run_comparison(opts)
+    assert not list(tmp_path.rglob("*.tmp"))
+    marker = opts.out / ".stages" / "figures" / "F1.json"
+    marker.write_text(marker.read_text()[:20])  # a kill mid-write, before this fix
+    again = run_comparison(opts)
+    assert again.done == ["figures/F1"]
+    assert again.skipped == ["figures/F6"]
+    assert json.loads(marker.read_text())["fingerprint"]
+
+
+def test_the_code_digest_includes_the_pair_inference() -> None:
+    assert "interface.py" in {p.name for p in results.code_files()}
+
+
+def test_write_text_atomic_names_its_temporary_file_after_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from wut_murl_craftax.analysis.load import write_text_atomic
+
+    seen = []
+    real = Path.replace
+
+    def spy(self: Path, target: Path) -> Path:
+        seen.append(self.name)
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", spy)
+    write_text_atomic(tmp_path / "m.json", "{}")
+    assert seen == [f"m.json.{os.getpid()}.tmp"]
+    assert (tmp_path / "m.json").read_text() == "{}"

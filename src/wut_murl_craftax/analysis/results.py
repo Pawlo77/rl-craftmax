@@ -26,7 +26,13 @@ from typing import Any
 
 import pandas as pd
 
-from .load import METRICS_ROOT, Frames, MissingPhaseError, load_phases
+from .load import (
+    METRICS_ROOT,
+    Frames,
+    MissingPhaseError,
+    load_phases,
+    write_text_atomic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,12 +129,13 @@ def default_published() -> Path:
 
 
 def code_files() -> list[Path]:
-    """Sources whose change must redo the figures: analysis, evaluation, charts."""
+    """Sources whose change must redo the figures (also the combo-pair inference)."""
     root = Path(__file__).resolve().parents[1]
     return sorted([
         *(root / "analysis").glob("*.py"),
         *(root / "evaluation").glob("*.py"),
         root / "visualisation" / "charts.py",
+        root / "training" / "interface.py",  # combo_pair decides a combo's block
     ])
 
 
@@ -223,7 +230,10 @@ class _Stages:
         marker = self._marker(name)
         if self.force or not marker.is_file():
             return False
-        saved = json.loads(marker.read_text())
+        try:
+            saved = json.loads(marker.read_text())
+        except ValueError:  # cut in half by a kill: the stage is not finished
+            return False
         return saved["fingerprint"] == self.fingerprint and all(
             (self.out / f).is_file() for f in saved["files"]
         )
@@ -242,11 +252,12 @@ class _Stages:
         files = build()
         marker = self._marker(name)
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
+        write_text_atomic(
+            marker,
             json.dumps({
                 "fingerprint": self.fingerprint,
                 "files": sorted(str(f.relative_to(self.out)) for f in files),
-            })
+            }),
         )
         self.s.done.append(name)
         logger.info("stage %s done in %.1f s", name, time.perf_counter() - start)
@@ -481,6 +492,15 @@ def _outputs_digest(out: Path) -> str:
     return h.hexdigest()
 
 
+def _read_marker(path: Path) -> dict[str, Any]:
+    """A marker's content; empty if it is cut in half (the stage then reruns)."""
+    try:
+        saved = json.loads(path.read_text())
+    except ValueError:
+        return {}
+    return saved if isinstance(saved, dict) else {}
+
+
 def _run_exists(tracking_uri: str, run_id: str) -> bool:
     """True if the logged run is still in the store (and not deleted)."""
     import mlflow
@@ -501,8 +521,8 @@ def log_results(inputs: _Inputs, st: _Stages, s: ResultsSummary) -> None:
     marker = st.out / STAGES / "log.json"
     digest = _digest([_outputs_digest(o.out), st.fingerprint, o.tracking_uri])
     if not s.done and not o.force and marker.is_file():
-        saved = json.loads(marker.read_text())
-        if saved["digest"] == digest and _run_exists(
+        saved = _read_marker(marker)
+        if saved.get("digest") == digest and _run_exists(
             str(o.tracking_uri), saved["run_id"]
         ):
             s.skipped.append("log")
@@ -519,7 +539,7 @@ def log_results(inputs: _Inputs, st: _Stages, s: ResultsSummary) -> None:
     paths = [o.out / "tables", o.out / "figures"]
     s.run_id = log_analysis_run(o.out, paths, RUN_NAME, tags, str(o.tracking_uri))
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(json.dumps({"digest": digest, "run_id": s.run_id}))
+    write_text_atomic(marker, json.dumps({"digest": digest, "run_id": s.run_id}))
     s.done.append("log")
     logger.info("logged run %s in %.1f s", s.run_id, time.perf_counter() - start)
 

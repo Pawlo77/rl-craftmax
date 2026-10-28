@@ -254,7 +254,7 @@ def test_write_tables_with_1b_and_literature(
     assert r"11.50 $\pm$ 0.70 (sd)" in text
     # our rows: CI of the mean, and the reproduction gate (status, gap and h)
     assert r"2.19 [2.12, 2.26]" in text
-    assert r"fail (gap $-$0.43, h 0.25)" in text
+    assert r"fail (gap \ensuremath{-}0.43, h 0.25)" in text
     assert r"pass (gap 0.05, h 0.25)" in text
     line = next(ln for ln in text.splitlines() if ln.startswith("PPO (paper"))
     assert line.rstrip().endswith(r"-- \\")  # a published row has no gate
@@ -293,9 +293,9 @@ def test_a_1b_heading_states_the_seed_count_of_the_data(
 
 
 def test_negative_numbers_use_a_math_minus() -> None:
-    assert latex._fmt(-0.5) == "$-$0.50"
+    assert latex._fmt(-0.5) == r"\ensuremath{-}0.50"
     assert latex._fmt(0.5) == "0.50"
-    assert latex._p(0.0004) == "$<$0.001"
+    assert latex._p(0.0004) == r"\ensuremath{<}0.001"
 
 
 def test_game_summary_says_not_logged_for_the_reused_runs(
@@ -363,8 +363,10 @@ def test_poi_and_holm_macros_name_the_control_and_exist_at_1m_only(
     row = tables["main"].query("benchmark == '1m' and method == 'sil'").iloc[0]
     assert got["poiOneMSilPpoRnn"] == f"{row['poi_ppo-rnn']:.2f}"
     p = row["p_holm_ppo-rnn"]
-    assert got["pHolmOneMSilPpoRnn"] == ("$<$0.001" if p < 0.001 else f"{p:.3f}")
-    assert not any("<" in v.replace("$<$", "") for v in got.values())
+    assert got["pHolmOneMSilPpoRnn"] == (
+        r"\ensuremath{<}0.001" if p < 0.001 else f"{p:.3f}"
+    )
+    assert not any("<" in v.replace(r"\ensuremath{<}", "") for v in got.values())
     assert not any(k.startswith(("poiOneB", "pHolmOneB")) for k in got)
     assert "poiOneMPpoPpo" not in got  # a control against itself is NaN
 
@@ -401,7 +403,7 @@ def test_complexity_macros_include_leaves_fidelity_and_the_unreached_case(
     assert got["fidSixteenOneMSil"] == "0.712"
     assert got["closedLoopOneMSil"] == "0.500"
     assert got["depthNinetyOneMSil"] == "5"
-    assert got["spearmanScoreNinetyOneM"] == "$-$0.432"
+    assert got["spearmanScoreNinetyOneM"] == r"\ensuremath{-}0.432"
     assert got["spearmanScoreNinetyOneMDagger"] == "0.100"
 
 
@@ -533,6 +535,26 @@ def test_the_no_memory_variant_has_its_own_macros_and_an_unknown_one_is_named(
     got = {n.name: n.text for n in latex.complexity_numbers(frame)}
     assert got["lNinetyOneMSilNoMemory"] == "64"
     assert got["lNinetyOneMSil"] == "32"
-    assert got["spearmanScoreNinetyOneMNoMemory"] == "$-$0.250"
+    assert got["spearmanScoreNinetyOneMNoMemory"] == r"\ensuremath{-}0.250"
     with pytest.raises(ValueError, match="'mystery'"):
         latex.complexity_numbers(frame.assign(variant="mystery"))
+
+
+def test_t5_ranks_inside_each_block_and_a_control_is_a_row_of_both(
+    tables: dict[str, pd.DataFrame],
+) -> None:
+    t5 = latex.stability_hardware(tables["stability"], tables["hardware"])
+    assert {"main", "skills"} <= set(t5["block"])
+    ppo = t5[(t5["method"] == "ppo") & (t5["benchmark"] == "1m")]
+    assert set(ppo["block"]) == {"main", "skills"}
+    text = latex.stability_hardware_tex(t5)
+    headings = [ln for ln in text.splitlines() if "multicolumn" in ln]
+    assert any("main block" in h for h in headings)
+    assert any("uses hand-written skills block" in h for h in headings)
+    # the lowest sd of each block is bold in that block, whatever the other block has
+    one_m = t5[(t5["benchmark"] == "1m") & (t5["profile"] == "laptop")]
+    for block, g in one_m.groupby("block"):
+        best = g.loc[g["sd"].idxmin(), "method"]
+        section = text.split("main block" if block == "main" else "skills block")[1]
+        row = next(ln for ln in section.splitlines() if ln.startswith(f"{best} &"))
+        assert "textbf" in row.split("&")[1]

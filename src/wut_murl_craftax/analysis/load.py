@@ -14,6 +14,7 @@ is imported by the functions that need it.
 import functools
 import json
 import logging
+import os
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -159,6 +160,17 @@ class MissingPhaseError(FileNotFoundError):
 
 class SchemaError(ValueError):
     """An export table breaks the contract (a column, the run key, the phase tag)."""
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write ``path`` through a temporary file of this process, then replace it.
+
+    A reader (or a rerun after a kill) sees the old file or the whole new one; the
+    process id keeps two writers from sharing a temporary file.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
 
 
 def in_phase(runs: pd.DataFrame, phase: str) -> pd.Series:
