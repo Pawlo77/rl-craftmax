@@ -581,6 +581,11 @@ def _rows_of(table: pd.DataFrame, key: tuple[str, str]) -> pd.DataFrame:
     return table[(table["method"] == key[0]) & (table["config_ref"] == key[1])]
 
 
+def _subject(table: pd.DataFrame) -> str:
+    """The method name(s) a plot is about: the first words of its titles."""
+    return ", ".join(sorted(map(str, table["method"].unique())))
+
+
 def _theme(theme: str) -> charts.Theme:
     """The shared theme at the double report width (these plots are dense)."""
     return charts.theme(theme, "double")
@@ -682,7 +687,12 @@ def plot_floor_reach(table: pd.DataFrame, out_dir: Path, theme: str = "report") 
     ax.set_xticks(floors, [f"{f}\n{names[f]}" for f in floors])
     charts.set_labels(ax, th, "floor", "final eval episodes reaching the floor")
     budget = table["budget"].iloc[0]
-    _title(ax, th, f"Floor reach, {budget}, {_basis(table)} (dashed: 5% rare limit)")
+    _title(
+        ax,
+        th,
+        f"{_subject(table)}: floor reach, {budget}, {_basis(table)} "
+        "(dashed: 5% rare limit)",
+    )
     _legend(fig, th, ax.get_legend_handles_labels()[0])
     return _save(fig, out_dir, _file(name, th))
 
@@ -700,27 +710,29 @@ def _achievement_marks(
 ) -> None:
     """Final-rate dots (blue common, amber rare), zero marks for never, hollow best.
 
-    ``never``: a solid cross; ``never in eval``: a hollow diamond (both at 0).
+    ``never``: a solid ink cross; ``never in eval``: a hollow ink diamond (both at 0,
+    drawn on top, with no best-rate ring: the legend promises exactly these shapes).
     """
-    blue, red, _, amber = th.series
+    blue, _, _, amber = th.series
     final, best = t["final_rate"] * 100, t["best_rate"] * 100
     for status, color in ((COMMON, blue), (RARE, amber)):
         m = (t["status"] == status).to_numpy()
         ax.hlines(y[m], final[m], best[m], color=th.grid)
         ax.scatter(final[m], y[m], s=th.ms**2, color=color, zorder=3)
     never = (t["status"] == NEVER).to_numpy()
-    ax.scatter(
-        np.zeros(never.sum()), y[never], marker="x", s=th.ms**2, color=red,
-        label=MARK_LABELS[NEVER],
-    )  # fmt: skip
     unknown = (t["status"] == NEVER_EVAL).to_numpy()
     ax.scatter(
-        np.zeros(unknown.sum()), y[unknown], marker="D", s=th.ms**2 * 0.8,
-        facecolors="none", edgecolors=red, linewidths=0.9,
-        label=MARK_LABELS[NEVER_EVAL],
+        np.zeros(never.sum()), y[never], marker="x", s=th.ms**2 * 1.6, color=th.ink,
+        linewidths=1.1, zorder=5, clip_on=False, label=MARK_LABELS[NEVER],
     )  # fmt: skip
     ax.scatter(
-        best, y, s=th.ms**2 * 1.3, facecolors="none", edgecolors=th.ink2,
+        np.zeros(unknown.sum()), y[unknown], marker="D", s=th.ms**2 * 1.1,
+        facecolors="none", edgecolors=th.ink, linewidths=1.0, zorder=5, clip_on=False,
+        label=MARK_LABELS[NEVER_EVAL],
+    )  # fmt: skip
+    ring = ~(never | unknown)
+    ax.scatter(
+        best[ring], y[ring], s=th.ms**2 * 1.3, facecolors="none", edgecolors=th.ink2,
         linewidths=0.8,
     )  # fmt: skip
 
@@ -741,6 +753,7 @@ def plot_achievement_status(
     if table.empty:
         return _nothing(out_dir, name, "achievement rates", th)
     keys = _unit_keys(table)
+    basis = f"{_basis(table)}, final rate, best over all checkpoints"
     first = _rows_of(table, keys[0]).reset_index(drop=True)
     group = (first["tier"] + " f" + first["floor"].astype(str)).to_numpy()
     y = np.cumsum(np.r_[0.0, (group[1:] != group[:-1]) * 0.7 + 1.0])
@@ -757,7 +770,7 @@ def plot_achievement_status(
         ax.set_yticks(y, first["achievement"])
         ax.tick_params(axis="y", labelsize=label_pt, length=0)
         ax.set_ylim(y[-1] + 1, -1)
-        _title(ax, th, _label(*key))
+        _title(ax, th, f"{_label(*key)}: {basis}")
     for g in dict.fromkeys(group):
         axes[-1].text(
             1.03, y[group == g].mean(), g.replace("_", " "),
@@ -771,14 +784,12 @@ def plot_achievement_status(
             _handle("final rate", color=th.series[0]),
             _handle("best over training", mec=th.ink2, mfc="none"),
             _handle("rare (< 5%)", color=th.series[3]),
-            _handle(MARK_LABELS[NEVER], color=th.series[1], marker="x"),
-            _handle(MARK_LABELS[NEVER_EVAL], marker="D", mec=th.series[1], mfc="none"),
+            _handle(MARK_LABELS[NEVER], color=th.ink, marker="x"),
+            _handle(MARK_LABELS[NEVER_EVAL], marker="D", mec=th.ink, mfc="none"),
         ],
         loc="outside lower center",
         cols=3 if th.name == "video" else 5,
     )
-    basis = f"{_basis(table)}: final rate, best over all checkpoints"
-    fig.suptitle(basis, x=0.01, ha="left", fontsize=th.title, color=th.ink)
     return _save(fig, out_dir, _file(name, th))
 
 
@@ -824,9 +835,8 @@ def plot_death_causes(
         ax.set_xticks(range(len(steps)), ticks, rotation=60, ha="right")
         ax.set_ylim(0, 100)
         charts.set_labels(ax, th, "env steps")
-        _title(ax, th, _label(*key))
+        _title(ax, th, f"{_label(*key)}: {_basis(table)}")
     charts.set_labels(axes[0], th, y="share of deaths (%)")
-    fig.suptitle(_basis(table), x=0.01, ha="left", fontsize=th.title, color=th.ink)
     handles = [
         Line2D([], [], marker="s", ls="", color=c, label=n) for n, c in colors.items()
     ]
@@ -858,6 +868,10 @@ def plot_stall_lengths(
         ax, th, "stall length (steps without an unlock)",
         "share of stalls at least this long",
     )  # fmt: skip
-    _title(ax, th, f"Stall lengths, {ccdf['budget'].iloc[0]}, {_basis(ccdf)}")
+    _title(
+        ax,
+        th,
+        f"{_subject(ccdf)}: stall lengths, {ccdf['budget'].iloc[0]}, {_basis(ccdf)}",
+    )
     _legend(fig, th, ax.get_legend_handles_labels()[0])
     return _save(fig, out_dir, _file(name, th))

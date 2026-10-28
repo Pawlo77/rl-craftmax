@@ -759,6 +759,9 @@ def test_never_and_never_in_eval_are_drawn_apart(
     b = np.asarray(unknown.get_paths()[0].vertices)
     assert a.shape != b.shape or not np.allclose(a, b)  # another marker shape
     assert len(unknown.get_facecolor()) == 0  # hollow: no claim of "never"
+    dots = [c for c in ax.collections if c.get_label() not in labels]
+    assert never.get_zorder() > max(c.get_zorder() for c in dots)  # never under a dot
+    assert unknown.get_zorder() > max(c.get_zorder() for c in dots)
     # and the legend of the saved figure lists both
     seen: list[str] = []
 
@@ -802,21 +805,33 @@ def test_plot_titles_name_the_basis(
         return out_dir / name
 
     monkeypatch.setattr(hard, "_save", keep)
-    table = stall_table(stall_frame(), final=False)
-    plot_floor_reach(floor_reach(floor_frame(), n=N), tmp_path)
-    plot_stall_lengths(stall_ccdf(table), tmp_path)
-    plot_achievement_status(achievement_status(achievement_frame()), tmp_path)
-    plot_death_causes(death_causes(death_frame()), tmp_path)
+    tables = [
+        floor_reach(floor_frame(), n=N),
+        stall_ccdf(stall_table(stall_frame(), final=False)),
+        achievement_status(achievement_frame()),
+        death_causes(death_frame()),
+    ]
+    plot_floor_reach(tables[0], tmp_path)
+    plot_stall_lengths(tables[1], tmp_path)
+    plot_achievement_status(tables[2], tmp_path)
+    plot_death_causes(tables[3], tmp_path)
     reach, stalls, achievements, deaths = figures
-    title = reach.axes[0].get_title(loc="left")
-    assert "stochastic eval, final checkpoint" in title
-    assert "1m" in title
-    assert "stochastic eval, all checkpoints" in stalls.axes[0].get_title(loc="left")
-    text = achievements._suptitle.get_text()  # type: ignore[attr-defined]  # matplotlib private
-    assert "stochastic eval" in text
-    assert "best over all checkpoints" in text
-    text = deaths._suptitle.get_text()  # type: ignore[attr-defined]  # matplotlib private
-    assert "stochastic eval, every checkpoint" in text
+
+    def title(fig: Figure) -> str:
+        return " ".join(fig.axes[0].get_title(loc="left").split())
+
+    assert "stochastic eval, final checkpoint" in title(reach)
+    assert "1m" in title(reach)
+    assert "stochastic eval, all checkpoints" in title(stalls)
+    assert "stochastic eval" in title(achievements)
+    assert "best over all checkpoints" in title(achievements)
+    assert "stochastic eval, every checkpoint" in title(deaths)
+    for fig, table in zip(figures, tables, strict=True):
+        assert fig._suptitle is None  # type: ignore[attr-defined]  # matplotlib private
+        methods = tuple(table["method"].unique())
+        panels = [a for a in fig.axes if a.get_title(loc="left")]
+        assert panels  # one left-aligned title per panel, starting with the method
+        assert all(a.get_title(loc="left").startswith(methods) for a in panels)
 
 
 def test_plots_refuse_mixed_modes_and_scopes(tmp_path: Path) -> None:
