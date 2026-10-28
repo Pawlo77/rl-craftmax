@@ -76,17 +76,27 @@ COMPLEXITY_QUANTITIES = {
     "group_move": "groupMove",
     "group_do": "groupDo",
     "group_rest": "groupRest",
+    "group_place": "groupPlace",
+    "group_craft": "groupCraft",
     "group_ladder": "groupLadder",
     "group_combat": "groupCombat",
+    "group_potion": "groupPotion",
     "group_upgrade": "groupUpgrade",
 }
 """``complexity.csv`` column -> quantity word (numbers spelled out, no digits)."""
 SPEARMANS = {
     "spearman_score_l90": "spearmanScoreNinety",
     "spearman_score_fid256": "spearmanScoreFidTwoFiftySix",
+    "spearman_fid256_p": "spearmanScoreFidTwoFiftySixP",
 }
 """Cross-method column -> macro word: one value per (budget, variant), no method part.
-The L90 one is NaN when every L90 is censored (R106 replaces it by the fidelity one)."""
+The L90 one needs `MIN_UNCENSORED` reached levels (R106 replaces it by the fidelity
+one)."""
+MIN_UNCENSORED = 3
+"""Seeds with a reached L90 that the L90 depth and the L90 Spearman need; one or two
+seeds are no statistic (the 1M smdp-skills depth of 1 and Spearman 0.182 were one)."""
+L90_ONLY = ("depth_at_l90_median", "spearman_score_l90")
+"""Columns left without a macro under `MIN_UNCENSORED` reached levels."""
 SPEARMAN = SPEARMANS["spearman_score_l90"]
 NEVER = r"\ensuremath{>}4096"
 """A leaf count that was never reached (``inf`` in ``complexity.csv``)."""
@@ -219,19 +229,30 @@ def _variant(variant: object) -> str:
         raise ValueError(msg) from None
 
 
+def _reached(frame: pd.DataFrame) -> pd.Series:
+    """Per row the seeds with a reached L90; all of them in a file without the count."""
+    if not {"n_seeds", "l90_censored"} <= set(frame.columns):
+        return pd.Series(math.inf, index=frame.index)
+    return frame["n_seeds"] - frame["l90_censored"]
+
+
 def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
     """Macros of a ``complexity.csv``: leaves to fidelity 80/90/95%, fidelities, ratios.
 
     Names follow `macro` with ``NoMemory`` or ``Dagger`` appended for those variants;
     a leaf count of ``inf`` reads "> 4096"; the Spearman value is one per budget and
-    variant.
+    variant. The L90 depth and Spearman (`L90_ONLY`) need `MIN_UNCENSORED` reached
+    levels in their row or variant, else no macro is written.
     """
     out = []
-    for r in frame.to_dict("records"):
+    reached = _reached(frame)
+    for r, n in zip(frame.to_dict("records"), reached, strict=True):
         tail = _variant(r["variant"])
         for col, quantity in COMPLEXITY_QUANTITIES.items():
             v = r.get(col)
             if v is None or (isinstance(v, float) and math.isnan(v)):
+                continue
+            if col in L90_ONLY and n < MIN_UNCENSORED:
                 continue
             whole = col.startswith(("l80", "l90", "l95", "depth", "peak"))
             text = _leaves(float(v)) if whole else _fmt(float(v), 3)
@@ -241,12 +262,16 @@ def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
                     text,
                 )
             )
+    by_variant = reached.groupby([frame["budget"], frame["variant"]]).sum()
     for (budget, variant), g in frame.groupby(["budget", "variant"]):
         for col, word in SPEARMANS.items():
+            if col in L90_ONLY and by_variant[(budget, variant)] < MIN_UNCENSORED:
+                continue
             v = g[col].dropna() if col in g else g.iloc[:0]
             if len(v):
                 name = f"{word}{BUDGET_NAMES[str(budget)]}{_variant(variant)}"
-                out.append(Number(name, _fmt(float(v.iloc[0]), 3)))
+                shown = _p if col.endswith("_p") else lambda x: _fmt(x, 3)
+                out.append(Number(name, shown(float(v.iloc[0]))))
     return out
 
 

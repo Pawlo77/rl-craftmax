@@ -535,6 +535,38 @@ def test_without_complexity_the_numbers_skip_those_macros_and_the_missing_file(
     assert "spearman" not in text
 
 
+def test_l90_depth_and_spearman_need_three_uncensored_seeds(
+    complexity_root: Path,
+) -> None:
+    frame = pd.read_csv(complexity_root / "1m" / "complexity.csv")
+    one = frame.assign(n_seeds=10, l90_censored=9)  # one uncensored seed per row
+    got = {n.name: n.text for n in latex.complexity_numbers(one)}
+    assert "depthNinetyOneMSil" not in got
+    assert "spearmanScoreNinetyOneMNoMemory" not in got
+    assert got["lNinetyOneMSil"] == "32"  # the level itself stays
+    many = frame.assign(n_seeds=10, l90_censored=7)
+    got = {n.name: n.text for n in latex.complexity_numbers(many)}
+    assert got["depthNinetyOneMSil"] == "5"
+    assert "spearmanScoreNinetyOneMNoMemory" in got
+
+
+def test_every_action_group_and_the_fidelity_spearman_p_have_macros(
+    complexity_root: Path,
+) -> None:
+    frame = pd.read_csv(complexity_root / "1m" / "complexity.csv")
+    frame = frame.assign(group_place=0.25, group_craft=0.5, group_potion=0.75)
+    got = {n.name: n.text for n in latex.complexity_numbers(frame)}
+    assert got["groupPlaceOneMSil"] == "0.250"
+    assert got["groupCraftOneMSil"] == "0.500"
+    assert got["groupPotionOneMSil"] == "0.750"
+    assert got["spearmanScoreFidTwoFiftySixPOneM"] == "0.040"
+    tiny = {
+        n.name: n.text
+        for n in latex.complexity_numbers(frame.assign(spearman_fid256_p=2e-4))
+    }
+    assert tiny["spearmanScoreFidTwoFiftySixPOneM"] == r"\ensuremath{<}0.001"
+
+
 def test_the_no_memory_variant_has_its_own_macros_and_an_unknown_one_is_named(
     complexity_root: Path,
 ) -> None:

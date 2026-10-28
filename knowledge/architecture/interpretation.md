@@ -69,7 +69,7 @@ related-code:
 - Splits: `CAPS` states per episode, train 2000 (plan), validation 2000 (it only scores `val_top1`), test 10,000 (keeps whole 1M episodes, bounds a 1B one).
 - Method folder `<out>/<budget>/<method>/`: `curve.csv`, `closed_loop.csv`, `importance.csv` (every policy and fit, identity columns in front), `complexity.json` (`median_run`, every policy summary), `rules_16.txt` (the seed with the lower-median final score, one section per fit), `fidelity_vs_leaves.png` (a line per seed), skill methods `top_level.json` (every seed, tried view main, default beside it with `optimistic_share`) and the median seed's `top_level_rules.txt`; logged as run `distill-<budget>-<method>` of experiment `analysis` (tags `analysis/kind=distill`, `analysis/phases`, `analysis/budget`, `analysis/method`) without the `*.npz` datasets; `.logged` holds the run id.
 - Budget folder: `complexity.csv` (`COLUMNS`: contracts section 3 plus `top_optimistic_share`, `l90_censored` and the R106 columns `majority`, `gain_16/64/256`, `peak_val_leaves`, `group_<action group>` and `spearman_score_fid256`/`spearman_fid256_p`, all read from the policy folders by `policy_extras`: `test.npz` labels, `curve_<variant>.csv` `val_top1`, `failure_<variant>.json`), a sibling `policies.csv` (one row per policy and variant with the same numbers), one row per (method, config_ref, variant) over every policy summary under the folder; `fidelity_vs_leaves_<budget>.png` (PNG only; an old `.pdf` is deleted) (report theme, column width, median base curve per unit, the 0.9 level as a solid muted line since dashed means control), copied to `--figures`.
-- `censored_median(levels)`: lower median with None as inf, so it is a grid size and inf exactly when more than half the seeds never reach the level; `level_text` prints inf as `> 4096`; `spearman(scores, levels)`: rho and p with None ranked above 4096, NaN under 3 seeds; `complexity_table(summaries, budget)`.
+- `censored_median(levels)`: lower median with None as inf, so it is a grid size and inf exactly when more than half the seeds never reach the level; `level_text` prints inf as `> 4096`; `spearman(scores, levels)`: rho and p with None ranked above 4096, NaN under 3 seeds or under `latex.MIN_UNCENSORED` = 3 reached levels; `uncensored_median(values)`: the L90 depth median, NaN under 3 reached seeds; `complexity_table(summaries, budget)`.
 - Ordinal codes (a split such as `direction <= 2.5` means "left or right"; rules must translate thresholds into sets):
 
 | Column | Codes |
@@ -125,8 +125,8 @@ related-code:
 
 ## Known issues
 
-- `depth_at_l90_median` is the median over the seeds that reach L90 only: at 1M it is 1 for `smdp-skills` (its one uncensored seed, seed 8) while `l90_median` is inf (deferred A7 minor).
-- `spearman_score_l90` ranks censored L90 above 4096: at 1M 89 of 90 base policies (267 of 270 fits) are censored, so the statistic rests on one uncensored policy (SMDP skills seed 8) and is not reported as a result; the write-up uses `spearman_score_fid256` instead (R106, [[Decision-tree interpretation]]).
+- `depth_at_l90_median` is the median over the seeds that reach L90 only, NaN under 3 of them (`uncensored_median`); a `complexity.csv` written before that rule has 1 for 1M `smdp-skills` (one seed), and `latex` writes no macro for it.
+- `spearman_score_l90` ranks censored L90 above 4096: at 1M 89 of 90 base policies (267 of 270 fits) are censored, so the statistic rests on one uncensored policy (SMDP skills seed 8): `spearman` now returns NaN under 3 reached levels and `latex` writes no macro for an older file's 0.182; the write-up uses `spearman_score_fid256` instead (R106, [[Decision-tree interpretation]]).
 
 ## Tests
 

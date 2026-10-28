@@ -312,9 +312,17 @@ def test_censored_levels_rank_above_the_grid_and_set_the_median() -> None:
     assert math.isnan(cli.censored_median([]))
     assert cli.level_text(inf) == "> 4096"
     assert cli.level_text(64.0) == "64"
-    rho, _ = cli.spearman([1.0, 2.0, 3.0, 4.0], [16, 4096, None, None])
-    assert rho == pytest.approx(cli.spearman([1, 2, 3, 4], [1, 2, 3, 3])[0])
+    rho, _ = cli.spearman([1.0, 2.0, 3.0, 4.0], [16, 64, 4096, None])
+    assert rho == pytest.approx(cli.spearman([1, 2, 3, 4], [1, 2, 3, 4])[0])
     assert math.isnan(cli.spearman([1.0, 2.0], [4, 8])[0])  # too few seeds
+    # one or two uncensored levels are no statistic, whatever the seed count
+    assert math.isnan(cli.spearman([1.0, 2.0, 3.0, 4.0], [16, 64, None, None])[0])
+
+
+def test_the_l90_depth_needs_three_uncensored_seeds() -> None:
+    assert math.isnan(cli.uncensored_median([1.0]))
+    assert math.isnan(cli.uncensored_median([1.0, 3.0]))
+    assert cli.uncensored_median([1.0, 3.0, 8.0]) == 3.0
 
 
 # --- R106 numbers --------------------------------------------------------------

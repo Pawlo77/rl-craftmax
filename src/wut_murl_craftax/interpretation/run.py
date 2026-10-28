@@ -40,6 +40,7 @@ from ..analysis.figures import (
     _title,
 )
 from ..analysis.figures import _theme as figure_theme
+from ..analysis.latex import MIN_UNCENSORED
 from ..analysis.load import METRICS_ROOT, load_phases
 from ..evaluation.select_pair import SKILL_METHODS
 from ..orchestration.tracking import log_analysis_run
@@ -141,14 +142,20 @@ def level_text(level: float) -> str:
     return CENSORED if math.isinf(level) else str(int(level))
 
 
+def uncensored_median(values: Sequence[float]) -> float:
+    """Median of the seeds that reached a level; NaN under `MIN_UNCENSORED` of them."""
+    return float(np.median(values)) if len(values) >= MIN_UNCENSORED else math.nan
+
+
 def spearman(
     scores: Sequence[float], levels: Sequence[float | None]
 ) -> tuple[float, float]:
     """Spearman's rho and p of score vs L90; None ranks above every size.
 
-    NaN for fewer than 3 seeds.
+    NaN for fewer than 3 seeds, or fewer than `MIN_UNCENSORED` reached levels: with
+    the rest tied above the grid, the rank order rests on one or two seeds.
     """
-    if len(scores) < 3:
+    if len(scores) < 3 or sum(v is not None for v in levels) < MIN_UNCENSORED:
         return math.nan, math.nan
     res = stats.spearmanr(scores, _censor(levels))
     return float(res.statistic), float(res.pvalue)
@@ -629,7 +636,7 @@ def _row(
         "l90_lo": lo,
         "l90_hi": hi,
         "l90_spread": "range" if budget == "1b" else "iqr",
-        "depth_at_l90_median": float(np.median(depths)) if depths else math.nan,
+        "depth_at_l90_median": uncensored_median(depths),
         **{f"fidelity_{n}": median(f"fidelity_{n}") for n in FIDELITY_AT},
         "expected_fidelity_256": median(f"expected_{CLOSED_LOOP_LEAVES}"),
         "closed_loop_256": median(f"closed_loop_{CLOSED_LOOP_LEAVES}"),
