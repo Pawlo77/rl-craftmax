@@ -89,14 +89,15 @@ GAP_COLUMNS = [
     "gap",
 ]
 """`greedy_gap`: per tuned run and checkpoint the mean episode score of each mode."""
-GATE_COLUMNS = ["method", "run_id", "achievement", "episodes", "after"]
-"""`gatekeepers`: per run and achievement, its episodes and the mean unlocks after."""
+LIFT_COLUMNS = ["method", "run_id", "achievement", "at", "with_a", "without_a", "lift"]
+"""`gatekeepers`: per run and achievement, the step ``at`` (the method's median unlock
+step), the episodes alive then with and without it, and the lift in later unlocks."""
 FATE_COLUMNS = ["budget", "method", "update", "env_steps", "seeds", "rho"]
 """`seed_fate`: Spearman of the seeds' checkpoint scores and final scores."""
 GATE_SHARE = 0.05
 """Gatekeeper rows: achievements unlocked in this share of episodes to 1 minus it."""
 GATE_MIN = 10
-"""Episodes with an achievement a method needs before its gatekeeper dot is drawn."""
+"""Alive episodes with and without the achievement a method needs for a dot."""
 LENGTH_BINS = 8
 """Equal-count episode-length bins of the benchmark (F26 right panel)."""
 LENGTH_MIN = 10
@@ -370,58 +371,61 @@ def _achievements(eps: pd.DataFrame) -> list[str]:
     ]
 
 
-def gatekeepers(eps: pd.DataFrame) -> pd.DataFrame:
-    """Per run and achievement: its episodes and the mean unlocks after its unlock.
+def _later(got: np.ndarray, steps: np.ndarray, skip: int, at: float) -> np.ndarray:
+    """Per episode the unlocks other than column ``skip`` later than step ``at``."""
+    later = got & (steps > at)
+    later[:, skip] = False
+    return later.sum(axis=1).astype(float)
 
-    An unlock counts when its ``unlock_step`` is later than the achievement's own;
-    rows exist for achievements unlocked in at least one of the run's episodes.
+
+def gatekeepers(eps: pd.DataFrame) -> pd.DataFrame:
+    """Per run and achievement A: the lift in later unlocks among episodes alive at A.
+
+    ``at`` is the method's median unlock step of A. Among the run's episodes still
+    alive then (``length > at``), the lift is the mean number of other achievements
+    unlocked after ``at`` in episodes that unlock A minus that in episodes that never
+    do; NaN when one group is empty. Survival to ``at`` is so held equal.
     """
     names = _achievements(eps)
     if not names or eps.empty:
-        return pd.DataFrame(columns=GATE_COLUMNS)
-    got = eps[[f"ach/{n}" for n in names]].to_numpy(bool)
-    steps = eps[[f"unlock_step/{n}" for n in names]].to_numpy(float, copy=True)
-    steps[~got] = np.nan  # a NaN step is never later than anything
-    parts = []
-    for i, name in enumerate(names):
-        has = got[:, i]
-        after = (steps[has] > steps[has, i : i + 1]).sum(axis=1)
-        parts.append(
-            pd.DataFrame({
-                "method": eps["method"].to_numpy()[has],
-                "run_id": eps["run_id"].to_numpy()[has],
-                "achievement": name,
-                "after": after.astype(float),
-            })
-        )
-    rows = pd.concat(parts, ignore_index=True)
-    out = rows.groupby(["method", "run_id", "achievement"], sort=False)["after"].agg(
-        episodes="size", after="mean"
-    )
-    return out.reset_index()[GATE_COLUMNS]
+        return pd.DataFrame(columns=LIFT_COLUMNS)
+    rows = []
+    for method, mine in eps.groupby("method", sort=False):
+        got = mine[[f"ach/{n}" for n in names]].to_numpy(bool)
+        steps = mine[[f"unlock_step/{n}" for n in names]].to_numpy(float)
+        length = mine["length"].to_numpy(float)
+        runs = mine["run_id"].to_numpy()
+        for i, name in enumerate(names):
+            if not got[:, i].any():
+                continue
+            at = float(np.median(steps[got[:, i], i]))
+            alive = length > at
+            later, has = _later(got, steps, i, at), got[:, i]
+            for run in np.unique(runs):
+                here = alive & (runs == run)
+                yes, no = later[here & has], later[here & ~has]
+                lift = yes.mean() - no.mean() if yes.size and no.size else np.nan
+                rows.append((method, run, name, at, yes.size, no.size, float(lift)))
+    return pd.DataFrame(rows, columns=LIFT_COLUMNS)
 
 
 def _gate_cats(ctx: Ctx) -> Cats:
-    """Achievements of mid share, the strongest gatekeeper (pooled) first."""
+    """Achievements of mid share, the largest mean lift over methods first."""
     table = gatekeepers(ctx.eps)
     names = _achievements(ctx.eps)
     share = {n: float(ctx.eps[f"ach/{n}"].mean()) for n in names}
     keep = [n for n, s in share.items() if GATE_SHARE <= s <= 1 - GATE_SHARE]
-    pooled = (
-        table
-        .assign(total=table["episodes"] * table["after"])
-        .groupby("achievement")[["total", "episodes"]]
-        .sum()
-    )
-    after = (pooled["total"] / pooled["episodes"]).to_dict()
-    keys = sorted(keep, key=lambda n: -after.get(n, 0.0))
-    counts = table.groupby(["method", "achievement"])["episodes"].sum()
+    sums = table.groupby(["method", "achievement"])[["with_a", "without_a"]].sum()
+    enough = sums.min(axis=1) >= GATE_MIN
+    means = table.groupby(["method", "achievement"])["lift"].mean()[enough]
+    order = means.groupby(level="achievement").mean().to_dict()
+    keys = sorted(keep, key=lambda n: -order.get(n, -np.inf))
 
     def values(method: str, key: str) -> np.ndarray:
-        if counts.get((method, key), 0) < GATE_MIN:
+        if not enough.get((method, key), False):
             return np.empty(0)
         mine = table[(table["method"] == method) & (table["achievement"] == key)]
-        return np.asarray(mine["after"], dtype=float)
+        return np.asarray(mine["lift"], dtype=float)
 
     labels = [k.replace("_", " ") for k in keys]
     return Cats(keys, labels, values)
@@ -432,16 +436,17 @@ def _gate_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
     if not cats.keys:
         _empty(ax, th, "no achievement in the middle share of episodes")
         return
+    ax.axvline(0.0, color=th.muted, lw=0.6)
     _dot_panel(
         ax,
         th,
         ctx,
         "gate",
         cats,
-        "further unlocks after it (mean per episode)",
+        "extra later unlocks with it\n(episodes alive at its median step)",
         notes,
         how="mean",
-        missing=f"has under {GATE_MIN} episodes with each",
+        missing=f"has under {GATE_MIN} alive episodes with or without each",
     )
 
 
@@ -457,9 +462,10 @@ def plot_gatekeepers(
     """F22 ``gatekeepers``: which achievements open up the rest of the run?
 
     Rows: achievements unlocked in 5% to 95% of the benchmark's final stochastic eval
-    episodes, the largest pooled count first. A dot is the mean over seeds of each
-    seed's mean number of later unlocks in the episodes that got it (`gatekeepers`),
-    with a bootstrap interval; methods with under `GATE_MIN` such episodes are left out.
+    episodes, the largest mean lift first. A dot is the mean over seeds of the lift of
+    `gatekeepers` (episodes alive at the method's median unlock step of the row, with
+    the achievement against without it) with a bootstrap interval; a method needs
+    `GATE_MIN` alive episodes in each group.
     """
     panel = Panel(
         "which achievements open up the rest of the run?",
@@ -468,9 +474,11 @@ def plot_gatekeepers(
     )
     notes = [
         (
-            "Final stochastic eval episodes. A dot: mean over seeds of the "
-            "achievements unlocked after this one in the episodes that unlocked it, "
-            "with a 95% bootstrap interval; rows sorted by the pooled count."
+            "Final stochastic eval episodes. For each achievement only the episodes "
+            "still alive at the method's median step of unlocking it count; a dot is "
+            "the mean over seeds of the later unlocks of the episodes that unlock it "
+            "minus those of the episodes that never do, with a 95% bootstrap interval. "
+            "Survival is held equal, skill is not: an association, not an effect."
         ),
     ]
     return _draw(

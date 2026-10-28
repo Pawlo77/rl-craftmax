@@ -36,6 +36,7 @@ from scipy import stats as sps
 from wut_murl_craftax.analysis import compare
 from wut_murl_craftax.analysis.figures_angles import (
     ANGLE_FIGURES,
+    GATE_MIN,
     NAMES,
     gatekeepers,
     greedy_gap,
@@ -59,7 +60,7 @@ PNG = b"\x89PNG\r\n\x1a\n"
 FIGS = [f"F{i}" for i in range(21, 29)]
 LABELS = {
     "F21": ("env steps", "greedy minus stochastic"),
-    "F22": ("further unlocks",),
+    "F22": ("later unlocks", "alive"),
     "F23": ("env steps", "Spearman"),
     "F24": ("ablation minus tuned",),
     "F25": ("tuning mean", "fresh-seed final mean"),
@@ -283,46 +284,72 @@ def test_the_gap_line_is_the_mean_gap_over_seeds(
 # --- F22 gatekeepers ----------------------------------------------------------------
 
 
-def naive_after(eps: pd.DataFrame, run: str, achievement: str) -> float:
-    """Mean over the run's episodes with ``achievement`` of the unlocks after it."""
+def naive_lift(eps: pd.DataFrame, method: str, run: str, ach: str) -> float:
+    """The lift of `gatekeepers` by a plain loop over the episodes."""
     names = [c.removeprefix("ach/") for c in eps.columns if c.startswith("ach/")]
-    counts = []
-    for _, e in eps[(eps["run_id"] == run) & eps[f"ach/{achievement}"]].iterrows():
-        at = e[f"unlock_step/{achievement}"]
-        counts.append(sum(
+    mine = eps[eps["method"] == method]
+    at = float(np.median(mine.loc[mine[f"ach/{ach}"], f"unlock_step/{ach}"]))
+    groups: dict[bool, list[int]] = {True: [], False: []}
+    for _, e in mine[(mine["run_id"] == run) & (mine["length"] > at)].iterrows():
+        later = sum(
             bool(e[f"ach/{b}"]) and e[f"unlock_step/{b}"] > at
-            for b in names if b != achievement
-        ))  # fmt: skip
-    return float(np.mean(counts)) if counts else float("nan")
+            for b in names
+            if b != ach
+        )
+        groups[bool(e[f"ach/{ach}"])].append(later)
+    if not groups[True] or not groups[False]:
+        return float("nan")
+    return float(np.mean(groups[True]) - np.mean(groups[False]))
 
 
-def test_gatekeepers_count_the_unlocks_after_each_achievement(
+def test_gatekeepers_lift_matches_a_plain_loop(
     frames: dict[str, pd.DataFrame],
 ) -> None:
     eps = final_checkpoint(frames["eval_episodes"])
-    eps = eps[eps["mode"] == "stochastic"]
+    eps = eps[(eps["mode"] == "stochastic") & (eps["budget"] == "1m")]
     table = gatekeepers(eps)
-    for r in table.sample(20, random_state=0).itertuples():
-        assert r.after == pytest.approx(naive_after(eps, r.run_id, r.achievement))
-        mine = eps[(eps["run_id"] == r.run_id) & eps[f"ach/{r.achievement}"]]
-        assert r.episodes == len(mine)
+    assert table["lift"].notna().any()
+    for r in table.sample(25, random_state=0).itertuples():
+        want = naive_lift(eps, r.method, r.run_id, r.achievement)
+        if np.isnan(want):
+            assert np.isnan(r.lift)
+        else:
+            assert r.lift == pytest.approx(want)
 
 
-def test_a_gatekeeper_dot_is_the_mean_over_seeds(
+def test_episodes_dead_before_the_median_unlock_are_left_out() -> None:
+    """One run: a at steps 10 and 30 (median 20); a quick death without a is dropped."""
+    eps = pd.DataFrame({
+        "method": "sil",
+        "run_id": "r",
+        "length": [100, 100, 100, 15],
+        "ach/a": [True, True, False, False],
+        "unlock_step/a": [10, 30, -1, -1],
+        "ach/b": [True, False, True, True],
+        "unlock_step/b": [20, -1, 50, 5],
+        "ach/c": [False, True, False, False],
+        "unlock_step/c": [-1, 40, -1, -1],
+    })
+    row = gatekeepers(eps).set_index("achievement").loc["a"]
+    assert row["at"] == 20
+    assert (row["with_a"], row["without_a"]) == (2, 1)
+    assert row["lift"] == pytest.approx(0.5 - 1.0)  # with the dead one it would be 0
+
+
+def test_a_gatekeeper_dot_is_the_mean_lift_over_seeds(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = plot_gatekeepers(frames, tmp_path, n_boot=N)
-    dots = artists(fig, "gate")
+    dots = [d for d in artists(fig, "gate") if str(d.get_gid()).split("/")[1] == "1m"]
     assert dots
     eps = final_checkpoint(frames["eval_episodes"])
     eps = eps[(eps["mode"] == "stochastic") & (eps["config_ref"] == "tuned")]
     table = gatekeepers(eps[eps["budget"] == "1m"])
-    for dot in dots[:12]:
-        _, budget, method, ach = str(dot.get_gid()).split("/")
-        if budget != "1m":
-            continue
+    for dot in dots:
+        _, _, method, ach = str(dot.get_gid()).split("/")
         seeds = table[(table["method"] == method) & (table["achievement"] == ach)]
-        want = seeds["after"].mean()
+        assert seeds[["with_a", "without_a"]].sum().min() >= GATE_MIN
+        want = seeds["lift"].mean()
         assert float(dot.get_xdata()[0]) == pytest.approx(want)  # type: ignore[attr-defined]
 
 
