@@ -957,22 +957,48 @@ def order_agreement(
     return pd.DataFrame(rows, columns=AGREEMENT_COLUMNS)
 
 
-def _label_levels(pos: Mapping[str, tuple[float, float]], th: Theme) -> dict[str, int]:
-    """A stacking level per node name so labels of one tier never overlap.
+LABEL_BASE_PT = 7.0
+"""Gap between a node and the lowest label above it (clear of dots and arrows)."""
+TIER_PT = 33.0
+"""Least height of one tier row of an order graph, in points."""
 
-    A label is placed on the lowest level where its estimated width (0.58 em a
-    character) clears the earlier labels there; nodes close in rank climb.
+
+def _node_positions(nodes: pd.DataFrame) -> dict[str, tuple[float, int]]:
+    return {
+        r.achievement: (r.rho, TIERS.index(r.tier) if r.tier in TIERS else len(TIERS))
+        for r in nodes.itertuples()
+    }
+
+
+def _label_levels(pos: Mapping[str, tuple[float, float]], th: Theme) -> dict[str, int]:
+    """A stacking level per node name: labels of one tier never overlap or cross.
+
+    Right to left, a label takes one level above every label to its right that its
+    (estimated, 0.62 em a character) width reaches, so the vertical leader of a label
+    never passes through another label.
     """
     per_pt = 1.1 / (th.width * 72 * 0.75)  # x data units per point of axes width
     levels: dict[str, int] = {}
-    ends: dict[tuple[float, int], float] = {}
-    for name, (x, y) in sorted(pos.items(), key=lambda kv: (kv[1][1], kv[1][0])):
-        level = 0
-        while ends.get((y, level), -1.0) > x:
-            level += 1
-        levels[name] = level
-        ends[y, level] = x + (len(name) * 0.58 * th.font + 6) * per_pt
+    for name, (x, y) in sorted(pos.items(), key=lambda kv: (kv[1][1], -kv[1][0])):
+        reach = x + (len(name) * 0.62 * th.font + 8) * per_pt
+        above = [
+            levels[o] for o, (ox, oy) in pos.items() if o in levels and oy == y
+            and x < ox < reach
+        ]  # fmt: skip
+        levels[name] = 1 + max(above) if above else 0
     return levels
+
+
+def _label_pt(th: Theme, levels: Mapping[str, int]) -> float:
+    """Height above a node that its labels need, in points."""
+    return LABEL_BASE_PT + (max(levels.values(), default=0) + 1) * th.font * 1.4
+
+
+def _tier_pt(th: Theme, need_pt: float) -> float:
+    """One tier row in points: the label stack of the busiest tier fits in it."""
+    if th.height is not None:
+        return th.height * 72 * 0.8 / 4
+    return max(TIER_PT, need_pt + 12)
 
 
 def _order_panel(
@@ -987,10 +1013,7 @@ def _order_panel(
 ) -> None:
     """Nodes by mean rank (x) and tier (y), the reduced edges as arrows."""
     color = _color(th, method)
-    pos = {
-        r.achievement: (r.rho, TIERS.index(r.tier) if r.tier in TIERS else len(TIERS))
-        for r in nodes.itertuples()
-    }
+    pos = _node_positions(nodes)
     for e in edges.itertuples():
         arrow = ax.annotate(
             "",
@@ -1009,27 +1032,30 @@ def _order_panel(
     for name, (x, y) in pos.items():
         (dot,) = ax.plot([x], [y], ls="", marker="o", ms=th.ms, color=color)
         dot.set_gid(_gid("node", budget, method, name))
-    top = 0
+    need = 0.0
     if labels:
         levels = _label_levels(pos, th)
-        top = max(levels.values(), default=0)
+        need = _label_pt(th, levels)
         step = th.font * 1.4
         for name, (x, y) in pos.items():
             ax.annotate(
                 name,
                 (x, y),
-                xytext=(3, 4 + levels[name] * step),
+                xytext=(0, LABEL_BASE_PT + levels[name] * step),
                 textcoords="offset points",
+                ha="left",
+                va="bottom",
                 fontsize=th.font,
                 color=th.ink2,
-                arrowprops={"arrowstyle": "-", "color": th.muted, "lw": 0.4}
-                if levels[name]
-                else None,
-            )
+                arrowprops={
+                    "arrowstyle": "-", "color": th.muted, "lw": 0.4,
+                    "relpos": (0, 0), "shrinkA": 0, "shrinkB": 2.5,
+                },
+            )  # fmt: skip
     _style(ax, th, grid="both")
     ax.set_xlim(-0.05, 1.05)
-    row_pt = 33.0 if th.height is None else th.height * 72 * 0.8 / 4  # one tier row
-    ax.set_ylim(len(TIERS) - 0.5, -0.5 - top * th.font * 1.4 / row_pt)
+    row = _tier_pt(th, need)
+    ax.set_ylim(len(TIERS) - 0.5, -max(0.5, (need + 4) / row))
     ax.set_yticks(range(len(TIERS)), [t.replace("_", " ") for t in TIERS])
     ax.tick_params(axis="y", length=0)
     _labels(ax, th, "mean normalised rank (0 first, 1 last)", "tier")
@@ -1054,11 +1080,19 @@ def plot_order_graph(
     ctxs = [c for c in _contexts(frames) if method in c.names]
     if not ctxs:
         return _no_data(name, th, out_dir, f"no tuned runs of {method}")
-    fig = _figure(th, len(ctxs) * (4 * th.pitch_mm + 38) + _legend_mm(th, 1))
+    graphs = [order_graph(c.eps[c.eps["method"] == method]) for c in ctxs]
+    need = max(
+        (_label_pt(th, _label_levels(_node_positions(n), th)) for n, _ in graphs),
+        default=0.0,
+    )
+    need = need if th.wide else 0.0
+    grow_mm = 0.0  # the video frame is fixed; a report figure grows with its tier rows
+    if th.height is None:
+        grow_mm = max(0.0, _tier_pt(th, need) * 3.5 + need - 134) / 72 * 25.4
+    fig = _figure(th, len(ctxs) * (4 * th.pitch_mm + 38 + grow_mm) + _legend_mm(th, 1))
     axes = _stack(fig, th, [1.0] * len(ctxs))
     notes = []
-    for ax, ctx in zip(axes, ctxs, strict=True):
-        nodes, edges = order_graph(ctx.eps[ctx.eps["method"] == method])
+    for ax, ctx, (nodes, edges) in zip(axes, ctxs, graphs, strict=True):
         _order_panel(ax, th, ctx.budget, method, nodes, edges, labels=th.wide)
         _title(ax, th, _panel_title(ctx.budget, f"{method} order graph"))
         if edges.empty:
