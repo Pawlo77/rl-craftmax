@@ -510,12 +510,14 @@ def test_copy_figures_takes_the_report_pngs_only(tmp_path: Path) -> None:
         "aggregate.pdf",
     ):
         (src / name).write_bytes(b"x")
-    (out / "old_figure.pdf").write_bytes(b"%PDF")  # an earlier build's vector file
+    (out / "aggregate.pdf").write_bytes(b"%PDF")  # an earlier build's vector file
+    (out / "handmade.pdf").write_bytes(b"%PDF")  # not a figure of this run: kept
     copied = copy_figures(src, out)
     assert sorted(p.name for p in copied) == ["aggregate.png", "aggregate_double.png"]
     assert sorted(p.name for p in out.iterdir()) == [
         "aggregate.png",
         "aggregate_double.png",
+        "handmade.pdf",
     ]
 
 

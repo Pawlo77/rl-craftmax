@@ -302,7 +302,7 @@ def test_old_pdfs_are_removed_from_both_figure_folders(
     opts = _two_stub_figures(monkeypatch, base, tmp_path)
     for folder in (opts.out / "figures", opts.report_dir / "figures"):
         folder.mkdir(parents=True)
-        (folder / "aggregate.pdf").write_bytes(b"%PDF-1.4 stale")
+        (folder / "F1_report_column.pdf").write_bytes(b"%PDF-1.4 stale")
     run_comparison(opts)
     assert not list(opts.out.rglob("*.pdf"))
     assert not list(opts.report_dir.rglob("*.pdf"))
