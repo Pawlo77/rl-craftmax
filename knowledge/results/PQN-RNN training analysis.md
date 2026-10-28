@@ -27,7 +27,6 @@ related-code:
 - Craftax-1M results only: `final-1m`, PQN-RNN (control, base of count-bonus-pqn-rnn, smdp-skills and dyna-q), 10 seeds (0-9) of the tuned config; method: [[PQN-RNN design]], plan [[2026-10-20-craftax-method-pqn-rnn]]; analysis of [[2026-10-20-craftax-training-analysis]] over the Craftax floors ([[Craftax floors and progression]]) and achievements ([[Craftax achievements]]).
 - Numbers come from `outputs/analysis/1m/pqn-rnn/` (written 2026-10-28 by `analysis.training`, logged as MLflow run `training-analysis-1m-pqn-rnn`, id `a7b67d217dfd48abba749a7b80799119`, experiment `analysis`) and from `outputs/metrics/final-1m` (`runs.parquet`: `final_score` is the training-episode score in % of the maximum, `eval_stochastic_score` the stochastic final eval). 19 case episodes, all replayed from the stored eval files.
 - Final eval = checkpoint 244 (999,424 env steps), stochastic mode, 64 eval seeds per run.
-- 1B: pending (final-1b not run, R75); sections marked 1B below are placeholders for the same tables at 1B.
 - Runs reused from tuning (`reused_from_tuning` in `outputs/metrics/final-1m/runs.parquet`): 3 of this method's 10 tuned runs (3 of 10 over all its units). A detector whose metric family a run never logged reads "not logged" (R78); detectors whose threshold assumes the 1B scale read "uninformative at 1M" (R79). Verdict counts of this method's detectors (all units): absent 55, detected 26, not logged 19; needs replay 0, needs eval actions 0.
 
 ## Hard scenarios
@@ -130,10 +129,6 @@ Caveat: skill forgetting fires on every seed of every method that runs it at 1M;
 
 - Absent in every run: Numerical failure, Survival failure.
 - Detector verdicts over the tuned runs (100 run-detector pairs): absent 55, detected 26, not logged 19; needs replay 0; needs eval actions 0. Runs with a metric family not logged (R78, runs reused from tuning, or a base control that lacks it): 10.
-
-### 1B
-
-1B: pending (final-1b not run, R75). The 1B obstacles table (3 seeds) is added by rerunning `analysis.training` once the 1B finals exist.
 
 ## Comparison with the controls
 

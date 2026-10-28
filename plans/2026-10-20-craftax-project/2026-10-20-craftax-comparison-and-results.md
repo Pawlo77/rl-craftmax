@@ -178,3 +178,15 @@ Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 (Phase 4 ord
 - [ ] **Step 1: Write** the note: T1 (both blocks), T2 and T6 as Markdown tables, the reproduction-gate outcome per control (pass, or the gap and h, with the issue note link), the sensitivity summary (T7) in one bullet per method, the figure index (ID, file, one-line takeaway).
 - [ ] **Step 2: Link** each method's `knowledge/results/<Method> training analysis.md` from its row.
 - [ ] **Step 3: Run** `make knowledge` and `make check`.
+
+### Task 8: 1B figure and table sets, 1M vs 1B comparison
+
+Runs once `final-1b` and `combo-1b` exist (cluster decision pending). Figures follow the 2026-10-28 standard: PNG only, one panel per file, no text on the image, captions in `knowledge/results/Figures 1M.md` and its 1B counterpart.
+
+**Files:**
+- Modify: `analysis/results.py` (figure stage writes `outputs/results/figures/1b/` and `report/figures/1b/`), `analysis/figures_angles.py` or a new `analysis/figures_scale.py` (the 1M vs 1B figures)
+- Create: `knowledge/results/Figures 1B.md` and the 1B tables note (same layout as the 1M notes)
+
+- [ ] **Step 1: Render** the 1B sets: every 1M figure and table that has 1B data, same names under `figures/1b/` and `tables/1b/`; nothing under `1m/` changes.
+- [ ] **Step 2: Write the failing tests, then add** a few 1M vs 1B figures (choose from: final score at 1M vs 1B per method with CIs and a diagonal; rank change per method between benchmarks; per-achievement success rate at 1M vs 1B; learning curves of both benchmarks on a shared normalised step axis; greedy vs stochastic gap at both budgets) and matching 1M vs 1B tables (per method: 1M and 1B score with CIs, rank at each, difference) under `figures/scale/` and `tables/scale/`. 1B stays indicative (3 seeds): intervals, no p-values.
+- [ ] **Step 3: Update** `knowledge/results/Final results.md` with the 1B results and the scale comparison; run `make knowledge` and `make check`.
