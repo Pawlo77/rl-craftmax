@@ -942,7 +942,7 @@ def _spread_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
             # low in the row, under the number a wide variant prints in the cell
             (dot,) = ax.plot(
                 [means[method] + 0.5],
-                [i + 0.8],
+                [i + 0.72],
                 ls="",
                 marker="^",
                 ms=th.ms * 1.1,
