@@ -31,7 +31,7 @@ related-code:
 - SIL (2.137) and the combination (2.132) do not beat PPO or PPO-RNN (PoI 0.33 to 0.37, Holm p 1.000), and the combination is below count-bonus PPO-RNN alone (PoI of the combination over it 0.17 [0.03, 0.38]): at 1M the two components do not add up. Sources: `main.csv`, `poi_matrix.csv`.
 - The PQN-RNN family and both skill methods are well below the PPO family and unstable: means 1.481 (count-bonus PQN-RNN), 1.356 (PQN-RNN), 1.077 (Dyna-Q), 0.831 (SMDP skills) against 2.132 to 2.274 for the PPO family, SIL and the combination; Holm p 0.001 to 0.002 against both PPO controls for the three methods that carry one; seed sd 0.375 to 0.651 against 0.046 to 0.117; runs with a collapse 3, 4, 5, 8 of 10 against 0 or 1. Neither skill method is separable from PQN-RNN (Holm p 0.273 and 0.108). Sources: `main.csv`, `stability.csv`.
 - Reproduction check: all three controls pass (PPO gap -0.027 within h 0.128; PPO-RNN gap -0.112 within h 0.135; PQN-RNN passes its reference-code comparison); no issue note opened. Source: `reproduction_gate.csv`.
-- Every method reaches only floor 0 in the final eval episodes (deepest floor share 1.0), 47 to 54 of the 67 achievements are never unlocked by any seed, and zombies are the top cause of death everywhere (46.6% to 61.1%). Sources: `game_summary.csv`, the nine training-analysis notes below.
+- Every method reaches only floor 0 in the final eval episodes (deepest floor share 1.0), 47 to 54 of the 67 achievements are never unlocked by any seed at any checkpoint (training and eval), and zombies are the top cause of death everywhere (46.6% to 61.1%). Sources: `game_summary.csv`, the nine training-analysis notes below.
 
 ## T1: main results
 
@@ -138,7 +138,7 @@ Tuning mean over the tuned config's runs (`tune-fine`, else `tune-coarse`, 3 see
 | smdp-skills | 1.415 | 7 | 0.581 | 0.835 |
 
 - PPO and PPO-RNN read n/a (selected on all their final seeds); the combination reads n/a (never tuned).
-- The tuning mean of the skill methods overstates the fresh result by 0.410 (Dyna-Q) and 0.835 (SMDP skills); SIL and the count bonus on PPO-RNN lose 0.004 and 0.084.
+- The tuning mean of the skill methods overstates the fresh result by 0.410 (Dyna-Q) and 0.835 (SMDP skills); SIL and the count bonus on PPO-RNN lose 0.004 and 0.084 (point estimates, 3 tuning vs 7 fresh seeds, no interval).
 
 ## T3: stability
 
@@ -172,7 +172,7 @@ Final-checkpoint stochastic eval episodes, each seed weighted equally; race wins
 | dyna-q | 4 | 0 (1.0) | zombie (0.525) | 0.110 | 0.786 | 0.0003 |
 | smdp-skills | 4 | 0 (1.0) | zombie (0.495) | 0.089 | 0.857 | 0.0009 |
 
-- Coverage is the mean over visited floors; wasted share and coverage are medians of seed medians; adoption is the share of episodes using an advanced mechanic, mean over mechanics.
+- Coverage is the mean over visited floors; wasted share and coverage are medians of seed medians; adoption is the share of episodes using an advanced mechanic, mean over mechanics (definitions: `game_summary_table` in [[src/wut_murl_craftax/analysis/compare.py]]).
 - Per-method detail (achievements, deaths, stalls, obstacles) is in the training-analysis notes of T1; every one opens with a 5-bullet summary.
 
 ## T7: sensitivity
@@ -190,7 +190,7 @@ Per method and tuning phase: configs and runs tried, best config (mean), robust 
 
 ## Hardware and timing (context only, R97)
 
-Every laptop run trained with two concurrent queue workers, so these figures are never ranked; PPO and PPO-RNN are fully reused from tuning, the others partly (`reused_runs` in the file). Source: `hardware.csv`.
+Every laptop run trained with two concurrent queue workers, so these figures are never ranked; PPO and PPO-RNN are fully reused from tuning, the others partly, the combination not at all (`reused_runs` in the file). Source: `hardware.csv`.
 
 | Method | Steady SPS | Wall-clock (s) |
 |---|---|---|
@@ -233,7 +233,14 @@ Files in `outputs/results/figures/` (`.png` only; `_double` and `_video` variant
 
 ## Interpretation (decision trees)
 
-Pending: filled from outputs/interpretation/1m after the distillation run (interpretation Task 7).
+Full write-up: [[Decision-tree interpretation]] (90 policies, 9 methods x 10 seeds, from `outputs/interpretation/1m/complexity.csv` and `policies.csv`).
+
+- No method's median policy is distillable at 90%: the L80, L90 and L95 medians are "> 4096" leaves for every method (R106); the one policy that reaches 90% is SMDP skills seed 8 (2 leaves), a collapsed one-action policy; median test fidelity at 256 leaves is 0.385 (Dyna-Q) to 0.512 (SIL), and the median tree of every method is 0.108 to 0.166 above the majority-action share; fidelity falls for larger trees.
+- Score vs fidelity at 256 leaves: Spearman 0.308 (p 0.003, base), between methods; it is accompanied by the majority share, not by extra structure (score vs gain over majority -0.027, derived).
+- Every recurrent policy's tree leans most on the previous action, a memory proxy (importance 0.117 to 0.186); without it fidelity at 256 leaves drops by 0.036 to 0.071.
+- A 256-leaf tree keeps 0.183 (count-bonus PPO-RNN) to 0.490 (SMDP skills) of its network's greedy score in closed loop; one DAgger round raises this for all 9 methods.
+- SMDP skills and Dyna-Q: the lowest-scoring seeds have skill networks whose greedy majority action cannot succeed given the policy's inventory (`READ_BOOK` with no book, `MAKE_DIAMOND_PICKAXE` and `MAKE_IRON_ARMOUR` with no diamond or iron ever collected); their top levels are lookup tables over 47 to 355 visited keys, and the median-score seed's 10 highest values lie within 0.08 of the optimistic start 10.
+- Figure: `fidelity_vs_leaves_1m` (PNG); F27 `distil_score` and F28 `distil_features` come from the figure-angles branch.
 
 ## 1B (pending)
 
