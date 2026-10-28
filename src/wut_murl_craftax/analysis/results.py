@@ -620,8 +620,11 @@ def copy_fidelity(
     ``<folder>/<budget>/fidelity_vs_leaves.png`` with a row in that folder's
     ``captions.csv`` (id ``FID``).
     """
+    from ..interpretation import run as interpretation
     from ..visualisation import charts
 
+    # the distillation owns the caption text (FIDELITY_CAPTION: fallback before it did)
+    text = getattr(interpretation, "FIDELITY_DESCRIPTION", FIDELITY_CAPTION)
     copied = []
     for budget in budgets:
         root = o.complexity_root / budget
@@ -640,7 +643,7 @@ def copy_fidelity(
         charts.write_captions(
             dest,
             "FID",
-            [charts.Caption(FIDELITY, "Distillation fidelity", FIDELITY_CAPTION)],
+            [charts.Caption(FIDELITY, "Distillation fidelity", text)],
         )
         copied.append(dest / f"{FIDELITY}.png")
     return copied

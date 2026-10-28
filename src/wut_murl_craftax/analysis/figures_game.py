@@ -2241,7 +2241,8 @@ def _actions_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
         return
     if unused:
         notes.append(
-            f"Not drawn (the {HEAT_ROWS} most used actions are): {', '.join(unused)}."
+            f"Only the {HEAT_ROWS} most used actions are drawn; not drawn: "
+            f"{', '.join(unused)}."
         )
     _heat(ax, th, ctx, "actions", labels, matrix, annotate=True)
 
