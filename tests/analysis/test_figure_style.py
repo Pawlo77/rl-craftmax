@@ -7,6 +7,7 @@ column, the report double width and the video; each file it saves is audited by
 
 import functools
 import re
+import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -140,6 +141,18 @@ def _fidelity_case(out: Path) -> None:
     distil._plot_fidelity(curves, out, "fidelity_seeds", per_seed=True)
 
 
+def _timeline_case(out: Path) -> None:
+    """The last-frame PNG of the achievement timeline (a 1080p video frame)."""
+    from tests.visualisation._learning_run import needs_ffmpeg, tiny_run
+    from wut_murl_craftax.visualisation.timeline import render_timeline
+
+    if needs_ffmpeg.args[0]:  # the skipif condition: no ffmpeg
+        pytest.skip("ffmpeg/ffprobe not installed")
+    video = Path(tempfile.mkdtemp(prefix="timeline_")) / "timeline.mkv"
+    render_timeline(tiny_run(), video, seconds=1, fps=2, hold=0)
+    shutil.copy(video.with_suffix(".png"), out / "timeline.png")
+
+
 def _cases() -> dict[str, Callable[[Path], None]]:
     """Case name -> a function that draws it into a folder."""
     cases: dict[str, Callable[[Path], None]] = {}
@@ -156,6 +169,7 @@ def _cases() -> dict[str, Callable[[Path], None]]:
         "hard": _hard_case,
         "hard-variants": _hard_variants_case,
         "fidelity": _fidelity_case,
+        "timeline": _timeline_case,
     }
 
 

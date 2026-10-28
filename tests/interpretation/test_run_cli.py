@@ -165,9 +165,14 @@ def test_every_method_folder_holds_the_plan_files(world: World) -> None:
     assert not SKILL_FILES & {p.name for p in world.method("ppo").iterdir()}
     assert {p.name for p in (world.out / "1m").iterdir()} == {
         "ppo", "smdp-skills", "complexity.csv", "policies.csv",
-        "fidelity_vs_leaves_1m.png",
+        "fidelity_vs_leaves.png", "captions.csv",
     }  # fmt: skip
-    assert (world.figures / "fidelity_vs_leaves_1m.png").is_file()
+    assert (world.figures / "1m" / "fidelity_vs_leaves.png").is_file()
+    for folder in (world.out / "1m", world.figures / "1m"):
+        rows = pd.read_csv(folder / "captions.csv")
+        assert rows["stem"].tolist() == ["fidelity_vs_leaves"]
+        assert rows["id"].tolist() == ["FID"]
+        assert "leaves" in rows["description"][0]
 
 
 def test_only_tuned_runs_are_distilled_at_their_final_checkpoint(world: World) -> None:

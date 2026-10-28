@@ -13,7 +13,7 @@ related-code:
 ---
 # Achievement timeline
 
-An animated heatmap: one row per achievement (22 in Classic, 67 in Craftax; list in [[Craftax achievements]]), columns are PPO updates, colour is the success rate (% of training episodes), rows sorted by first unlock with a ring at the first unlock. The cursor sweeps left to right; a counter shows how many achievements have been unlocked at least once. Data: `metrics.npz` and `episodes.npz` from [[Recording training data]].
+An animated heatmap: one row per achievement (22 in Classic, 67 in Craftax; list in [[Craftax achievements]]), columns are PPO updates, colour is the success rate (% of training episodes), rows sorted by first unlock with a ring at the first unlock. The cursor sweeps left to right (the edge of the coloured area is the clock: no title or counter on the frame); `captions.csv` beside the files holds the caption of the last-frame PNG. Data: `metrics.npz` and `episodes.npz` from [[Recording training data]].
 
 ## Steps
 

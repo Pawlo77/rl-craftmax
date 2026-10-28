@@ -4,7 +4,9 @@ Rows (22 Classic, 67 Craftax) are sorted by first unlock: the first update in wh
 any training episode earned the achievement; a ring marks it once the cursor passes.
 Colour is the EMA success rate on a square-root scale so 1-5% rates stay visible.
 The look is the shared video theme (`charts.Theme`, seaborn); the PNG of the last frame
-is written as it is, with every label inside the canvas.
+is written as it is, with every label inside the canvas. Like every figure it carries
+no title or counter (the sweep edge is the clock; the caption in ``captions.csv``
+beside the files says the rest).
 Usage: ``python -m wut_murl_craftax.visualisation.timeline RUN [--logx]``
 """
 
@@ -18,9 +20,32 @@ from matplotlib.colors import LinearSegmentedColormap, PowerNorm
 
 from ..training.records import first_unlocks, load_episodes, load_metrics
 from . import ffmpeg
-from .charts import VIDEO, ema, frame, set_labels, settle, style_axes, themed_figure
+from .charts import (
+    VIDEO,
+    Shape,
+    capture_captions,
+    ema,
+    frame,
+    register_caption,
+    set_labels,
+    settle,
+    style_axes,
+    themed_figure,
+    write_captions,
+    write_png,
+)
 
 logger = logging.getLogger(__name__)
+
+CAPTION_ID = "TL"
+"""Figure id of the timeline in ``captions.csv``."""
+DESCRIPTION = (
+    "Success rate of every achievement over training (one row each, sorted by the "
+    "update of its first unlock, never-unlocked rows last): the colour is the share "
+    "of training episodes that finished in the update with the achievement, on a "
+    "square-root scale so rates of 1 to 5% stay visible, the video sweeps the "
+    "columns left to right, a ring marks the first unlock of a row."
+)
 
 
 def first_unlock_order(first: np.ndarray) -> np.ndarray:
@@ -59,7 +84,7 @@ def render_timeline(
     th = VIDEO._replace(
         width=size[0] / VIDEO.dpi, height=size[1] / VIDEO.dpi, font=fs, title=fs * 1.3
     )
-    fig = themed_figure(th, 0)
+    fig = themed_figure(th, shape=Shape.CURVE)  # the video frame fills the canvas
     ax = style_axes(fig.add_subplot(), th, grid="x")
     cmap = LinearSegmentedColormap.from_list("seq", th.seq)
     mesh = ax.pcolormesh(
@@ -80,9 +105,7 @@ def render_timeline(
     ax.grid(False)
     set_labels(ax, th, "environment steps (M)")
     bar = fig.colorbar(mesh, ax=ax, fraction=0.03, pad=0.02)
-    bar.set_label(
-        "success rate, % of episodes (sqrt scale)", color=th.ink2, fontsize=fs
-    )
+    bar.set_label("success rate (%, sqrt scale)", color=th.ink2, fontsize=fs)
     bar.ax.tick_params(colors=th.muted, labelsize=fs)
     bar.outline.set_visible(False)
     fx = np.where(first < 0, np.nan, x[np.clip(first - 1, 0, None)])
@@ -90,11 +113,6 @@ def render_timeline(
     dots = ax.scatter(
         fx, rows, s=fs * 2.2, facecolors="none", edgecolors=th.ink, linewidths=1.2
     )
-    title = ax.set_title("", loc="left", fontsize=fs * 1.3, color=th.ink)
-    count = ax.set_title("", loc="right", fontsize=fs * 1.1, color=th.muted)
-    # lay out for the widest strings any frame shows: the last step count, all rows
-    title.set_text(f"Achievements over training - {x.max():.2f}M steps")
-    count.set_text(f"unlocked at least once: {n_rows} / {n_rows}")
     settle(fig)
     fig.set_layout_engine("none")  # the layout is settled; frames only change data
     cursor = _cursor(x, int(seconds * fps), int(hold * fps), logx)
@@ -106,10 +124,11 @@ def render_timeline(
             mesh.set_array(np.ma.masked_invalid(vis).ravel())
             seen = (first >= 0) & (first <= i + 1)
             dots.set_offsets(np.c_[np.where(seen, fx, np.nan), rows])
-            title.set_text(f"Achievements over training - {x[i]:.2f}M steps")
-            count.set_text(f"unlocked at least once: {seen.sum()} / {n_rows}")
             writer.write(frame(fig))
-    fig.savefig(out.with_suffix(".png"), facecolor=fig.get_facecolor(), dpi=th.dpi)
+    write_png(fig, out.with_suffix(".png"))
+    with capture_captions() as captions:
+        register_caption(out.stem, "Achievement timeline", DESCRIPTION)
+    write_captions(out.parent, CAPTION_ID, captions)
     logger.info("timeline %s: %d frames in %.1fs", out, len(cursor), time.time() - t0)
     return out
 

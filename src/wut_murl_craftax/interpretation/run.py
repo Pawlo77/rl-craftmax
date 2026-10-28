@@ -5,7 +5,8 @@
 distils each run of a ``config_ref`` (default ``tuned``; the export's ``runs``, R77) at
 its final checkpoint into ``<out>/<budget>/<method>/<run_id>/`` (skipped once done,
 unless ``--force``), sums each method up, writes ``<out>/<budget>/complexity.csv`` and
-the figure ``fidelity_vs_leaves_<budget>`` (copied to ``--figures``) and logs each
+the figure ``<budget>/fidelity_vs_leaves`` (copied to ``--figures/<budget>/``, each
+folder with a ``captions.csv``) and logs each
 method folder, datasets left out, as ``distill-<budget>-<method>`` in ``analysis``.
 @see [[2026-10-20-craftax-interpretation-and-ruleset]]
 """
@@ -32,12 +33,10 @@ from scipy import stats
 from ..analysis.cases import run_dirs
 from ..analysis.figures import (
     _figure,
-    _finish,
     _labels,
     _save,
     _style,
     _style_of,
-    _title,
 )
 from ..analysis.figures import _theme as figure_theme
 from ..analysis.latex import MIN_UNCENSORED
@@ -45,6 +44,7 @@ from ..analysis.load import METRICS_ROOT, load_phases
 from ..evaluation.select_pair import SKILL_METHODS
 from ..orchestration.tracking import log_analysis_run
 from ..training.smdp import GREEDY_TABLE_FILE
+from ..visualisation.charts import Shape, capture_captions, write_captions
 from ..visualisation.eval_rollouts import EvalRun
 from .dataset import (
     _FIELDS,
@@ -446,19 +446,34 @@ def _rules_text(folder: Path, median: Json) -> str:
     return "\n".join(lines) + "\n"
 
 
+FIDELITY_STEM = "fidelity_vs_leaves"
+"""File stem of the distillation's fidelity figure (budget folder and method folder)."""
+FIDELITY_ID = "FID"
+"""Figure id of the fidelity figure in ``captions.csv`` (as `analysis.results`)."""
+FIDELITY_TITLE = "Distillation fidelity"
+FIDELITY_DESCRIPTION = (
+    "Test top-1 fidelity of the distilled decision trees (base fit) against their "
+    "number of leaves on a log2 axis: how much of the policy a tree of that size "
+    "reproduces. One line per unit, the median over its seeds{seeds}; the muted "
+    "horizontal line is the 0.9 level (L90). Solid lines are tuned methods, dashed "
+    "lines controls, dotted lines with hollow markers ablations; colours: method "
+    "legend."
+)
+
+
 def _plot_fidelity(
     curves: pd.DataFrame, out_dir: Path, name: str, *, per_seed: bool
 ) -> None:
     """Test top-1 fidelity of the base fits over the leaf grid, with the 0.9 level.
 
     One line per unit (median over seeds), or with ``per_seed`` one thin line per
-    seed under the method's median.
+    seed under the method's median. No legend, title or label on the image: the method
+    legend figure gives the colours, the caption the rest (`FIDELITY_DESCRIPTION`).
     """
     th = figure_theme("report")
-    fig = _figure(th, 55)
+    fig = _figure(th, shape=Shape.CURVE)
     ax = _style(fig.add_subplot(), th, grid="both")
     leaf = curves[(curves["kind"] == "leaves") & (curves["variant"] == BASE)]
-    handles = []
     for (method, ref), unit in leaf.groupby(["method", "config_ref"], sort=True):
         style = _style_of(th, str(method), str(ref))
         if per_seed:
@@ -466,19 +481,18 @@ def _plot_fidelity(
                 ax.plot(seed["size"], seed["top1"], color=style["color"], lw=0.5,
                         alpha=0.4)  # fmt: skip
         med = unit.groupby("size")["top1"].median()
-        handles += ax.plot(med.index, med.to_numpy(), lw=th.lw, ms=th.ms, **style)
+        ax.plot(med.index, med.to_numpy(), lw=th.lw, ms=th.ms, **style)
     # solid: dashed lines are controls (contracts section 6)
     ax.axhline(0.9, color=th.muted, lw=0.5)
-    ax.text(LEAF_GRID[0], 0.91, "L90", fontsize=th.font, color=th.muted)
     ax.set_xscale("log", base=2)
     ax.set_xticks(LEAF_GRID[::2], [str(n) for n in LEAF_GRID[::2]])
     ax.set_ylim(0, 1.02)
     _labels(ax, th, "leaves (log2)", "test top-1 fidelity")
-    if len(handles) > 1:
-        _finish(fig, th, handles, cols=2)
-    else:  # one unit: the title names it, a one-entry legend would add nothing
-        _title(ax, th, f"{handles[0].get_label()}: test top-1 fidelity")
-    _save(fig, th, out_dir, name)
+    seeds = ", with a thin line per seed" if per_seed else ""
+    _save(
+        fig, th, out_dir, name, title=FIDELITY_TITLE,
+        description=FIDELITY_DESCRIPTION.format(seeds=seeds),
+    )  # fmt: skip
     (out_dir / f"{name}.pdf").unlink(missing_ok=True)  # figures are PNG only now
 
 
@@ -506,7 +520,9 @@ def sum_up_method(folder: Path) -> None:
         _write_json(
             folder / "top_level.json", {"median_run": median["run_id"], "seeds": seeds}
         )
-    _plot_fidelity(curves, folder, "fidelity_vs_leaves", per_seed=True)
+    with capture_captions() as captions:
+        _plot_fidelity(curves, folder, FIDELITY_STEM, per_seed=True)
+    write_captions(folder, FIDELITY_ID, captions)
 
 
 def _fit_of(summary: Json, variant: str) -> Json | None:
@@ -752,10 +768,13 @@ def sum_up_budget(folder: Path, figures: Path) -> None:
     _write_csv(policy_table(summaries), folder / "policies.csv")
     parts = [_read_curve(p) for p in sorted(folder.glob("*/curve.csv"))]
     curves = pd.concat([c for c in parts if c is not None], ignore_index=True)
-    name = f"fidelity_vs_leaves_{budget}"
-    _plot_fidelity(curves, folder, name, per_seed=False)
-    figures.mkdir(parents=True, exist_ok=True)
-    _copy_atomic(folder / f"{name}.png", figures / f"{name}.png")
+    with capture_captions() as captions:
+        _plot_fidelity(curves, folder, FIDELITY_STEM, per_seed=False)
+    write_captions(folder, FIDELITY_ID, captions)
+    dest = figures / budget  # the comparison's per-benchmark figure folder
+    dest.mkdir(parents=True, exist_ok=True)
+    _copy_atomic(folder / f"{FIDELITY_STEM}.png", dest / f"{FIDELITY_STEM}.png")
+    write_captions(dest, FIDELITY_ID, captions)
 
 
 # ------------------------------------------------------------------------- driver

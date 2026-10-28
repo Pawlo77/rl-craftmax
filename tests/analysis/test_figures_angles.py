@@ -8,6 +8,7 @@ a second way.
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -38,9 +39,11 @@ from wut_murl_craftax.analysis.figures_angles import (
     ANGLE_FIGURES,
     GATE_MIN,
     NAMES,
+    STEMS,
     gatekeepers,
     greedy_gap,
     plot_ablation_effects,
+    plot_achievements_vs_length,
     plot_distil_features,
     plot_distil_score,
     plot_episode_spread,
@@ -50,9 +53,15 @@ from wut_murl_craftax.analysis.figures_angles import (
     plot_tuning_optimism,
     seed_fate,
 )
-from wut_murl_craftax.analysis.load import final_checkpoint
+from wut_murl_craftax.analysis.load import final_checkpoint, select
 from wut_murl_craftax.evaluation.hardware import reused_from_tuning
 from wut_murl_craftax.evaluation.stats import stratified_bootstrap_ci
+from wut_murl_craftax.visualisation.charts import (
+    MAX_ROWS_MM,
+    Caption,
+    Shape,
+    capture_captions,
+)
 
 N = 100
 """Bootstrap resamples in tests."""
@@ -60,11 +69,11 @@ PNG = b"\x89PNG\r\n\x1a\n"
 FIGS = [f"F{i}" for i in range(21, 29)]
 LABELS = {
     "F21": ("env steps", "greedy minus stochastic"),
-    "F22": ("later unlocks", "alive"),
+    "F22": ("later unlocks",),
     "F23": ("env steps", "Spearman"),
     "F24": ("ablation minus tuned",),
     "F25": ("tuning mean", "fresh-seed final mean"),
-    "F26": ("achievements per episode", "episode length"),
+    "F26": ("achievements per episode",),
     "F27": ("fidelity at 256 leaves", "final score"),
     "F28": (),
 }
@@ -113,6 +122,11 @@ def optimism_table(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=compare.TUNING_OPTIMISM_COLUMNS)
 
 
+def one_benchmark(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """The frames cut to Craftax-1M, as the results CLI hands them to a figure."""
+    return select(frames, budget="1m", pool=True)
+
+
 def draw(
     fid: str,
     frames: dict[str, pd.DataFrame],
@@ -121,7 +135,8 @@ def draw(
     width: str = "column",
     trees: Path | None = None,
 ) -> Figure:
-    """Call the figure of ``fid`` with test-sized bootstraps."""
+    """Call the figure of ``fid`` on Craftax-1M with test-sized bootstraps."""
+    frames = one_benchmark(frames)
     b = {"width": width, "n_boot": N}
     root = trees or out_dir / "no-interpretation"
     calls: dict[str, Callable[[], Figure]] = {
@@ -141,6 +156,13 @@ def draw(
         ),
     }
     return calls[fid]()
+
+
+def captions_of(fid: str, *args: Any, **kwargs: Any) -> dict[str, Caption]:
+    """The captions the figure of ``fid`` registers, by stem (`draw` arguments)."""
+    with capture_captions() as got:
+        draw(fid, *args, **kwargs)
+    return {c.stem: c for c in got}
 
 
 def artists(fig: Figure, kind: str) -> list[Artist]:
@@ -170,26 +192,29 @@ def pos(method: str) -> int:
 # --- every figure -------------------------------------------------------------------
 
 
-def test_every_figure_id_has_a_function_and_a_stem() -> None:
+def test_every_figure_id_has_a_function_and_its_stems() -> None:
     assert list(ANGLE_FIGURES) == FIGS
-    assert set(NAMES) == set(FIGS)
+    assert set(NAMES) == set(FIGS) == set(STEMS)
     assert all(f.__name__.startswith("plot_") for f in ANGLE_FIGURES.values())
+    assert STEMS["F26"] == ["episode_spread", "achievements_vs_length"]
+    assert all(STEMS[f] == [NAMES[f]] for f in FIGS if f != "F26")
 
 
 @pytest.mark.parametrize("theme", ["report", "video"])
 @pytest.mark.parametrize("fid", FIGS)
-def test_each_figure_writes_a_png_with_its_labels(
+def test_each_figure_writes_its_pngs_with_its_labels(
     fid: str, theme: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
     fig = draw(fid, frames, tmp_path, theme, trees=trees)
-    name = NAMES[fid] + ("_video" if theme == "video" else "")
-    assert (tmp_path / f"{name}.png").read_bytes().startswith(PNG)
+    suffix = "_video" if theme == "video" else ""
+    for stem in STEMS[fid]:
+        assert (tmp_path / f"{stem}{suffix}.png").read_bytes().startswith(PNG)
     for want in LABELS[fid]:
         assert want in axis_labels(fig), (fid, want, axis_labels(fig))
 
 
 @pytest.mark.parametrize("fid", FIGS)
-def test_sizes_match_the_other_figures(
+def test_sizes_are_the_report_widths_and_1080p(
     fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
     fig = draw(fid, frames, tmp_path, trees=trees)
@@ -203,47 +228,54 @@ def test_sizes_match_the_other_figures(
     assert not small, small
     wide = draw(fid, frames, tmp_path, width="double", trees=trees)
     assert wide.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
-    assert (tmp_path / f"{NAMES[fid]}_double.png").is_file()
+    for stem in STEMS[fid]:
+        assert (tmp_path / f"{stem}_double.png").is_file()
     video = draw(fid, frames, tmp_path, "video", trees=trees)
     w, h = video.get_size_inches() * video.dpi
     assert (round(w), round(h)) == (1920, 1080)
 
 
-@pytest.mark.parametrize("width", ["column", "double"])
 @pytest.mark.parametrize("fid", FIGS)
-def test_legends_stay_off_the_axes_and_text_inside_the_canvas(
-    fid: str, width: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+def test_a_figure_declares_a_size_class_and_has_no_title_or_text_of_its_own(
+    fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames, tmp_path, width=width, trees=trees)
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
-    legends = [*fig.legends, *(ax.get_legend() for ax in fig.axes)]
-    boxes = [ax.get_window_extent(renderer) for ax in fig.axes if ax.axison]
-    for legend in filter(None, legends):
-        box = legend.get_window_extent(renderer)
-        assert not any(box.overlaps(b) for b in boxes), fid
-    inches = fig.get_size_inches()
-    drawn = fig.get_tightbbox(renderer)  # inches; only what is drawn
-    assert min(drawn.x0, drawn.y0) >= -0.01, (fid, drawn)
-    assert drawn.x1 <= inches[0] + 0.01, (fid, drawn)
-    assert drawn.y1 <= inches[1] + 0.01, (fid, drawn)
+    fig = draw(fid, frames, tmp_path, trees=trees)
+    assert fig.shape in set(Shape)  # type: ignore[attr-defined]
+    assert not fig.texts
+    assert getattr(fig, "_suptitle", None) is None
+    assert all(not ax.get_title(loc="left") for ax in fig.axes)
+    assert all(ax.get_legend() is None for ax in fig.axes)
+    if fid != "F24":  # F24 keeps its two-entry marker legend (hollow dot, cross)
+        assert not fig.legends
 
 
 @pytest.mark.parametrize("fid", FIGS)
-def test_a_missing_1b_is_pending(
-    fid: str, frames_1m: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+def test_every_stem_registers_a_caption_with_the_question_and_no_budget_words(
+    fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
-    fig = draw(fid, frames_1m, tmp_path, trees=trees)
-    assert "Craftax-1B pending" in said(fig)
+    got = captions_of(fid, frames, tmp_path, trees=trees)
+    assert set(got) == set(STEMS[fid])
+    for caption in got.values():
+        assert caption.title.strip()
+        assert "?" in caption.description  # the question the figure answers first
+        assert "1B" not in caption.description, caption.description
+        assert "pending" not in caption.title.lower()
+
+
+def test_figures_of_two_benchmarks_are_refused(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="one benchmark"):
+        plot_greedy_gap(frames, tmp_path, n_boot=N)
 
 
 def test_an_unknown_theme_or_width_is_refused(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     with pytest.raises(ValueError, match="theme"):
-        plot_greedy_gap(frames, tmp_path, "poster", n_boot=N)
+        plot_greedy_gap(frames_1m, tmp_path, "poster", n_boot=N)
     with pytest.raises(ValueError, match="width"):
-        plot_greedy_gap(frames, tmp_path, width="triple", n_boot=N)
+        plot_greedy_gap(frames_1m, tmp_path, width="triple", n_boot=N)
 
 
 # --- F21 greedy vs stochastic -------------------------------------------------------
@@ -265,9 +297,9 @@ def test_greedy_gap_is_greedy_minus_stochastic_per_run_and_checkpoint(
 
 
 def test_the_gap_line_is_the_mean_gap_over_seeds(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_greedy_gap(frames, tmp_path, n_boot=N)
+    fig = plot_greedy_gap(frames_1m, tmp_path, n_boot=N)
     for method in LEVEL:
         line = by_gid(fig, f"gap/1m/{method}")
         steps = [checkpoint_steps("1m", u) for u in UPDATES]
@@ -278,7 +310,7 @@ def test_the_gap_line_is_the_mean_gap_over_seeds(
             atol=1e-9,  # type: ignore[attr-defined]
         )
     assert by_gid(fig, "band/1m/sil")
-    assert {a.get_gid() for a in artists(fig, "gap")} >= {"gap/1b/ppo"}
+    assert {a.get_gid() for a in artists(fig, "gap")} == {f"gap/1m/{m}" for m in LEVEL}
 
 
 # --- F22 gatekeepers ----------------------------------------------------------------
@@ -373,9 +405,9 @@ def test_an_achievement_without_effect_has_no_lift() -> None:
 
 
 def test_a_gatekeeper_dot_is_the_mean_lift_over_seeds(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames: dict[str, pd.DataFrame], frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_gatekeepers(frames, tmp_path, n_boot=N)
+    fig = plot_gatekeepers(frames_1m, tmp_path, n_boot=N)
     dots = [d for d in artists(fig, "gate") if str(d.get_gid()).split("/")[1] == "1m"]
     assert dots
     eps = final_checkpoint(frames["eval_episodes"])
@@ -390,12 +422,38 @@ def test_a_gatekeeper_dot_is_the_mean_lift_over_seeds(
 
 
 def test_gatekeeper_rows_no_method_can_fill_are_named_not_drawn(
-    frames: dict[str, pd.DataFrame], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(figures_angles, "GATE_MIN", 10_000)
-    fig = plot_gatekeepers(frames, tmp_path, n_boot=N)
+    fig = plot_gatekeepers(frames_1m, tmp_path, n_boot=N)
     assert not artists(fig, "gate")
-    assert "no method has 10000 alive episodes" in said(fig)
+    assert "No method has 10000 alive episodes" in said(fig)
+
+
+def test_the_gatekeeper_rows_fit_a_third_of_a_page_and_the_cut_ones_are_named(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    methods = len(LEVEL)
+    limit = figures_angles._gate_limit(methods)
+    assert limit == 6  # 9 dodged methods: a row is 10.85 mm, 66 mm of rows
+    assert limit * (methods * 1.05 + 1.4) + 14 <= MAX_ROWS_MM
+    full = captions_of("F22", frames_1m, tmp_path)["gatekeepers"].description
+    monkeypatch.setattr(figures_angles, "_gate_limit", lambda _m: 2)
+    got = captions_of("F22", frames_1m, tmp_path)["gatekeepers"].description
+    assert "Not drawn, smaller mean lift" in got
+    assert "Not drawn" not in full
+    fig = plot_gatekeepers(frames_1m, tmp_path, n_boot=N)
+    assert len({str(a.get_gid()).split("/")[3] for a in artists(fig, "gate")}) == 2
+
+
+def test_a_single_gatekeeper_row_has_no_lone_tick_label(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(figures_angles, "_gate_limit", lambda _m: 1)
+    fig = plot_gatekeepers(frames_1m, tmp_path, n_boot=N)
+    assert not [t for t in fig.axes[0].get_yticklabels() if t.get_text()]
+    got = captions_of("F22", frames_1m, tmp_path)["gatekeepers"].description
+    assert "The single row is" in got
 
 
 # --- F23 fate -----------------------------------------------------------------------
@@ -417,9 +475,9 @@ def test_seed_fate_is_the_spearman_of_checkpoint_and_final_score(
 
 
 def test_the_fate_lines_and_the_pooled_mean(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    fig = plot_seed_fate(frames, tmp_path)
+    fig = plot_seed_fate(frames_1m, tmp_path)
     line = by_gid(fig, f"fate/1m/{REVERSED}")
     np.testing.assert_allclose(line.get_ydata(), [-1.0, 1.0, 1.0])  # type: ignore[attr-defined]
     pooled = by_gid(fig, "fate/1m/pooled")
@@ -429,14 +487,17 @@ def test_the_fate_lines_and_the_pooled_mean(
     null = by_gid(fig, "null/1m")
     top = null.get_y() + null.get_height()  # type: ignore[attr-defined]
     assert top == pytest.approx(t / np.sqrt(8 + t**2))
+    note = captions_of("F23", frames_1m, tmp_path)["seed_fate"].description
+    assert f"from -{top:.2f} to {top:.2f}" in note  # the band text moved to the caption
 
 
 # --- F24 ablations ------------------------------------------------------------------
 
 
 def test_ablation_effects_are_the_ablation_table_differences(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
+    frames = frames_1m
     table = compare.ablation_table(frames, n_boot=N)
     fig = plot_ablation_effects(frames, tmp_path, n_boot=N, table=table)
     for r in table.itertuples():
@@ -452,12 +513,16 @@ def test_ablation_effects_are_the_ablation_table_differences(
             sorted(seeds.get_offsets()[:, 0]),
             sorted(want),  # type: ignore[attr-defined]
         )
-    assert "PoI" in said(fig)
+    assert "PoI" not in said(fig)  # the stats line is in the caption now
+    got = captions_of("F24", frames, tmp_path)["ablation_effects"].description
+    for r in table[table["poi_tuned"].notna()].itertuples():
+        assert f"{r.method} ({r.config_ref}) PoI {r.poi_tuned:.2f}" in got
 
 
 def test_ablation_crosses_use_only_the_fresh_tuned_seeds(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
+    frames = frames_1m
     fig = plot_ablation_effects(frames, tmp_path, n_boot=N)
     runs = frames["runs"][frames["runs"]["budget"] == "1m"]
     tuned = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]
@@ -474,8 +539,9 @@ def test_ablation_crosses_use_only_the_fresh_tuned_seeds(
 
 
 def test_tuning_optimism_points_and_their_fresh_intervals(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
+    frames = frames_1m
     table = optimism_table(frames)
     fig = plot_tuning_optimism(frames, tmp_path, n_boot=N, table=table)
     runs = frames["runs"]
@@ -494,48 +560,37 @@ def test_tuning_optimism_points_and_their_fresh_intervals(
         )
         seg = by_gid(fig, f"ci/1m/{r.method}").get_segments()[0]  # type: ignore[attr-defined]
         assert sorted(seg[:, 1]) == pytest.approx([ci.lo, ci.hi])
-    text = said(fig)
-    assert "ppo" in text
-    assert "selected on all its final seeds" in text
+    got = captions_of("F25", frames, tmp_path)["tuning_optimism"].description
+    for r in table[table["optimism"].notna()].itertuples():
+        assert f"{r.method} {r.optimism:+.2f}" in got  # the optimism is in the caption
+    assert "selected on all its final seeds: ppo" in got
+    assert "ppo" not in said(fig)  # no method names on the image: legend_methods
 
 
-def test_a_legend_of_long_labels_drops_columns_to_fit(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+def test_tuning_optimism_has_no_legend_and_no_text_beyond_ticks_and_labels(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    table = optimism_table(frames)
-    table["method"] = ["count-bonus-ppo-rnn", "count-bonus-pqn-rnn", "ppo"]
-    table["optimism"] = [0.123, -0.456, np.nan]
-    fig = plot_tuning_optimism(frames, tmp_path, n_boot=N, table=table)
-    fig.canvas.draw()
-    legend = fig.legends[0].get_window_extent(fig.canvas.get_renderer())  # type: ignore[attr-defined]
-    assert legend.x0 >= 0
-    assert legend.x1 <= fig.bbox.x1
-
-
-def test_a_one_entry_legend_becomes_a_note(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    table = optimism_table(frames)
-    table = table[table["method"] != "dyna-q"]
-    fig = plot_tuning_optimism(frames, tmp_path, n_boot=N, table=table)
+    fig = plot_tuning_optimism(
+        frames_1m, tmp_path, n_boot=N, table=optimism_table(frames_1m)
+    )
     assert not fig.legends
-    assert "Shown: sil (" in said(fig)
+    assert fig.axes[0].get_legend() is None
+    assert not fig.axes[0].texts
 
 
 # --- F26 episode spread -------------------------------------------------------------
 
 
-def test_episode_spread_shares_and_length_profile(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+def test_episode_spread_shares_and_the_mean_triangles(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
+    frames = frames_1m
     fig = plot_episode_spread(frames, tmp_path)
     mesh = by_gid(fig, "heat/1m/achievements")
     assert isinstance(mesh, QuadMesh)
     grid = np.ma.filled(mesh.get_array(), np.nan).reshape(len(LEVEL), -1) / 100
     rows = [t.get_text() for t in mesh.axes.get_yticklabels()]
-    eps = final_checkpoint(frames["eval_episodes"])
-    eps = eps[(eps["mode"] == "stochastic") & (eps["budget"] == "1m")]
-    eps = eps[eps["config_ref"] == "tuned"]
+    eps = tuned_episodes(frames)
     for i, method in enumerate(rows):
         counts = eps.loc[eps["method"] == method, "n_achievements"]
         share = counts.value_counts(normalize=True)
@@ -547,8 +602,28 @@ def test_episode_spread_shares_and_length_profile(
         mean = eps.loc[eps["method"] == method, "n_achievements"].mean()
         tri = by_gid(fig, f"mean/1m/{method}")
         assert float(tri.get_xdata()[0]) == pytest.approx(mean + 0.5)  # type: ignore[attr-defined]
-    # length lines: the mean achievements of the method's episodes in each bin of the
-    # benchmark's equal-count length bins, at the bin's median length
+
+
+def tuned_episodes(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    eps = final_checkpoint(frames["eval_episodes"])
+    eps = eps[(eps["mode"] == "stochastic") & (eps["budget"] == "1m")]
+    return eps[eps["config_ref"] == "tuned"]
+
+
+def test_episode_spread_writes_two_files_one_panel_each(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    got = captions_of("F26", frames_1m, tmp_path)
+    assert set(got) == {"episode_spread", "achievements_vs_length"}
+    for stem in got:
+        assert (tmp_path / f"{stem}.png").is_file()
+
+
+def test_the_length_lines_are_the_bin_means_of_the_equal_count_bins(
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_achievements_vs_length(frames_1m, tmp_path)
+    eps = tuned_episodes(frames_1m)
     edges = np.unique(np.quantile(eps["length"], np.linspace(0, 1, 9)))
     for method in ("sil", "dyna-q"):
         mine = eps[eps["method"] == method]
@@ -566,8 +641,9 @@ def test_episode_spread_shares_and_length_profile(
 
 
 def test_distil_score_points_and_the_spearman(
-    frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
+    frames = frames_1m
     fig = plot_distil_score(frames, tmp_path, interpretation=trees)
     runs = frames["runs"]
     tuned = runs[(runs["config_ref"] == "tuned") & (runs["budget"] == "1m")]
@@ -592,17 +668,18 @@ def test_distil_score_points_and_the_spearman(
         ).statistic
         for m in DISTILLED
     ])
-    text = said(fig)
-    assert f"pooled Spearman rho {rho:.2f}" in text
+    text = captions_of("F27", frames, tmp_path, trees=trees)["distil_score"].description
+    assert f"Pooled Spearman rho {rho:.2f}" in text
     assert f"within methods {within:.2f}" in text
-    for want in ("pending", "pqn-rnn", "combo"):
+    for want in ("Distillation pending", "pqn-rnn", "combo"):
         assert want in text
+    assert "rho" not in said(fig)  # the numbers moved to the caption
 
 
 def test_distil_features_heat_map_is_the_mean_importance(
-    frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
 ) -> None:
-    fig = plot_distil_features(frames, tmp_path, interpretation=trees)
+    fig = plot_distil_features(frames_1m, tmp_path, interpretation=trees)
     mesh = by_gid(fig, "heat/1m/importance")
     assert isinstance(mesh, QuadMesh)
     grid = np.ma.filled(mesh.get_array(), np.nan).reshape(len(FEATURES), len(DISTILLED))
@@ -621,8 +698,8 @@ def test_distil_features_heat_map_is_the_mean_importance(
 
 
 def test_distillation_figures_without_any_policy_say_so(
-    frames: dict[str, pd.DataFrame], tmp_path: Path
+    frames_1m: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     for fn in (plot_distil_score, plot_distil_features):
-        fig = fn(frames, tmp_path, interpretation=tmp_path / "none")
+        fig = fn(frames_1m, tmp_path, interpretation=tmp_path / "none")
         assert "pending" in said(fig)

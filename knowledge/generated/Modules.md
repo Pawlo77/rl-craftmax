@@ -17,7 +17,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1475 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1278 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1174 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2555 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 946 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 842 | [[analysis]] |
@@ -45,7 +45,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 271 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/rules.py]] | Rules and importance of distilled trees, and the top-level rules of skill methods. |  |  | 510 | [[interpretation]] |
-| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 931 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 950 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/tree_policy.py]] | Decision trees played as policies, and their closed-loop fidelity. |  |  | 345 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow tracking, finals. |  |  | 139 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
@@ -89,7 +89,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/visualisation/review.py]] | Review: keep/drop CSV (source of truth), previews, contact sheet, one static page. |  |  | 173 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/rollout.py]] | Rollout record (seed, key scheme, actions, per-step features), policies, replay. |  |  | 699 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/text.py]] | Pillow text overlays (captions, banners, cards, labels): ffmpeg lacks drawtext. |  |  | 144 | [[visualisation]] |
-| [[src/wut_murl_craftax/visualisation/timeline.py]] | Achievement timeline: animated heatmap of success per achievement over training. |  |  | 137 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/timeline.py]] | Achievement timeline: animated heatmap of success per achievement over training. |  |  | 156 | [[visualisation]] |
 
 ## Modules no architecture note lists
 
