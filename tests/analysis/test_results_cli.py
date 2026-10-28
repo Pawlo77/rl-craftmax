@@ -39,7 +39,7 @@ STEMS = [
     "sensitivity", "stability", "hardware", "race_steps", "race_wall",
     "order_agreement", "funnel", "funnel_training", "deaths", "stalls", "splits",
     "coverage", "survival", "combat", "actions", "resources", "advanced", "radar_1m",
-    "radar_1b", *(f"order_{m}" for m in METHODS),
+    *(f"order_{m}" for m in METHODS),
 ]  # fmt: skip
 """The figure file stems of the plan's list (F1 to F20), one per file."""
 ANGLE_STEMS = [
@@ -149,17 +149,31 @@ def _files(folder: Path, stems: list[str], suffixes: tuple[str, ...]) -> list[Pa
 def test_a_full_run_writes_every_figure_in_both_themes_and_widths(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    missing = [
-        p.name for p in _files(base.out / "figures", STEMS, VARIANTS) if not p.is_file()
-    ]
+    folder = base.out / "figures" / "1m"
+    missing = [p.name for p in _files(folder, STEMS, VARIANTS) if not p.is_file()]
     assert not missing
     assert not full.problems
+
+
+def test_each_benchmark_has_its_own_figure_folder_and_captions(
+    full: ResultsSummary, base: ResultsOptions
+) -> None:
+    root = base.out / "figures"
+    assert not list(root.glob("*.png")), "no flat figure files"
+    assert {p.name for p in root.iterdir() if p.is_dir()} == {"1m", "1b"}
+    assert (root / "1b" / "curves_score.png").is_file()
+    assert (root / "1b" / "radar_1b.png").is_file()
+    assert not (root / "1b" / "poi_matrix.png").exists()  # the PoI needs 10 seeds
+    assert not (root / "1m" / "radar_1b.png").exists()
+    for budget in ("1m", "1b"):
+        captions = pd.read_csv(root / budget / "captions.csv")
+        assert list(captions.columns) == ["stem", "id", "title", "description"]
 
 
 def test_a_full_run_writes_the_analysis_angle_figures(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    folder = base.out / "figures"
+    folder = base.out / "figures" / "1m"
     missing = [
         f"{s}{v}.png" for s in ANGLE_STEMS for v in VARIANTS
         if not (folder / f"{s}{v}.png").is_file()
@@ -191,7 +205,7 @@ def test_a_failing_reproduction_gate_still_writes_everything(
     assert row.loc[("ppo-rnn", "1m"), "status"] == "pass"
     assert row.loc[("ppo", "1m"), "gap"] == pytest.approx(-3.0)
     assert "ppo" in " ".join(full.failed_gates)
-    assert (base.out / "figures" / "curves_score.png").is_file()
+    assert (base.out / "figures" / "1m" / "curves_score.png").is_file()
     assert (base.report_dir / "numbers.tex").is_file()
 
 
@@ -206,16 +220,17 @@ def test_the_report_folder_gets_tables_numbers_and_report_figures(
     assert r"\scoreOneMPpo}" in numbers
     assert r"\closedLoopOneMSil}" in numbers
     assert r"\closedLoopOneMSilNoMemory}" in numbers
-    figures = {p.name for p in (report / "figures").glob("*.png")}
+    figures = {p.name for p in (report / "figures" / "1m").glob("*.png")}
     assert "curves_score_double.png" in figures
-    assert "fidelity_vs_leaves_1m.png" in figures
+    assert "fidelity_vs_leaves.png" in figures
     assert not [n for n in figures if n.endswith("_video.png")]
+    assert not list((report / "figures").glob("*.png")), "no flat figure files"
 
 
 def test_the_fidelity_figure_is_copied_into_the_results_figures(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    got = base.out / "figures" / "fidelity_vs_leaves_1m.png"
+    got = base.out / "figures" / "1m" / "fidelity_vs_leaves.png"
     assert got.read_bytes() == b"PNG fidelity"
 
 
@@ -254,7 +269,7 @@ def test_the_run_is_logged_as_comparison_final_in_experiment_analysis(
     tables = {a.path for a in client.list_artifacts(found.info.run_id, "tables")}
     assert "tables/main.csv" in tables
     figures = {a.path for a in client.list_artifacts(found.info.run_id, "figures")}
-    assert "figures/curves_score.png" in figures
+    assert {"figures/1m", "figures/1b"} <= figures
 
 
 # --- resume and idempotence ---------------------------------------------------------
@@ -264,7 +279,7 @@ def test_a_rerun_skips_finished_stages_and_keeps_the_outputs_and_the_run(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
     tables = base.out / "tables" / "main.csv"
-    fig = base.out / "figures" / "curves_score.png"
+    fig = base.out / "figures" / "1m" / "curves_score.png"
     before = (tables.read_bytes(), fig.stat().st_mtime_ns)
     again = run_comparison(base)
     assert not again.done
@@ -294,6 +309,7 @@ def _two_stub_figures(
 
     def stub(fid: str) -> Callable[..., None]:
         def draw(frames: object, folder: Path, theme: str, *, width: str, **kw: object):
+            folder.mkdir(parents=True, exist_ok=True)
             (folder / f"{fid}_{theme}_{width}.png").write_bytes(b"x")
 
         return draw
@@ -301,6 +317,33 @@ def _two_stub_figures(
     figures = {"F1": stub("F1"), "F6": stub("F6")}
     monkeypatch.setattr(results, "figure_functions", lambda: figures)
     return replace(base, out=tmp_path / "r", report_dir=tmp_path / "p", log=False)
+
+
+def test_a_figure_stage_draws_each_benchmark_alone_and_writes_its_captions(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wut_murl_craftax.visualisation import charts
+
+    seen: list[tuple[str, set[str]]] = []
+
+    def stub(frames: dict, folder: Path, theme: str, *, width: str, **kw: object):  # type: ignore[type-arg]
+        seen.append((folder.name, set(frames["runs"]["budget"])))
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"toy_{theme}.png").write_bytes(b"x")
+        charts.register_caption("toy", "Toy", f"Drawn at {folder.name}.")
+
+    monkeypatch.setattr(results, "figure_functions", lambda: {"F1": stub})
+    opts = replace(base, out=tmp_path / "r", report_dir=tmp_path / "p", log=False)
+    run_comparison(opts)
+    assert {(name, tuple(b)) for name, b in seen} == {
+        ("1m", ("1m",)),
+        ("1b", ("1b",)),
+    }
+    for budget in ("1m", "1b"):
+        rows = (opts.out / "figures" / budget / "captions.csv").read_text()
+        lines = rows.splitlines()
+        assert lines[0] == "stem,id,title,description"
+        assert f"toy,F1,Toy,Drawn at {budget}." in lines
 
 
 def test_changed_inputs_redo_the_tables_and_the_figures(
@@ -330,7 +373,7 @@ def test_a_deleted_output_redoes_its_stage(
 ) -> None:
     opts = _two_stub_figures(monkeypatch, base, tmp_path)
     run_comparison(opts)
-    (opts.out / "figures" / "F1_video_column.png").unlink()
+    (opts.out / "figures" / "1m" / "F1_video_column.png").unlink()
     (opts.out / "tables" / "main.csv").unlink()
     again = run_comparison(opts)
     assert (opts.out / "tables" / "main.csv").is_file()  # tables are rewritten
@@ -415,9 +458,9 @@ def test_no_complexity_skips_only_what_depends_on_it(
     assert "spearman" not in numbers
     assert (out / "tables" / "main.csv").is_file()
     assert (out / "tables" / "sensitivity.csv").is_file()
-    assert (out / "figures" / "F1_report_column.png").is_file()
-    assert not list((out / "figures").glob("fidelity*"))
-    assert not list((report / "figures").glob("fidelity*"))
+    assert (out / "figures" / "1m" / "F1_report_column.png").is_file()
+    assert not list((out / "figures").glob("*/fidelity*"))
+    assert not list((report / "figures").glob("*/fidelity*"))
     assert not (out / ".stages" / "log.json").exists()
 
 
@@ -528,8 +571,8 @@ def test_no_complexity_removes_stale_fidelity_files_and_does_not_copy_them(
 ) -> None:
     full_opts, partial = _stub_full_then_partial(base, tmp_path, monkeypatch)
     run_comparison(full_opts)
-    assert (full_opts.out / "figures" / "fidelity_vs_leaves_1m.png").is_file()
-    (full_opts.report_dir / "figures" / "fidelity_vs_leaves_1m.png").unlink()
+    assert (full_opts.out / "figures" / "1m" / "fidelity_vs_leaves.png").is_file()
+    (full_opts.report_dir / "figures" / "1m" / "fidelity_vs_leaves.png").unlink()
     run_comparison(partial)
     assert not list((partial.out / "figures").glob("fidelity*"))
     assert not list((partial.report_dir / "figures").glob("fidelity*"))

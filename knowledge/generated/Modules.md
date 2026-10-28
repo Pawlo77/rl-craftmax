@@ -16,15 +16,15 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 497 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1403 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1475 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1278 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2544 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 882 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 830 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2555 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 946 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 842 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 433 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/obstacles.py]] | Obstacle detectors of the training analysis, their registry and the obstacles table. |  | [[2026-10-20-craftax-training-analysis]] | 1521 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/results.py]] | Run the method comparison: tables T1-T7, figures F1-F28, report files, MLflow run. |  | [[2026-10-20-craftax-comparison-and-results]] | 688 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/results.py]] | Run the method comparison: tables T1-T7, figures F1-F28, report files, MLflow run. |  | [[2026-10-20-craftax-comparison-and-results]] | 754 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/training.py]] | Training analysis of every method: hard scenarios, obstacles and case episodes. |  | [[2026-10-20-craftax-training-analysis]] | 554 | [[analysis]] |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. |  |  | 149 |  |
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, records, statistics, pair, export. |  |  | 418 | [[evaluation]] |
@@ -76,7 +76,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. |  |  | 1454 |  |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. |  |  | 237 | [[training]] |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. |  |  | 124 | [[visualisation]] |
-| [[src/wut_murl_craftax/visualisation/charts.py]] | Chart colours, the seaborn figure theme and the dark animation frames. |  |  | 584 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/charts.py]] | Chart colours, the seaborn figure theme and the dark animation frames. |  |  | 807 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/curves.py]] | Animated training curves: % of max reward, achievements unlocked, success rates. |  |  | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/cuts.py]] | Cuts from the reviewed CSV: clips, cards, 3-min (16:9, Short) and 12-min cuts, GIFs. |  |  | 410 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. |  |  | 750 | [[visualisation]] |

@@ -657,11 +657,62 @@ def _plain_log(axis: Axis) -> None:
     axis.set_minor_locator(NullLocator())
 
 
-def _percent_axis(ax: Axes, which: str) -> None:
-    """Symlog percent axis from 0 to 100 (rates of a few % stay readable)."""
+def _percent_axis(ax: Axes, which: str, *, unit: bool = True) -> None:
+    """Symlog percent axis from 0 to 100 (rates of a few % stay readable).
+
+    ``unit=False`` leaves the ``%`` off the tick labels (the axis label says it): in a
+    row of narrow panels ``10%`` and ``100%`` would run together.
+    """
     getattr(ax, f"set_{which}scale")("symlog", linthresh=1.0)
     getattr(ax, f"set_{which}lim")(-0.3, 100)  # room for the 0 marks
-    getattr(ax, f"set_{which}ticks")(PERCENT_TICKS, [f"{p}%" for p in PERCENT_TICKS])
+    labels = [f"{p}%" if unit else str(p) for p in PERCENT_TICKS]
+    getattr(ax, f"set_{which}ticks")(PERCENT_TICKS, labels)
+
+
+def _titles(
+    fig: Figure,
+    th: charts.Theme,
+    axes: Sequence[Axes],
+    table: pd.DataFrame,
+    keys: Sequence[tuple[str, str]],
+    shared: str,
+) -> None:
+    """One title when there is one panel; else a figure title and a variant per panel.
+
+    The shared part (``<method>: <basis>``) goes once above the panels, each panel is
+    titled with its variant (``tuned``, ``no-flags``) only. A table of several methods
+    keeps the full unit label on every panel.
+    """
+    subject = _subject(table)
+    if len(keys) > 1 and "," not in subject:
+        fig.suptitle(
+            f"{subject}: {shared}", x=0.01, ha="left", fontsize=th.title, color=th.ink
+        )
+        for ax, (_, ref) in zip(axes, keys, strict=True):
+            _title(ax, th, ref)
+        return
+    for ax, key in zip(axes, keys, strict=True):
+        _title(ax, th, f"{_label(*key)}: {shared}")
+
+
+def _never_groups(table: pd.DataFrame, keys: Sequence[tuple[str, str]]) -> list[str]:
+    """Tier and floor groups (``intermediate f1``) never unlocked in any panel."""
+    first = _rows_of(table, keys[0])
+    out = []
+    for group, rows in first.assign(
+        group=first["tier"] + " f" + first["floor"].astype(str)
+    ).groupby("group", sort=False):
+        names = set(rows["achievement"])
+        every = all(
+            (
+                _rows_of(table, k).set_index("achievement").loc[sorted(names), "status"]
+                == NEVER
+            ).all()
+            for k in keys
+        )
+        if every:
+            out.append(str(group))
+    return out
 
 
 def plot_floor_reach(table: pd.DataFrame, out_dir: Path, theme: str = "report") -> Path:
@@ -761,6 +812,11 @@ def plot_achievement_status(
     basis = f"{_basis(table)}, final rate, best over all checkpoints"
     first = _rows_of(table, keys[0]).reset_index(drop=True)
     group = (first["tier"] + " f" + first["floor"].astype(str)).to_numpy()
+    folded = _never_groups(table, keys)
+    if len(folded) == len(dict.fromkeys(group)):  # nothing reached: keep one group
+        folded = folded[1:]
+    keep = ~np.isin(group, folded)
+    first, group = first[keep].reset_index(drop=True), group[keep]
     y = np.cumsum(np.r_[0.0, (group[1:] != group[:-1]) * 0.7 + 1.0])
     fig = _figure(th, ROW_MM * (y[-1] + 2) + 45)
     axes = fig.subplots(1, len(keys), sharey=True, squeeze=False)[0]
@@ -771,17 +827,23 @@ def plot_achievement_status(
         t = _rows_of(table, key).set_index("achievement").reindex(first["achievement"])
         _achievement_marks(ax, th, t, y)
         ax.axvline(RARE_RATE * 100, color=th.muted, ls="--", lw=1)
-        _percent_axis(ax, "x")
+        _percent_axis(ax, "x", unit=len(keys) < 3)
         ax.set_yticks(y, first["achievement"])
         ax.tick_params(axis="y", labelsize=label_pt, length=0)
         ax.set_ylim(y[-1] + 1, -1)
-        _title(ax, th, f"{_label(*key)}: {basis}")
+        charts.set_labels(ax, th, "% of eval episodes" if len(keys) > 2 else None)
+    _titles(fig, th, axes, table, keys, basis)
     for g in dict.fromkeys(group):
         axes[-1].text(
             1.03, y[group == g].mean(), g.replace("_", " "),
             transform=axes[-1].get_yaxis_transform(), fontsize=label_pt,
             color=th.muted, va="center",
         )  # fmt: skip
+    notes = []
+    if folded:
+        who = " by any variant" if len(keys) > 1 else ""
+        groups = ", ".join(g.replace("_", " ") for g in folded)
+        notes.append(f"Never unlocked{who}: {groups}.")
     _legend(
         fig,
         th,
@@ -792,6 +854,8 @@ def plot_achievement_status(
             _handle(MARK_LABELS[NEVER], color=th.ink, marker="x"),
             _handle(MARK_LABELS[NEVER_EVAL], marker="D", mec=th.ink, mfc="none"),
         ],
+        notes=notes,
+        notes_in_legend=True,
         loc="outside lower center",
         cols=3 if th.name == "video" else 5,
     )
@@ -840,7 +904,7 @@ def plot_death_causes(
         ax.set_xticks(range(len(steps)), ticks, rotation=60, ha="right")
         ax.set_ylim(0, 100)
         charts.set_labels(ax, th, "env steps")
-        _title(ax, th, f"{_label(*key)}: {_basis(table)}")
+    _titles(fig, th, axes, table, keys, _basis(table))
     charts.set_labels(axes[0], th, y="share of deaths (%)")
     handles = [
         Line2D([], [], marker="s", ls="", color=c, label=n) for n, c in colors.items()

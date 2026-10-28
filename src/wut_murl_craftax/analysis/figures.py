@@ -55,6 +55,7 @@ NAMES = {
     "F19": "stability",
     "F20": "hardware",
     "F2F3": "aggregate_poi",
+    "LEG": "legend_methods",
 }
 """Figure id -> file stem (``.png``; ``_double`` and ``_video`` mark the variants)."""
 STEPS = {"m": 1e6, "b": 1e9}
@@ -1389,7 +1390,78 @@ def plot_hardware(
     return _save(fig, th, out_dir, name)
 
 
+LEGEND_DESCRIPTION = (
+    "Colour, line style and marker of every method; the other figures carry no method "
+    "legend. Controls are dashed with their own marker, tuned methods solid, an "
+    "ablation of a method dotted with a hollow marker in the method's colour."
+)
+
+
+def method_handles(
+    th: Theme, names: Sequence[str], *, ablation: bool = False
+) -> list[Line2D]:
+    """One legend entry per method in its colour, line style and marker.
+
+    ``ablation`` adds a grey entry for the dotted, hollow ablation style.
+    """
+    handles = []
+    for m in names:
+        s = _style_of(th, m)
+        handles.append(
+            Line2D(
+                [], [], color=s["color"], ls=s["ls"], marker=s["marker"], ms=th.ms,
+                lw=max(th.lw, 1.0), label=m,
+            )
+        )  # fmt: skip
+    if ablation:
+        handles.append(
+            Line2D(
+                [], [], color=th.ink2, ls=":", marker="o", markerfacecolor=th.surface,
+                ms=th.ms, lw=max(th.lw, 1.0), label="ablation",
+            )
+        )  # fmt: skip
+    return handles
+
+
+def plot_legend_methods(
+    frames: Frames,
+    out_dir: Path,
+    theme: str = "report",
+    *,
+    width: str = "column",
+) -> Figure:
+    """``legend_methods``: the one legend of every method figure (no axes).
+
+    Every method of ``frames`` (controls first, then each block's methods) with its
+    colour, line style and marker; an ablation entry when the runs hold ablations.
+    The other figures drop their method legends and point here.
+    """
+    th, name = _theme(theme, width), NAMES["LEG"]
+    runs = frames["runs"]
+    if runs.empty:
+        return _no_data(name, th, out_dir, "no runs for the method legend")
+    names = list(
+        dict.fromkeys(
+            m
+            for _, r in compare.budgets(compare.tuned(runs))
+            for _, m, _ in compare.members(r)
+        )
+    )
+    ablation = bool((runs["config_ref"] != compare.TUNED).any())
+    handles = method_handles(th, names, ablation=ablation)
+    rows = -(-len(handles) // th.legend_cols)
+    fig = _figure(th, shape=charts.Shape.LEGEND, rows=rows)
+    fig.legend(
+        handles=handles, loc="center", ncol=th.legend_cols, fontsize=th.font,
+        frameon=False, labelcolor=th.ink2,
+    )  # fmt: skip
+    return _save(
+        fig, th, out_dir, name, title="Method legend", description=LEGEND_DESCRIPTION
+    )
+
+
 FIGURES: dict[str, Callable[..., Figure]] = {
+    "LEG": plot_legend_methods,
     "F1": plot_curves_score,
     "F2": plot_aggregate,
     "F3": plot_poi_matrix,

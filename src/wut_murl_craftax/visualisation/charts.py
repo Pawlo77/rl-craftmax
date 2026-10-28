@@ -10,10 +10,13 @@ legends sit outside the axes, figures are PNG only. `figure`, `style` and `frame
 the pixel-sized dark frames of the animated learning-process videos.
 """
 
+import contextlib
+import csv
+import enum
 import functools
 import logging
 import textwrap
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -26,6 +29,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure, FigureBase
 from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.text import Text
+from matplotlib.ticker import MaxNLocator
 
 SURFACE = "#1a1a19"
 """Chart background (dark surface)."""
@@ -139,8 +143,58 @@ logger = logging.getLogger(__name__)
 COLUMN_MM = 80.0
 """One Interspeech column: (170 mm text width - 10 mm gap) / 2."""
 MM = 1 / 25.4
-WIDTHS = {"column": COLUMN_MM, "double": 170.0}
-"""Report figure widths in mm: one column, or two columns."""
+TILE_MM = (COLUMN_MM - 2) / 2
+"""Two panels side by side in one column (2 mm gap); only if a panel reads at 39 mm."""
+WIDTHS = {"column": COLUMN_MM, "double": 170.0, "tile": TILE_MM}
+"""Report figure widths in mm: one column, two columns, half a column.
+
+Figures are included at ``width=\\linewidth`` with no scaling, so these are final."""
+
+
+class Shape(enum.StrEnum):
+    """The height class of a report figure: its width times an aspect, or rows."""
+
+    CURVE = "curve"
+    """Curves and scatters: height 0.62 of the width."""
+    DOTS = "dots"
+    """Short dot or bar panels (a few rows): 0.45 of the width."""
+    SQUARE = "square"
+    """Heat maps and polar plots: 1.0 of the width."""
+    ROWS = "rows"
+    """Long category lists: a fixed height per row, at most `MAX_ROWS_MM`."""
+    LEGEND = "legend"
+    """A figure with no axes (the method legend, a placeholder): sized by its text."""
+
+
+ASPECT: dict[Shape, float] = {Shape.CURVE: 0.62, Shape.DOTS: 0.45, Shape.SQUARE: 1.0}
+"""Height over width of the fixed-aspect classes."""
+MAX_ROWS_MM = 80.0
+"""A `Shape.ROWS` figure taller than this (about a third of a page) moves to the double
+width or is split into panels."""
+ROWS_BASE_MM = 14.0
+"""x axis, its label and the margins of a `Shape.ROWS` figure, besides its rows."""
+
+
+def shape_height_mm(th: "Theme", shape: Shape, rows: int | None = None) -> float:
+    """Report height in mm of ``shape`` at the theme's width (the video has its own).
+
+    ``CURVE``, ``DOTS`` and ``SQUARE`` are width times `ASPECT`; ``ROWS`` is
+    ``rows * th.pitch_mm + ROWS_BASE_MM`` (needs ``rows``); ``LEGEND`` needs ``rows`` as
+    the number of legend rows (4.2 mm each, 4 mm margin).
+
+    Raises:
+        ValueError: If ``rows`` is missing for ``ROWS`` or ``LEGEND``.
+    """
+    if shape in ASPECT:
+        return th.width * 25.4 * ASPECT[shape]
+    if rows is None:
+        msg = f"shape {shape.value!r} needs the number of rows"
+        raise ValueError(msg)
+    if shape is Shape.LEGEND:
+        return rows * 4.2 + 4.0
+    return rows * th.pitch_mm + ROWS_BASE_MM
+
+
 SERIES_LIGHT = ("#1c5cab", "#a8411a", "#127552", "#8f5f00")
 """`SERIES` on `SURFACE_LIGHT`: checkpoints and units of one method, report theme."""
 FONT = "DejaVu Sans"
@@ -188,8 +242,9 @@ def report_theme(width: str = "column") -> Theme:
     return Theme(
         "report", SURFACE_LIGHT, INK_LIGHT, INK2_LIGHT, MUTED_LIGHT, GRID_LIGHT,
         METHOD_COLORS_LIGHT, SEQUENTIAL_LIGHT, DIVERGING_LIGHT, mm * MM, None, 300,
-        7.0, 7.5, 3.3, 0.9, 3.0, "_double" if width == "double" else "",
-        4 if width == "double" else 2, round(56 * mm / COLUMN_MM), width == "double",
+        7.0, 7.5, 3.3, 0.9, 3.0, {"double": "_double", "tile": "_tile"}.get(width, ""),
+        4 if width == "double" else 1 if width == "tile" else 2,
+        round(56 * mm / COLUMN_MM), width == "double",
         SERIES_LIGHT,
     )  # fmt: skip
 
@@ -286,17 +341,35 @@ def _bind(fig: FigureBase, rc: Any) -> None:
     fig.subfigures = subfigures  # type: ignore[method-assign]  # per-instance wrapper
 
 
-def themed_figure(th: Theme, height_mm: float) -> Figure:
-    """A constrained-layout figure on the theme surface (report height: the rows).
+def themed_figure(
+    th: Theme,
+    height_mm: float | None = None,
+    *,
+    shape: Shape | None = None,
+    rows: int | None = None,
+) -> Figure:
+    """A constrained-layout figure on the theme surface.
 
-    Axes, legends and texts created on it (and on its subfigures) read the theme's
-    seaborn rc parameters; the global ``rcParams`` stay untouched.
+    The report height is ``height_mm``, or from ``shape`` (`shape_height_mm`: a fixed
+    aspect, or ``rows`` rows); the figure remembers its ``shape`` for the audit. The
+    video is always 1920 x 1080. Axes, legends and texts created on it (and on its
+    subfigures) read the theme's seaborn rc parameters; the global ``rcParams`` stay
+    untouched.
+
+    Raises:
+        ValueError: If neither ``height_mm`` nor ``shape`` is given.
     """
+    if shape is not None and height_mm is None:
+        height_mm = shape_height_mm(th, shape, rows)
+    if height_mm is None:
+        msg = "themed_figure needs a height_mm or a shape"
+        raise ValueError(msg)
     rc = rc_params(th)
     fig = Figure(
         figsize=(th.width, th.height or height_mm * MM), dpi=th.dpi,
         facecolor=th.surface, layout="constrained",
     )  # fmt: skip
+    fig.shape = shape  # type: ignore[attr-defined]  # read back by the audit
     FigureCanvasAgg(fig)
     _bind(fig, rc)
     fig.theme_rc = rc  # type: ignore[attr-defined]  # read back by `settle`, `write_png`
@@ -317,7 +390,48 @@ def style_axes(ax: Axes, th: Theme, *, grid: Literal["x", "y", "both"] = "x") ->
         spine.set_linewidth(0.5)
     ax.grid(axis=grid, color=th.grid, lw=0.5)
     ax.set_axisbelow(True)
+    nbins = 3 if th.name == "report" and not th.wide else 5  # 7 pt labels need room
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=nbins))
     return ax
+
+
+def label_inset_mm(th: Theme, labels: Sequence[str], pad_mm: float = 3.5) -> float:
+    """Left inset in mm that fits the longest of ``labels`` (measured) and a y label.
+
+    Panels meant to tile share one inset (the largest of the group), so their axes
+    line up when LaTeX sets them side by side or stacked.
+    """
+    from matplotlib.textpath import TextPath
+
+    widest = max(
+        (TextPath((0, 0), t, size=th.font).get_extents().width for t in labels),
+        default=0.0,
+    )  # points
+    return widest / 72 * 25.4 + pad_mm
+
+
+def add_panel(
+    fig: Figure,
+    *,
+    left_mm: float,
+    bottom_mm: float = 9.0,
+    right_mm: float = 2.0,
+    top_mm: float = 2.0,
+    **kwargs: Any,
+) -> Axes:
+    """One axes with exact insets in mm from the canvas edges (no layout engine).
+
+    ``left_mm`` holds the category or tick labels and the y label (see
+    `label_inset_mm`), ``bottom_mm`` the x tick labels and x label. Give every panel of
+    a tile group the same insets and size: their axes areas are then identical.
+    """
+    fig.set_layout_engine("none")
+    w, h = fig.get_size_inches() * 25.4
+    return fig.add_axes(
+        (left_mm / w, bottom_mm / h, 1 - (left_mm + right_mm) / w,
+         1 - (bottom_mm + top_mm) / h),
+        **kwargs,
+    )  # fmt: skip
 
 
 def heatmap(
@@ -537,15 +651,111 @@ def write_png(fig: Figure, path: Path) -> None:
         fig.savefig(path, facecolor=fig.get_facecolor(), dpi=fig.dpi)
 
 
-def save_png(fig: Figure, th: Theme, out_dir: Path, name: str) -> Figure:
+class Caption(NamedTuple):
+    """What the report says about one figure; the image itself carries no sentence."""
+
+    stem: str
+    """File stem without the ``_double`` / ``_video`` suffix (``combat_kills``)."""
+    title: str
+    """A few words that name the figure (the first cell of its row in the notes)."""
+    description: str
+    """What is drawn and how to read it, with the details the image leaves out."""
+
+
+_CAPTURES: list[dict[str, Caption]] = []
+"""Open `capture_captions` blocks, innermost last."""
+
+
+@contextlib.contextmanager
+def capture_captions() -> Iterator[list[Caption]]:
+    """Collect the `Caption` of every figure saved inside the block (one per stem).
+
+    The list fills while the block runs; a stem saved in several variants (column,
+    double, video) or twice keeps its last caption. Blocks may nest: each sees the
+    figures saved inside it.
+    """
+    found: dict[str, Caption] = {}
+    out: list[Caption] = []
+    _CAPTURES.append(found)
+    try:
+        yield out
+    finally:
+        _CAPTURES.pop()
+        out.extend(found.values())
+
+
+def register_caption(stem: str, title: str, description: str) -> None:
+    """Record the caption of figure ``stem`` in every open `capture_captions` block.
+
+    Raises:
+        ValueError: If the title or the description is empty, or a text has a line
+            break or a pipe (one table cell each in the notes).
+    """
+    for text in (title, description):
+        if not text.strip() or "\n" in text or "|" in text:
+            msg = f"caption of {stem!r} needs one-line text without '|', got {text!r}"
+            raise ValueError(msg)
+    for found in _CAPTURES:
+        found[stem] = Caption(stem, title, description)
+
+
+def figure_dir(out_dir: Path, budget: str) -> Path:
+    """The folder of one benchmark's figures: ``<out_dir>/<budget>`` (``1m``, ``1b``).
+
+    A 1B run adds ``1b/`` beside ``1m/`` without touching it; stems carry no budget.
+    """
+    return out_dir / budget
+
+
+CAPTION_COLUMNS = ("stem", "id", "title", "description")
+"""Columns of ``captions.csv``, which every figure stage keeps next to its PNGs."""
+
+
+def write_captions(folder: Path, fid: str, rows: Sequence[Caption]) -> Path:
+    """Replace the ``fid`` rows of ``<folder>/captions.csv`` by ``rows``; return it.
+
+    The file lists every figure of the folder (``stem,id,title,description``), the id
+    being the figure id of the stage (``F13``). Rows of other ids are kept, so one
+    stage rerun never loses the captions of the others.
+    """
+    path = folder / "captions.csv"
+    keep: list[dict[str, str]] = []
+    if path.is_file():
+        with path.open(newline="") as f:
+            keep = [r for r in csv.DictReader(f) if r["id"] != fid]
+    keep += [
+        {"stem": r.stem, "id": fid, "title": r.title, "description": r.description}
+        for r in rows
+    ]
+    folder.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CAPTION_COLUMNS)
+        writer.writeheader()
+        writer.writerows(keep)
+    return path
+
+
+def save_png(
+    fig: Figure,
+    th: Theme,
+    out_dir: Path,
+    name: str,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+) -> Figure:
     """Write ``<name><suffix>.png`` into ``out_dir`` (PNG only) and return ``fig``.
 
     Titles are wrapped to their panels and the layout is fitted to the canvas first
     (`wrap_titles`, `fit_canvas`), so nothing is cropped and the report widths and
-    the 1080p frame stay exact.
+    the 1080p frame stay exact. With ``description`` the figure registers its
+    `Caption` (``title`` and ``description``, stem ``name``): that is where the text
+    that is not on the image goes.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     write_png(fig, out_dir / f"{name}{th.suffix}.png")
+    if description is not None:
+        register_caption(name, title or name.replace("_", " "), description)
     return fig
 
 
@@ -556,14 +766,27 @@ def finish(
     notes: Sequence[str] = (),
     cols: int | None = None,
     loc: Any = "outside upper center",
+    *,
+    notes_in_legend: bool = False,
 ) -> None:
-    """Legend outside the axes (``loc``: above them by default), notes below them."""
+    """Legend outside the axes (``loc``: above them by default), notes below them.
+
+    ``notes_in_legend`` puts the notes in the legend as its left-aligned title: a
+    legend and a note both at the bottom edge are placed over each other by the
+    layout engine, one box has no such problem.
+    """
+    text = "\n".join(textwrap.fill(n, th.wrap) for n in notes if n)
     if handles:
-        fig.legend(
+        legend = fig.legend(
             handles=list(handles), loc=loc, ncol=cols or th.legend_cols,
             fontsize=th.font, frameon=False, labelcolor=th.ink2,
+            title=text if notes_in_legend and text else None,
+            alignment="left" if notes_in_legend else "center",
         )  # fmt: skip
-    text = "\n".join(textwrap.fill(n, th.wrap) for n in notes if n)
+        if notes_in_legend and text:
+            legend.get_title().set_color(th.muted)
+            legend.get_title().set_fontsize(th.font)
+            text = ""
     if text:
         fig.supxlabel(
             text, x=0.01, ha="left", fontsize=th.font, color=th.muted,

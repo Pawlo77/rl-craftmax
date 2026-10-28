@@ -891,3 +891,41 @@ def test_import_is_light() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.split() == ["False", "False"]
+
+
+def test_several_variants_share_one_title_and_fold_never_unlocked_tiers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    figures: list[Figure] = []
+
+    def keep(fig: Figure, out_dir: Path, name: str) -> Path:
+        figures.append(fig)
+        return out_dir / name
+
+    monkeypatch.setattr(hard, "_save", keep)
+    status = achievement_status(achievement_frame())
+    refs = ("tuned", "monte-carlo", "no-flags", "random-top")
+    table = pd.concat([status.assign(config_ref=r) for r in refs])
+    plot_achievement_status(table, tmp_path)
+    (fig,) = figures
+    title = fig._suptitle.get_text()  # type: ignore[attr-defined]  # matplotlib private
+    assert title.startswith(f"{table['method'].iloc[0]}: stochastic eval")
+    panels = [a.get_title(loc="left") for a in fig.axes]
+    assert panels == list(refs)  # the variant only, the shared part is above
+    legend = fig.legends[0]
+    note = legend.get_title().get_text().replace("\n", " ")
+    never = table[table["status"] == NEVER]
+    folded = note.split(": ", 1)[1].rstrip(".").split(", ") if "variant" in note else []
+    assert "by any variant" in note or not folded
+    shown = {t.get_text() for t in fig.axes[0].get_yticklabels()}
+    for group in folded:  # a folded tier is all never in every variant and not drawn
+        tier, floor = group.rsplit(" f", 1)
+        names = set(
+            table[
+                (table["tier"] == tier.replace(" ", "_"))
+                & (table["floor"] == int(floor))
+            ]["achievement"]
+        )
+        assert names
+        assert not names & shown
+        assert set(never[never["achievement"].isin(names)]["achievement"]) == names

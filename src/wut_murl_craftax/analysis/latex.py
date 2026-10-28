@@ -813,18 +813,30 @@ def drop_pdfs(folder: Path, stems: Collection[str] | None = None) -> list[Path]:
 
 
 def copy_figures(results_dir: Path, out_dir: Path = FIGURES_DIR) -> list[Path]:
-    """Copy the report PNGs of ``results_dir`` (no ``_video`` file) to ``out_dir``.
+    """Copy the report PNGs of ``results_dir`` to ``out_dir``, one folder per benchmark.
 
-    Figures were PDF and PNG once: the ``<stem>.pdf`` of every copied figure is deleted
-    from ``out_dir`` so the report never includes a stale vector file; other files stay.
+    ``<results_dir>/<budget>/<stem>[_double].png`` goes to ``<out_dir>/<budget>/`` (no
+    ``_video`` file). Stale files go: the flat ``<out_dir>/*.png`` and ``*.pdf`` of the
+    old layout, and in each benchmark folder every PNG the run no longer writes and
+    every ``<stem>.pdf`` of a copied figure; other files stay.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    sources = [
-        p for p in sorted(results_dir.glob("*.png")) if not p.stem.endswith("_video")
-    ]
-    drop_pdfs(out_dir, {p.stem for p in sources})
+    for old in [*out_dir.glob("*.png"), *out_dir.glob("*.pdf")]:
+        old.unlink()
     copied = []
-    for src in sources:
-        shutil.copy2(src, out_dir / src.name)
-        copied.append(out_dir / src.name)
+    folders = results_dir.iterdir() if results_dir.is_dir() else []
+    for folder in sorted(p for p in folders if p.is_dir()):
+        dest = out_dir / folder.name
+        dest.mkdir(parents=True, exist_ok=True)
+        sources = [
+            p for p in sorted(folder.glob("*.png")) if not p.stem.endswith("_video")
+        ]
+        keep = {p.name for p in sources}
+        for old in dest.glob("*.png"):
+            if old.name not in keep:
+                old.unlink()
+        drop_pdfs(dest, {p.stem for p in sources})
+        for src in sources:
+            shutil.copy2(src, dest / src.name)
+            copied.append(dest / src.name)
     return copied

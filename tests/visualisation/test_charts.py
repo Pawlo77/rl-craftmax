@@ -130,3 +130,109 @@ def test_a_long_panel_title_is_wrapped_to_its_axes(tmp_path: Path) -> None:
     empty = charts._left_title(fig.add_subplot(3, 1, 3))
     assert empty is not None
     assert empty.get_text() == ""
+
+
+# --- captions and per-benchmark folders -------------------------------------------
+
+
+def _saved_figure(tmp_path: Path, name: str, **caption: str) -> Path:
+    th = charts.report_theme()
+    fig = charts.themed_figure(th, 30)
+    charts.style_axes(fig.add_subplot(), th).plot([0, 1], [0, 1])
+    charts.save_png(fig, th, tmp_path, name, **caption)
+    return tmp_path / f"{name}.png"
+
+
+def test_a_saved_figure_registers_its_caption_under_the_stem(tmp_path: Path) -> None:
+    with charts.capture_captions() as rows:
+        _saved_figure(tmp_path, "toy", title="Toy", description="A line from 0 to 1.")
+        _saved_figure(tmp_path, "toy", title="Toy", description="The last one wins.")
+        _saved_figure(tmp_path, "plain")  # no description: nothing registered
+    assert rows == [charts.Caption("toy", "Toy", "The last one wins.")]
+
+
+def test_a_caption_registered_outside_a_block_is_dropped() -> None:
+    charts.register_caption("x", "X", "Nobody collects this.")  # no error
+
+
+@pytest.mark.parametrize("bad", ["", "  ", "two\nlines", "a | b"])
+def test_a_caption_text_is_one_cell(bad: str) -> None:
+    with pytest.raises(ValueError, match="caption of 'x'"):
+        charts.register_caption("x", "X", bad)
+    with pytest.raises(ValueError, match="caption of 'x'"):
+        charts.register_caption("x", bad, "fine")
+
+
+def test_captions_csv_keeps_the_rows_of_the_other_figure_ids(tmp_path: Path) -> None:
+    rows = [charts.Caption("a", "A", "first"), charts.Caption("b", "B", "second")]
+    charts.write_captions(tmp_path, "F1", rows)
+    charts.write_captions(tmp_path, "F2", [charts.Caption("c", "C", "third")])
+    path = charts.write_captions(tmp_path, "F1", [charts.Caption("a", "A", "new")])
+    lines = path.read_text().splitlines()
+    assert lines[0] == "stem,id,title,description"
+    assert sorted(lines[1:]) == ["a,F1,A,new", "c,F2,C,third"]
+
+
+def test_the_figure_folder_of_a_benchmark_is_a_subfolder() -> None:
+    assert charts.figure_dir(Path("figures"), "1m") == Path("figures/1m")
+
+
+# --- size classes: widths, aspect ratios, tiling insets ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("width", "mm"), [("column", 80.0), ("double", 170.0), ("tile", 39.0)]
+)
+def test_report_widths_are_exact_and_the_tile_is_half_a_column(
+    width: str, mm: float
+) -> None:
+    th = charts.theme("report", width)
+    assert th.width * 25.4 == pytest.approx(mm)
+    assert charts.TILE_MM == (charts.COLUMN_MM - 2) / 2
+    assert th.suffix == {"column": "", "double": "_double", "tile": "_tile"}[width]
+
+
+@pytest.mark.parametrize(
+    ("shape", "ratio"),
+    [(charts.Shape.CURVE, 0.62), (charts.Shape.DOTS, 0.45), (charts.Shape.SQUARE, 1.0)],
+)
+def test_a_fixed_aspect_shape_gives_height_over_width(
+    shape: charts.Shape, ratio: float
+) -> None:
+    th = charts.theme("report")
+    fig = charts.themed_figure(th, shape=shape)
+    w, h = fig.get_size_inches()
+    assert h / w == pytest.approx(ratio)
+    assert fig.shape == shape  # type: ignore[attr-defined]
+
+
+def test_a_rows_shape_grows_by_the_theme_pitch_per_row() -> None:
+    th = charts.theme("report")
+    two = charts.shape_height_mm(th, charts.Shape.ROWS, 2)
+    ten = charts.shape_height_mm(th, charts.Shape.ROWS, 10)
+    assert ten - two == pytest.approx(8 * th.pitch_mm)
+    with pytest.raises(ValueError, match="rows"):
+        charts.shape_height_mm(th, charts.Shape.ROWS)
+    with pytest.raises(ValueError, match="height_mm or a shape"):
+        charts.themed_figure(th)
+
+
+def test_the_video_keeps_its_frame_whatever_the_shape() -> None:
+    fig = charts.themed_figure(charts.VIDEO, shape=charts.Shape.CURVE)
+    assert tuple(fig.get_size_inches() * fig.dpi) == (1920, 1080)
+
+
+def test_tiled_panels_with_one_inset_have_identical_axes_boxes() -> None:
+    th = charts.theme("report")
+    inset = max(
+        charts.label_inset_mm(th, names) for names in (["ppo"], ["count-bonus-pqn-rnn"])
+    )
+    boxes = []
+    for _ in range(2):
+        fig = charts.themed_figure(th, shape=charts.Shape.DOTS)
+        ax = charts.add_panel(fig, left_mm=inset)
+        boxes.append(tuple(ax.get_position().bounds))
+    assert boxes[0] == boxes[1]
+    left, _, width, _ = boxes[0]
+    assert left * 80.0 == pytest.approx(inset)
+    assert (left + width) * 80.0 == pytest.approx(78.0)

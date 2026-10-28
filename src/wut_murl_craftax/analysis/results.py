@@ -68,8 +68,23 @@ COMPLEXITY_MACRO = re.compile(
 """Names of the macros built from ``complexity.csv`` (`latex.COMPLEXITY_QUANTITIES`)."""
 DISTIL_FIGURES = ("F27", "F28")
 """Figures that read the distillation's policy folders: their stage also hashes them."""
-FIDELITY = "fidelity_vs_leaves_{budget}"
-"""Stem of the distillation figure per budget (contracts section 3)."""
+BUDGET_ONLY: dict[str, tuple[str, ...]] = {
+    "F3": ("1m",),
+    "F18": ("1m",),
+    "F20": ("1m",),
+}
+"""Figure ids that exist for some benchmarks only: the PoI matrix needs the 10 seeds of
+1M (3 at 1B), the tuning phases and the hardware figure are 1M's."""
+FIDELITY = "fidelity_vs_leaves"
+"""Stem of the distillation figure; it sits in ``figures/<budget>/`` (contracts 3).
+
+The distillation writes ``<budget>/fidelity_vs_leaves.png`` (older runs
+``fidelity_vs_leaves_<budget>.png``, still found)."""
+FIDELITY_CAPTION = (
+    "Test top-1 fidelity of the distilled decision trees against their number of "
+    "leaves, per method and variant: how much of the policy a tree of that size "
+    "reproduces."
+)
 
 
 @dataclass(slots=True)
@@ -330,7 +345,7 @@ def figure_functions() -> dict[str, Callable[..., Any]]:
     game: dict[str, Callable[..., Any]] = dict(figures_game.GAME_FIGURES)
     game["F7G"] = figures_game.plot_order_graphs  # one file per method
     game["F17"] = figures_game.plot_radars  # one file per budget
-    order = ["F1", "F2", "F3", "F2F3", "F4", "F5", "F18", "F19", "F20"]
+    order = ["LEG", "F1", "F2", "F3", "F2F3", "F4", "F5", "F18", "F19", "F20"]
     return {k: core[k] for k in order} | game | dict(figures_angles.ANGLE_FIGURES)
 
 
@@ -360,7 +375,16 @@ def figure_kwargs(
 
 
 def _snapshot(folder: Path) -> dict[Path, int]:
-    return {p: p.stat().st_mtime_ns for p in folder.glob("*") if p.is_file()}
+    return {p: p.stat().st_mtime_ns for p in folder.rglob("*") if p.is_file()}
+
+
+def for_budget(kwargs: Mapping[str, Any], budget: str) -> dict[str, Any]:
+    """``kwargs`` with every table that has a ``benchmark`` column cut to ``budget``."""
+    out: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        has = isinstance(value, pd.DataFrame) and "benchmark" in value.columns
+        out[key] = value[value["benchmark"] == budget] if has else value
+    return out
 
 
 def draw(
@@ -368,12 +392,31 @@ def draw(
     frames: Frames,
     folder: Path,
     kwargs: Mapping[str, Any],
+    fid: str | None = None,
 ) -> list[Path]:
-    """Draw one figure function in every variant; return the files it wrote."""
+    """Draw one figure function in every variant, per benchmark; return the files.
+
+    A benchmark's figures go to ``<folder>/<budget>/`` (``1m/``), made from that
+    benchmark's runs and table rows alone, so a later 1B run adds ``1b/`` and leaves
+    ``1m/`` as it is. With ``fid`` the captions the function registered are written
+    to ``<folder>/<budget>/captions.csv`` (`charts.write_captions`).
+    """
+    from ..visualisation import charts
+    from .load import select
+
     folder.mkdir(parents=True, exist_ok=True)
     before = _snapshot(folder)
-    for theme, width in VARIANTS:
-        fn(frames, folder, theme, width=width, **kwargs)
+    budgets = sorted(set(frames["runs"]["budget"]))
+    for budget in budgets:
+        if budget not in BUDGET_ONLY.get(fid or "", budgets):
+            continue
+        out = charts.figure_dir(folder, budget)
+        part = frames if len(budgets) == 1 else select(frames, budget=budget, pool=True)
+        with charts.capture_captions() as captions:
+            for theme, width in VARIANTS:
+                fn(part, out, theme, width=width, **for_budget(kwargs, budget))
+        if fid is not None and captions:
+            charts.write_captions(out, fid, captions)
     return [p for p, m in _snapshot(folder).items() if before.get(p) != m]
 
 
@@ -381,7 +424,10 @@ def drop_old_pdfs(folder: Path) -> None:
     """Figures are PNG only: delete the ``*.pdf`` an earlier run left in ``folder``."""
     from . import latex
 
-    for path in latex.drop_pdfs(folder):
+    for path in [
+        *latex.drop_pdfs(folder),
+        *(p for sub in sorted(folder.glob("*/")) for p in latex.drop_pdfs(sub)),
+    ]:
         logger.info("removed %s (figures are PNG only)", path)
 
 
@@ -397,7 +443,11 @@ def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) ->
             fid: str = fid, fn: Callable[..., Any] = fn, frames: Frames | None = frames
         ) -> list[Path]:
             return draw(
-                fn, frames or inputs.full, o.out / "figures", figure_kwargs(fid, t, o)
+                fn,
+                frames or inputs.full,
+                o.out / "figures",
+                figure_kwargs(fid, t, o),
+                fid,
             )
 
         if fid == "F20" and "1b" in set(inputs.runs["runs"]["budget"]):
@@ -420,19 +470,35 @@ def _distil_stages(o: ResultsOptions, st: _Stages) -> _Stages:
 def copy_fidelity(
     o: ResultsOptions, folder: Path, budgets: Sequence[str]
 ) -> list[Path]:
-    """Copy the distillation's fidelity figures of ``budgets`` into ``folder``."""
+    """Copy the distillation's fidelity figure of each of ``budgets`` to its folder.
+
+    ``<complexity_root>/<budget>/fidelity_vs_leaves[_<budget>].png`` becomes
+    ``<folder>/<budget>/fidelity_vs_leaves.png`` with a row in that folder's
+    ``captions.csv`` (id ``FID``).
+    """
+    from ..visualisation import charts
+
     copied = []
     for budget in budgets:
-        src = o.complexity_root / budget / f"{FIDELITY.format(budget=budget)}.png"
-        if not src.is_file():
+        root = o.complexity_root / budget
+        found = [root / f"{FIDELITY}.png", root / f"{FIDELITY}_{budget}.png"]
+        src = next((p for p in found if p.is_file()), None)
+        if src is None:
             if budget == "1m":
                 logger.warning(
-                    "%s is missing: the report's fidelity figure is not copied", src
+                    "%s is missing: the report's fidelity figure is not copied",
+                    found[0],
                 )
             continue
-        folder.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, folder / src.name)
-        copied.append(folder / src.name)
+        dest = charts.figure_dir(folder, budget)
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest / f"{FIDELITY}.png")
+        charts.write_captions(
+            dest,
+            "FID",
+            [charts.Caption(FIDELITY, "Distillation fidelity", FIDELITY_CAPTION)],
+        )
+        copied.append(dest / f"{FIDELITY}.png")
     return copied
 
 
@@ -613,7 +679,7 @@ def run_comparison(o: ResultsOptions) -> ResultsSummary:
         budgets = sorted(set(inputs.runs["runs"]["budget"]))
         copy_fidelity(o, o.out / "figures", budgets)
     else:  # an earlier full run's copies would go on to the report as if current
-        for stale in (o.out / "figures").glob(FIDELITY.format(budget="*") + ".*"):
+        for stale in (o.out / "figures").glob(f"*/{FIDELITY}.*"):
             stale.unlink()
     write_report_files(inputs, t, s)
     if o.log:

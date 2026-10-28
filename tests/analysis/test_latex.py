@@ -499,9 +499,12 @@ def test_write_numbers_checks_the_report_macros(
     write_numbers(path, frames, **kw)  # type: ignore[arg-type]
 
 
-def test_copy_figures_takes_the_report_pngs_only(tmp_path: Path) -> None:
+def test_copy_figures_takes_the_report_pngs_of_each_benchmark_folder(
+    tmp_path: Path,
+) -> None:
     src, out = tmp_path / "results", tmp_path / "report" / "figures"
-    src.mkdir()
+    (src / "1m").mkdir(parents=True)
+    (src / "1b").mkdir()
     out.mkdir(parents=True)
     for name in (
         "aggregate.png",
@@ -509,16 +512,20 @@ def test_copy_figures_takes_the_report_pngs_only(tmp_path: Path) -> None:
         "aggregate_video.png",
         "aggregate.pdf",
     ):
-        (src / name).write_bytes(b"x")
-    (out / "aggregate.pdf").write_bytes(b"%PDF")  # an earlier build's vector file
-    (out / "handmade.pdf").write_bytes(b"%PDF")  # not a figure of this run: kept
+        (src / "1m" / name).write_bytes(b"x")
+    (src / "1b" / "aggregate.png").write_bytes(b"x")
+    (src / "captions.csv").write_text("stem,id,title,description\n")  # not a folder
+    (out / "aggregate.png").write_bytes(b"old flat")  # the old flat layout: removed
+    (out / "old.pdf").write_bytes(b"%PDF")
+    (out / "1m").mkdir()
+    (out / "1m" / "aggregate.pdf").write_bytes(b"%PDF")  # an earlier vector file
+    (out / "1m" / "handmade.pdf").write_bytes(b"%PDF")  # not a figure of this run
+    (out / "1m" / "gone.png").write_bytes(b"x")  # a stem the run no longer writes
     copied = copy_figures(src, out)
-    assert sorted(p.name for p in copied) == ["aggregate.png", "aggregate_double.png"]
-    assert sorted(p.name for p in out.iterdir()) == [
-        "aggregate.png",
-        "aggregate_double.png",
-        "handmade.pdf",
-    ]
+    names = sorted(str(p.relative_to(out)) for p in copied)
+    assert names == ["1b/aggregate.png", "1m/aggregate.png", "1m/aggregate_double.png"]
+    left = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file())
+    assert left == [*names, "1m/handmade.pdf"]
 
 
 def test_without_complexity_the_numbers_skip_those_macros_and_the_missing_file(

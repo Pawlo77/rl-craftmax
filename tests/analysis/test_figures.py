@@ -40,6 +40,7 @@ from wut_murl_craftax.analysis.figures import (
     plot_aggregate_poi,
     plot_curves_score,
     plot_hardware,
+    plot_legend_methods,
     plot_poi_matrix,
     plot_seed_spread,
     plot_sensitivity,
@@ -48,7 +49,11 @@ from wut_murl_craftax.analysis.figures import (
 )
 from wut_murl_craftax.evaluation.stability import config_scores
 from wut_murl_craftax.evaluation.stats import curve_band, step_grid
-from wut_murl_craftax.visualisation.charts import METHOD_COLORS, METHOD_COLORS_LIGHT
+from wut_murl_craftax.visualisation.charts import (
+    METHOD_COLORS,
+    METHOD_COLORS_LIGHT,
+    capture_captions,
+)
 
 N = 200
 """Bootstrap resamples in tests (the protocol's 10,000 only slow them down)."""
@@ -56,6 +61,7 @@ THEMES = ("report", "video")
 CONTROLS = ("ppo", "ppo-rnn", "pqn-rnn")
 PNG = b"\x89PNG\r\n\x1a\n"
 LABELS = {
+    "LEG": (),
     "F1": ("env steps", "score (% of max)"),
     "F2": ("final score (% of max)",),
     "F3": ("versus (column)", "method (row)"),
@@ -128,6 +134,7 @@ def draw(
         "F19": lambda: plot_stability(frames, out_dir, theme, **w),
         "F20": lambda: plot_hardware(frames, out_dir, theme, **w),
         "F2F3": lambda: plot_aggregate_poi(frames, out_dir, theme, n_boot=N, **w),
+        "LEG": lambda: plot_legend_methods(frames, out_dir, theme, **w),
     }
     return plain[fid]()
 
@@ -994,4 +1001,56 @@ def test_every_method_artist_is_drawn_in_a_method_colour(
             parts = artist.get_gid().split("/")
             method = parts[2] if kind in ("rc", "sens") else parts[3]
             assert to_hex(_colors(theme)[method]) in _hexes(artist), artist.get_gid()
-    assert checked or fid in ("F3", "F5")
+    assert checked or fid in ("F3", "F5", "LEG")
+
+
+# --- the one method legend -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_legend_methods_lists_every_method_with_its_colour_style_and_marker(
+    theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_legend_methods(frames, tmp_path, theme)
+    assert not fig.axes, "the legend is the whole figure"
+    (legend,) = fig.legends
+    labels = [t.get_text() for t in legend.get_texts()]
+    methods = [m for m in labels if m in METHOD_COLORS]
+    assert set(methods) == set(frames["runs"]["method"]) - {"ablation"}
+    assert methods[:3] == ["ppo", "ppo-rnn", "pqn-rnn"][: len(methods[:3])]  # controls
+    palette = _colors(theme)
+    for handle, label in zip(legend.legend_handles, labels, strict=True):
+        if label in CONTROLS:
+            assert handle.get_linestyle() == "--"
+        if label in METHOD_COLORS:
+            assert to_hex(handle.get_color()) == to_hex(palette[label])
+            assert handle.get_marker() not in ("", "None", None)
+
+
+def test_legend_methods_adds_the_ablation_style_when_runs_have_ablations(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_legend_methods(frames, tmp_path)
+    labels = [t.get_text() for t in fig.legends[0].get_texts()]
+    assert ("ablation" in labels) == bool(
+        (frames["runs"]["config_ref"] != "tuned").any()
+    )
+
+
+def test_legend_methods_has_a_caption_and_the_three_variants(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    with capture_captions() as rows:
+        for theme, width in (
+            ("report", "column"),
+            ("report", "double"),
+            ("video", "column"),
+        ):
+            plot_legend_methods(frames, tmp_path, theme, width=width)
+    assert {p.name for p in tmp_path.iterdir()} == {
+        "legend_methods.png",
+        "legend_methods_double.png",
+        "legend_methods_video.png",
+    }
+    assert [c.stem for c in rows] == ["legend_methods"]
+    assert "colour" in rows[0].description

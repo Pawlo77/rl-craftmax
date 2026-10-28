@@ -24,7 +24,8 @@ from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-from matplotlib.ticker import FuncFormatter
+from matplotlib.textpath import TextPath
+from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from ..evaluation.milestones import (
     ADVANCED_ACHIEVEMENTS,
@@ -64,6 +65,7 @@ from .figures import (
     _style_of,
     _theme,
     _title,
+    method_handles,
 )
 from .hard import ACHIEVEMENTS, TIERS, _cells, death_causes, stall_ccdf, stall_stats
 from .hard import stall_table as _stall_table
@@ -171,22 +173,7 @@ def _contexts(frames: Frames, n_boot: int = BOOTSTRAP_N, seed: int = 0) -> list[
 
 def _method_handles(th: Theme, names: Sequence[str]) -> list[Line2D]:
     """One legend entry per method in its colour and line style."""
-    handles = []
-    for m in names:
-        s = _style_of(th, m)
-        handles.append(
-            Line2D(
-                [],
-                [],
-                color=s["color"],
-                ls=s["ls"],
-                marker=s["marker"],
-                ms=th.ms,
-                lw=max(th.lw, 1.0),
-                label=m,
-            )
-        )
-    return handles
+    return method_handles(th, names)
 
 
 def _grid(fig: Figure, th: Theme, mm: Sequence[Sequence[float]]) -> list[list[Axes]]:
@@ -970,17 +957,27 @@ def _node_positions(nodes: pd.DataFrame) -> dict[str, tuple[float, int]]:
     }
 
 
-def _label_levels(pos: Mapping[str, tuple[float, float]], th: Theme) -> dict[str, int]:
+def _text_pt(name: str, th: Theme) -> float:
+    """Width in points of ``name`` at the theme's font size (DejaVu Sans, measured)."""
+    return float(TextPath((0, 0), name, size=th.font).get_extents().width)
+
+
+def _label_levels(
+    pos: Mapping[str, tuple[float, float]], th: Theme, columns: int = 1
+) -> dict[str, int]:
     """A stacking level per node name: labels of one tier never overlap or cross.
 
     Right to left, a label takes one level above every label to its right that its
     (estimated, 0.62 em a character) width reaches, so the vertical leader of a label
     never passes through another label.
     """
-    per_pt = 1.1 / (th.width * 72 * 0.75)  # x data units per point of axes width
+    share = (
+        0.7 / columns - 0.1
+    )  # axes width in figure widths (labels, gaps eat the rest)
+    per_pt = 1.1 / (th.width * 72 * share)  # x data units per point of axes width
     levels: dict[str, int] = {}
     for name, (x, y) in sorted(pos.items(), key=lambda kv: (kv[1][1], -kv[1][0])):
-        reach = x + (len(name) * 0.62 * th.font + 8) * per_pt
+        reach = x + (1.5 * _text_pt(name, th) + 8) * per_pt
         above = [
             levels[o] for o, (ox, oy) in pos.items() if o in levels and oy == y
             and x < ox < reach
@@ -991,7 +988,7 @@ def _label_levels(pos: Mapping[str, tuple[float, float]], th: Theme) -> dict[str
 
 def _label_pt(th: Theme, levels: Mapping[str, int]) -> float:
     """Height above a node that its labels need, in points."""
-    return LABEL_BASE_PT + (max(levels.values(), default=0) + 1) * th.font * 1.4
+    return LABEL_BASE_PT + (max(levels.values(), default=0) + 1) * th.font * 1.7
 
 
 def _tier_pt(th: Theme, need_pt: float, rows: int) -> float:
@@ -1015,6 +1012,7 @@ def _order_panel(
     *,
     labels: bool,
     tiers: Sequence[int],
+    columns: int = 1,
 ) -> None:
     """Nodes by mean rank (x) and tier (y, only the ``tiers`` drawn), arrows after."""
     color = _color(th, method)
@@ -1040,9 +1038,9 @@ def _order_panel(
         dot.set_gid(_gid("node", budget, method, name))
     need = 0.0
     if labels:
-        levels = _label_levels(pos, th)
+        levels = _label_levels(pos, th, columns)
         need = _label_pt(th, levels)
-        step = th.font * 1.4
+        step = th.font * 1.7
         for name, (x, y) in pos.items():
             ax.annotate(
                 name,
@@ -1091,7 +1089,10 @@ def plot_order_graph(
     tiers = sorted({y for n, _ in graphs for _, y in _node_positions(n).values()})
     tiers = tiers or [0]  # a graph with no node still draws its first tier
     need = max(
-        (_label_pt(th, _label_levels(_node_positions(n), th)) for n, _ in graphs),
+        (
+            _label_pt(th, _label_levels(_node_positions(n), th, len(graphs)))
+            for n, _ in graphs
+        ),
         default=0.0,
     )
     need = need if th.wide else 0.0
@@ -1104,7 +1105,15 @@ def plot_order_graph(
     notes = []
     for ax, ctx, (nodes, edges) in zip(axes, ctxs, graphs, strict=True):
         _order_panel(
-            ax, th, ctx.budget, method, nodes, edges, labels=th.wide, tiers=tiers
+            ax,
+            th,
+            ctx.budget,
+            method,
+            nodes,
+            edges,
+            labels=th.wide,
+            tiers=tiers,
+            columns=len(ctxs) if th.wide else 1,
         )
         _title(ax, th, _panel_title(ctx.budget, f"{method} order graph"))
         if edges.empty:
@@ -1562,6 +1571,8 @@ def _stall_ccdf_panel(ax: Axes, th: Theme, ctx: Ctx, notes: list[str]) -> None:
     ax.set_yscale("log")
     ax.xaxis.set_major_formatter(FuncFormatter(_num_text))
     ax.yaxis.set_major_formatter(FuncFormatter(_num_text))
+    for axis in (ax.xaxis, ax.yaxis):  # minor labels of a narrow range run together
+        axis.set_minor_formatter(NullFormatter())
     _labels(ax, th, "stall length (steps)", "share of stalls at least this long")
 
 
