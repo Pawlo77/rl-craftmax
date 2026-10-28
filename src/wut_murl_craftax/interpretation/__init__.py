@@ -16,6 +16,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         Dataset,
         collect,
         dataset_path,
+        relabel,
     )
     from .distill import (
         DEPTH_GRID,
@@ -93,6 +94,7 @@ _EXPORTS: dict[str, str] = {
     "fit_grid": "distill",
     "importance": "rules",
     "paths_to": "rules",
+    "relabel": "dataset",
     "rules_text": "rules",
     "top_level_rules": "rules",
     "tree_rollouts": "tree_policy",
@@ -140,6 +142,7 @@ __all__ = [
     "fit_grid",
     "importance",
     "paths_to",
+    "relabel",
     "rules_text",
     "top_level_rules",
     "tree_rollouts",
