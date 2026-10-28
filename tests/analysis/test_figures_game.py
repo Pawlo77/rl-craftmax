@@ -657,8 +657,9 @@ def test_f11_dots_are_the_median_of_the_seed_medians(
     fig = plot_coverage(frames, tmp_path, n_boot=N)
     dots = {a.get_gid(): xdata(a) for a in artists(fig, "coverage")}
     for method in ("ppo", "sil", "combo"):
-        for floor in range(len(FLOOR_COLUMNS)):
-            values = _seed_median(frames, method, f"coverage/{floor}")
+        for column in FLOOR_COLUMNS:
+            floor = column.removeprefix("coverage/")
+            values = _seed_median(frames, method, column)
             values = values[np.isfinite(values)]
             gid = f"coverage/1m/{method}/{floor}"
             if values.size:
@@ -676,10 +677,12 @@ def test_f11_a_floor_never_visited_is_left_out_not_zero(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
     fig = plot_coverage(frames, tmp_path, n_boot=N)
-    visited = [g for g in gids(fig, "coverage") if g.endswith("/2")]
+    visited = [g for g in gids(fig, "coverage") if g.endswith("/gnomish_mines")]
     eps = _method_eps(frames, "ppo", "1m")
-    assert eps["coverage/2"].isna().all()  # ppo never reaches floor 2 in the fixture
-    assert "coverage/1m/ppo/2" not in visited
+    assert (
+        eps["coverage/gnomish_mines"].isna().all()
+    )  # ppo never reaches floor 2 in the fixture
+    assert "coverage/1m/ppo/gnomish_mines" not in visited
     assert visited  # others do
 
 

@@ -1670,18 +1670,15 @@ def _dots(
 
 
 def _coverage_cats(ctx: Ctx) -> Cats:
-    keys = sorted(
-        (
-            c.removeprefix("coverage/")
-            for c in ctx.eps.columns
-            if c.startswith("coverage/")
-        ),
-        key=int,
-    )
-    labels = [
-        FLOOR_NAMES[int(k)] if int(k) < len(FLOOR_NAMES) else f"floor {k}" for k in keys
+    """Floors (``coverage/<floor name>``) in game order, then any unknown name."""
+    found = [
+        c.removeprefix("coverage/")
+        for c in ctx.eps.columns
+        if c.startswith("coverage/")
     ]
-    return Cats(keys, labels, _per_seed_of(ctx, "coverage/{}"))
+    rank = {n: i for i, n in enumerate(FLOOR_NAMES)}
+    keys = sorted(found, key=lambda n: (rank.get(n, len(rank)), n))
+    return Cats(keys, keys, _per_seed_of(ctx, "coverage/{}"))
 
 
 def _tiles_cats(ctx: Ctx) -> Cats:

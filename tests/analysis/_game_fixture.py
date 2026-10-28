@@ -20,7 +20,7 @@ ENTER = ("enter_dungeon", "enter_gnomish_mines", "enter_sewers")
 CREATURES = ("zombie", "skeleton")
 ACTIONS = ("noop", "left", "right", "do", "sleep")
 RESOURCES = ("wood", "stone", "diamond")
-FLOOR_COLUMNS = ("coverage/0", "coverage/1", "coverage/2")
+FLOOR_COLUMNS = ("coverage/overworld", "coverage/dungeon", "coverage/gnomish_mines")
 STAT_NAMES = ("food", "drink", "energy")
 
 
