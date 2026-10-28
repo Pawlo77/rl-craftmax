@@ -56,7 +56,7 @@ REF_NAMES = {
     "kappa0": "KappaZero",
 }
 """``config_ref`` -> its macro word (``tuned`` is omitted)."""
-VARIANT_NAMES = {"base": "", "dagger": "Dagger"}
+VARIANT_NAMES = {"base": "", "no-memory": "NoMemory", "dagger": "Dagger"}
 COMPLEXITY_QUANTITIES = {
     "l80_median": "lEighty",
     "l90_median": "lNinety",
@@ -188,15 +188,29 @@ def _leaves(v: float) -> str:
     return f"{v:.0f}" if v == int(v) else f"{v:.1f}"
 
 
+def _variant(variant: object) -> str:
+    """The macro word of a ``complexity.csv`` variant.
+
+    Raises:
+        ValueError: Naming a variant the macros have no word for.
+    """
+    try:
+        return VARIANT_NAMES[str(variant)]
+    except KeyError:
+        msg = f"complexity.csv variant {variant!r} has no macro word in VARIANT_NAMES"
+        raise ValueError(msg) from None
+
+
 def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
     """Macros of a ``complexity.csv``: leaves to fidelity 80/90/95%, fidelities, ratios.
 
-    Names follow `macro` with ``Dagger`` appended for the ``dagger`` variant; a leaf
-    count of ``inf`` reads "> 4096"; the Spearman value is one per budget and variant.
+    Names follow `macro` with ``NoMemory`` or ``Dagger`` appended for those variants;
+    a leaf count of ``inf`` reads "> 4096"; the Spearman value is one per budget and
+    variant.
     """
     out = []
     for r in frame.to_dict("records"):
-        tail = VARIANT_NAMES[r["variant"]]
+        tail = _variant(r["variant"])
         for col, quantity in COMPLEXITY_QUANTITIES.items():
             v = r.get(col)
             if v is None or (isinstance(v, float) and math.isnan(v)):
@@ -212,7 +226,7 @@ def complexity_numbers(frame: pd.DataFrame) -> list[Number]:
     for (budget, variant), g in frame.groupby(["budget", "variant"]):
         v = g["spearman_score_l90"].dropna()
         if len(v):
-            name = f"{SPEARMAN}{BUDGET_NAMES[str(budget)]}{VARIANT_NAMES[str(variant)]}"
+            name = f"{SPEARMAN}{BUDGET_NAMES[str(budget)]}{_variant(variant)}"
             out.append(Number(name, _fmt(float(v.iloc[0]), 3)))
     return out
 

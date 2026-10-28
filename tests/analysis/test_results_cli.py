@@ -57,6 +57,10 @@ COMPLEXITY = {
     "expected_fidelity_256": 0.95, "closed_loop_256": 0.5,
     "spearman_score_l90": -0.4321, "spearman_p": 0.2,
 }  # fmt: skip
+NO_MEMORY = {
+    **COMPLEXITY, "variant": "no-memory", "l90_median": 64.0, "fidelity_256": 0.8,
+}  # fmt: skip
+"""The ``no-memory`` row every policy has in the real ``complexity.csv``."""
 N_BOOT = 40
 """Bootstrap resamples in tests."""
 
@@ -70,7 +74,9 @@ def export(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def interpretation(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("interpretation")
     (root / "1m").mkdir()
-    pd.DataFrame([COMPLEXITY]).to_csv(root / "1m" / "complexity.csv", index=False)
+    pd.DataFrame([COMPLEXITY, NO_MEMORY]).to_csv(
+        root / "1m" / "complexity.csv", index=False
+    )
     (root / "1m" / "fidelity_vs_leaves_1m.pdf").write_bytes(b"%PDF-1.4 fidelity")
     return root
 
@@ -185,6 +191,7 @@ def test_the_report_folder_gets_tables_numbers_and_report_figures(
     numbers = (report / "numbers.tex").read_text()
     assert r"\scoreOneMPpo}" in numbers
     assert r"\closedLoopOneMSil}" in numbers
+    assert r"\closedLoopOneMSilNoMemory}" in numbers
     figures = {p.name for p in (report / "figures").glob("*.pdf")}
     assert "curves_score_double.pdf" in figures
     assert "fidelity_vs_leaves_1m.pdf" in figures
@@ -577,3 +584,20 @@ def test_tuning_only_runs_reach_the_tuning_tables_and_no_final_table(
     )
     optimism = pd.read_csv(out["dirty"] / "tuning_optimism.csv")
     assert optimism["tuning_phase"].notna().any()
+
+
+def test_an_unexpected_error_in_the_numbers_is_not_swallowed(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wut_murl_craftax.analysis import latex
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise KeyError("no-memory")
+
+    monkeypatch.setattr(latex, "write_numbers", boom)
+    opts = replace(
+        _two_stub_figures(monkeypatch, base, tmp_path), phases=("final-1m",),
+        tuning=("tune-coarse",), n_boot=N_BOOT,
+    )  # fmt: skip
+    with pytest.raises(KeyError, match="no-memory"):
+        run_comparison(opts)

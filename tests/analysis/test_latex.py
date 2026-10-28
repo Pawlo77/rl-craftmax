@@ -39,6 +39,14 @@ COMPLEXITY = [
         "spearman_score_l90": -0.4321, "spearman_p": 0.2,
     },
     {
+        "budget": "1m", "method": "sil", "config_ref": "tuned", "variant": "no-memory",
+        "n_seeds": 3, "l80_median": 16.0, "l90_median": 64.0, "l95_median": np.inf,
+        "l90_lo": 32.0, "l90_hi": 128.0, "l90_spread": "iqr",
+        "depth_at_l90_median": 6.0, "fidelity_16": 0.61, "fidelity_64": 0.7,
+        "fidelity_256": 0.8, "expected_fidelity_256": 0.85, "closed_loop_256": 0.4,
+        "spearman_score_l90": -0.25, "spearman_p": 0.3,
+    },
+    {
         "budget": "1m", "method": "dyna-q", "config_ref": "kappa0", "variant": "dagger",
         "n_seeds": 3, "l80_median": 4.5, "l90_median": 16.0, "l95_median": 64.0,
         "l90_lo": 8.0, "l90_hi": 32.0, "l90_spread": "iqr", "depth_at_l90_median": 4.0,
@@ -516,3 +524,15 @@ def test_without_complexity_the_numbers_skip_those_macros_and_the_missing_file(
     assert r"\scoreOneMPpo}" in text
     assert "fidelity" not in text
     assert "spearman" not in text
+
+
+def test_the_no_memory_variant_has_its_own_macros_and_an_unknown_one_is_named(
+    complexity_root: Path,
+) -> None:
+    frame = pd.read_csv(complexity_root / "1m" / "complexity.csv")
+    got = {n.name: n.text for n in latex.complexity_numbers(frame)}
+    assert got["lNinetyOneMSilNoMemory"] == "64"
+    assert got["lNinetyOneMSil"] == "32"
+    assert got["spearmanScoreNinetyOneMNoMemory"] == "$-$0.250"
+    with pytest.raises(ValueError, match="'mystery'"):
+        latex.complexity_numbers(frame.assign(variant="mystery"))
