@@ -25,6 +25,7 @@ from wut_murl_craftax.interpretation import (
     dataset,
     dataset_path,
     featurize,
+    relabel,
 )
 from wut_murl_craftax.training.checkpoints import save_checkpoint
 from wut_murl_craftax.training.interface import METHODS
@@ -34,6 +35,7 @@ from wut_murl_craftax.visualisation.eval_rollouts import (
     evaluate,
     load_eval,
     network_outputs,
+    rollout_seeds,
     stored_episode,
 )
 
@@ -304,3 +306,24 @@ def test_a_dataset_saves_under_budget_method_run_and_split(
     ds = collect(counting_run, 0, SEEDS, 20, _counting_outputs, "ppo-rnn")
     ds.save(path)
     _equal(Dataset.load(path), ds)
+
+
+def test_relabel_labels_the_states_of_any_rollout_as_collect_does(
+    counting_run: EvalRun,
+) -> None:
+    """DAgger: another policy's eval arrays, labelled by the network of the run."""
+    played = rollout_seeds(counting_run, counting_run.params(0), SEEDS, greedy=True)
+    assert played is not None
+    ds = relabel(counting_run, 0, played, 30, _counting_outputs, "ppo-rnn")
+    np.testing.assert_array_equal(ds.label, ds.step % MOVES)  # the network's labels
+    prev = ds.features[:, ds.columns.index("prev_action")]
+    for i, seed in enumerate(SEEDS):
+        rows = ds.episode == seed
+        acted = played["actions"][i, : played["length"][i]]
+        np.testing.assert_array_equal(prev[rows], np.r_[-1, acted][ds.step[rows]])
+    stochastic = rollout_seeds(counting_run, counting_run.params(0), SEEDS, False)
+    assert stochastic is not None
+    _equal(
+        relabel(counting_run, 0, stochastic, 30, _counting_outputs, "ppo-rnn"),
+        collect(counting_run, 0, SEEDS, 30, _counting_outputs, "ppo-rnn"),
+    )

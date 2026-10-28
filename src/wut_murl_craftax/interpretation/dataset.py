@@ -9,7 +9,7 @@ most ``max_states_per_episode`` states sampled uniformly. Rows hold `FEATURES` p
 [[2026-10-20-craftax-interpretation-and-ruleset]]; files: `dataset_path`.
 """
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import NamedTuple, Self, cast
 
@@ -137,24 +137,25 @@ def _batches(
         yield cast(dict[str, np.ndarray], arrays), list(range(len(batch)))
 
 
-def _played(
-    run: EvalRun, update: int, seeds: Sequence[int]
-) -> Iterator[tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None]]:
-    """Each seed's stochastic episode: ``(seed, actions, skill, steps_in_skill)``."""
-    for arrays, rows in _batches(run, update, seeds):
-        for i in rows:
-            n = int(arrays["length"][i])
-            skill, steps = (
-                arrays[k][i, :n] if k in arrays else None
-                for k in ("extras/skill", "extras/steps_in_skill")
-            )
-            yield int(arrays["seeds"][i]), arrays["actions"][i, :n], skill, steps
+type Played = tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None]
+"""One episode: ``(seed, actions, skill, steps_in_skill)``."""
+
+
+def _played(arrays: dict[str, np.ndarray], rows: Sequence[int]) -> Iterator[Played]:
+    """The episodes of eval-file ``arrays`` at ``rows``."""
+    for i in rows:
+        n = int(arrays["length"][i])
+        skill, steps = (
+            arrays[k][i, :n] if k in arrays else None
+            for k in ("extras/skill", "extras/steps_in_skill")
+        )
+        yield int(arrays["seeds"][i]), arrays["actions"][i, :n], skill, steps
 
 
 def _episode(
     run: EvalRun,
     update: int,
-    played: tuple[int, np.ndarray, np.ndarray | None, np.ndarray | None],
+    played: Played,
     cap: int | None,
     outputs: Outputs,
 ) -> tuple[np.ndarray, ...]:
@@ -209,11 +210,38 @@ def collect(
     if not seeds:
         msg = "collect needs at least one seed"
         raise ValueError(msg)
+    played = (p for a, rows in _batches(run, update, seeds) for p in _played(a, rows))
+    return _dataset(run, update, played, max_states_per_episode, outputs, family)
+
+
+def relabel(
+    run: EvalRun,
+    update: int,
+    arrays: dict[str, np.ndarray],
+    max_states_per_episode: int | None = MAX_STATES,
+    outputs: Outputs = network_outputs,
+    family: Family | None = None,
+) -> Dataset:
+    """The states of eval-file ``arrays`` of any policy, labelled by ``update``.
+
+    ``arrays`` come from `rollout_seeds` (a tree's, for a DAgger round); the rest is
+    as in `collect`, so the stochastic arrays of ``update`` give `collect`'s rows.
+    """
+    played = _played(arrays, range(len(arrays["seeds"])))
+    return _dataset(run, update, played, max_states_per_episode, outputs, family)
+
+
+def _dataset(
+    run: EvalRun,
+    update: int,
+    played: Iterable[Played],
+    cap: int | None,
+    outputs: Outputs,
+    family: Family | None,
+) -> Dataset:
+    """Rows of every ``played`` episode (`_episode`), as one dataset."""
     family = network_family(run.policy) if family is None else family
-    rows = [
-        _episode(run, update, p, max_states_per_episode, outputs)
-        for p in _played(run, update, seeds)
-    ]
+    rows = [_episode(run, update, p, cap, outputs) for p in played]
     parts = dict(zip(_FIELDS, zip(*rows, strict=True), strict=True))
     arrays = {k: np.concatenate(v) for k, v in parts.items()}
     columns = (*FEATURES[run.game], *MEMORY_FEATURES)
