@@ -315,6 +315,36 @@ def test_force_redoes_every_stage(
     assert again.done == ["figures/F1", "figures/F6"]
 
 
+def test_a_changed_source_invalidates_the_stage_markers(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opts = _two_stub_figures(monkeypatch, base, tmp_path)
+    source = tmp_path / "figures_source.py"
+    source.write_text("x = 1\n")
+    monkeypatch.setattr(results, "code_files", lambda: [source])
+    assert run_comparison(opts).done == ["figures/F1", "figures/F6"]
+    assert run_comparison(opts).skipped == ["figures/F1", "figures/F6"]
+    source.write_text("x = 2\n")
+    assert run_comparison(opts).done == ["figures/F1", "figures/F6"]
+
+
+def test_the_code_digest_covers_the_analysis_and_stats_sources() -> None:
+    names = {p.name for p in results.code_files()}
+    assert {"compare.py", "figures.py", "figures_game.py", "stats.py"} <= names
+
+
+def test_the_default_published_scores_are_in_the_fingerprint(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default = tmp_path / "published.yaml"
+    default.write_text("ppo: {}\n")
+    monkeypatch.setattr(results, "default_published", lambda: default)
+    opts = replace(base, published=None, out=tmp_path / "r", log=False)
+    before = results._Inputs(opts).fingerprint()
+    default.write_text("ppo: {1m: {score: 1.0}}\n")
+    assert results._Inputs(opts).fingerprint() != before
+
+
 # --- partial and failing runs -------------------------------------------------------
 
 
@@ -432,3 +462,118 @@ def test_stage_markers_hold_the_input_fingerprint(
 ) -> None:
     marker = json.loads((base.out / ".stages" / "figures" / "F1.json").read_text())
     assert re.fullmatch(r"[0-9a-f]{64}", marker["fingerprint"])
+
+
+def _stub_full_then_partial(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[ResultsOptions, ResultsOptions]:
+    """Options of a full run (stub figures) and the partial ones of its folders."""
+    full_opts = replace(
+        _two_stub_figures(monkeypatch, base, tmp_path),
+        phases=("final-1m",), tuning=("tune-coarse",), n_boot=N_BOOT,
+    )  # fmt: skip
+    return full_opts, replace(full_opts, complexity=False)
+
+
+def test_no_complexity_never_overwrites_a_numbers_file_that_has_the_macros(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full_opts, partial = _stub_full_then_partial(base, tmp_path, monkeypatch)
+    run_comparison(full_opts)
+    numbers = full_opts.report_dir / "numbers.tex"
+    before = numbers.read_text()
+    assert r"\closedLoopOneMSil}" in before
+    run_comparison(partial)
+    assert numbers.read_text() == before
+    side = (full_opts.report_dir / "numbers.partial.tex").read_text()
+    assert r"\scoreOneMPpo}" in side
+    assert "closedLoop" not in side
+
+
+def test_no_complexity_removes_stale_fidelity_files_and_does_not_copy_them(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full_opts, partial = _stub_full_then_partial(base, tmp_path, monkeypatch)
+    run_comparison(full_opts)
+    assert (full_opts.out / "figures" / "fidelity_vs_leaves_1m.pdf").is_file()
+    (full_opts.report_dir / "figures" / "fidelity_vs_leaves_1m.pdf").unlink()
+    run_comparison(partial)
+    assert not list((partial.out / "figures").glob("fidelity*"))
+    assert not list((partial.report_dir / "figures").glob("fidelity*"))
+
+
+def test_no_complexity_still_checks_the_other_report_macros(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, partial = _stub_full_then_partial(base, tmp_path, monkeypatch)
+    partial.report_dir.mkdir()
+    report = partial.report_dir / "report.tex"
+    report.write_text(r"\closedLoopOneMSil \scoreOneMPpo")
+    assert not run_comparison(partial).problems  # complexity macros are left out
+    report.write_text(r"\scoreOneMPpo \scoreOneMNoSuchMethod")
+    problems = run_comparison(partial).problems
+    assert len(problems) == 1
+    assert "scoreOneMNoSuchMethod" in problems[0]
+
+
+def test_the_log_stage_reruns_for_another_store_or_a_deleted_run(
+    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opts = replace(
+        _two_stub_figures(monkeypatch, base, tmp_path), log=True,
+        phases=("final-1m",), tuning=("tune-coarse",), n_boot=N_BOOT,
+    )  # fmt: skip
+    first = run_comparison(opts)
+    assert first.done[-1] == "log"
+    assert run_comparison(opts).skipped[-1] == "log"
+    mlflow.MlflowClient(opts.tracking_uri).delete_run(str(first.run_id))
+    again = run_comparison(opts)
+    assert again.done == ["log"]
+    assert again.run_id != first.run_id
+    elsewhere = replace(
+        opts, tracking_uri=f"sqlite:///{tmp_path / 'other' / 'mlruns.db'}?timeout=300"
+    )
+    assert run_comparison(elsewhere).done == ["log"]
+
+
+def test_tuning_only_runs_reach_the_tuning_tables_and_no_final_table(
+    export_writer: Callable[..., Path],
+    base: ResultsOptions,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phases = ("final-1m", "tune-coarse", "tune-fine")
+    clean = export_writer(tmp_path / "clean", phases)
+    dirty = export_writer(tmp_path / "dirty", phases)
+    runs = pd.read_parquet(dirty / "tune-coarse" / "runs.parquet")
+    extra = runs[runs["method"] == "ppo"].copy()
+    extra["run_id"] = [f"only{i}".ljust(32, "0") for i in range(len(extra))]
+    extra["phases"] = "tune-coarse"
+    extra["config_hash"] = extra["config_ref"] = "deadbeef"
+    extra["final_score"] = 99.0
+    pd.concat([runs, extra]).to_parquet(dirty / "tune-coarse" / "runs.parquet")
+    monkeypatch.setattr(results, "figure_functions", dict)
+    out = {}
+    for name, root in (("clean", clean), ("dirty", dirty)):
+        opts = replace(
+            base, phases=("final-1m",), tuning=("tune-coarse", "tune-fine"),
+            out=tmp_path / name / "results", report_dir=tmp_path / name / "report",
+            metrics_root=root, complexity=False, log=False, n_boot=N_BOOT,
+        )  # fmt: skip
+        run_comparison(opts)
+        out[name] = opts.out / "tables"
+    for stem in ("main", "ablation", "poi_matrix"):
+        assert (out["dirty"] / f"{stem}.csv").read_text() == (
+            out["clean"] / f"{stem}.csv"
+        ).read_text()
+    sens = {n: pd.read_csv(out[n] / "sensitivity.csv") for n in out}
+    pick = lambda d: d[(d["method"] == "ppo") & (d["phase"] == "tune-coarse")]  # noqa: E731
+    assert (
+        pick(sens["dirty"])["configs"].iloc[0]
+        == pick(sens["clean"])["configs"].iloc[0] + 1
+    )
+    assert (
+        pick(sens["dirty"])["runs"].iloc[0] == pick(sens["clean"])["runs"].iloc[0] + 3
+    )
+    optimism = pd.read_csv(out["dirty"] / "tuning_optimism.csv")
+    assert optimism["tuning_phase"].notna().any()

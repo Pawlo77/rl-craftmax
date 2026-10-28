@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import logging
+import re
 import shutil
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -53,6 +54,11 @@ BOOT_GAME = ("F8", "F8T", "F9", "F9S", "F10", "F11", "F12", "F13", "F14", "F15",
 """In-game figures that bootstrap over seeds (the others take no resampling)."""
 TABLE_FILES = {"game": "game_summary"}
 """Table key -> CSV stem where they differ."""
+COMPLEXITY_MACRO = re.compile(
+    r"^(?:lEighty|lNinety|depthNinety|fid|expectedFid|closedLoop|spearman)"
+    r"[A-Za-z]*?(?:OneM|OneB)"
+)
+"""Names of the macros built from ``complexity.csv`` (`latex.COMPLEXITY_QUANTITIES`)."""
 FIDELITY = "fidelity_vs_leaves_{budget}"
 """Stem of the distillation figure per budget (contracts section 3)."""
 
@@ -99,6 +105,40 @@ class ResultsSummary:
 
 def _digest(parts: object) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+
+
+def _file_hash(path: Path) -> str | None:
+    """Content hash of a file, None if it is absent."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def default_published() -> Path:
+    """The repository's ``published_scores.yaml`` (what the gate reads by default)."""
+    from ..evaluation.reproduction import PUBLISHED_SCORES
+
+    return PUBLISHED_SCORES
+
+
+def code_files() -> list[Path]:
+    """Sources whose change must redo the figures: analysis, evaluation, charts."""
+    root = Path(__file__).resolve().parents[1]
+    return sorted([
+        *(root / "analysis").glob("*.py"),
+        *(root / "evaluation").glob("*.py"),
+        root / "visualisation" / "charts.py",
+    ])
+
+
+def code_digest() -> str:
+    """Hash of `code_files`, so a code change invalidates every stage marker."""
+    h = hashlib.sha256()
+    for path in code_files():
+        h.update(path.name.encode())
+        h.update(path.read_bytes())
+    return h.hexdigest()
 
 
 def _stat(path: Path) -> list[object] | None:
@@ -151,7 +191,6 @@ class _Inputs:
             p: [_stat(f) for f in sorted((o.metrics_root / p).glob("*.parquet"))]
             for p in (*self.phases, *o.tuning)
         }
-        published = o.published or Path()
         return _digest({
             "files": files,
             "phases": self.phases,
@@ -159,8 +198,9 @@ class _Inputs:
             "n_boot": o.n_boot,
             "n_perm": o.n_perm,
             "seed": o.seed,
-            "published": _stat(published) if o.published else None,
+            "published": _file_hash(o.published or default_published()),
             "literature": _stat(LITERATURE_CSV),
+            "code": code_digest(),
         })
 
 
@@ -332,6 +372,8 @@ def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) ->
                 fn, frames or inputs.full, o.out / "figures", figure_kwargs(fid, t, o)
             )
 
+        if fid == "F20" and "1b" in set(inputs.runs["runs"]["budget"]):
+            logger.warning("F20 hardware is drawn for Craftax-1M only (one stem)")
         st.run(f"figures/{fid}", build)
 
 
@@ -379,9 +421,13 @@ def write_report_files(
     (o.report_dir / "tables").mkdir(parents=True, exist_ok=True)
     for path in written:
         shutil.copy2(path, o.report_dir / "tables" / path.name)
+    numbers = o.report_dir / "numbers.tex"
+    if not o.complexity and _has_complexity_macros(numbers):
+        numbers = o.report_dir / "numbers.partial.tex"  # keep the full file intact
+        logger.warning("%s holds complexity macros: writing %s", o.report_dir, numbers)
     try:
         latex.write_numbers(
-            o.report_dir / "numbers.tex", inputs.runs,
+            numbers, inputs.runs,
             tables={"main": t["main"], "ablation": t["ablation"]},
             complexity_root=o.complexity_root, complexity=o.complexity,
             report=o.report_dir / "report.tex" if o.complexity else None, **boot,
@@ -389,7 +435,28 @@ def write_report_files(
     except ValueError as e:
         logger.error("numbers.tex not complete: %s", e)  # noqa: TRY400
         s.problems.append(str(e))
+    report_tex = o.report_dir / "report.tex"
+    if not o.complexity and report_tex.is_file():  # check what this run defines
+        missing = [
+            m
+            for m in latex.undefined_macros(report_tex, numbers)
+            if not COMPLEXITY_MACRO.match(m)
+        ]
+        if missing:
+            msg = f"{report_tex} uses macros that {numbers} does not define: {missing}"
+            logger.error(msg)
+            s.problems.append(msg)
     latex.copy_figures(o.out / "figures", o.report_dir / "figures")
+
+
+def _has_complexity_macros(numbers: Path) -> bool:
+    """True if an existing ``numbers.tex`` defines a macro of ``complexity.csv``."""
+    from . import latex
+
+    if not numbers.is_file():
+        return False
+    defined = latex.defined_macros(numbers.read_text())
+    return any(COMPLEXITY_MACRO.match(m) for m in defined)
 
 
 def _gate_lines(gate: pd.DataFrame) -> list[str]:
@@ -414,14 +481,31 @@ def _outputs_digest(out: Path) -> str:
     return h.hexdigest()
 
 
+def _run_exists(tracking_uri: str, run_id: str) -> bool:
+    """True if the logged run is still in the store (and not deleted)."""
+    import mlflow
+
+    from ..orchestration.tracking import resolve_tracking_uri
+
+    base, _, query = tracking_uri.partition("?")
+    uri = resolve_tracking_uri(base) + (f"?{query}" if query else "")
+    try:
+        run = mlflow.MlflowClient(uri).get_run(run_id)
+    except mlflow.exceptions.MlflowException:
+        return False
+    return run.info.lifecycle_stage == "active"
+
+
 def log_results(inputs: _Inputs, st: _Stages, s: ResultsSummary) -> None:
     """Log ``tables`` and ``figures`` as run ``comparison-final`` unless current."""
     o = inputs.o
     marker = st.out / STAGES / "log.json"
-    digest = _digest([_outputs_digest(o.out), st.fingerprint])
+    digest = _digest([_outputs_digest(o.out), st.fingerprint, o.tracking_uri])
     if not s.done and not o.force and marker.is_file():
         saved = json.loads(marker.read_text())
-        if saved["digest"] == digest:
+        if saved["digest"] == digest and _run_exists(
+            str(o.tracking_uri), saved["run_id"]
+        ):
             s.skipped.append("log")
             s.run_id = saved["run_id"]
             return
@@ -484,6 +568,9 @@ def run_comparison(o: ResultsOptions) -> ResultsSummary:
     if o.complexity:
         budgets = sorted(set(inputs.runs["runs"]["budget"]))
         copy_fidelity(o, o.out / "figures", budgets)
+    else:  # an earlier full run's copies would go on to the report as if current
+        for stale in (o.out / "figures").glob(FIDELITY.format(budget="*") + ".*"):
+            stale.unlink()
     write_report_files(inputs, t, s)
     if o.log:
         log_results(inputs, st, s)
