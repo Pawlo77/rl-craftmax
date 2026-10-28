@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, analysis]
 created: 2026-10-24
-updated: 2026-10-25
+updated: 2026-10-28
 related-code:
   - "[[src/wut_murl_craftax/analysis/__init__.py]]"
   - "[[src/wut_murl_craftax/analysis/cases.py]]"
@@ -25,6 +25,7 @@ related-code:
 - Filled by the training analysis and comparison tasks; so far the loaders, the literature table, the obstacle detectors, the hard-scenario summaries and the comparison tables.
 - Training-analysis cases (TA3): the case finder, its replay export and the case facts.
 - Training-analysis CLI (TA5): runs the hard summaries, obstacle detectors and cases of every (budget, method) and logs them to MLflow.
+- Hand-off (TA6, TA7): the 1M outputs are written up as one note per method under `knowledge/results/` (summary at the top, quoted by the report and the comparison plan), and `cases.csv` carries the `video` flag the video and the Hugging Face release read ([[2026-10-20-craftax-visualisation-production]], [[2026-10-20-craftax-huggingface-release]]).
 
 ## Public surface
 
@@ -102,6 +103,10 @@ One line each; signatures and details: [[Modules]].
 - Case files (`export_case`, `out_dir` = `outputs/analysis/<budget>/<method>/`): `rollouts/case-<id>.npz`, `masters/case-<id>.mkv` (whole episode, frame = step), `gifs/<id>.gif`, stall `overlays/<id>.mp4`; the rollout is copied to `outputs/visualisation/runs/case-<id>.npz` (flat, for the video `runs/*.npz` glob), and that copy is the `rollout` column. A `cases.csv` consumer takes the 16 px master from the `master` column, or uses `Path(rollout).stem` with `--masters-dir`; a row's `rollout` path is never passed to `cuts.cut_kept` as is (it expects a stem).
 - The comparison tables read `runs` (final score, eval scores, hardware columns, `config_json` for combo pairs and sensitivity), `curves` (`train/score_pct`, `first_unlock/*`, `first_unlock_wall/*`), final-checkpoint stochastic `eval_episodes`, `configs/reference/published_scores.yaml` and the literature CSV.
 - Out: `outputs/analysis/<budget>/`, `outputs/results/`, MLflow experiment `analysis`.
+- Hand-off at 1M (1B pending, R75; `final-1b` and `combo-1b` not run):
+  - Results notes, one per registry method, each opening with a 5-bullet summary (score and floors, achievements, deaths, stalls, obstacles) that [[2026-10-20-craftax-report]] (Discussion) and [[2026-10-20-craftax-comparison-and-results]] quote: [[PPO training analysis]], [[PPO-RNN training analysis]], [[PQN-RNN training analysis]], [[Count-bonus PPO-RNN training analysis]], [[Count-bonus PQN-RNN training analysis]], [[SIL training analysis]], [[SMDP skills training analysis]], [[Dyna-Q training analysis]], [[Combo training analysis]]. The count-bonus variants are two methods, so two notes; ablation units (R77) have their own section in the note of their method, never pooled into the tuned rows.
+  - Video: `cases.csv` rows with `video = yes` are the cases for the scenes "Stuck, then solved", the deepest floor and deaths of [[2026-10-20-craftax-visualisation-production]]. The rule, per method and only the `tuned` unit: the 2 longest `stall` cases (latest checkpoint first, then length; the final checkpoint has 2 for every method but dyna-q, whose second is its checkpoint 148 case), the first `deep_floor` case (a floor 1 case where one exists, else the overworld episode with the most achievements) and the first `death` case (the most frequent cause). That gives 4 rows per method, 36 of 291 at 1M; every other row, ablation units included, reads `no`. Flagged rows have their rollout, master, GIF and, for stalls, overlay on disk.
+  - Hugging Face release: `outputs/analysis/<budget>/<method>/` (`hard/`, `cases.csv`, `obstacles.csv`, `obstacles.md`, `plots/`, `gifs/`, `overlays/`, `cases/<id>.json`) is the per-method package of [[2026-10-20-craftax-huggingface-release]]; the budget-level `outputs/analysis/<budget>/cases.csv` and the per-method copies stay as written by `write_cases` (same columns, one row set per method) and differ from it only in `video`.
 
 ## Invariants
 
@@ -147,11 +152,13 @@ One line each; signatures and details: [[Modules]].
 - Importing `training` imports neither JAX nor MLflow (`_open_run` and the logging import them when used).
 - Figures read their numbers from the tables of `compare` (T1 for F2, `poi_matrix` for F3, T2 for F4's published marks, `achievement_status` for F5, T7 and `stability.config_scores` for F18, `run_stability` and T3 for F19, T4 for F20) and from `evaluation.stats` (`curve_band`, `step_grid` for F1); a statistic is never recomputed in `figures`. Only Craftax-1M is drawn without a note: a budget without runs is left out and the figure's note says "Craftax-1B pending" (F3, a 1M figure by design, says only that 1M is needed); 1B panels that exist are marked indicative and show median and mean (t interval) in F2, never IQM. With no runs a figure is a placeholder reading "no data". A panel is never an empty unlabelled axis (an unmeasured hardware panel reads "n.m.").
 - A method has one colour in every figure and theme; a method missing from `METHOD_COLORS` raises. Ablations (R77) are their own dotted rows or curves, never pooled into the tuned method. A block is never ranked against the other: F2, F3, F5 and F1 show the blocks apart, the controls repeated in each. F20's laptop wall-clock and SPS carry the R97 note ("two concurrent workers, context only") from T4's `note` column; profiles are never compared. Every drawn artist carries a `gid` (`<kind>/<budget or phase>/<block>/<method>/<config_ref>`).
+- `video` is set by hand, not by code: `write_cases` rebuilds a method's rows with `video` = "" and `analysis.training --force` resets it, so the rule above is applied again after any rerun, to the budget table and to the per-method copies together. The `cases.csv` files logged in MLflow run `training-analysis-<budget>-<method>` predate the marks and keep `video` blank; the files on disk are the hand-off.
+- A results note holds only numbers of the files of its method folder and of `outputs/metrics/<phase>/runs.parquet`; "not logged" (R78) and "uninformative at 1M" (R79) are copied from the detector statuses, never replaced by a number.
 
 ## Known issues
 
 - `export_case` replays a stall case's episode five times: `as_rollout`, the master render and `render_overlay` (its own `EvalRun`, which replays for the observations, the network outputs and the frames); sharing one replay needs an `EvalRun` or episode parameter on `as_rollout` and `render_overlay` ([[visualisation]]).
-- Key aliasing, survival failure despite flags and bonus-driven re-trying need the `skill_ends` replay frame, and hoarding under log2 keys (the tuned count-bonus-pqn-rnn config) the `eval_inventory` frame; until evaluation Task 6 builds them they read `needs replay (evaluation Task 6)`.
+- Key aliasing, survival failure despite flags and bonus-driven re-trying need the `skill_ends` replay frame, and hoarding under log2 keys (the tuned count-bonus-pqn-rnn config) the `eval_inventory` frame; until evaluation Task 6 builds them they read `needs replay (evaluation Task 6)`. The 1M production run had both frames in the export, so none of its 2410 verdicts reads `needs replay` or `needs eval actions`.
 
 ## Tests
 
