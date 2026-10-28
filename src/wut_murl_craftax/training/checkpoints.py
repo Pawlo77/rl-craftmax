@@ -1,5 +1,10 @@
-"""Log-spaced params-only checkpoints with an index, and the full resume state."""
+"""Log-spaced params-only checkpoints with an index, and the full resume state.
 
+Checkpoint files deleted on purpose (storage retention) are listed in
+``ckpt/pruned.json``: they are known-absent, never lost, and ``index.json`` keeps them.
+"""
+
+import datetime
 import json
 import logging
 import os
@@ -17,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 STATE_FILE = Path("state") / "state.npz"
 """Full training state of a run, relative to the run directory."""
+
+
+PRUNED_FILE = Path("ckpt") / "pruned.json"
+"""Checkpoints deleted on purpose, relative to the run directory: ``updates``, ``date``
+and ``reason`` (`mark_pruned`)."""
+
+
+class PrunedCheckpointError(FileNotFoundError):
+    """The params of a checkpoint that was deleted on purpose (`PRUNED_FILE`)."""
 
 
 class CheckpointEntry(TypedDict):
@@ -57,17 +71,46 @@ def load_index(run_dir: Path) -> list[CheckpointEntry]:
     return entries
 
 
+def pruned_updates(run_dir: Path) -> frozenset[int]:
+    """Updates whose checkpoint file was deleted on purpose (`PRUNED_FILE`)."""
+    path = Path(run_dir) / PRUNED_FILE
+    if not path.is_file():
+        return frozenset()
+    return frozenset(int(u) for u in json.loads(path.read_text())["updates"])
+
+
+def mark_pruned(run_dir: Path, updates: Collection[int], reason: str) -> Path:
+    """Add ``updates`` to `PRUNED_FILE` (written before their files are deleted)."""
+    path = Path(run_dir) / PRUNED_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    marker = {
+        "updates": sorted(pruned_updates(run_dir) | {int(u) for u in updates}),
+        "date": datetime.date.today().isoformat(),
+        "reason": reason,
+    }
+    _write_atomic(path, json.dumps(marker, indent=1).encode())
+    return path
+
+
 def missing_checkpoints(run_dir: Path) -> list[int]:
-    """Updates whose ``ckpt/`` file is gone although ``index.json`` lists it."""
+    """Updates whose ``ckpt/`` file is lost: listed, not on disk, not pruned.
+
+    Pruned updates (`pruned_updates`) were deleted on purpose and are never lost.
+    """
+    pruned = pruned_updates(run_dir)
     return [
         e["update"]
         for e in load_index(run_dir)
-        if not (Path(run_dir) / "ckpt" / e["file"]).is_file()
+        if e["update"] not in pruned
+        and not (Path(run_dir) / "ckpt" / e["file"]).is_file()
     ]
 
 
 def drop_missing_checkpoints(run_dir: Path) -> list[int]:
-    """Drop the `missing_checkpoints` from the index; return their updates."""
+    """Drop the `missing_checkpoints` from the index; return their updates.
+
+    Pruned updates stay listed: readers take ``env_steps`` of their eval files from it.
+    """
     lost = missing_checkpoints(run_dir)
     if lost:
         kept = [e for e in load_index(run_dir) if e["update"] not in lost]
@@ -96,9 +139,19 @@ def save_checkpoint[T](
 
 
 def load_params[T](run_dir: Path, update: int, template: T) -> T:
-    """Restore the params saved at ``update`` into the structure of ``template``."""
-    data = (Path(run_dir) / "ckpt" / f"{update:05d}.msgpack").read_bytes()
-    return cast(T, serialization.from_bytes(template, data))
+    """Restore the params saved at ``update`` into the structure of ``template``.
+
+    Raises:
+        PrunedCheckpointError: The checkpoint was deleted on purpose.
+    """
+    path = Path(run_dir) / "ckpt" / f"{update:05d}.msgpack"
+    if not path.is_file() and update in pruned_updates(run_dir):
+        msg = (
+            f"{run_dir}: checkpoint {update} was pruned ({PRUNED_FILE}); "
+            "only its eval files remain"
+        )
+        raise PrunedCheckpointError(msg)
+    return cast(T, serialization.from_bytes(template, path.read_bytes()))
 
 
 def _is_key(leaf: object) -> bool:

@@ -14,6 +14,7 @@ import pytest
 from wut_murl_craftax.orchestration import queue, store
 from wut_murl_craftax.orchestration.store import (
     EVAL_MODES,
+    evaluation_complete,
     merge_stores,
     phase_status,
 )
@@ -114,7 +115,7 @@ def test_merge_copies_a_run_with_its_history_and_artifacts(
         metrics={"train/return": [1.0, 2.0, 3.0]},
     )
     counts = merge_stores(node.uri, main_store.uri)
-    assert counts == {"copied": 1, "joined": 0}
+    assert counts == {"copied": 1, "joined": 0, "refused": 0}
     run = main_store.runs()["ppo-1m-aaaaaaaa-s0"]
     assert run.info.status == "FINISHED"
     assert run.data.params == {"lr": "0.0003"}
@@ -150,7 +151,7 @@ def test_a_run_in_both_stores_merges_its_phases(main_store: Node, node: Node) ->
     main_store.add("a-1m-aaaaaaaa-s0", "tune-coarse")
     node.add("a-1m-aaaaaaaa-s0", "finals,tune-coarse", experiment="finals")
     counts = merge_stores(node.uri, main_store.uri)
-    assert counts == {"copied": 0, "joined": 1}
+    assert counts == {"copied": 0, "joined": 1, "refused": 0}
     assert _phases(main_store.runs()["a-1m-aaaaaaaa-s0"]) == {"tune-coarse", "finals"}
 
 
@@ -230,7 +231,7 @@ def test_of_two_unfinished_copies_the_one_further_on_is_kept(
     _saved_at(main_store, main_store.add(name, "final-1b", status="KILLED"), main_at)
     _saved_at(node, node.add(name, "final-1b", status="KILLED"), node_at)
     counts = merge_stores(node.uri, main_store.uri)
-    assert counts == {"copied": copied, "joined": 1 - copied}
+    assert counts == {"copied": copied, "joined": 1 - copied, "refused": 0}
     run = main_store.runs()[name]
     assert run.info.status == "KILLED"
     assert saved_update(artifact_path(run.info.artifact_uri)) == max(main_at, node_at)
@@ -357,14 +358,22 @@ def test_a_join_copies_the_eval_files_and_metrics_the_main_copy_lacks(
         files={"eval/final/3.npz": "node", "eval/final/1.npz": "n1"},
         metrics={"eval/final/return": [9.0, 2.0], "train/return": [5.0]},
     )
-    assert merge_stores(node.uri, main_store.uri) == {"copied": 0, "joined": 1}
+    assert merge_stores(node.uri, main_store.uri) == {
+        "copied": 0,
+        "joined": 1,
+        "refused": 0,
+    }
     out = artifact_path(main_store.runs()[name].info.artifact_uri)
     assert (out / "eval/final/3.npz").read_text() == "main"  # main's file stays
     assert (out / "eval/final/1.npz").read_text() == "n1"
     # step 0 is main's; only evaluation series are copied on a join
     assert _history(main_store, name, "eval/final/return") == [(0, 1.0), (1, 2.0)]
     assert _history(main_store, name, "train/return") == []
-    assert merge_stores(node.uri, main_store.uri) == {"copied": 0, "joined": 1}
+    assert merge_stores(node.uri, main_store.uri) == {
+        "copied": 0,
+        "joined": 1,
+        "refused": 0,
+    }
     assert _history(main_store, name, "eval/final/return") == [(0, 1.0), (1, 2.0)]
 
 
@@ -408,8 +417,23 @@ def test_merge_of_named_runs_seeds_a_node_store(main_store: Node, node: Node) ->
     counts = merge_stores(
         main_store.root / "mlruns.db", node.uri, names={"a-1m-aaaaaaaa-s0", "c"}
     )
-    assert counts == {"copied": 1, "joined": 0}
+    assert counts == {"copied": 1, "joined": 0, "refused": 0}
     assert set(node.runs()) == {"a-1m-aaaaaaaa-s0"}
+
+
+def test_an_unfinished_node_run_without_state_is_refused(
+    main_store: Node, node: Node, caplog: pytest.LogCaptureFixture
+) -> None:
+    """1B storage: a stateless unfinished copy in the main store would restart from
+    update 0 beside its old checkpoints; it stays on the node, which can resume it."""
+    node.add("a-1b-aaaaaaaa-s0", "final-1b", status="KILLED")
+    _saved_at(node, node.add("b-1b-bbbbbbbb-s0", "final-1b", status="KILLED"), 7)
+    node.add("c-1b-cccccccc-s0", "final-1b")  # FINISHED without state/: copied
+    counts = merge_stores(node.uri, main_store.uri)
+    assert counts == {"copied": 2, "joined": 0, "refused": 1}
+    assert set(main_store.runs()) == {"b-1b-bbbbbbbb-s0", "c-1b-cccccccc-s0"}
+    assert "a-1b-aaaaaaaa-s0" in caplog.text
+    assert "without state/" in caplog.text
 
 
 def test_merge_cli_reports_the_counts(main_store: Node, node: Node) -> None:
@@ -522,6 +546,51 @@ def test_status_shows_a_finished_run_without_every_log_spaced_eval_apart(
     last = out.stdout.strip().splitlines()[-1]
     want = "pending 2, running 0, eval-incomplete 2, finished 1, killed 0"
     assert last == want
+
+
+def test_status_counts_a_pruned_run_by_its_eval_files(main_store: Node) -> None:
+    """Storage retention: the prune keeps every eval file, so a pruned run is
+    finished; a pruned checkpoint without its eval files is a gap (review M6)."""
+    ppo, pqn, *_ = _names()
+    marker = json.dumps({"updates": [1, 2], "reason": "test"})
+    main_store.add(
+        ppo, "entries", files=evaluated(1, 2, 3) | {"ckpt/pruned.json": marker}
+    )
+    gap = evaluated(1, 2, 3) | {"ckpt/pruned.json": marker}
+    del gap["eval/greedy/00002.npz"], gap["eval/stochastic/00002.npz"]
+    main_store.add(pqn, "entries", files=gap)
+    status = phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)
+    assert (status[ppo], status[pqn]) == ("finished", "eval-incomplete")
+
+
+def test_evaluation_is_complete_with_both_modes_of_the_evaluated_updates(
+    tmp_path: Path,
+) -> None:
+    for rel, text in evaluated(1, 3).items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    assert evaluation_complete(tmp_path, log_spaced=True)
+    (tmp_path / "eval" / "greedy" / "00001.npz").unlink()
+    assert not evaluation_complete(tmp_path, log_spaced=True)
+    assert evaluation_complete(tmp_path, log_spaced=False)  # the final one only
+    assert not evaluation_complete(tmp_path / "none", log_spaced=False)
+
+
+def test_a_stateless_unfinished_copy_never_replaces_one_with_an_unreadable_state(
+    main_store: Node, node: Node
+) -> None:
+    """Review M8: -1 (unreadable) would lose to 0 (no state) in `_further`."""
+    name = "a-1b-aaaaaaaa-s0"
+    here = main_store.add(name, "final-1b", status="KILLED", files={"m.npz": "main"})
+    state = artifact_path(main_store.client.get_run(here).info.artifact_uri) / "state"
+    state.mkdir()
+    (state / "state.npz").write_bytes(b"PK truncated")
+    node.add(name, "final-1b,combo-1b", status="KILLED", files={"m.npz": "node"})
+    counts = merge_stores(node.uri, main_store.uri)
+    assert counts == {"copied": 0, "joined": 1, "refused": 0}
+    out = artifact_path(main_store.runs()[name].info.artifact_uri)
+    assert (out / "m.npz").read_text() == "main"
+    assert _phases(main_store.runs()[name]) == {"final-1b", "combo-1b"}
 
 
 def test_status_eval_modes_are_the_evaluations() -> None:

@@ -39,7 +39,12 @@ from ..orchestration import (
 from ..orchestration.queue import COMBINE_KEY, CONFIG_ARTIFACT, RunSpec
 from ..orchestration.runner import Trainer
 from ..training import ppo_rnn, pqn_rnn
-from ..training.checkpoints import CheckpointEntry, load_index, load_params
+from ..training.checkpoints import (
+    CheckpointEntry,
+    load_index,
+    load_params,
+    pruned_updates,
+)
 from ..training.interface import Policy, run_trainer
 from ..training.ppo import PPOPolicy, make_env, policy_value
 from ..training.records import achievement_weights, is_classic
@@ -405,11 +410,14 @@ def evaluate(
     seeds: Sequence[int] = EVAL_SEEDS,
     chunk: int = CHUNK_STEPS,
     should_stop: Callable[[], bool] = _never,
+    skip_pruned: bool = False,
 ) -> list[EvalSummary]:
     """Write ``eval/<mode>/<update>.npz`` for each update without one.
 
     Returns early once ``should_stop()`` is true (checked before every checkpoint and
-    after every chunk), never leaving a partial file.
+    after every chunk), never leaving a partial file. A pruned checkpoint without an
+    eval file (`pruned_updates`) raises `PrunedCheckpointError` (its params are
+    gone), or is skipped with a warning when ``skip_pruned``.
 
     Returns:
         A summary per file written now.
@@ -417,10 +425,13 @@ def evaluate(
     if mode not in MODES:
         msg = f"mode must be one of {MODES}, got {mode!r}"
         raise ValueError(msg)
-    written = []
+    written, pruned = [], pruned_updates(run.dir)
     for u in updates:
         path = _path(run.dir, u, mode)
         if path.exists():
+            continue
+        if u in pruned and skip_pruned:
+            logger.warning("%s: checkpoint %d was pruned, not evaluated", run.dir, u)
             continue
         if should_stop():
             break
@@ -454,19 +465,27 @@ def evaluate_spec(
     seeds: Sequence[int] = EVAL_SEEDS,
     chunk: int = CHUNK_STEPS,
     methods: Mapping[str, Trainer] | None = None,
+    skip_pruned: bool = False,
 ) -> Iterator[EvalSummary]:
     """Both modes of the final checkpoint, or of every one for ``log_spaced`` specs.
 
     Yields a summary per scheduled file: a new one as soon as it is written, an
     existing one read back (so a caller can log what a crashed call did not). Stops
-    early once ``should_stop()`` is true.
+    early once ``should_stop()`` is true. A pruned checkpoint without its file
+    raises, or is skipped with ``skip_pruned`` (`evaluate`).
     """
     run = EvalRun.load(run_dir, methods)
     updates = run.updates if spec.eval_mode == "log_spaced" else run.updates[-1:]
+    pruned = pruned_updates(run.dir)
     for u in updates:
         for mode in MODES:
             if _path(run.dir, u, mode).exists():
                 yield _summary(run, u, mode, load_eval(run.dir, u, mode == "greedy"))
+                continue
+            if u in pruned and skip_pruned:
+                logger.warning(
+                    "%s: checkpoint %d was pruned, not evaluated", run.dir, u
+                )
                 continue
             new = evaluate(
                 run, [u], mode, seeds=seeds, chunk=chunk, should_stop=should_stop
@@ -736,13 +755,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--seeds", default="10000-10063", help="inclusive range lo-hi")
     p.add_argument("--updates", help="comma list; default every checkpoint")
     p.add_argument("--mode", choices=MODES, default="stochastic")
+    p.add_argument("--skip-pruned", action="store_true", help="skip pruned checkpoints")
     a = p.parse_args(argv)
     lo, hi = map(int, a.seeds.split("-"))
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     configure_runtime()
     run = EvalRun.load(a.run)
     updates = [int(u) for u in a.updates.split(",")] if a.updates else run.updates
-    evaluate(run, updates, a.mode, seeds=range(lo, hi + 1))
+    seeds = range(lo, hi + 1)
+    evaluate(run, updates, a.mode, seeds=seeds, skip_pruned=a.skip_pruned)
     print(f"eval written to {run.dir / 'eval' / a.mode}")
 
 

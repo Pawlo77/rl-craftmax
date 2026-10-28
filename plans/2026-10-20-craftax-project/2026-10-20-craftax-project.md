@@ -78,7 +78,7 @@ Timetable (measured, 2 queue workers since 2026-10-22 00:06, about 1.4 x the thr
 ### Phase 2: Finals
 
 - [ ] `final-1m`: tuned configuration of every control and method, 10 seeds. (done 2026-10-24 07:23: 140 finished, 0 killed, Fri 23 21:41 to Sat 24 07:23, 9.7 h on the laptop with 2 workers (estimate 13 h); results in each method plan's `## Results`)
-- [ ] `final-1b`: same, 3 seeds, 1B steps (laptop or cluster; same run names); 1B results are indicative, significance claims are made at 1M ([[Experiment decisions]], 2026-10-21).
+- [ ] `final-1b`: same, 3 seeds, 1B steps (laptop or cluster; same run names); 1B results are indicative, significance claims are made at 1M ([[Experiment decisions]], 2026-10-21). Storage: [[2026-10-20-craftax-compute-budget]] Task 2 (no `SEED_FROM`, `state/` dropped on finish, finished runs copied back without it).
 - [ ] Fixed-seed evaluation of every log-spaced checkpoint of each final run (tuning runs evaluate their final checkpoint only), run by the queue before a run is marked FINISHED ([[2026-10-20-craftax-infrastructure]] Task 5). (done for the 1M finals 2026-10-24: 13 greedy and 13 stochastic checkpoint evaluations in each of the 140 `final-1m` and 10 `combo-1m` runs; `final-1b` and `combo-1b` open)
 
 ### Phase 3: Combination of the two best methods

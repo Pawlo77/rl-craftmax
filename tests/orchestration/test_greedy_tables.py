@@ -12,7 +12,7 @@ from wut_murl_craftax.orchestration import greedy_tables
 from wut_murl_craftax.orchestration.runner import TAG_WARN_ARTIFACTS
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training import smdp
-from wut_murl_craftax.training.checkpoints import save_checkpoint
+from wut_murl_craftax.training.checkpoints import mark_pruned, save_checkpoint
 from wut_murl_craftax.training.skills import NUM_SKILLS, SKILLS
 
 SCHEMA_WARNING = (
@@ -93,3 +93,32 @@ def test_the_cli_refuses_a_config_of_another_method(
         greedy_tables.main(["--tracking-uri", uri, "--config-hash", "20ec0807"])
     out = artifact_path(client.get_run(ids["schema"]).info.artifact_uri)
     assert not (out / "eval").exists()  # checked before any write
+
+
+def test_a_rebuild_keeps_the_rows_of_pruned_checkpoints_and_never_reads_them(
+    store: tuple[str, mlflow.MlflowClient, dict[str, str]],
+) -> None:
+    """Storage retention: a pruned checkpoint is known-absent, never a crash."""
+    _, client, ids = store
+    out = artifact_path(client.get_run(ids["untouched"]).info.artifact_uri)
+    path = smdp.rebuild_greedy_table(out)  # update 0 stores no keys, update 5 two
+    before = pq.read_table(path)
+    mark_pruned(out, [5], "test")
+    (out / "ckpt" / "00005.msgpack").unlink()
+    assert pq.read_table(smdp.rebuild_greedy_table(out)).equals(before)
+    mark_pruned(out, [0], "test")
+    (out / "ckpt" / "00000.msgpack").unlink()
+    assert pq.read_table(smdp.rebuild_greedy_table(out)).equals(before)
+
+
+def test_a_rebuild_with_every_checkpoint_pruned_and_no_table_fails_clearly(
+    store: tuple[str, mlflow.MlflowClient, dict[str, str]],
+) -> None:
+    """Review M7: nothing to read and nothing to keep is a clear error."""
+    _, client, ids = store
+    out = artifact_path(client.get_run(ids["untouched"]).info.artifact_uri)
+    mark_pruned(out, [0, 5], "test")
+    for u in (0, 5):
+        (out / "ckpt" / f"{u:05d}.msgpack").unlink()
+    with pytest.raises(FileNotFoundError, match="every checkpoint is pruned"):
+        smdp.rebuild_greedy_table(out)

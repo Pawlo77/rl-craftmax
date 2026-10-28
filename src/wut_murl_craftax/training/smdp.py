@@ -37,7 +37,7 @@ from ..evaluation.episode_metrics import (
     stack_online,
 )
 from ..orchestration import shard_envs
-from .checkpoints import load_index
+from .checkpoints import load_index, pruned_updates
 from .hooks import Traj
 from .ppo import env_placement, make_train_env
 from .pqn_rnn import (
@@ -1270,7 +1270,12 @@ def rebuild_greedy_table(run_dir: Path) -> Path:
 
     Each checkpoint's stored sparse table is read without a params template and
     ``q_init`` from ``config.json`` (an ``smdp-skills`` config); the old file is
-    replaced as a whole, atomically, so a broken one never joins the new rows.
+    replaced as a whole, atomically, so a broken one never joins the new rows. A
+    pruned checkpoint (`pruned_updates`) is never read: its old rows are carried
+    over, and with every checkpoint pruned the old file stays as it is.
+
+    Raises:
+        FileNotFoundError: Every checkpoint is pruned and there is no old file.
     """
     run_dir = Path(run_dir)
     cfg = json.loads((run_dir / "config.json").read_text())
@@ -1278,12 +1283,31 @@ def rebuild_greedy_table(run_dir: Path) -> Path:
     path = run_dir / "eval" / GREEDY_TABLE_FILE
     part = path.with_suffix(".rebuild")
     part.unlink(missing_ok=True)
+    pruned = pruned_updates(run_dir)
     for e in load_index(run_dir):
+        if e["update"] in pruned:
+            continue
         data = (run_dir / "ckpt" / e["file"]).read_bytes()
         cols = greedy_table(serialization.msgpack_restore(data), q_init)
         write_update_rows(part, e["update"], cols, GREEDY_TYPES)
+    if not part.is_file():  # every checkpoint pruned: the old rows are all there is
+        if not path.is_file():
+            msg = f"{run_dir}: every checkpoint is pruned and there is no {path.name}"
+            raise FileNotFoundError(msg)
+        return path
+    if pruned and path.is_file():
+        _carry_rows(path, part, pruned)
     part.replace(path)
     return path
+
+
+def _carry_rows(old: Path, new: Path, updates: frozenset[int]) -> None:
+    """Add the rows of ``updates`` in parquet file ``old`` to ``new``, by update."""
+    table = pq.read_table(new)
+    kept = pq.read_table(old)
+    kept = kept.filter(pc.is_in(kept["update"], pa.array(sorted(updates), pa.int32())))
+    kept = kept.select(table.column_names).cast(table.schema)
+    pq.write_table(pa.concat_tables([kept, table]).sort_by("update"), new)
 
 
 def write_update_rows(

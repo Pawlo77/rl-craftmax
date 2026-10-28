@@ -26,11 +26,13 @@ from wut_murl_craftax.evaluation.export import (
 from wut_murl_craftax.evaluation.milestones import CREATURES
 from wut_murl_craftax.evaluation.rollout_metrics import (
     RUN_IDENTITY,
+    RunRef,
     arrow_table,
     episode_columns,
     out_paths,
 )
 from wut_murl_craftax.orchestration.queue import PHASES_DIR
+from wut_murl_craftax.training.checkpoints import mark_pruned
 
 T0 = 1_700_000_000_000
 """Wall-clock time (ms) of the first fake sample."""
@@ -843,3 +845,15 @@ def test_a_timeout_in_the_uri_reaches_the_mlflow_logging(
 
 def _episodes_of(folder: Path) -> pd.DataFrame:
     return pd.read_parquet(folder / "eval_episodes.parquet")
+
+
+def test_a_pruned_run_keeps_the_env_steps_of_every_eval_file(tmp_path: Path) -> None:
+    """Storage retention: ``index.json`` stays whole when the checkpoints go."""
+    run_dir = tmp_path / "run"
+    _artifacts(run_dir, "ppo")
+    mark_pruned(run_dir, list(UPDATES), "test")
+    ref = RunRef("r" * 32, "ppo-1m-aaaaaaaa-s0", "ppo", "1m", 0, run_dir)
+    tables = export.run_episodes(ref, "tuned", "craftax", tmp_path / "replay")
+    steps = {s for t in tables.episodes for s in t["env_steps"].to_pylist()}
+    assert steps == {u * SPU for u in UPDATES}
+    assert len(tables.episodes) == 2 * len(UPDATES)

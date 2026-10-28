@@ -5,3 +5,6 @@ device_roles: cpu-actor  # rollouts on the CPU shards, updates on Metal (runner 
 memory_limit_bytes: 34359738368  # 32 GiB of the 48 GB: leaves the OS, MLflow and a browser their share
 checkpoint_every: 10  # a 1M run is ~240 updates, so a kill loses < 5% of it (about 25 state saves)
 unmeasured_limits: []  # every abort.limits bound was measured on CPU and Metal
+# The laptop keeps state/ of finished runs; `python -m wut_murl_craftax.orchestration.prune`
+# deletes it (and the checkpoints nothing reads) on request.
+drop_state_on_finish: false

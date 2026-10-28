@@ -30,13 +30,14 @@ from wut_murl_craftax.orchestration.profiles import Profile, load_profile
 from wut_murl_craftax.orchestration.queue import RunSpec, config_hash, expand_phase
 from wut_murl_craftax.orchestration.runner import final_score, worker_specs
 from wut_murl_craftax.orchestration.runtime import BackendError
-from wut_murl_craftax.orchestration.store import merge_stores
+from wut_murl_craftax.orchestration.store import EVAL_MODES, merge_stores
 from wut_murl_craftax.orchestration.tracking import artifact_path
 from wut_murl_craftax.training.checkpoints import (
     checkpoint_schedule,
     load_index,
     load_params,
     load_state,
+    mark_pruned,
 )
 from wut_murl_craftax.training.ppo import make_env
 from wut_murl_craftax.training.records import LOSS_COLUMNS
@@ -1370,6 +1371,281 @@ def test_a_lost_checkpoint_of_a_run_in_progress_stays_tagged_and_fails_at_the_en
     trainer = FakeTrainer(steps_per_update=spu)
     store.run([spec], trainer)  # a rerun skips it
     assert trainer.updates == []
+
+
+# --- storage retention: pruned checkpoints, dropped state ------------------------
+
+
+def _prune(out: Path, updates: list[int]) -> None:
+    """What the prune CLI does to a run's checkpoints: mark them, then delete them."""
+    mark_pruned(out, updates, "test")
+    for u in updates:
+        (out / "ckpt" / f"{u:05d}.msgpack").unlink()
+
+
+def _point_count(store: Store, name: str) -> int:
+    run = store.runs()[name]
+    return sum(
+        len(store.client.get_metric_history(run.info.run_id, key))
+        for key in run.data.metrics
+    )
+
+
+def _files(out: Path, *names: str) -> dict[str, bytes]:
+    return {n: (out / n).read_bytes() for n in names}
+
+
+KEPT = ("ckpt/index.json", "metrics.npz", "episodes.npz", "config.json")
+
+
+def test_a_finished_run_with_pruned_checkpoints_and_no_state_is_reused_untouched(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    out = store.run_dir(spec.name)
+    _prune(out, [0, 1, 2, 3])  # a tuning-only run: every checkpoint
+    shutil.rmtree(out / "state")
+    before, points = _files(out, *KEPT), _point_count(store, spec.name)
+    for _ in range(2):
+        trainer = FakeTrainer()
+        store.run([spec], trainer)
+        assert trainer.updates == []
+        run = store.runs()[spec.name]
+        assert run.info.status == "FINISHED"
+        assert not {"ckpt/missing", "fail/error"} & set(run.data.tags)
+        assert _files(out, *KEPT) == before
+        assert _point_count(store, spec.name) == points
+    assert sorted(p.name for p in (out / "ckpt").iterdir()) == [
+        "index.json",
+        "pruned.json",
+    ]
+    assert not (out / "state").exists()
+
+
+def test_a_pruned_run_of_a_log_spaced_phase_is_neither_retrained_nor_repaired(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("final-1m", ["published"], eval_mode="log_spaced")
+    store.run([spec], FakeTrainer())
+    out = store.run_dir(spec.name)
+    _prune(out, [0, 1, 2])  # the final checkpoint is kept, state/ too
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.updates == []
+    assert _files(out, *KEPT) == before
+    assert sorted(p.name for p in (out / "ckpt").glob("*.msgpack")) == ["00003.msgpack"]
+    assert store.runs()[spec.name].info.status == "FINISHED"
+
+
+def test_a_lost_final_checkpoint_is_rebuilt_beside_pruned_ones_that_stay_pruned(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    out = store.run_dir(spec.name)
+    _prune(out, [0, 1])
+    final = out / "ckpt" / "00003.msgpack"
+    saved = final.read_bytes()
+    final.unlink()  # lost, not pruned: rebuilt from state/
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.updates == []
+    assert final.read_bytes() == saved
+    assert not (out / "ckpt" / "00000.msgpack").exists()  # pruned: never rebuilt
+    assert [e["update"] for e in load_index(out)] == [0, 1, 2, 3]
+    run = store.runs()[spec.name]
+    assert run.info.status == "FINISHED"
+    assert "ckpt/missing" not in run.data.tags
+
+
+def test_a_finished_run_with_a_lost_checkpoint_and_no_state_is_never_retrained(
+    store: Store,
+) -> None:
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    out = store.run_dir(spec.name)
+    (out / "ckpt" / "00002.msgpack").unlink()
+    shutil.rmtree(out / "state")
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    with pytest.raises(RuntimeError, match=r"\[2\] are lost and state/ is gone"):
+        store.run([spec], trainer)
+    assert trainer.updates == []
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert _files(out, *KEPT) == before
+
+
+def test_a_run_with_checkpoints_but_no_state_refuses_to_start_from_scratch(
+    store: Store,
+) -> None:
+    spu = 25_000  # 40 updates: checkpoints at 0, 1, 2, ...
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((11, signal.SIGINT), steps_per_update=spu))
+    out = store.run_dir(spec.name)
+    shutil.rmtree(out / "state")
+    ckpt = {p.name: p.read_bytes() for p in (out / "ckpt").iterdir()}
+    config = (out / "config.json").stat().st_mtime_ns
+    segments = store.runs()[spec.name].data.tags["code/segments"]
+    trainer = FakeTrainer(steps_per_update=spu)
+    with pytest.raises(RuntimeError, match="no state/: refusing to retrain"):
+        store.run([spec], trainer)
+    assert trainer.updates == []
+    assert {p.name: p.read_bytes() for p in (out / "ckpt").iterdir()} == ckpt
+    assert (out / "config.json").stat().st_mtime_ns == config  # refused before it
+    assert store.runs()[spec.name].data.tags["code/segments"] == segments
+
+
+def test_a_pruned_run_reopened_by_a_cut_queue_call_is_only_evaluated(
+    store: Store,
+) -> None:
+    """Review M5: a hard kill between the reopening of a FINISHED run and its
+    ``eval/pending`` tag leaves it RUNNING; with its final checkpoint indexed and
+    its score logged it is evaluated again, never trained or refused."""
+    (spec,) = store.phase("tune-coarse", ["published"])
+    store.run([spec], FakeTrainer())
+    out = store.run_dir(spec.name)
+    _prune(out, [0, 1, 2, 3])
+    shutil.rmtree(out / "state")
+    store.client.update_run(store.runs()[spec.name].info.run_id, status="RUNNING")
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    store.run([spec], trainer)
+    assert trainer.updates == []
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert _files(out, *KEPT) == before
+
+
+def test_a_run_cut_before_its_first_state_save_restarts(store: Store) -> None:
+    """Checkpoints 0 and 1 come before the first state save: a kill there leaves
+    them without ``state/``, and the run restarts from update 0 as one lineage."""
+    spu = 25_000
+    (spec,) = store.phase("tune-coarse", ["published"])
+    with pytest.raises(SystemExit):
+        store.run([spec], FakeTrainer((11, signal.SIGINT), steps_per_update=spu))
+    out = store.run_dir(spec.name)
+    shutil.rmtree(out / "state")
+    first = [e for e in load_index(out) if e["update"] <= 1]
+    for e in load_index(out)[len(first) :]:
+        (out / "ckpt" / e["file"]).unlink()
+    (out / "ckpt" / "index.json").write_text(json.dumps(first))
+    trainer = FakeTrainer(steps_per_update=spu)
+    store.run([spec], trainer)
+    assert trainer.updates[0] == 1
+    assert store.runs()[spec.name].info.status == "FINISHED"
+
+
+def _drop_profile(tmp_path: Path) -> Path:
+    path = tmp_path / "drop.yaml"
+    body = yaml.safe_load(PROFILE.read_text()) | {"drop_state_on_finish": True}
+    path.write_text(yaml.safe_dump(body))
+    return path
+
+
+def _writing_eval(
+    run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]
+) -> None:
+    """Both modes' eval files of the updates the spec's phase evaluates."""
+    updates = [e["update"] for e in load_index(run_dir)]
+    for u in updates if spec.eval_mode == "log_spaced" else updates[-1:]:
+        for mode in EVAL_MODES:
+            path = run_dir / "eval" / mode / f"{u:05d}.npz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"e")
+
+
+@pytest.mark.parametrize("eval_mode", ["final", "log_spaced"])
+def test_a_drop_state_profile_deletes_state_once_a_run_finishes_evaluated(
+    store: Store, tmp_path: Path, eval_mode: str
+) -> None:
+    profile = _drop_profile(tmp_path)
+    (spec,) = store.phase("final-1m", ["published"], eval_mode=eval_mode)
+    store.evaluate = _writing_eval  # type: ignore[method-assign]  # writes eval files
+    store.run([spec], FakeTrainer(), profile=profile)
+    out = store.run_dir(spec.name)
+    assert not (out / "state").exists()
+    assert sorted(p.name for p in (out / "ckpt").glob("*.msgpack")) == [
+        f"{u:05d}.msgpack" for u in (0, 1, 2, 3)
+    ]
+    assert (out / "eval" / "greedy" / "00003.npz").is_file()
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    store.run([spec], trainer, profile=profile)  # reused, never retrained
+    assert trainer.updates == []
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert _files(out, *KEPT) == before
+
+
+def test_a_drop_state_profile_keeps_state_of_unevaluated_killed_or_failed_runs(
+    store: Store, tmp_path: Path
+) -> None:
+    profile = _drop_profile(tmp_path)
+    unevaluated, killed = store.phase("final-1m", ["published", "lr-hi"])
+    store.run([unevaluated], FakeTrainer(), profile=profile)  # writes no eval files
+    run = store.runs()[unevaluated.name]
+    assert run.info.status == "FINISHED"
+    assert (store.run_dir(unevaluated.name) / "state" / "state.npz").is_file()
+    with pytest.raises(SystemExit):
+        store.run([killed], FakeTrainer((2, signal.SIGINT)), profile=profile)
+    assert store.runs()[killed.name].info.status == "KILLED"
+    assert (store.run_dir(killed.name) / "state" / "state.npz").is_file()
+    store.evaluate = _crashing_eval  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        store.run([killed], FakeTrainer(), profile=profile)
+    assert store.runs()[killed.name].info.status == "FAILED"
+    assert (store.run_dir(killed.name) / "state" / "state.npz").is_file()
+
+
+def test_a_stateless_finished_node_run_merged_back_is_reused_without_training(
+    store: Store, tmp_path: Path
+) -> None:
+    """1B storage (audit D3): a cluster run that dropped its state on finishing is
+    copied into the main store and reused there, never retrained."""
+    (spec,) = store.phase("final-1m", ["published"])
+    node_uri = f"sqlite:///{tmp_path / 'node' / 'mlruns-node-0.db'}"
+    runner.main(
+        [spec],
+        _drop_profile(tmp_path),
+        experiment_config=store.config,
+        tracking_uri=node_uri,
+        methods={"toy": FakeTrainer()},
+        evaluate=_writing_eval,
+    )
+    assert merge_stores(node_uri, store.tracking_uri)["copied"] == 1
+    out = store.run_dir(spec.name)
+    assert not (out / "state").exists()
+    before = _files(out, *KEPT)
+    trainer = FakeTrainer()
+    store.evaluate = _writing_eval  # type: ignore[method-assign]
+    store.run([spec], trainer)
+    assert trainer.updates == []
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert _files(out, *KEPT) == before
+
+
+def test_a_drop_state_profile_keeps_state_when_a_checkpoint_is_lost(
+    store: Store, tmp_path: Path
+) -> None:
+    profile = _drop_profile(tmp_path)
+    (spec,) = store.phase("final-1m", ["published"])
+
+    def losing_eval(run_dir: Path, spec: RunSpec, stop: Callable[[], bool]) -> None:
+        _writing_eval(run_dir, spec, stop)
+        (run_dir / "ckpt" / "00001.msgpack").unlink(missing_ok=True)
+
+    store.evaluate = losing_eval  # type: ignore[method-assign]
+    store.run([spec], FakeTrainer(), profile=profile)
+    assert store.runs()[spec.name].info.status == "FINISHED"
+    assert (store.run_dir(spec.name) / "state" / "state.npz").is_file()
+
+
+def _crashing_eval(
+    run_dir: Path, spec: RunSpec, should_stop: Callable[[], bool]
+) -> None:
+    msg = "evaluation crashed"
+    raise OSError(msg)
 
 
 def test_a_methods_knobs_reach_its_hooks_in_training_and_evaluation(
