@@ -42,18 +42,27 @@ CORE_STEMS = [
     "sensitivity_fine", "stability_drawdown", "stability_events", "hardware_sps",
     "hardware_wall_clock", "hardware_compile", "hardware_memory",
     "hardware_utilisation",
+    "race_steps", "race_wall", "order_agreement", "funnel_tech", "funnel_floor",
+    "funnel_training_depth",
+    "funnel_training_floor", "deaths", "stalls_ccdf", "stalls_escape", "splits",
+    "coverage", "new_tiles", "survival_low", "survival_zero", "survival_level",
+    "combat_kills", "combat_damage", "combat_fights", "actions_share",
+    "actions_entropy", "actions_wasted", "resources_use", "resources_time",
+    "advanced_mean", "advanced_final", *(f"radar_{m}" for m in METHODS),
 ]  # fmt: skip
-"""One-panel core figures: a column and a video file each (no double width)."""
-STEMS = [
-    "race_steps", "race_wall", "order_agreement", "funnel", "funnel_training",
-    "deaths", "stalls", "splits", "coverage", "survival", "combat", "actions",
-    "resources", "advanced", "radar_1m", *(f"order_{m}" for m in METHODS),
-]  # fmt: skip
-"""The figure file stems of the plan's list (F1 to F20), one per file."""
+"""One-panel figures: a column and a video file each (no double width). The synthetic
+export has no first-unlock curves, so the two races are placeholders."""
+ORDER_STEMS = [f"order_{m}" for m in METHODS]
+"""The order graphs print node names: 170 mm and video files, no column file."""
 ANGLE_STEMS = [
     "greedy_gap", "gatekeepers", "seed_fate", "ablation_effects", "tuning_optimism",
     "episode_spread", "distil_score", "distil_features",
 ]  # fmt: skip
+if (
+    "achievements_vs_length"
+    in Path(results.__file__).with_name("figures_angles.py").read_text()
+):  # F26 is split into two files once the angle figures are converted
+    ANGLE_STEMS.append("achievements_vs_length")
 """The analysis-angle figures F21-F28 (PNG; F27 and F28 say distillation pending)."""
 VARIANTS = ("", "_double", "_video")
 """Column report figure, double-width report figure, dark video figure."""
@@ -158,13 +167,20 @@ def test_a_full_run_writes_every_figure_in_both_themes_and_widths(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
     folder = base.out / "figures" / "1m"
-    missing = [p.name for p in _files(folder, STEMS, VARIANTS) if not p.is_file()]
-    missing += [
+    missing = [
         p.name for p in _files(folder, CORE_STEMS, ("", "_video")) if not p.is_file()
     ]
-    assert not missing
+    missing += [
+        p.name
+        for p in _files(folder, ORDER_STEMS, ("_double", "_video"))
+        if not p.is_file()
+    ]
+    assert not missing, str(missing)
     doubled = {p.stem[:-7] for p in folder.glob("*_double.png")}
-    assert not doubled & set(CORE_STEMS) - {"legend_methods"}
+    assert {"legend_methods", *ORDER_STEMS} <= doubled
+    wide = {"legend_methods", "race_steps", "race_wall"}  # a placeholder has every size
+    assert not doubled & (set(CORE_STEMS) - wide)
+    assert not [p for p in folder.glob("order_*.png") if p.stem in ORDER_STEMS]
     assert not full.problems
 
 
@@ -175,9 +191,8 @@ def test_each_benchmark_has_its_own_figure_folder_and_captions(
     assert not list(root.glob("*.png")), "no flat figure files"
     assert {p.name for p in root.iterdir() if p.is_dir()} == {"1m", "1b"}
     assert (root / "1b" / "curves_score_main.png").is_file()
-    assert (root / "1b" / "radar_1b.png").is_file()
+    assert (root / "1b" / "radar_ppo.png").is_file()
     assert not list((root / "1b").glob("poi_matrix*"))  # the PoI needs 10 seeds
-    assert not (root / "1m" / "radar_1b.png").exists()
     for budget in ("1m", "1b"):
         captions = pd.read_csv(root / budget / "captions.csv")
         assert list(captions.columns) == ["stem", "id", "title", "description"]

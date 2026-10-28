@@ -73,7 +73,7 @@ def _game_case(fid: str, theme: str, width: str, out: Path) -> None:
 
 @functools.cache
 def _game() -> dict[str, pd.DataFrame]:
-    return game_frames()
+    return game_frames(("1m",))
 
 
 @functools.cache
@@ -140,9 +140,9 @@ def _fidelity_case(out: Path) -> None:
     distil._plot_fidelity(curves, out, "fidelity_seeds", per_seed=True)
 
 
-DOUBLE_FIDS: set[str] = set()
-"""Figure ids with a 170 mm variant (a stem in a module's ``DOUBLE_STEMS``); the others
-are one column wide, so their double-width case would save nothing."""
+DOUBLE_FIDS: set[str] = {"F7G"}
+"""Figure ids drawn at 170 mm and as video only (order graphs print node names): they
+have no column case. Every other figure is one column wide: no double-width case."""
 
 
 def _cases() -> dict[str, Callable[[Path], None]]:
@@ -154,7 +154,7 @@ def _cases() -> dict[str, Callable[[Path], None]]:
             *((f, _game_case) for f in FIGS),  # F6 also saves F6W, the wall-clock race
             *((f, _angle_case) for f in ANGLE_FIGS),
         ]:
-            if width == "double" and theme == "report" and fid not in DOUBLE_FIDS:
+            if theme == "report" and (width == "double") != (fid in DOUBLE_FIDS):
                 continue
             cases[f"{fid}-{theme}-{width}"] = (
                 lambda out, f=fid, c=case, t=theme, w=width: c(f, t, w, out)

@@ -170,8 +170,12 @@ Figs = dict[str, Figure]
 Shape = charts.Shape
 DOUBLE_STEMS: tuple[str, ...] = ()
 """``fnmatch`` patterns of the stems that also get a 170 mm variant: a one-panel figure
-fits the column, so only figures that need the width (``figures_game`` adds its
-order graphs) list themselves; the video variant is always drawn."""
+fits the column, so only a figure that needs the width lists itself."""
+DOUBLE_ONLY: tuple[str, ...] = ("order_*",)
+"""Stems drawn at 170 mm and as video only (their node names do not fit a column);
+every other report figure is one column wide. The video is always drawn."""
+COLUMN_STEMS: tuple[str, ...] = ("order_agreement",)
+"""Stems that match `DOUBLE_ONLY` but fit the column."""
 PROFILE_NAMES = {
     "laptop": "Apple Silicon laptop, 48 GB (CPU actors, Metal updates)",
     "cuda": "CUDA GPU machine",
@@ -180,9 +184,17 @@ PROFILE_NAMES = {
 
 
 def wants(th: Theme, stem: str) -> bool:
-    """False for a ``_double`` variant of a figure that fits the column (not drawn)."""
-    wide_report = th.name == "report" and th.suffix == "_double"
-    return not wide_report or any(fnmatch(stem, p) for p in DOUBLE_STEMS)
+    """Whether ``stem`` is drawn in this variant.
+
+    The video always; a column figure unless it is `DOUBLE_ONLY`; a ``_double`` file
+    only for a `DOUBLE_ONLY` or `DOUBLE_STEMS` figure (others fit the column).
+    """
+    if th.name == "video":
+        return True
+    only = any(fnmatch(stem, p) for p in DOUBLE_ONLY) and stem not in COLUMN_STEMS
+    if th.suffix == "_double":
+        return only or any(fnmatch(stem, p) for p in DOUBLE_STEMS)
+    return not only
 
 
 def _single_budget(runs: pd.DataFrame) -> str:

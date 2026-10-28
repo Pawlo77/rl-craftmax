@@ -176,13 +176,18 @@ ROWS_BASE_MM = 14.0
 
 
 def shape_height_mm(
-    th: "Theme", shape: Shape, rows: int | None = None, base_mm: float | None = None
+    th: "Theme",
+    shape: Shape,
+    rows: int | None = None,
+    base_mm: float | None = None,
+    pitch_mm: float | None = None,
 ) -> float:
     """Report height in mm of ``shape`` at the theme's width (the video has its own).
 
     ``CURVE``, ``DOTS`` and ``SQUARE`` are width times `ASPECT`; ``ROWS`` is
-    ``rows * th.pitch_mm + base_mm`` (needs ``rows``; ``base_mm`` defaults to
-    `ROWS_BASE_MM`, give more for a legend or long rotated labels); ``LEGEND`` needs
+    ``rows * pitch_mm + base_mm`` (needs ``rows``; ``pitch_mm`` defaults to the theme's
+    row pitch, ``base_mm`` to `ROWS_BASE_MM`, give more for a legend or long rotated
+    labels); ``LEGEND`` needs
     ``rows`` as the number of legend rows (4.2 mm each, 4 mm margin).
 
     Raises:
@@ -195,7 +200,8 @@ def shape_height_mm(
         raise ValueError(msg)
     if shape is Shape.LEGEND:
         return rows * 4.2 + 4.0
-    return rows * th.pitch_mm + (ROWS_BASE_MM if base_mm is None else base_mm)
+    pitch = th.pitch_mm if pitch_mm is None else pitch_mm
+    return rows * pitch + (ROWS_BASE_MM if base_mm is None else base_mm)
 
 
 SERIES_LIGHT = ("#1c5cab", "#a8411a", "#127552", "#8f5f00")
@@ -351,6 +357,7 @@ def themed_figure(
     shape: Shape | None = None,
     rows: int | None = None,
     base_mm: float | None = None,
+    pitch_mm: float | None = None,
 ) -> Figure:
     """A constrained-layout figure on the theme surface.
 
@@ -364,7 +371,7 @@ def themed_figure(
         ValueError: If neither ``height_mm`` nor ``shape`` is given.
     """
     if shape is not None and height_mm is None:
-        height_mm = shape_height_mm(th, shape, rows, base_mm)
+        height_mm = shape_height_mm(th, shape, rows, base_mm, pitch_mm)
     if height_mm is None:
         msg = "themed_figure needs a height_mm or a shape"
         raise ValueError(msg)
@@ -400,17 +407,22 @@ def style_axes(ax: Axes, th: Theme, *, grid: Literal["x", "y", "both"] = "x") ->
     return ax
 
 
-def category_figure(th: Theme, rows: int, extra_mm: float = 0.0) -> Figure:
+def category_figure(
+    th: Theme, rows: int, extra_mm: float = 0.0, pitch_mm: float | None = None
+) -> Figure:
     """A figure for ``rows`` category rows: `Shape.DOTS` if they fit, else `Shape.ROWS`.
 
     Short lists get the fixed 0.45 aspect (they tile with their neighbours); a longer
-    list grows by the theme's row pitch. ``extra_mm`` adds room for a legend or long
-    rotated labels.
+    list grows by the row pitch (the theme's, or ``pitch_mm`` where each row holds
+    several dodged marks). ``extra_mm`` adds room for a legend or long rotated labels.
     """
     base = ROWS_BASE_MM + extra_mm
-    if rows * th.pitch_mm + base <= th.width * 25.4 * ASPECT[Shape.DOTS]:
+    pitch = th.pitch_mm if pitch_mm is None else pitch_mm
+    if rows * pitch + base <= th.width * 25.4 * ASPECT[Shape.DOTS]:
         return themed_figure(th, shape=Shape.DOTS)
-    return themed_figure(th, shape=Shape.ROWS, rows=rows, base_mm=base)
+    return themed_figure(
+        th, shape=Shape.ROWS, rows=rows, base_mm=base, pitch_mm=pitch_mm
+    )
 
 
 def label_inset_mm(th: Theme, labels: Sequence[str], pad_mm: float = 3.5) -> float:

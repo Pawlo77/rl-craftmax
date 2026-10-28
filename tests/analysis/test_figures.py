@@ -92,8 +92,12 @@ LABELS = {
 class Bundle:
     """The figures one call wrote (stem -> figure), searched as if they were one."""
 
-    def __init__(self, figs: dict[str, Figure]) -> None:
+    def __init__(
+        self, figs: dict[str, Figure], captions: dict[str, str] | None = None
+    ) -> None:
         self.figs = figs
+        self.captions = captions or {}
+        """Stem -> caption description registered while the figures were drawn."""
 
     @property
     def axes(self) -> list:

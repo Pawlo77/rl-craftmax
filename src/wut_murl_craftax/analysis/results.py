@@ -344,7 +344,6 @@ def figure_functions() -> dict[str, Callable[..., Any]]:
     core: dict[str, Callable[..., Any]] = dict(figures.FIGURES)
     game: dict[str, Callable[..., Any]] = dict(figures_game.GAME_FIGURES)
     game["F7G"] = figures_game.plot_order_graphs  # one file per method
-    game["F17"] = figures_game.plot_radars  # one file per budget
     order = ["LEG", "F1", "F2", "F3", "F4", "F5", "F18", "F19", "F20"]
     return {k: core[k] for k in order} | game | dict(figures_angles.ANGLE_FIGURES)
 
