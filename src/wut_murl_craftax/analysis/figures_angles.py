@@ -107,6 +107,8 @@ LENGTH_MIN = 10
 """Episodes of a method a length bin needs to be drawn."""
 FEATURE_ROWS = 12
 """Inputs of the importance heat map: the largest per-method means."""
+MIN_WITHIN = 5
+"""Policies a method needs for its own score-fidelity Spearman (F27)."""
 POLICY_SUMMARY = "complexity.json"
 """`interpretation.run.SUMMARY`, written last in a finished policy folder (that module
 is not imported here: it loads JAX)."""
@@ -172,9 +174,21 @@ def _legend_rows(th: Theme, entries: int) -> float:
 def _close(
     fig: Figure, th: Theme, handles: Sequence[Any], notes: Sequence[str]
 ) -> None:
-    """`figures._finish` with the legend in `_legend_cols` columns."""
-    with mpl.rc_context(LEGEND_RC):
-        _finish(fig, th, handles, notes, cols=_legend_cols(th))
+    """`figures._finish` with the legend in `_legend_cols` columns, fewer if too wide.
+
+    Long labels (F25 carries its optimism in them) can make the columns wider than
+    the figure, so the legend is measured and redrawn with one column less until fits.
+    """
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+    for cols in range(_legend_cols(th), 0, -1):
+        for old in list(fig.legends):
+            old.remove()
+        with mpl.rc_context(LEGEND_RC):
+            _finish(fig, th, handles, notes, cols=cols)
+        if not fig.legends or fig.legends[0].get_window_extent(renderer).width <= (
+            fig.bbox.width
+        ):
+            return
 
 
 def _budget_axes(
@@ -374,7 +388,9 @@ def plot_greedy_gap(
         (
             "Mean over seeds of each seed's greedy minus stochastic mean eval score "
             "(percentage points) with a 95% bootstrap band. Value-based methods sample "
-            "epsilon-greedy; their argmax is the greedy mode."
+            "epsilon-greedy, so their gap closes partly by construction as epsilon "
+            "decays; the policy-gradient gap compares the argmax with the policy's "
+            "own distribution."
         ),
     ]
     return _draw(
@@ -629,8 +645,10 @@ def plot_seed_fate(
     notes = [
         (
             "Spearman rho between the seeds' mean stochastic eval score at a "
-            "checkpoint and their final score: high early means a run could be stopped"
-            " early."
+            "checkpoint and their final score (the training-episode score, so the last "
+            "checkpoint also measures eval against training agreement): high early "
+            "means a run could be stopped early. Early checkpoints have many tied "
+            "scores, which pull rho towards 0; the method mean is no test."
         ),
     ]
     return _draw(
@@ -660,6 +678,12 @@ def _effect_panel(
 ) -> None:
     ax.axvline(0.0, color=th.muted, lw=0.6)
     tuned = compare.tuned(runs).groupby("method")["final_score"].mean()
+    fresh = compare.tuned(runs)[~compare.tuned(runs)["phases"].map(reused_from_tuning)]
+    counts = compare.tuned(runs).groupby("method").size()
+    fresh_n, fresh_mean = (
+        fresh.groupby("method").size(),
+        fresh.groupby("method")["final_score"].mean(),
+    )
     rng = np.random.default_rng(0)  # jitter only; it moves no number
     for y, r in enumerate(rows.itertuples()):
         s = _style_of(th, r.method, r.config_ref)
@@ -688,6 +712,18 @@ def _effect_panel(
             markeredgewidth=th.lw * 1.4,
         )
         dot.set_gid(_gid("effect", *key))
+        n = int(fresh_n.get(r.method, 0))
+        if compare.MIN_FRESH <= n < counts.get(r.method, 0):  # some seeds were reused
+            (cross,) = ax.plot(
+                [mine["final_score"].mean() - fresh_mean[r.method]],
+                [y],
+                ls="",
+                marker="x",
+                ms=th.ms * 1.2,
+                mew=th.lw * 1.4,
+                color=s["color"],
+            )
+            cross.set_gid(_gid("fresh", *key))
     _style(ax, th)
     ax.set_yticks(range(len(rows)), [_effect_label(r) for r in rows.itertuples()])
     ax.set_ylim(len(rows) - 0.5, -0.5)
@@ -725,23 +761,46 @@ def plot_ablation_effects(
     if not shown:
         return _no_data(NAMES["F24"], th, out_dir, "no ablation runs")
     sizes = [int((table["benchmark"] == b).sum()) for b in shown]
-    fig, axes = _budget_axes(th, [n * th.pitch_mm * 2.2 + PANEL_MM for n in sizes], 0)
+    fig, axes = _budget_axes(th, [n * th.pitch_mm * 2.2 + PANEL_MM for n in sizes], 2)
     for ax, budget in zip(axes, shown, strict=True):
         rows = table[table["benchmark"] == budget].reset_index(drop=True)
         runs = frames["runs"][frames["runs"]["budget"] == budget]
         _effect_panel(ax, th, budget, rows, runs)
         what = "which component carries each method?"
         _title(ax, th, _panel_title(budget, what), narrow=True)
+    handles = [
+        Line2D(
+            [],
+            [],
+            ls="",
+            marker="o",
+            ms=th.ms * 1.3,
+            color=th.ink2,
+            markerfacecolor=th.surface,
+            label="vs all tuned seeds",
+        ),
+        Line2D(
+            [],
+            [],
+            ls="",
+            marker="x",
+            ms=th.ms * 1.2,
+            color=th.ink2,
+            label="vs fresh tuned seeds",
+        ),
+    ]
     notes = [
         (
             "Hollow dot: ablation minus tuned mean final score with its 95% bootstrap "
             "CI (Welch t at 1B); faint dots: each ablation seed minus the tuned mean. "
             "PoI: P(ablation beats tuned); p: Mann-Whitney, Holm-adjusted per block "
-            "(1M only)."
+            "(1M only). Cross: the difference to the tuned seeds not reused from "
+            "tuning; the reused ones were selected, so the table's baseline is "
+            "optimistic (R102)."
         ),
         *_pending(present),
     ]
-    _close(fig, th, (), notes)
+    _close(fig, th, handles, notes)
     return _done(fig, th, out_dir, NAMES["F24"])
 
 
@@ -837,7 +896,8 @@ def plot_tuning_optimism(
         (
             "Dot: mean of the fresh final seeds (not reused from tuning, R102) with a "
             "95% bootstrap CI; legend: the tuning optimism, tuning minus fresh mean "
-            "(R101)."
+            "(R101). The tuning mean has 3 seeds and no interval; with seed noise "
+            "alone it would still regress towards the fresh mean."
         ),
         *reasons,
         *_pending(present),
@@ -882,7 +942,7 @@ def _spread_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
             # low in the row, under the number a wide variant prints in the cell
             (dot,) = ax.plot(
                 [means[method] + 0.5],
-                [i + 0.86],
+                [i + 0.8],
                 ls="",
                 marker="^",
                 ms=th.ms * 1.1,
@@ -893,6 +953,9 @@ def _spread_panel(ax: Axes, th: Theme, ctx: Ctx, _notes: list[str]) -> None:
             dot.set_gid(_gid("mean", ctx.budget, method))
     ax.set_yticks(np.arange(len(shares)) + 0.5, list(shares.index), rotation=0)
     ax.tick_params(axis="x", rotation=0)
+    if not th.wide:  # 13 count labels do not fit the column side by side
+        for tick in ax.get_xticklabels()[1::2]:
+            tick.set_visible(False)
     _labels(ax, th, "achievements per episode")
 
 
@@ -950,7 +1013,9 @@ def plot_episode_spread(
     notes = [
         (
             "Final stochastic eval episodes of the tuned runs, all seeds pooled; heat "
-            "map triangle: the method's mean achievements per episode."
+            "map triangle: the method's mean achievements per episode. Length and "
+            "achievements are associated, not causal: eating, drinking and sleeping "
+            "also keep an episode alive; the last length bin is open-ended."
         ),
     ]
     return _draw(NAMES["F26"], frames, out_dir, theme, width, panels, notes=notes)
@@ -1051,7 +1116,23 @@ def _score_panel(
     if len(ok) < 3:
         return "Spearman needs 3 policies"
     res = sps.spearmanr(ok["fidelity_256"], ok["score"])
-    return f"Spearman rho {res.statistic:.2f} (p {res.pvalue:.2g}, {len(ok)} policies)"
+    within = within_rho(ok)
+    shown = f"{within:.2f}" if np.isfinite(within) else "n/a"
+    return (
+        f"pooled Spearman rho {res.statistic:.2f} (p {res.pvalue:.2g}, {len(ok)} "
+        f"policies), within methods {shown}"
+    )
+
+
+def within_rho(policies: pd.DataFrame) -> float:
+    """Mean over methods with `MIN_WITHIN` policies of their score-fidelity rho."""
+    rhos = [
+        _spearman(g["fidelity_256"].to_numpy(float), g["score"].to_numpy(float))
+        for _, g in policies.groupby("method")
+        if len(g) >= MIN_WITHIN
+    ]
+    rhos = [r for r in rhos if np.isfinite(r)]
+    return float(np.mean(rhos)) if rhos else float("nan")
 
 
 def _distil_figure(
@@ -1109,7 +1190,11 @@ def plot_distil_score(
         return _method_handles(th, [m for m in order if m in have])
 
     notes = [
-        "One dot per distilled policy: base fit, test states of its final checkpoint."
+        (
+            "One dot per distilled policy: base fit, test states of its final "
+            "checkpoint. The pooled rho (R106) mostly compares methods; within "
+            f"methods: the mean rho over methods with {MIN_WITHIN} or more policies."
+        ),
     ]
     return _distil_figure(
         NAMES["F27"],
@@ -1164,7 +1249,9 @@ def plot_distil_features(
         (
             "Permutation importance: drop in the 256-leaf tree's test fidelity when "
             "the input is shuffled, mean over a method's distilled seeds (base fit); "
-            "blank: not an input of that method."
+            "blank: not an input of that method. Methods differ in their inputs "
+            "(memory proxies, skill flags), and correlated inputs split importance, so "
+            "compare within a column before across."
         ),
     ]
     rows_mm = FEATURE_ROWS * CELL_MM + PANEL_MM + 18.0  # rotated method names below

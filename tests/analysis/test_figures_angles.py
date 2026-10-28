@@ -403,6 +403,21 @@ def test_ablation_effects_are_the_ablation_table_differences(
     assert "PoI" in said(fig)
 
 
+def test_ablation_crosses_use_only_the_fresh_tuned_seeds(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    fig = plot_ablation_effects(frames, tmp_path, n_boot=N)
+    runs = frames["runs"][frames["runs"]["budget"] == "1m"]
+    tuned = runs[(runs["method"] == "sil") & (runs["config_ref"] == "tuned")]
+    fresh = tuned[~tuned["phases"].map(reused_from_tuning)]["final_score"]
+    assert 0 < len(fresh) < len(tuned)
+    ablation = runs[runs["config_ref"] == "single-buffer"]["final_score"]
+    cross = by_gid(fig, "fresh/1m/sil/single-buffer")
+    want = ablation.mean() - fresh.mean()
+    assert float(cross.get_xdata()[0]) == pytest.approx(want)  # type: ignore[attr-defined]
+    assert not artists(fig, "fresh/1m/dyna-q")  # no reused tuned seed, no cross
+
+
 # --- F25 tuning optimism ------------------------------------------------------------
 
 
@@ -430,6 +445,19 @@ def test_tuning_optimism_points_and_their_fresh_intervals(
     text = said(fig)
     assert "ppo" in text
     assert "selected on all its final seeds" in text
+
+
+def test_a_legend_of_long_labels_drops_columns_to_fit(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    table = optimism_table(frames)
+    table["method"] = ["count-bonus-ppo-rnn", "count-bonus-pqn-rnn", "ppo"]
+    table["optimism"] = [0.123, -0.456, np.nan]
+    fig = plot_tuning_optimism(frames, tmp_path, n_boot=N, table=table)
+    fig.canvas.draw()
+    legend = fig.legends[0].get_window_extent(fig.canvas.get_renderer())  # type: ignore[attr-defined]
+    assert legend.x0 >= 0
+    assert legend.x1 <= fig.bbox.x1
 
 
 # --- F26 episode spread -------------------------------------------------------------
@@ -478,8 +506,16 @@ def test_distil_score_points_and_the_spearman(
         xs += list(want[:, 0])
         ys += list(want[:, 1])
     rho = sps.spearmanr(xs, ys).statistic
+    within = np.mean([
+        sps.spearmanr(
+            [fidelity_of(m, k) for k in range(10)],
+            tuned[tuned["method"] == m].sort_values("seed")["final_score"],
+        ).statistic
+        for m in DISTILLED
+    ])
     text = said(fig)
-    assert f"{rho:.2f}" in text
+    assert f"pooled Spearman rho {rho:.2f}" in text
+    assert f"within methods {within:.2f}" in text
     for want in ("pending", "pqn-rnn", "combo"):
         assert want in text
 

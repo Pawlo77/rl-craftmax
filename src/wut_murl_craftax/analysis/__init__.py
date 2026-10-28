@@ -66,6 +66,7 @@ if TYPE_CHECKING:  # real names for type checkers; runtime imports stay lazy
         plot_seed_fate,
         plot_tuning_optimism,
         seed_fate,
+        within_rho,
     )
     from .figures_game import (
         GAME_FIGURES,
@@ -301,6 +302,7 @@ _EXPORTS: dict[str, str] = {
     "plot_seed_fate": "figures_angles",
     "plot_tuning_optimism": "figures_angles",
     "seed_fate": "figures_angles",
+    "within_rho": "figures_angles",
     "GAME_FIGURES": "figures_game",
     "GAME_NAMES": "figures_game",
     "funnel_shares": "figures_game",
@@ -479,6 +481,7 @@ __all__ = [
     "tuning_optimism",
     "undefined_macros",
     "units",
+    "within_rho",
     "write_cases",
     "write_numbers",
     "write_tables",
