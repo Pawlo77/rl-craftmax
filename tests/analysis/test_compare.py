@@ -504,6 +504,7 @@ def test_t4_is_per_profile_with_the_context_note(
 def _race_frames(
     first: dict[str, list[float | None]] | None = None,
     wall: dict[str, float] | None = None,
+    profile: str = "laptop",
 ) -> dict[str, pd.DataFrame]:
     """Main-block methods racing to collect_wood; every seed unlocks place_table at 5.
 
@@ -526,7 +527,7 @@ def _race_frames(
                 "budget": "1m",
                 "seed": seed,
                 "config_ref": "tuned",
-                "profile": "laptop",
+                "profile": profile,
                 "config_json": "{}",
             })
             names = ["first_unlock/place_table", "first_unlock_wall/place_table"]
@@ -564,8 +565,17 @@ def test_race_winner_is_the_lowest_median_of_half_the_seeds() -> None:
         "sil": False,
         "count-bonus-pqn-rnn": False,
     }
+    # R97: laptop wall-clock is context only, so nobody wins it; the times stay
+    assert not race["winner_wall"].any()
+    assert wood.loc["count-bonus-pqn-rnn", "median_wall"] == pytest.approx(3.0)
+    assert race["wall_note"].eq(CONTEXT_NOTE).all()
+
+
+def test_wall_clock_winners_exist_for_a_profile_that_is_not_the_laptop() -> None:
+    race = race_table(_race_frames(profile="cuda"))
+    wood = race[race["achievement"] == "collect_wood"].set_index("method")
     assert wood.loc["count-bonus-pqn-rnn", "winner_wall"]
-    assert race["wall_note"].eq(CONTEXT_NOTE).all()  # laptop wall-clock (R97)
+    assert race["wall_note"].eq("").all()
     table = race[race["achievement"] == "place_table"]
     assert table["winner_steps"].all()  # a tie: every tied method wins
 
@@ -594,8 +604,10 @@ def test_t6_one_row_per_method_with_race_wins_and_headlines() -> None:
     row = t.set_index("method")
     assert row.loc["count-bonus-ppo-rnn", "race_wins_steps"] == 2  # wood + table tie
     assert row.loc["sil", "race_wins_steps"] == 1
-    assert row.loc["count-bonus-pqn-rnn", "race_wins_wall"] == 2
+    assert t["race_wins_wall"].isna().all()  # R97: laptop wall-clock is never ranked
     assert t["wall_note"].eq(CONTEXT_NOTE).all()
+    cuda = game_summary_table(_race_frames(profile="cuda")).set_index("method")
+    assert cuda.loc["count-bonus-pqn-rnn", "race_wins_wall"] == 2
     assert not t["indicative"].any()
     assert row.loc["sil", "top_death_cause"] == "starvation"
     assert row.loc["sil", "top_death_share"] == pytest.approx(1.0)

@@ -872,8 +872,10 @@ def _race_block(firsts: pd.DataFrame, names: Sequence[str]) -> pd.DataFrame:
     timed = ok[(ok["profile"] != MIXED) & np.isfinite(ok["median_wall"])]
     fastest = timed.groupby(["achievement", "profile"])["median_wall"].min()
     key = pd.MultiIndex.from_frame(stats[["achievement", "profile"]])
-    stats["winner_wall"] = stats["eligible"] & (
-        stats["median_wall"].to_numpy() == fastest.reindex(key).to_numpy()
+    stats["winner_wall"] = (
+        stats["eligible"]
+        & (stats["median_wall"].to_numpy() == fastest.reindex(key).to_numpy())
+        & (stats["profile"] != LAPTOP)  # R97: laptop timings are context, never ranked
     )
     stats["wall_note"] = np.where(stats["profile"] == LAPTOP, CONTEXT_NOTE, "")
     order = {m: i for i, m in enumerate(names)}
@@ -891,8 +893,9 @@ def race_table(frames: Frames) -> pd.DataFrame:
     are lower medians over all n runs, +inf for a run that never unlocked it (as
     `obstacles`' base medians), so a method is ranked on its slow seeds too. Eligible at
     k >= n / 2 (then the median is finite); the eligible method(s) with the lowest
-    median win in env steps and, among methods of one profile, in wall-clock, whose
-    laptop rows carry `CONTEXT_NOTE` (R97). Methods race only inside their block.
+    median win in env steps and, among methods of one profile, in wall-clock; laptop
+    rows keep their times with `CONTEXT_NOTE` but win nothing (R97, two workers shared
+    the machine). Methods race only inside their block.
     """
     parts = []
     for budget, runs in _budgets(_tuned(frames["runs"])):
@@ -968,7 +971,9 @@ def game_summary_table(frames: Frames) -> pd.DataFrame:
                 "role": role,
                 "indicative": budget not in SIGNIFICANCE_BUDGETS,
                 "race_wins_steps": _NAN if won is None else won["winner_steps"],
-                "race_wins_wall": _NAN if won is None else won["winner_wall"],
+                "race_wins_wall": (
+                    _NAN if won is None or won["wall_note"] else won["winner_wall"]
+                ),
                 "wall_note": "" if won is None else won["wall_note"],
                 **_game_headlines(final[final["run_id"].isin(ids)]),
             })

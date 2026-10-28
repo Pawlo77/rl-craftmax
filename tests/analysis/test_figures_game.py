@@ -320,10 +320,8 @@ def test_f6_wall_clock_is_a_second_file_with_its_winners(
     fig = race(frames, tmp_path, clock="wall")
     assert (tmp_path / "race_wall.pdf").exists()
     won = compare.race_table(frames)
-    won = won[won["winner_wall"].astype(bool)]
-    assert gids(fig, "winner") == {
-        f"winner/{r.benchmark}/{r.method}/{r.achievement}" for r in won.itertuples()
-    }
+    assert not won["winner_wall"].any()  # R97: every run is a laptop run, no ring
+    assert gids(fig, "winner") == set()
     assert any("two concurrent workers" in t for t in texts(fig))
 
 
