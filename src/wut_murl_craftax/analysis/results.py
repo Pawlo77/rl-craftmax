@@ -345,7 +345,7 @@ def figure_functions() -> dict[str, Callable[..., Any]]:
     game: dict[str, Callable[..., Any]] = dict(figures_game.GAME_FIGURES)
     game["F7G"] = figures_game.plot_order_graphs  # one file per method
     game["F17"] = figures_game.plot_radars  # one file per budget
-    order = ["LEG", "F1", "F2", "F3", "F2F3", "F4", "F5", "F18", "F19", "F20"]
+    order = ["LEG", "F1", "F2", "F3", "F4", "F5", "F18", "F19", "F20"]
     return {k: core[k] for k in order} | game | dict(figures_angles.ANGLE_FIGURES)
 
 
@@ -358,7 +358,6 @@ def figure_kwargs(
         "F1": boot,
         "F2": {"table": t["main"], "ablation": t["ablation"], **boot},
         "F3": {"table": t["poi_matrix"], **boot},
-        "F2F3": {"table": t["main"], "poi": t["poi_matrix"], **boot},
         "F4": {"literature": t["literature"], **boot},
         "F18": {"table": t["sensitivity"]},
         "F19": {"per_run": t["stability_runs"], "table": t["stability"]},

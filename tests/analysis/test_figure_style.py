@@ -52,7 +52,7 @@ DATA_NAME_STEMS = ("order_",)
 
 @functools.cache
 def _core() -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], pd.DataFrame]:
-    frames = figure_frames()
+    frames = figure_frames(("1m",))
     published = Path(tempfile.mkdtemp(prefix="published_")) / "published.yaml"
     published.write_text("{}")
     lit = literature_table(
@@ -140,6 +140,11 @@ def _fidelity_case(out: Path) -> None:
     distil._plot_fidelity(curves, out, "fidelity_seeds", per_seed=True)
 
 
+DOUBLE_FIDS: set[str] = set()
+"""Figure ids with a 170 mm variant (a stem in a module's ``DOUBLE_STEMS``); the others
+are one column wide, so their double-width case would save nothing."""
+
+
 def _cases() -> dict[str, Callable[[Path], None]]:
     """Case name -> a function that draws it into a folder."""
     cases: dict[str, Callable[[Path], None]] = {}
@@ -149,6 +154,8 @@ def _cases() -> dict[str, Callable[[Path], None]]:
             *((f, _game_case) for f in FIGS),  # F6 also saves F6W, the wall-clock race
             *((f, _angle_case) for f in ANGLE_FIGS),
         ]:
+            if width == "double" and theme == "report" and fid not in DOUBLE_FIDS:
+                continue
             cases[f"{fid}-{theme}-{width}"] = (
                 lambda out, f=fid, c=case, t=theme, w=width: c(f, t, w, out)
             )

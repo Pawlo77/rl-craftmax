@@ -34,12 +34,20 @@ METHODS = (
     "count-bonus-pqn-rnn", "count-bonus-ppo-rnn", "combo", "dyna-q", "ppo",
     "ppo-rnn", "pqn-rnn", "sil", "smdp-skills",
 )  # fmt: skip
+CORE_STEMS = [
+    "legend_methods", "curves_score_main", "curves_score_skills", "aggregate",
+    "poi_matrix_main", "poi_matrix_skills", "seed_spread_main", "seed_spread_skills",
+    "seed_spread_published", "success_heatmap_main", "success_heatmap_skills",
+    "config_scores_coarse", "sensitivity_coarse", "config_scores_fine",
+    "sensitivity_fine", "stability_drawdown", "stability_events", "hardware_sps",
+    "hardware_wall_clock", "hardware_compile", "hardware_memory",
+    "hardware_utilisation",
+]  # fmt: skip
+"""One-panel core figures: a column and a video file each (no double width)."""
 STEMS = [
-    "curves_score", "aggregate", "poi_matrix", "seed_spread", "success_heatmap",
-    "sensitivity", "stability", "hardware", "race_steps", "race_wall",
-    "order_agreement", "funnel", "funnel_training", "deaths", "stalls", "splits",
-    "coverage", "survival", "combat", "actions", "resources", "advanced", "radar_1m",
-    *(f"order_{m}" for m in METHODS),
+    "race_steps", "race_wall", "order_agreement", "funnel", "funnel_training",
+    "deaths", "stalls", "splits", "coverage", "survival", "combat", "actions",
+    "resources", "advanced", "radar_1m", *(f"order_{m}" for m in METHODS),
 ]  # fmt: skip
 """The figure file stems of the plan's list (F1 to F20), one per file."""
 ANGLE_STEMS = [
@@ -151,7 +159,12 @@ def test_a_full_run_writes_every_figure_in_both_themes_and_widths(
 ) -> None:
     folder = base.out / "figures" / "1m"
     missing = [p.name for p in _files(folder, STEMS, VARIANTS) if not p.is_file()]
+    missing += [
+        p.name for p in _files(folder, CORE_STEMS, ("", "_video")) if not p.is_file()
+    ]
     assert not missing
+    doubled = {p.stem[:-7] for p in folder.glob("*_double.png")}
+    assert not doubled & set(CORE_STEMS) - {"legend_methods"}
     assert not full.problems
 
 
@@ -161,9 +174,9 @@ def test_each_benchmark_has_its_own_figure_folder_and_captions(
     root = base.out / "figures"
     assert not list(root.glob("*.png")), "no flat figure files"
     assert {p.name for p in root.iterdir() if p.is_dir()} == {"1m", "1b"}
-    assert (root / "1b" / "curves_score.png").is_file()
+    assert (root / "1b" / "curves_score_main.png").is_file()
     assert (root / "1b" / "radar_1b.png").is_file()
-    assert not (root / "1b" / "poi_matrix.png").exists()  # the PoI needs 10 seeds
+    assert not list((root / "1b").glob("poi_matrix*"))  # the PoI needs 10 seeds
     assert not (root / "1m" / "radar_1b.png").exists()
     for budget in ("1m", "1b"):
         captions = pd.read_csv(root / budget / "captions.csv")
@@ -205,7 +218,7 @@ def test_a_failing_reproduction_gate_still_writes_everything(
     assert row.loc[("ppo-rnn", "1m"), "status"] == "pass"
     assert row.loc[("ppo", "1m"), "gap"] == pytest.approx(-3.0)
     assert "ppo" in " ".join(full.failed_gates)
-    assert (base.out / "figures" / "1m" / "curves_score.png").is_file()
+    assert (base.out / "figures" / "1m" / "curves_score_main.png").is_file()
     assert (base.report_dir / "numbers.tex").is_file()
 
 
@@ -221,7 +234,8 @@ def test_the_report_folder_gets_tables_numbers_and_report_figures(
     assert r"\closedLoopOneMSil}" in numbers
     assert r"\closedLoopOneMSilNoMemory}" in numbers
     figures = {p.name for p in (report / "figures" / "1m").glob("*.png")}
-    assert "curves_score_double.png" in figures
+    assert "curves_score_main.png" in figures
+    assert "order_ppo_double.png" in figures
     assert "fidelity_vs_leaves.png" in figures
     assert not [n for n in figures if n.endswith("_video.png")]
     assert not list((report / "figures").glob("*.png")), "no flat figure files"
@@ -279,7 +293,7 @@ def test_a_rerun_skips_finished_stages_and_keeps_the_outputs_and_the_run(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
     tables = base.out / "tables" / "main.csv"
-    fig = base.out / "figures" / "1m" / "curves_score.png"
+    fig = base.out / "figures" / "1m" / "curves_score_main.png"
     before = (tables.read_bytes(), fig.stat().st_mtime_ns)
     again = run_comparison(base)
     assert not again.done

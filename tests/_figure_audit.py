@@ -223,7 +223,7 @@ def _text_problems(
             figure_texts.append(text)
         elif kind in ("annotation", "other") and not NUMBER.match(text):
             sentences.append(text)
-        if FORBIDDEN.search(text):
+        if kind != "tick" and FORBIDDEN.search(text):  # '1M' is a step tick
             forbidden.append(text)
     return figure_texts, sentences, forbidden
 
