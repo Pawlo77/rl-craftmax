@@ -210,24 +210,51 @@ def test_a_full_run_writes_the_analysis_angle_figures(
     assert {f"figures/F{i}" for i in range(21, 29)} <= set(full.done)
 
 
-def test_a_full_run_writes_every_table_as_csv_and_latex(
+def test_a_full_run_writes_every_table_as_csv_and_latex_per_benchmark(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    tables = base.out / "tables"
+    root = base.out / "tables"
+    assert not list(root.glob("*.csv")), "no flat table files"
+    assert not list(root.glob("*.tex"))
+    one_m = root / "1m"
     for stem in TABLES:
-        assert (tables / f"{stem}.csv").is_file(), stem
+        assert (one_m / f"{stem}.csv").is_file(), stem
     for stem in ("main", "literature", "game_summary", "stability_hardware"):
-        assert (tables / f"{stem}.tex").is_file(), stem
-    main = pd.read_csv(tables / "main.csv")
+        assert (one_m / f"{stem}.tex").is_file(), stem
+    assert (one_m / "main_vs_controls.tex").is_file()
+    main = pd.read_csv(one_m / "main.csv")
     assert set(main["block"]) == {"main", "skills"}
-    assert set(main["benchmark"]) == {"1m", "1b"}
-    assert set(pd.read_csv(tables / "sensitivity.csv")["phase"]) == set(TUNING)
+    assert set(main["benchmark"]) == {"1m"}  # each folder holds only its rows
+    assert set(pd.read_csv(root / "1b" / "main.csv")["benchmark"]) == {"1b"}
+    assert not (root / "1b" / "poi_matrix.csv").exists()  # the PoI is 1M only
+    assert not (root / "1b" / "main_vs_controls.tex").exists()
+    assert set(pd.read_csv(one_m / "sensitivity.csv")["phase"]) == set(TUNING)
+    for table in one_m.glob("*.csv"):
+        frame = pd.read_csv(table)
+        if "benchmark" in frame:
+            assert set(frame["benchmark"]) <= {"1m"}, table.name
+
+
+def test_each_table_folder_has_its_captions(
+    full: ResultsSummary, base: ResultsOptions
+) -> None:
+    for budget in ("1m", "1b"):
+        folder = base.out / "tables" / budget
+        captions = pd.read_csv(folder / "captions.csv")
+        assert list(captions.columns) == ["stem", "id", "title", "description"]
+        for stem in captions["stem"]:  # a described table is a file of the folder
+            assert (folder / f"{stem}.csv").is_file() or (
+                folder / f"{stem}.tex"
+            ).is_file(), (budget, stem)
+        assert {"main", "game_summary"} <= set(captions["stem"])
+        files = {p.stem for p in folder.glob("*.csv")} - {"captions"}
+        assert files <= set(captions["stem"])  # every table file is described
 
 
 def test_a_failing_reproduction_gate_still_writes_everything(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    gate = pd.read_csv(base.out / "tables" / "reproduction_gate.csv")
+    gate = pd.read_csv(base.out / "tables" / "1m" / "reproduction_gate.csv")
     row = gate.set_index(["control", "benchmark"])
     assert row.loc[("ppo", "1m"), "status"] == "fail"
     assert row.loc[("ppo-rnn", "1m"), "status"] == "pass"
@@ -241,9 +268,10 @@ def test_the_report_folder_gets_tables_numbers_and_report_figures(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
     report = base.report_dir
-    assert (report / "tables" / "main.tex").read_text() == (
-        base.out / "tables" / "main.tex"
+    assert (report / "tables" / "1m" / "main.tex").read_text() == (
+        base.out / "tables" / "1m" / "main.tex"
     ).read_text()
+    assert not list((report / "tables").glob("*.tex")), "no flat table files"
     numbers = (report / "numbers.tex").read_text()
     assert r"\scoreOneMPpo}" in numbers
     assert r"\closedLoopOneMSil}" in numbers
@@ -268,7 +296,8 @@ def test_no_text_output_has_the_long_dash(
 ) -> None:
     dash = chr(0x2014)
     texts = [
-        *(base.out / "tables").glob("*"),
+        *(base.out / "tables").rglob("*.csv"),
+        *(base.out / "tables").rglob("*.tex"),
         *base.report_dir.rglob("*.tex"),
         Path(results.__file__),
     ]
@@ -296,7 +325,7 @@ def test_the_run_is_logged_as_comparison_final_in_experiment_analysis(
     top = {a.path for a in client.list_artifacts(found.info.run_id)}
     assert top == {"tables", "figures"}
     tables = {a.path for a in client.list_artifacts(found.info.run_id, "tables")}
-    assert "tables/main.csv" in tables
+    assert {"tables/1m", "tables/1b"} <= tables
     figures = {a.path for a in client.list_artifacts(found.info.run_id, "figures")}
     assert {"figures/1m", "figures/1b"} <= figures
 
@@ -307,7 +336,7 @@ def test_the_run_is_logged_as_comparison_final_in_experiment_analysis(
 def test_a_rerun_skips_finished_stages_and_keeps_the_outputs_and_the_run(
     full: ResultsSummary, base: ResultsOptions
 ) -> None:
-    tables = base.out / "tables" / "main.csv"
+    tables = base.out / "tables" / "1m" / "main.csv"
     fig = base.out / "figures" / "1m" / "curves_score_main.png"
     before = (tables.read_bytes(), fig.stat().st_mtime_ns)
     again = run_comparison(base)
@@ -403,9 +432,9 @@ def test_a_deleted_output_redoes_its_stage(
     opts = _two_stub_figures(monkeypatch, base, tmp_path)
     run_comparison(opts)
     (opts.out / "figures" / "1m" / "F1_video_column.png").unlink()
-    (opts.out / "tables" / "main.csv").unlink()
+    (opts.out / "tables" / "1m" / "main.csv").unlink()
     again = run_comparison(opts)
-    assert (opts.out / "tables" / "main.csv").is_file()  # tables are rewritten
+    assert (opts.out / "tables" / "1m" / "main.csv").is_file()  # rewritten
     assert again.done == ["figures/F1"]
     assert again.skipped == ["figures/F6"]
 
@@ -485,8 +514,8 @@ def test_no_complexity_skips_only_what_depends_on_it(
     assert r"\scoreOneMPpo}" in numbers
     assert "closedLoop" not in numbers
     assert "spearman" not in numbers
-    assert (out / "tables" / "main.csv").is_file()
-    assert (out / "tables" / "sensitivity.csv").is_file()
+    assert (out / "tables" / "1m" / "main.csv").is_file()
+    assert (out / "tables" / "1m" / "sensitivity.csv").is_file()
     assert (out / "figures" / "1m" / "F1_report_column.png").is_file()
     assert not list((out / "figures").glob("*/fidelity*"))
     assert not list((report / "figures").glob("*/fidelity*"))
@@ -502,7 +531,7 @@ def test_phases_never_exported_are_skipped_not_fatal(
         str(out), "--report-dir", str(tmp_path / "report"), "--metrics-root",
         str(export), "--no-complexity", "--no-log", "--n-boot", str(N_BOOT),
     ])  # fmt: skip
-    main = pd.read_csv(out / "tables" / "main.csv")
+    main = pd.read_csv(out / "tables" / "1m" / "main.csv")
     assert set(main["benchmark"]) == {"1m"}
 
 
@@ -666,7 +695,7 @@ def test_tuning_only_runs_reach_the_tuning_tables_and_no_final_table(
             metrics_root=root, complexity=False, log=False, n_boot=N_BOOT,
         )  # fmt: skip
         run_comparison(opts)
-        out[name] = opts.out / "tables"
+        out[name] = opts.out / "tables" / "1m"
     for stem in ("main", "ablation", "poi_matrix"):
         assert (out["dirty"] / f"{stem}.csv").read_text() == (
             out["clean"] / f"{stem}.csv"
