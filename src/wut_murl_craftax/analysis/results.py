@@ -1,8 +1,8 @@
-"""Run the method comparison: tables T1-T7, figures F1-F20, report files, MLflow run.
+"""Run the method comparison: tables T1-T7, figures F1-F28, report files, MLflow run.
 
 ``python -m wut_murl_craftax.analysis.results --phases final-1m [final-1b ...] --tuning
 tune-coarse tune-fine --out outputs/results --tracking-uri sqlite:///<db>?timeout=300``
-wires `compare`, `figures`, `figures_game` and `latex` (nothing is reimplemented), logs
+wires `compare`, the `figures*` modules and `latex` (nothing is reimplemented), logs
 ``tables`` and ``figures`` as run ``comparison-final``. Phases never exported are
 skipped (R86). The 1M ``complexity.csv`` is required unless ``--no-complexity`` (skips
 its macros, their check, the fidelity figure). A failed reproduction gate is not fatal.
@@ -66,6 +66,8 @@ COMPLEXITY_MACRO = re.compile(
     r"[A-Za-z]*?(?:OneM|OneB)"
 )
 """Names of the macros built from ``complexity.csv`` (`latex.COMPLEXITY_QUANTITIES`)."""
+DISTIL_FIGURES = ("F27", "F28")
+"""Figures that read the distillation's policy folders: their stage also hashes them."""
 FIDELITY = "fidelity_vs_leaves_{budget}"
 """Stem of the distillation figure per budget (contracts section 3)."""
 
@@ -322,14 +324,14 @@ def write_table_files(tables: Mapping[str, pd.DataFrame], out: Path) -> list[Pat
 
 def figure_functions() -> dict[str, Callable[..., Any]]:
     """Figure id -> function, in the plan's order (one function per file family)."""
-    from . import figures, figures_game
+    from . import figures, figures_angles, figures_game
 
     core: dict[str, Callable[..., Any]] = dict(figures.FIGURES)
     game: dict[str, Callable[..., Any]] = dict(figures_game.GAME_FIGURES)
     game["F7G"] = figures_game.plot_order_graphs  # one file per method
     game["F17"] = figures_game.plot_radars  # one file per budget
     order = ["F1", "F2", "F3", "F2F3", "F4", "F5", "F18", "F19", "F20"]
-    return {k: core[k] for k in order} | game
+    return {k: core[k] for k in order} | game | dict(figures_angles.ANGLE_FIGURES)
 
 
 def figure_kwargs(
@@ -347,6 +349,12 @@ def figure_kwargs(
         "F19": {"per_run": t["stability_runs"], "table": t["stability"]},
         "F20": {"table": t["hardware"]},
         "F7": {"n_perm": o.n_perm, "seed": o.seed},
+        "F21": boot,
+        "F22": boot,
+        "F24": {"table": t["ablation"], **boot},
+        "F25": {"table": t["tuning_optimism"], **boot},
+        "F27": {"interpretation": o.complexity_root},
+        "F28": {"interpretation": o.complexity_root},
     }
     return given.get(fid, boot if fid in BOOT_GAME else {})
 
@@ -386,7 +394,19 @@ def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) ->
 
         if fid == "F20" and "1b" in set(inputs.runs["runs"]["budget"]):
             logger.warning("F20 hardware is drawn for Craftax-1M only (one stem)")
-        st.run(f"figures/{fid}", build)
+        (_distil_stages(o, st) if fid in DISTIL_FIGURES else st).run(
+            f"figures/{fid}", build
+        )
+
+
+def _distil_stages(o: ResultsOptions, st: _Stages) -> _Stages:
+    """`st` with a fingerprint over the finished policy folders too.
+
+    A live distillation adds policies without touching the export tables.
+    """
+    summaries = sorted(o.complexity_root.glob("*/*/*/complexity.json"))
+    digest = _digest([st.fingerprint, [_stat(p) for p in summaries]])
+    return _Stages(st.out, digest, force=st.force, s=st.s)
 
 
 def copy_fidelity(

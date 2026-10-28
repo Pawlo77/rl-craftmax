@@ -42,6 +42,11 @@ STEMS = [
     "radar_1b", *(f"order_{m}" for m in METHODS),
 ]  # fmt: skip
 """The figure file stems of the plan's list (F1 to F20), one per file."""
+ANGLE_STEMS = [
+    "greedy_gap", "gatekeepers", "seed_fate", "ablation_effects", "tuning_optimism",
+    "episode_spread", "distil_score", "distil_features",
+]  # fmt: skip
+"""The analysis-angle figures F21-F28 (PNG; F27 and F28 say distillation pending)."""
 VARIANTS = ("", "_double", "_video")
 """Column report figure, double-width report figure, dark video figure."""
 TABLES = [
@@ -152,6 +157,18 @@ def test_a_full_run_writes_every_figure_in_both_themes_and_widths(
     ]
     assert not missing
     assert not full.problems
+
+
+def test_a_full_run_writes_the_analysis_angle_figures(
+    full: ResultsSummary, base: ResultsOptions
+) -> None:
+    folder = base.out / "figures"
+    missing = [
+        f"{s}{v}.png" for s in ANGLE_STEMS for v in VARIANTS
+        if not (folder / f"{s}{v}.png").is_file()
+    ]  # fmt: skip
+    assert not missing
+    assert {f"figures/F{i}" for i in range(21, 29)} <= set(full.done)
 
 
 def test_a_full_run_writes_every_table_as_csv_and_latex(
