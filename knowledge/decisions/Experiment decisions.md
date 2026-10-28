@@ -309,3 +309,20 @@ Consequences: this departs from the 2026-10-21 decision (pair from both budgets)
 | 5 | smdp-skills | pqn-rnn | 10 | 0.90668 | 0.240 |
 
 Outcome (`combo-1m`, 10 seeds, 2026-10-24 07:24 to 08:35): mean 2.13164, sd 0.09252, IQM 2.12066. It is below `count-bonus-ppo-rnn` alone (PoI of the combination over it 0.170) and the PPO-RNN control (0.330), and level with `sil` (0.450), so at 1M the two components do not add up.
+
+## 2026-10-28 - Phase 4 analysis rulings at 1M
+
+Decision: Phase 4 (analysis) runs on the 1M finals only (`final-1m`, `combo-1m`); every step that needs `final-1b` or `combo-1b` is built and tested and reruns with the same commands once 1B exists (ruling R75). The rulings below change how results are reported:
+
+- R77: runs belong to a phase by the `phases` tag, never the experiment name; statistics are per (method, `config_ref`), and the six ablations get their own table, never pooled with tuned runs.
+- R78: the 26 control runs reused from tuning lack the online metric families; detectors and figures report them as "not logged", never as 0 or "not detected".
+- R79 and R92: detector thresholds that assume 1B are relative to the run's own scale at 1M or reported "uninformative at 1M"; the drawdown floor at 1M is max(0.1, 0.25 x the run's max smoothed score).
+- R97: every laptop run trained with two queue workers, so wall-clock time, SPS and machine-wide hardware series are context only, never ranked.
+- R98: hoarding (`capped_steps`) counts only materials whose progress-key cap is above 1.
+- R102: tuning optimism compares the 3-seed tune-fine mean with fresh final seeds only (not reused from tuning); controls, selected on all their final seeds, read n/a.
+- R106: decision-tree fidelity at 1M is low and genuine (the pipeline is aligned: greedy labels match the stored greedy actions on every step checked); L80, L90 and L95 are reported as "> 4096", each fidelity next to the majority-class baseline, and the all-censored score-vs-L90 Spearman is replaced by score vs fidelity at 256 leaves.
+- R107: the obstacles table for the tuning runs (`tune-coarse`, `tune-fine`, 494 runs) is deferred at 1M; the training-analysis notes say so.
+
+Why: the analysis was requested before the 1B finals (which need the cluster). The full ruling log with costs-if-wrong is the Phase 4 part of the project's SDD ledger (`.superpowers/sdd/2026-10-20-craftax-project/progress.md`, git-ignored).
+
+Consequences: 1B rows, the 1B combination re-check (2026-10-24 decision) and the tuning-runs obstacles table remain open; the 1M results notes in `knowledge/results/` state which numbers are 1M-only.
