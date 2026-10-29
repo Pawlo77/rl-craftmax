@@ -177,7 +177,7 @@ def test_ablations_change_only_their_keys_of_the_tuned_config(
     assert changed == ABLATIONS[registry]
 
 
-def test_1b_controls_run_their_untuned_1b_columns(methods: Path) -> None:
+def test_1b_controls_run_their_1b_columns(methods: Path) -> None:
     configs = {s.registry_name: s.config for s in _specs("final-1b", methods)}
     for control in ("ppo", "ppo-rnn", "pqn-rnn"):
         method = load_method(control, methods)
@@ -190,6 +190,15 @@ def test_1b_controls_run_their_untuned_1b_columns(methods: Path) -> None:
     assert configs["ppo-rnn"]["activation"] == "relu"
     assert (configs["ppo-rnn"]["envs"], configs["ppo-rnn"]["num_steps"]) == (1024, 64)
     assert (configs["pqn-rnn"]["envs"], configs["pqn-rnn"]["num_steps"]) == (1024, 128)
+
+
+def test_1b_controls_follow_their_tuned_block_like_the_donors(tmp_path: Path) -> None:
+    """A control's 1B final is its `tuned` config (empty today), so it always shares
+    one donor with the methods built on it."""
+    methods = _copy_methods(tmp_path, TUNED | {"ppo-rnn": {"ent": 0.002}})
+    configs = {s.registry_name: s.config for s in _specs("final-1b", methods)}
+    assert configs["ppo-rnn"] == _tuned(methods, "ppo-rnn", "ppo-rnn", "1b")
+    assert configs["ppo-rnn"]["ent"] == configs["sil"]["ent"] == 0.002
 
 
 @pytest.mark.parametrize(
@@ -205,13 +214,89 @@ def test_1b_controls_run_their_untuned_1b_columns(methods: Path) -> None:
 def test_1b_methods_take_their_1m_knobs_on_the_1b_control_settings(
     methods: Path, registry: str, control: str, knobs: dict[str, Any]
 ) -> None:
-    """Every key of the control's 1B final (or smdp-skills' for dyna-q) is unchanged."""
+    """Every key of the control's 1B final (or smdp-skills' for dyna-q) is unchanged,
+    but the table size dyna-q's own `budgets.1b` block sets."""
     configs = {s.registry_name: s.config for s in _specs("final-1b", methods)}
     cfg, base = configs[registry], configs[control]
-    assert {k: cfg[k] for k in base if k != "method"} == {
-        k: v for k, v in base.items() if k != "method"
-    }
+    own = {"log2_rows"} if registry == "dyna-q" else set()
+    keep = {k: v for k, v in base.items() if k != "method" and k not in own}
+    assert {k: cfg[k] for k in keep} == keep
     assert {k: cfg[k] for k in knobs} == knobs
+
+
+M1_NAMES = {
+    "ppo": {"e06ac6db"},
+    "ppo-rnn": {"b3ce95c4"},
+    "pqn-rnn": {"10cbfc16"},
+    "count-bonus-ppo-rnn": {"9403d21d", "b0b1c535"},
+    "count-bonus-pqn-rnn": {"e6e1fafa"},
+    "sil": {"57a864f9", "6f8690ad"},
+    "smdp-skills": {"0b84c247", "1f559f2c", "20ec0807", "89f3c98f"},
+    "dyna-q": {"3fd02b70", "74c22d85"},
+    "combo": {"fd6c4333"},
+}
+"""Config hashes of the finished final-1m and combo-1m runs (the shipped methods)."""
+
+
+@pytest.mark.parametrize("phase", ["final-1m", "combo-1m"])
+def test_1m_finals_keep_the_names_that_ran(phase: str) -> None:
+    """A change meant for 1B (a `budgets.1b` block, a donor) must not rename them."""
+    hashes: dict[str, set[str]] = {}
+    for s in expand_phase(PHASES / f"{phase}.yaml"):
+        hashes.setdefault(s.registry_name, set()).add(s.config_hash)
+    assert hashes == {k: v for k, v in M1_NAMES.items() if k in hashes}
+    assert len(hashes) == (1 if phase == "combo-1m" else 8)
+
+
+def test_1b_run_names_never_meet_a_1m_name() -> None:
+    names_1b = {s.name for p in ("final-1b", "combo-1b") for s in _real(p)}
+    names_1m = {s.name for p in ("final-1m", "combo-1m") for s in _real(p)}
+    assert len(names_1b) == 27
+    assert not names_1b & names_1m
+    assert all(re.fullmatch(r"[a-z-]+-1b-[0-9a-f]{8}-s[0-2]", n) for n in names_1b)
+
+
+def _real(phase: str) -> list[RunSpec]:
+    return expand_phase(PHASES / f"{phase}.yaml")
+
+
+@pytest.mark.parametrize(
+    ("slug", "registry"),
+    [
+        ("count-bonus", "count-bonus-ppo-rnn"),
+        ("count-bonus", "count-bonus-pqn-rnn"),
+        ("combo", "combo"),
+    ],
+)
+def test_the_1b_count_tables_have_four_times_the_1m_slots(
+    slug: str, registry: str
+) -> None:
+    """The 1M tuned runs end at 16-115 keys; the largest whole-run log-log projection
+    is 36,700 keys at 1B (199,000 by the last quarter's rate): 7.1 x (1.3 x) the
+    guard of 2^20 slots, 28.6 x (5.3 x) that of 2^22."""
+    ref = "combined" if slug == "combo" else "tuned"
+    method = load_method(slug)
+    for budget, log2_k in (("1m", 20), ("1b", 22)):
+        cfg = resolve_config(method, registry, budget, ref=ref)
+        assert (cfg["log2_k"], cfg["max_occupancy"]) == (log2_k, 0.25)
+
+
+def test_the_1b_dyna_tables_are_sized_for_a_1b_run() -> None:
+    """A log-log fit of the tuned 1M runs projects 1.2 million rows and 23 million
+    pairs at 1B (smdp-skills 50,000 rows): the 1M shapes (2^20 rows with
+    `smdp/table_full` at a quarter of them, 2^16 pairs with `dyna/model_full` at the
+    last one) would end dyna-q runs for good, and 2^24 / 2^25 is what 8 GB allows."""
+    shape = {
+        (b, r): resolve_config(load_method(r), r, b)
+        for b in ("1m", "1b")
+        for r in ("smdp-skills", "dyna-q")
+    }
+    assert shape["1m", "smdp-skills"]["log2_rows"] == 20
+    assert shape["1b", "smdp-skills"]["log2_rows"] == 20  # its projection fits 2^20
+    assert shape["1m", "dyna-q"]["log2_rows"] == 20
+    assert shape["1m", "dyna-q"]["model_pairs"] == 2**16
+    assert shape["1b", "dyna-q"]["log2_rows"] == 24
+    assert shape["1b", "dyna-q"]["model_pairs"] == 2**25
 
 
 def test_a_zero_tuned_kappa_makes_the_kappa_ablation_fail_loudly(

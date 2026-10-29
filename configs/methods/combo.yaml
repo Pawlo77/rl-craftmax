@@ -40,6 +40,11 @@ base:
   insert_cap: 64
   layout: slots
 
+# 1B: the count table has 2^22 slots, as in count-bonus.yaml (combo-1m ends at 51-94
+# keys; 33,900 projected by the whole-run fit, 126,000 by the last quarter: 31 x and 8.3 x).
+budgets:
+  1b: {log2_k: 22}
+
 grid:
   coarse:
   - {name: combined}

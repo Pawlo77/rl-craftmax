@@ -334,3 +334,20 @@ Decision: a metric under a method's `abort.permanent` (a guard: full count table
 Why: a guard reads a state that a retry from the same checkpoint reaches again, so a second run only repeats the abort.
 
 Consequences: a guard-aborted run ends FAILED; `coarse_results` takes finished runs only, so such a config is left out of the ranking (with `--min-complete` when enough configs are complete, or `--allow-partial`), not scored as a failure; without either, the fine-grid selection fails naming its missing runs. The chunk that aborted is not logged and the tag holds the metric and update, not its value. The abort rules are in the method YAML files; `abort.py` and [[orchestration]] describe them.
+
+## 2026-10-29 - 1B launch readiness
+
+Decision: `final-1b` runs every entry's `tuned` config, as `final-1m` does; the controls' tuned blocks are empty, so their run names are unchanged. The permanent table guards are sized for 1B in `budgets.1b` blocks only: count-bonus and combo `log2_k: 22`, dyna-q `log2_rows: 24` and `model_pairs: 2^25`; smdp-skills keeps its 2^20 rows. Every 1M config, name and result is unchanged (the 150 finished 1M hashes are pinned by a test).
+
+Why: the tuned 1M runs are still accelerating at 1M, so each count was projected to 1e9 steps from a log-log fit of its 1M series (10-100 % of the run, largest of the 10 seeds; the last quarter's linear rate is the second, harsher estimate):
+
+| Table (guard) | Run | At 1M | Whole-run fit at 1B | Last quarter's rate | Size at 1B and margin of its guard to the fit |
+|---|---|---|---|---|---|
+| smdp-skills rows (a quarter of 2^20 = 262,144) | smdp-skills | 47-213 | 49,700 | 431,000 | kept at 2^20: 5.3 x |
+| dyna-q rows (a quarter of the rows) | dyna-q | 66-362 | 1.2 million | 0.73 million | 2^24 (guard 4.2 million): 3.5 x |
+| dyna-q pairs (all P slots) | dyna-q | 355-1,645 | 23 million (90th percentile 2.9 million, median 0.11 million) | 2.75 million | 2^25 (the largest 8 GB allow, 6.7 GB of tables): 1.45 x (11.8 x the 90th percentile) |
+| count keys (a quarter of the slots) | count-bonus PPO-RNN, PQN-RNN, combo | 16-115 | 36,700; 1,050; 33,900 | 199,000; 53,000; 126,000 | 2^22 (guard 1.05 million): 28.6 x, 1000 x, 31 x |
+
+The rule was the smallest power of two whose projection is at most half the guard. It gives 2^24 rows, 2^26 pairs and, for the count table, 2^20 slots at the fit (2^22 was chosen for the last-quarter estimate, 5.3 x). Pairs are capped by device memory: dyna-q holds 1.3 GiB at 2^22 rows and pairs, 4.9 GiB at 2^24 rows and 2^24 pairs, 6.3 GiB at 2^25 pairs and 8.9 GiB at 2^26 pairs (the 1M model: 0.3 GiB); its `state/` file is the same size (6.4 GiB at 2^25, written twice while its `.tmp` is saved), and the checkpoints do not grow with the table (24.9 MiB at 8 envs at 2^20 and 2^24 rows alike). `ckpt/` grows with the rows visited (130 B per row) and the skill graph with the pairs visited (43 B per pair): about 1.1 GB per dyna-q run at the 90th-percentile projection (13 log-spaced checkpoints, with the 0.4-0.65 GB of the other files), 3.0 GB at the largest: more than 2 GB only for visited counts, not for the table size.
+
+Consequences: the 1B skill-method runs differ from the 1M ones in table size only (dyna-q rows 2^20 to 2^24, pairs 2^16 to 2^25; count slots 2^20 to 2^22), and a row id is the top 20 bits of the key hash at 1M and the top 22 or 24 at 1B: join 1M and 1B tables on the key fields, never on `key`. The report says so. If a running 1B run's projection (`scripts/cluster/project_guards.py`) passes 0.7 of its guard, the entry is resized and restarted (see [[2026-10-20-craftax-compute-budget]] Task 2). The abort flags of the PQN-RNN controls at 1B use the dead-input share (`pqn/bn_dead_share`), a bound that does not depend on the update count.
