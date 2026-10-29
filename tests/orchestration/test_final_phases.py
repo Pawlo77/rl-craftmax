@@ -177,7 +177,7 @@ def test_ablations_change_only_their_keys_of_the_tuned_config(
     assert changed == ABLATIONS[registry]
 
 
-def test_1b_controls_run_their_untuned_1b_columns(methods: Path) -> None:
+def test_1b_controls_run_their_1b_columns(methods: Path) -> None:
     configs = {s.registry_name: s.config for s in _specs("final-1b", methods)}
     for control in ("ppo", "ppo-rnn", "pqn-rnn"):
         method = load_method(control, methods)
@@ -190,6 +190,15 @@ def test_1b_controls_run_their_untuned_1b_columns(methods: Path) -> None:
     assert configs["ppo-rnn"]["activation"] == "relu"
     assert (configs["ppo-rnn"]["envs"], configs["ppo-rnn"]["num_steps"]) == (1024, 64)
     assert (configs["pqn-rnn"]["envs"], configs["pqn-rnn"]["num_steps"]) == (1024, 128)
+
+
+def test_1b_controls_follow_their_tuned_block_like_the_donors(tmp_path: Path) -> None:
+    """A control's 1B final is its `tuned` config (empty today), so it always shares
+    one donor with the methods built on it."""
+    methods = _copy_methods(tmp_path, TUNED | {"ppo-rnn": {"ent": 0.002}})
+    configs = {s.registry_name: s.config for s in _specs("final-1b", methods)}
+    assert configs["ppo-rnn"] == _tuned(methods, "ppo-rnn", "ppo-rnn", "1b")
+    assert configs["ppo-rnn"]["ent"] == configs["sil"]["ent"] == 0.002
 
 
 @pytest.mark.parametrize(
