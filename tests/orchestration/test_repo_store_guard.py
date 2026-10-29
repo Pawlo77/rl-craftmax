@@ -14,7 +14,7 @@ from wut_murl_craftax.orchestration import queue, runner
 from wut_murl_craftax.orchestration import store as store_cli
 from wut_murl_craftax.orchestration.tracking import (
     UNDER_PYTEST_ENV,
-    _resolve_tracking_uri,
+    resolve_tracking_uri,
 )
 
 
@@ -33,12 +33,12 @@ def test_a_store_inside_the_repo_is_refused(
 ) -> None:
     monkeypatch.chdir(ROOT)
     with pytest.raises(RuntimeError, match="inside the repo under pytest"):
-        _resolve_tracking_uri(uri)
+        resolve_tracking_uri(uri)
     assert not (ROOT / "x").exists()
 
 
 def test_a_store_outside_the_repo_is_fine(tmp_path: Path) -> None:
-    got = _resolve_tracking_uri(f"sqlite:///{tmp_path / 'm.db'}")
+    got = resolve_tracking_uri(f"sqlite:///{tmp_path / 'm.db'}")
     assert got.endswith("m.db")
 
 

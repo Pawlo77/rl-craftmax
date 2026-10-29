@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 from ..training.smdp import rebuild_greedy_table
 from .queue import TAG_CONFIG_HASH, TAG_METHOD, _runs
 from .runner import TAG_WARN_ARTIFACTS
-from .tracking import _resolve_tracking_uri, artifact_path
+from .tracking import artifact_path, resolve_tracking_uri
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--config-hash", required=True)
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    client = mlflow.MlflowClient(_resolve_tracking_uri(a.tracking_uri))
+    client = mlflow.MlflowClient(resolve_tracking_uri(a.tracking_uri))
     rows = regenerate(client, a.config_hash)
     logger.info("rebuilt %d runs of %s", len(rows), a.config_hash)
 

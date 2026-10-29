@@ -5,7 +5,7 @@ domain: orchestration
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, orchestration]
 created: 2026-10-20
-updated: 2026-10-28
+updated: 2026-10-29
 related-code:
   - "[[src/wut_murl_craftax/orchestration/__init__.py]]"
   - "[[src/wut_murl_craftax/orchestration/runtime.py]]"
@@ -51,9 +51,9 @@ One line each; signatures and details: [[Modules]].
 - `runtime`: compile cache, device roles, CPU env shards, `select_platforms`, `import_craftax`, texture caches.
 - `profiles`: machine profiles (`configs/profiles/<name>.yaml`): host devices, role mode, memory limit, save cadence, `drop_state_on_finish` (true in `cuda.yaml`); no hyperparameters.
 - `queue`: run identity (`<registry>-<budget>-<hash8>-s<seed>`), `RunSpec`, expansion of method and phase YAML files; a combo spec carries its unhashed `combine` pair, which the runner saves in `config.json`.
-- `runner`: resumable training, evaluation and MLflow logging of every `RunSpec` of a worker; the `Trainer` protocol.
-- `abort`: non-finite-loss aborts (opt-in method metrics via `abort.finite`) and flag rules.
-- `store`: phase status and the merge of node MLflow stores; the merge never copies an unfinished node run without `state/`: refused when new to the main store, joined (phases only) beside an unfinished main copy, even one with an unreadable state.
+- `runner`: resumable training, evaluation and MLflow logging of every `RunSpec` of a worker; the `Trainer` protocol. An array node runs with `--worker-index`, `--num-workers` and `--node` against its own store (`scripts/cluster/run_array.sh`); `--seed-from <main store copy>` first merges the node's runs from a read-only copy, so it reuses finished runs and resumes unfinished ones (nodes resume each other's runs only when `STORE_DIR` is on a filesystem they all see, and SQLite there needs working file locks). A profile's `unmeasured_limits` (cuda: `ppo/ratio_first_mb`, not yet measured on that device) turn a bound hit into a retried abort (tag `abort/unmeasured`) instead of `abort/guard`.
+- `abort`: non-finite-loss aborts (opt-in method metrics via `abort.finite`; a loss is retried once, a second abort tags `abort/bug`), guards (`abort.permanent`, a subset of `finite`) and `abort.limits` bounds that end a run for good (tag `abort/guard`, as `abort/memory` does; `queue.permanently_ended` skips it), and flag rules.
+- `store`: phase status and the merge of node MLflow stores; the merge never copies an unfinished node run without `state/`: refused when new to the main store, joined (phases only) beside an unfinished main copy, even one with an unreadable state; a FINISHED node run already in the main store joins by phase tag and brings its evaluation files and `eval/*` points. A node store records its array size beside the database; another size is refused until it is merged.
 - `tracking`: resumable MLflow run tracking and the store location.
 - `train_metrics`: windowed MLflow points of the per-update metrics.
 - `reproducibility`: environment snapshot (platform, packages, git state) for MLflow.

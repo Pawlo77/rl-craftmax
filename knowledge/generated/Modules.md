@@ -54,12 +54,12 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/greedy_tables.py]] | Rebuild the SMDP greedy tables of stored runs from their checkpoints (ruling R81). |  |  | 68 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. |  |  | 74 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/prune.py]] | Storage retention: delete run artifacts no later step reads (dry run by default). |  |  | 399 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. |  |  | 1427 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. |  |  | 1443 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. |  |  | 240 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. |  |  | 1419 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. |  |  | 187 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. |  |  | 547 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 359 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 355 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. |  |  | 202 | [[orchestration]] |
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. |  |  | 392 | [[training]] |
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. |  |  | 119 | [[training]] |

@@ -86,10 +86,6 @@ def resolve_store_uri(tracking_uri: str) -> str:
     return resolve_tracking_uri(base) + (f"?{query}" if query else "")
 
 
-_resolve_tracking_uri = resolve_tracking_uri
-"""The name the orchestration modules import (kept so they need no edit)."""
-
-
 def _artifact_location(tracking_uri: str, experiment: str) -> str | None:
     """``<db dir>/mlruns/<experiment>`` for a SQLite file store, else MLflow's default.
 
@@ -247,7 +243,7 @@ class MlflowRunTracker:
 
         try:
             mlflow = importlib.import_module("mlflow")
-            tracking_uri = _resolve_tracking_uri(self.tracking.tracking_uri)
+            tracking_uri = resolve_tracking_uri(self.tracking.tracking_uri)
             with warnings.catch_warnings():
                 warnings.filterwarnings(
                     "ignore",
