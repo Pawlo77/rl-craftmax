@@ -128,7 +128,7 @@ Per-run minutes: the tuned config's measured minutes (controls: the 1-worker med
 - The estimate before the measurements was 21.7 h training + 31.9 h evaluation sequential for the 1M finals (53.6 h) and 4.2 h for `combo-1m`: the 13-checkpoint evaluation was planned at the training rate (9 min per run) and measures 3.7 min, and PPO, PPO-RNN and PQN-RNN train faster than planned.
 - Add about 10% to `final-1m` for out-of-memory retries (the cleanup pass of `run_workers.sh`): about 14 h, 0.6 days, with `combo-1m` about 15 h.
 - Measured 2026-10-24: `final-1m` 9.7 h and `combo-1m` 1.2 h wall-clock with 2 workers, 10.9 h together, no out-of-memory retries. 38 of the 140 `final-1m` runs were tuning runs of a tuned config, joined by run name, which only added their 12 missing checkpoint evaluations; per-run minutes of the finals are not measured yet.
-- Laptop 1B (`final-1b`, `combo-1b`; estimate): the 1M rates of the tuned configs applied to 1B steps, one run at a time; the Phase 1 methods' rates are the 2-worker per-worker rates x 1.46 (mean measured slowdown) to get 1 worker; eval at 8,500 steps/s. Memory at the 1B shape is in 1B job resources below (6 to 8 GB of GPU memory at 1,024 envs x 64 steps for the PPO family, not the 36 GB this line once quoted; only Dyna-Q needs more).
+- Laptop 1B (`final-1b`, `combo-1b`; estimate): the 1M rates of the tuned configs applied to 1B steps, one run at a time; the Phase 1 methods' rates are the 2-worker per-worker rates x 1.46 (mean measured slowdown) to get 1 worker; eval at 8,500 steps/s. Memory at the 1B shape is in 1B job resources below (6 to 8 GB of GPU memory at 1,024 envs x 64 steps for the PPO family, not the 36 GB this line once quoted; none needs more, Dyna-Q peaks at 20.7 GB).
 
 | Method | Steps/s (1 worker) | Hours per 1B run | 3 seeds, training | Eval h per run | 3 seeds, training + eval |
 |---|---|---|---|---|---|
@@ -222,7 +222,7 @@ Method, with the status of each number:
 
 - **State S** (measured, exact): shape-only `jax.eval_shape` of the trainer's `init` at 1,024 envs; live arrays at 8 to 512 envs agree (0.29 MB per env on top of the fixed part).
 - **Update program** (measured on CPU, extrapolated to GPU): XLA's buffer analysis (`memory_analysis`: arguments, outputs, temp) of the jitted update compiled for the 1,024-env shape, without allocating it. The temp bytes are linear in envs (PQN-RNN 12.71 MB per env at 128, 256, 512 and 1,024). A GPU compile can fuse differently; not measured.
-- **What the runner also holds** (read from `runner._train`, confirmed by live arrays after 2 chunks = 2 x S): the init state `fresh` for the whole run, the copy `train_chunk` makes of the carry (SMDP, Dyna-Q), the model (Dyna-Q) and the resident method state (SIL, combo), the 50-update metrics of a chunk (5 MB per update at 64 steps, 10 MB at 128), and after a resume the loaded `saved` state as well (+S).
+- **What the runner also holds** (since `perf/dyna-q-memory`, 2026-10-29; live buffers measured at 8 envs, before and after): only the live state and the 50-update metrics of a chunk (5 MB per update at 64 steps, 10 MB at 128). The init state and the state loaded on a resume are dropped before the first chunk, and `train_chunk` updates the carry (SMDP, Dyna-Q), the model (Dyna-Q) and the resident method state (SIL, combo) in place (donated) instead of copying them. Before, the runner held the init state for the whole run (+S), the restored one after a resume (+S), and the copy (the column below); outputs are bit-identical.
 - **Resident-set growth** (measured): the runner's chunk, record and state-save steps at 8, 32, 128, 256, 512 envs on the CPU, fitted a + b x envs and read at 1,024. It counts touched pages only (zero-filled tables are not resident), so it is a cross-check of the program analysis, not the request.
 - The 1M store logs no `peak_device_mb` (Metal and CPU keep no counters), so the GPU table has no 1M check; its `peak_rss_mb` of the tuned final configs (laptop, 256 envs x 16 steps, one process) is ppo 6.3, ppo-rnn 3.5, pqn-rnn 3.5, count-bonus-ppo-rnn 4.7, count-bonus-pqn-rnn 4.5, sil 5.7, smdp-skills 3.0, dyna-q 3.5 GB, combo 6.1 to 6.5 GB.
 - The "1,024 envs x 64 steps needs more than 36 GB" remark has no source in [[2026-10-20-craftax-infrastructure]]; the rollout batch is 65,536 x 8,268 x 4 B = 2.17 GB, and 36 GB is the Metal ceiling of the laptop (`METALJAX_MEM_SYS_MB`).
@@ -231,20 +231,20 @@ Method, with the status of each number:
 
 | Entry | Steps per update | State S | Update program | Copy in `train_chunk` | Peak, fresh start | Peak, after a resume | CPU resident set at 1,024 envs (fit) | VRAM request | Card |
 |---|---|---|---|---|---|---|---|---|---|
-| ppo | 65,536 | 0.43 | 4.75 | 0 | 6.3 | 6.7 | 10.3 | 11 | 24 GB |
-| ppo-rnn | 65,536 | 0.40 | 6.51 | 0 | 8.0 | 8.4 | 11.8 | 13 | 24 GB |
-| pqn-rnn | 131,072 | 0.40 | 13.03 | 0 | 14.7 | 15.1 | 15.5 | 20 | 24 GB |
-| count-bonus-ppo-rnn | 65,536 | 0.52 | 6.51 | 0 | 8.3 | 8.8 | 9.1 | 12 | 24 GB |
-| count-bonus-pqn-rnn | 131,072 | 0.51 | 13.03 | 0 | 15.1 | 15.6 | 14.1 | 21 | 24 GB |
-| sil | 65,536 | 1.78 | 6.65 | 1.38 | 13.6 | 15.4 | 18.9 | 21 | 24 GB |
-| smdp-skills | 131,072 | 0.53 | 13.22 | 0.45 | 15.2 | 15.8 | 14.1 | 21 | 24 GB |
-| dyna-q | 131,072 | 7.02 | 13.22 | 6.95 | 34.7 | 41.7 | not fitted (live arrays) | 53 | 80 GB |
-| combo | 65,536 | 1.90 | 6.65 | 1.50 | 14.1 | 16.0 | 19.0 | 21 | 24 GB |
+| ppo | 65,536 | 0.43 | 4.75 | 0 | 5.9 | 5.9 | 10.3 | 11 | 24 GB |
+| ppo-rnn | 65,536 | 0.40 | 6.51 | 0 | 7.6 | 7.6 | 11.8 | 13 | 24 GB |
+| pqn-rnn | 131,072 | 0.40 | 13.03 | 0 | 14.3 | 14.3 | 15.5 | 19 | 24 GB |
+| count-bonus-ppo-rnn | 65,536 | 0.52 | 6.51 | 0 | 7.8 | 7.8 | 9.1 | 11 | 24 GB |
+| count-bonus-pqn-rnn | 131,072 | 0.51 | 13.03 | 0 | 14.6 | 14.6 | 14.1 | 20 | 24 GB |
+| sil | 65,536 | 1.78 | 6.65 | 0 (was 1.38) | 10.4 | 10.4 | 18.9 | 21 | 24 GB |
+| smdp-skills | 131,072 | 0.53 | 13.22 | 0 (was 0.45) | 14.2 | 14.2 | 14.1 | 19 | 24 GB |
+| dyna-q | 131,072 | 7.02 | 13.22 | 0 (was 6.95) | 20.7 | 20.7 | not fitted (live arrays) | 27 | 40 GB |
+| combo | 65,536 | 1.90 | 6.65 | 0 (was 1.50) | 10.7 | 10.7 | 19.0 | 21 | 24 GB |
 
-- Peak = `fresh` S + live S (+ S after a resume) + copy + update program + 50 updates of metrics. Update program = XLA temp plus new outputs; for SMDP and Dyna-Q the learner's rollout batch (4.43 GB, argument) plus its temp (8.71 GB); Dyna-Q's rollout program peaks lower (27 GB).
-- Request = the larger of the peak after a resume and the fitted resident set above idle, times 1.25, plus 1 GB (CUDA context, cuDNN and cuBLAS workspaces, allocator fragmentation).
-- Dyna-Q's tables are 6.4 GiB of its 7.02 GB (2^24 rows, 2^25 pairs, measured at 8 and 64 envs: 6,397 and 6,413 MB). It needs an 80 GB card; a 48 GB card holds a fresh start (peak 34.7, request 44) but not a resumed run (41.7). Nothing at 24 GB fits it.
-- Knobs that would lower Dyna-Q (none applied): the runner's `fresh` and `saved` states and the copy in `train_chunk` are 14 to 21 GB of the peak and are held only for resume and input-state safety (a code change); `model_pairs` 2^25 to 2^24 saves about 2.2 GB per copy but is the guard sized in [[Experiment decisions]]; envs x `num_steps` halves the 13 GB learner term.
+- Peak = live S + update program + 50 updates of metrics, the same after a resume (the old peaks less the init state, the restored state and the copy). Update program = XLA temp plus new outputs; for SMDP and Dyna-Q the learner's rollout batch (4.43 GB, argument) plus its temp (8.71 GB); Dyna-Q's rollout program peaks lower. Before the first chunk a resume briefly holds the init and the loaded state (2 S), and a Dyna-Q checkpoint save adds up to 4.3 GB (measured on the CPU backend): both under the peak.
+- Request = the larger of the peak after a resume and the fitted resident set above idle, times 1.25, plus 1 GB (CUDA context, cuDNN and cuBLAS workspaces, allocator fragmentation). The resident-set fit was measured before the change (an upper bound now, not refitted), so it still sets the ppo, ppo-rnn, sil and combo requests.
+- Dyna-Q's tables are 6.4 GiB of its 7.02 GB (2^24 rows, 2^25 pairs, measured at 8 and 64 envs: 6,397 and 6,413 MB). Peak 20.7 GB fresh or resumed (was 34.7 and 41.7), request 27 GB: a 32 or 40 GB card. A 24 GB card holds the peak with 3.3 GB to spare, under the 25 % + 1 GB margin; Task 3 Step 1 decides whether that is enough.
+- Knobs that would lower Dyna-Q further (none applied): `model_pairs` 2^25 to 2^24 saves about 2.2 GB but is the guard sized in [[Experiment decisions]]; envs x `num_steps` halves the 13 GB learner term.
 - `peak_device_mb` (peak bytes in use) is what a run logs; JAX preallocates 75 % of a card per process unless `XLA_PYTHON_CLIENT_PREALLOCATE=false` or `XLA_PYTHON_CLIENT_MEM_FRACTION` is set (neither is in `run_array.sh` or `cuda.yaml`), so `nvidia-smi` shows the pool, not the peak.
 
 ### Host RAM, cores and disk
@@ -284,7 +284,7 @@ Method, with the status of each number:
 - Training and eval hours are the CUDA table above (authors' 266,961 steps/s divided by the overhead factor; eval at the laptop rate). `state/` saves = (updates / 50 + 12 checkpoint-aligned chunks) x (S / 1 GB/s + 0.3 s); the 1 GB/s end to end is an assumption (the laptop wrote Dyna-Q's 6.4 GiB in 1.2 to 1.4 s idle and 5 to 6 s under a load of 30). They and the compile add 8 % to the 50 GPU hours of the CUDA table; the host-side recording per chunk is below 2 s and not added.
 - The GPU eval rate is unmeasured: 26 passes (13 checkpoints x 2 modes) of 64 seeds in 1,000-step chunks until the last episode ends. At an assumed 0.5 to 1.5 ms per step on a 64-env scan the pass takes 12 s at 8,000 steps and 150 s at the 100,000-step cap, so eval is 0.1 to 1.1 h per run against the 0.43 h used.
 - The time limit is about 2 x the run estimate (GPU class and eval length are the unknowns). A run that reaches the limit is stopped by `--signal=B:TERM@600`, saves `state/` and resumes when the same command is submitted again (after a resume the peak of the GPU table applies).
-- Jobs per GPU: one. By memory alone a 24 GB card holds one job (two entries of 11 to 13 GB plus two CUDA contexts do not fit); a 40 GB card two of ppo, ppo-rnn and count-bonus-ppo-rnn; a 48 GB card two of the 20 to 21 GB entries; an 80 GB card three of them. Jobs on one GPU share its compute, so no wall-clock gain is expected, and each needs `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+- Jobs per GPU: one. By memory alone a 24 GB card holds one job (two entries of 11 to 13 GB plus two CUDA contexts do not fit); a 40 GB card two of ppo, ppo-rnn and count-bonus-ppo-rnn; a 48 GB card two of the 19 to 21 GB entries; an 80 GB card three of them. Jobs on one GPU share its compute, so no wall-clock gain is expected, and each needs `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 
 ### Request lines
 
@@ -298,11 +298,11 @@ STORE_DIR=node-stores/count-bonus-ppo-rnn sbatch --array=0-2 --gres=gpu:1 --cpus
 STORE_DIR=node-stores/count-bonus-pqn-rnn sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --mem=12G --time=04:00:00 scripts/cluster/run_array.sh final-1b --method count-bonus-pqn-rnn   # 24 GB card
 STORE_DIR=node-stores/sil sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --mem=16G --time=05:00:00 scripts/cluster/run_array.sh final-1b --method sil                      # 24 GB card
 STORE_DIR=node-stores/smdp-skills sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --mem=12G --time=04:00:00 scripts/cluster/run_array.sh final-1b --method smdp-skills   # 24 GB card
-STORE_DIR=node-stores/dyna-q sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=05:00:00 scripts/cluster/run_array.sh final-1b --method dyna-q                # 80 GB card
+STORE_DIR=node-stores/dyna-q sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=05:00:00 scripts/cluster/run_array.sh final-1b --method dyna-q                # 40 GB card (32 GB suffices)
 STORE_DIR=node-stores/combo sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --mem=16G --time=05:00:00 scripts/cluster/run_array.sh combo-1b                                   # 24 GB card
 ```
 
-- Totals: 27 runs, 53.5 GPU hours estimated (117 charged at the time limits), 24 GB cards for 24 runs and an 80 GB card for the 3 Dyna-Q runs.
+- Totals: 27 runs, 53.5 GPU hours estimated (117 charged at the time limits), 24 GB cards for 24 runs and a 40 GB card (32 GB suffices) for the 3 Dyna-Q runs.
 
 ### Task 3: 1B job resources
 
@@ -310,7 +310,7 @@ STORE_DIR=node-stores/combo sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --
 - Modify: this file (replace the extrapolated numbers above with the first-node measurements)
 
 - [ ] **Step 1:** on the first GPU node, run one seed of every entry for 2 to 3 chunks (`peak_device_mb` and `peak_rss_mb` are logged per chunk); replace the "Peak, fresh start" column and the 1.25 x factor. Run it once with `XLA_PYTHON_CLIENT_PREALLOCATE=false` so the card's allocator pool does not hide the peak.
-- [ ] **Step 2:** kill a Dyna-Q and a SIL run after 2 chunks and resume them; read the device peak (expected +S: 41.7 and 15.4 GB) and the host peak of the resume (expected 19 GB for Dyna-Q). It decides whether a 48 GB card is enough for Dyna-Q.
+- [ ] **Step 2:** kill a Dyna-Q and a SIL run after 2 chunks and resume them; read the device peak (expected as a fresh start: 20.7 and 10.4 GB) and the host peak of the resume (expected 19 GB for Dyna-Q). With Step 1 it decides whether a 24 GB card is enough for Dyna-Q.
 - [ ] **Step 3:** read the chunk wall time and the `state/` save time of each entry at 1,024 envs (largest for SIL, SMDP, Dyna-Q); they replace the 1 GB/s save rate and, with the steady steps per second, the authors' rate divided by the overhead factor. All must stay far under the 600 s stop grace.
 - [ ] **Step 4:** time the first checkpoint evaluation on the GPU (26 passes) and record the longest 1B eval episode; they replace the 0.43 h and the 8,000-step assumption (Task 1 Step 3b).
 - [ ] **Step 5:** `sacct -o JobID,MaxRSS,TotalCPU,Elapsed,AllocCPUS` of the first runs: replaces the host RAM peak and the 4 cores; `du -sh` of the node store while a run trains and after it finishes: replaces the disk columns (with Task 2 Step 3).
