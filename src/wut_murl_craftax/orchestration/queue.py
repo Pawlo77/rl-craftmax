@@ -1343,8 +1343,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         _cli(argv)
     except QueueConfigError as error:
+        logger.debug("config error", exc_info=True)  # the message is the exit text
         msg = f"error: {error}"
-        raise SystemExit(msg) from None
+        raise SystemExit(msg) from error
 
 
 def _cli(argv: Sequence[str] | None) -> None:

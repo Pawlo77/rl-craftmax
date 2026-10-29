@@ -1,5 +1,6 @@
 """Local MLflow tracking helpers for resumable runs."""
 
+import contextlib
 import importlib
 import json
 import logging
@@ -211,7 +212,8 @@ def log_analysis_run(
     try:
         _upload(client, run_id, folder, paths, replace=bool(found))
     except BaseException:
-        client.set_terminated(run_id, "FAILED")  # never left RUNNING
+        with contextlib.suppress(Exception):  # the upload's error is the one to raise
+            client.set_terminated(run_id, "FAILED")  # never left RUNNING
         raise
     client.set_terminated(run_id)
     return str(run_id)

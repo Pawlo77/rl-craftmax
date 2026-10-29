@@ -385,13 +385,14 @@ def test_the_cli_exits_with_the_message_of_a_config_error(tmp_path: Path) -> Non
     (tmp_path / "bad.yaml").write_text(yaml.safe_dump({"base": {}}))
     phase = {"budget": "1m", "eval": "final", "runs": {"bad": {"configs": ["base"]}}}
     (tmp_path / "p.yaml").write_text(yaml.safe_dump(phase))
-    with pytest.raises(SystemExit, match=r"bad\.yaml: `base` must be a non-empty"):
+    with pytest.raises(SystemExit, match=r"bad\.yaml: `base` must be a non-empty") as e:
         queue.main([
             "--phase",
             str(tmp_path / "p.yaml"),
             "--methods-dir",
             str(tmp_path),
         ])
+    assert isinstance(e.value.__cause__, queue.QueueConfigError)  # kept for debugging
 
 
 @pytest.mark.parametrize("permanent", ["m", ["n"], [1], [["m"]], [{"m": 1}]])
