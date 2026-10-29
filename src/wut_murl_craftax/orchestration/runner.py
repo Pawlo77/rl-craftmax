@@ -880,6 +880,15 @@ def _mark_memory(previous: Mapping[str, str], error: MemoryLimitError) -> None:
     logger.warning("run aborted for good (%s): %s", TAG_ABORT_MEMORY, error)
 
 
+def _proc_start(pid: int) -> str | None:
+    """Start time of a process in ticks since boot (``/proc``, Linux), else None."""
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    return text.rpartition(")")[2].split()[19]  # field 22, after the state
+
+
 def _live_owner(found: Any) -> int | None:
     """The PID of a live process on this host that trains ``found`` (RUNNING)."""
     if found is None or found.info.status != "RUNNING":
@@ -896,6 +905,8 @@ def _live_owner(found: Any) -> int | None:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError):
         return None  # gone, or reused by another user's process: a queue is ours
+    if (start := owner.get("start")) and _proc_start(pid) != start:
+        return None  # the PID was reused by a process of ours (a requeue, a reboot)
     return pid
 
 
@@ -1083,7 +1094,11 @@ def _run_spec(
         msg = f"{spec.name}: MLflow opened run {active.run_name} ({active.run_id})"
         raise RuntimeError(msg)  # e.g. $MLFLOW_RUN_ID set in the environment
     out = tracker.artifact_dir
-    owner = {"pid": os.getpid(), "host": socket.gethostname()}
+    owner = {
+        "pid": os.getpid(),
+        "host": socket.gethostname(),
+        "start": _proc_start(os.getpid()),
+    }
     (out / OWNER_FILE).write_text(json.dumps(owner))
     n_updates, first = _schedule(trainer, spec, profile)
     trains, lost = _decide_training(found, out, n_updates)

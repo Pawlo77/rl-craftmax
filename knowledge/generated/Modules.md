@@ -56,7 +56,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/prune.py]] | Storage retention: delete run artifacts no later step reads (dry run by default). |  |  | 399 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. |  |  | 1444 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. |  |  | 240 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. |  |  | 1417 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. |  |  | 1432 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. |  |  | 187 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. |  |  | 547 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 357 | [[orchestration]] |

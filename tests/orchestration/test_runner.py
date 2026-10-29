@@ -1844,9 +1844,9 @@ def test_a_child_whose_queue_dies_saves_its_state_and_stops(store: Store) -> Non
     assert not (out / runner.OWNER_FILE).exists()
 
 
-def _owned_by(tmp_path: Path, pid: int, status: str = "RUNNING") -> Any:
+def _owned_by(tmp_path: Path, pid: int, status: str = "RUNNING", **extra: Any) -> Any:
     """A found run whose owner.json names ``pid`` on this host."""
-    owner = {"pid": pid, "host": socket.gethostname()}
+    owner = {"pid": pid, "host": socket.gethostname(), **extra}
     (tmp_path / runner.OWNER_FILE).write_text(json.dumps(owner))
     info = types.SimpleNamespace(status=status, artifact_uri=tmp_path.as_uri())
     return types.SimpleNamespace(info=info, data=types.SimpleNamespace(tags={}))
@@ -1866,6 +1866,24 @@ def test_an_owner_pid_of_another_user_is_not_the_runs_trainer(
     monkeypatch.setattr(os, "kill", denied)
     assert runner._live_owner(found) is None
     assert runner._skip_reason(found) is None
+
+
+def test_an_owner_pid_started_at_another_time_was_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """owner.json keeps the process start time (Linux): a live PID that started at
+    another time is not the trainer (a requeue or reboot reused it)."""
+    pid = os.getppid()
+    monkeypatch.setattr(runner, "_proc_start", lambda p: "222")
+    assert runner._live_owner(_owned_by(tmp_path, pid, start="222")) == pid
+    assert runner._live_owner(_owned_by(tmp_path, pid, start="111")) is None
+    assert runner._live_owner(_owned_by(tmp_path, pid)) == pid  # an older file
+
+
+def test_the_process_start_time_is_read_where_proc_exists() -> None:
+    start = runner._proc_start(os.getpid())
+    assert start is None or (Path("/proc").is_dir() and start.isdigit())
+    assert runner._proc_start(2**22 + 12345) is None
 
 
 def test_a_run_with_a_live_child_is_never_trained_twice(

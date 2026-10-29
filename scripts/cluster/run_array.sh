@@ -10,6 +10,8 @@
 # store is merged, as its runs move to other workers. Another node resumes a killed
 # node's run only if STORE_DIR is on a filesystem every node sees (SQLite on NFS or
 # Lustre needs working file locks: the queue and its child write one database file).
+# One user per STORE_DIR and one node per worker index: a run's live owner is looked up
+# by PID and process start time on its own host only (owner.json).
 #
 # Environment: PROFILE (default cuda), STORE_DIR (default node-stores), SEED_FROM (a
 # read-only copy of the main mlruns.db with its mlruns/ beside it: the node first takes
