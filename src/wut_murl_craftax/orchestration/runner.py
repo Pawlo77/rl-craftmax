@@ -202,9 +202,10 @@ class Trainer(Protocol):
     """A registry entry: one method's training, as the runner drives it.
 
     The state is one pytree (`save_state` round-trips it); ``train_chunk`` called
-    with n then m updates must equal one call with n + m. Its `ChunkMetrics` must
-    follow that class's episode rules; the runner times the chunk after
-    ``jax.block_until_ready`` on the returned state and metrics.
+    with n then m updates must equal one call with n + m. It may donate the input
+    state's buffers (tables updated in place): the runner never reads a state it
+    passed. Its `ChunkMetrics` must follow that class's episode rules; the runner
+    times the chunk after ``jax.block_until_ready`` on the returned state and metrics.
 
     A trainer may set the attribute ``loss_columns: tuple[str, ...]``, the
     `LOSS_COLUMNS` it fills (default: all; PQN-RNN leaves the PPO-only ones NaN). The
@@ -340,17 +341,23 @@ def state_template(trainer_state: Any, spec: RunSpec) -> dict[str, Any]:
 
 
 def _snapshot(
-    fresh: dict[str, Any], trainer_state: Any, update: int, wall: float, log: RunLog
+    blank: tuple[np.ndarray, dict[str, np.ndarray]],
+    trainer_state: Any,
+    update: int,
+    wall: float,
+    log: RunLog,
 ) -> dict[str, Any]:
-    """The state to save after ``update``; compacts ``log.episodes`` into one block."""
-    rows, empty = fresh["log"]
+    """The state to save after ``update``; compacts ``log.episodes`` into one block.
+
+    ``blank`` is the empty ``log`` of `state_template`.
+    """
+    rows, empty = blank
     episodes = {
         k: np.concatenate([v, *(e[k] for e in log.episodes)]) for k, v in empty.items()
     }
     log.episodes = [episodes]
     table = np.array(log.rows, np.float64).reshape(-1, rows.shape[1])
     return {
-        **fresh,
         "trainer": trainer_state,
         "update": update,
         "wall_s": wall,
@@ -767,16 +774,19 @@ def _train(
     }
     fresh = state_template(trainer.init(config, jax.random.key(spec.seed)), spec)
     saved = _resume(out, fresh, spu)
-    state, update = saved["trainer"], saved["update"]
+    state, update, wall_s = saved["trainer"], saved["update"], saved["wall_s"]
     log = RunLog(out, spec.env, achievement_names(spec.env))
-    rows, episodes = saved["log"]
+    blank, (rows, episodes) = fresh["log"], saved["log"]
     log.rows, log.episodes = rows.tolist(), [episodes]
     lost = _repair_checkpoints(trainer, out, fresh, saved, ckpts, spu)
+    # only the live state stays: `train_chunk` may donate it, and the init or restored
+    # state held beside it would double the device memory (Dyna-Q at 1B: 7 GB each)
+    del fresh, saved
     written = {e["update"] for e in load_index(out)}
     columns, extras = _loss_columns(trainer), _Extras.load(out, update)
     abort = spec.abort or {}
     rules, flagged = abort.get("flags", []), set[str]()
-    t0 = time.monotonic() - saved["wall_s"]
+    t0 = time.monotonic() - wall_s
     every, max_reward = log_every(n_updates), float(achievement_weights(spec.env).sum())
     chunks: list[tuple[int, float]] = []
     while update < n_updates and stop.signum is None:
@@ -803,7 +813,7 @@ def _train(
         if update in ckpts:
             _checkpoint(trainer, state, out, update, spu, wall, written)
         extras.save()
-        save_state(out, _snapshot(fresh, state, update, wall, log))
+        save_state(out, _snapshot(blank, state, update, wall, log))
         log.flush()
         points = metric_points(
             log.rows,

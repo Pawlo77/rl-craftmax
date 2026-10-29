@@ -615,6 +615,9 @@ def test_an_interrupted_run_resumes_to_the_uninterrupted_result(
     run = cut.runs()[spec.name]
     assert (len(cut.runs()), run.info.run_id, run.info.status) == (1, rid, "FINISHED")
     _assert_same_run(cut.run_dir(spec.name), whole.run_dir(spec.name), spec)
+    # neither the init state nor the restored one outlives its use: a chunk may
+    # donate its input, and a held copy doubles the device memory (Dyna-Q: 7 GB)
+    assert not any(first.held + second.held)
     history = cut.client.get_metric_history(rid, "train/return")
     assert [m.step for m in history] == [spu * u for u in range(1, n_updates + 1)]
     score = cut.client.get_run(rid).data.metrics[queue.SCORE_METRIC]
