@@ -317,6 +317,16 @@ def test_make_queue_fine_stage_and_dry_run() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "dry"),
+    [("1", True), ("true", True), ("yes", True), ("0", False), ("false", False)],
+)
+def test_make_queue_dry_run_follows_the_value(value: str, dry: bool) -> None:
+    out = _make("queue", "PHASE=smoke", f"DRY_RUN={value}")
+    assert ("--dry-run" in out) is dry
+    assert "--dry-run" not in _make("queue", "PHASE=smoke")
+
+
 def test_make_queue_takes_the_profile() -> None:
     out = _make("queue", "PHASE=smoke", "PROFILE=cuda")
     assert "--profile configs/profiles/cuda.yaml" in out
