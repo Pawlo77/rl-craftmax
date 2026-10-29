@@ -894,10 +894,8 @@ def _live_owner(found: Any) -> int | None:
         return None
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
-        return None
-    except PermissionError:  # alive, another user's process
-        pass
+    except (ProcessLookupError, PermissionError):
+        return None  # gone, or reused by another user's process: a queue is ours
     return pid
 
 
