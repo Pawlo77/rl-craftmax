@@ -1,12 +1,12 @@
 """Measure the PPO-RNN recompute gap on this machine (ctrl-metrics review, Important).
 
 PPO-RNN's permanent guard keeps ``ppo/ratio_first_mb`` in [0.999, 1.001]: the
-learner's sequence rerun must give the rollout's log-probs back. It was measured on
-CPU and Metal only (PPO-RNN design, "Device verification"); TF32 matmuls on a CUDA GPU
-may widen the gap. This runs a few updates of the budget's config on the profile's
-devices and prints, per update, the largest log-prob and value gaps over every
-minibatch of epoch 1 and the trainer's ``ppo/ratio_first_mb``; it exits 1 when a
-log-prob gap or ``|ratio - 1|`` reaches ``--bound``. Run it on a node before final-1b:
+learner's sequence rerun must give the rollout's log-probs back. Measured on CPU and
+Metal only (PPO-RNN design, "Device verification"); TF32 on CUDA may widen the gap.
+Runs a few updates of the budget's config on the profile's devices, prints the largest
+log-prob and value gaps of epoch 1 and the trainer's ``ppo/ratio_first_mb``, and exits
+2 when a gap or ``|ratio - 1|`` reaches ``--bound`` (1 is a crash). ppo-rnn only: the
+count-bonus and SIL variants share the guard on other shapes. Run it on a node first:
 
     uv run python scripts/cluster/check_recompute.py  # cuda.yaml, 1b config, 3 updates
 """
@@ -110,7 +110,7 @@ def measure(budget: str, updates: int, seed: int, shape: dict[str, int]) -> floa
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Command-line entry point; the exit code is 1 when the gap reaches the bound."""
+    """Command-line entry point; the exit code is 2 when the gap reaches the bound."""
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument(
         "--profile", type=Path, default=REPO / "configs/profiles/cuda.yaml"
@@ -144,7 +144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"worst gap {worst:.2e}, bound {args.bound:.0e}, guard {GUARD:.0e}: {verdict}"
     )
-    return 0 if worst < args.bound else 1
+    return 0 if worst < args.bound else 2
 
 
 if __name__ == "__main__":
