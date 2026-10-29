@@ -2432,17 +2432,19 @@ def plot_advanced(
 # ------------------------------------------------------------------------ F17
 
 RADAR_COLUMNS = ["benchmark", "method", "axis", "raw", "scaled"]
+SURVIVOR_COLUMN = "any_zero_share"
+"""The export column of the Survivor axis; older exports lack it (`_radar_raw`)."""
 
 
 def _radar_raw(eps: pd.DataFrame) -> pd.DataFrame:
     """The eight radar axes per run: the mean over its episodes (metrics plan).
 
-    Explorer: mean coverage of visited floors; Survivor: 1 - the largest of the three
-    stats' zero shares (a lower bound of the share of steps with any stat zero, the
-    export keeps them apart); Fighter: hostile kills per 1000 steps; Crafter: tech
-    depth; Diver: max floor; Efficient: achievements per 1000 steps; Mage: share of
-    the advanced mechanics used; Precise: 1 - wasted share. NaN where a column is
-    missing.
+    Explorer: mean coverage of visited floors; Survivor: 1 - ``any_zero_share``, the
+    share of steps with any stat zero (an export without that column gets 1 - the
+    largest of the three stats' zero shares, an upper bound of survival); Fighter:
+    hostile kills per 1000 steps; Crafter: tech depth; Diver: max floor; Efficient:
+    achievements per 1000 steps; Mage: share of the advanced mechanics used; Precise:
+    1 - wasted share. NaN where a column is missing.
     """
     length = _column(eps, "length").replace(0, np.nan)
     cover = [c for c in eps.columns if c.startswith("coverage/")]
@@ -2450,9 +2452,13 @@ def _radar_raw(eps: pd.DataFrame) -> pd.DataFrame:
     kills = [c for c in eps.columns if c.startswith("kills/") and c != "kills/passive"]
     adv = [c for c in eps.columns if c.startswith("adv/")]
     nan = pd.Series(np.nan, index=eps.index)
+    if SURVIVOR_COLUMN in eps.columns:
+        survivor = 1 - eps[SURVIVOR_COLUMN]
+    else:
+        survivor = 1 - eps[zero].max(axis=1) if zero else nan
     axes = {
         "explorer": eps[cover].mean(axis=1) if cover else nan,
-        "survivor": 1 - eps[zero].max(axis=1) if zero else nan,
+        "survivor": survivor,
         "fighter": eps[kills].sum(axis=1) / length * 1000 if kills else nan,
         "crafter": _column(eps, "tech_depth").astype(float),
         "diver": _column(eps, "max_floor").astype(float),
@@ -2528,6 +2534,13 @@ def _radar_cell(
     ax.set_title(method, loc="left", fontsize=th.title, color=th.ink)
 
 
+def _survivor_text(eps: pd.DataFrame) -> str:
+    """The caption's definition of the Survivor axis, as `_radar_raw` computes it."""
+    if SURVIVOR_COLUMN in eps.columns:
+        return "one minus the share of steps with any stat at zero."
+    return "one minus the largest single-stat zero share, an upper bound of survival."
+
+
 def plot_radar(
     frames: Frames,
     out_dir: Path,
@@ -2563,8 +2576,7 @@ def plot_radar(
         text = (
             f"Playstyle radar of {method}: eight axes from the final stochastic eval "
             "episodes, each min-max scaled over the methods of the benchmark (0.5: all "
-            "equal). Survivor is one minus the largest single-stat zero share, an "
-            f"upper bound of survival. {' '.join(notes)}"
+            f"equal). Survivor is {_survivor_text(ctx.eps)} {' '.join(notes)}"
         )
         _save(fig, th, out_dir, stem, title=f"Radar, {method}", description=text)
         figs[stem] = fig

@@ -955,10 +955,36 @@ def test_radar_raw_values_follow_the_definitions(
     assert table["1m", "sil", "efficient"] == pytest.approx(
         eff.groupby(eps["run_id"]).mean().mean()
     )
-    zero = eps[[f"zero_share/{s}" for s in figures_game.STATS]].max(axis=1)
     assert table["1m", "sil", "survivor"] == pytest.approx(
-        1 - zero.groupby(eps["run_id"]).mean().mean()
+        1 - per_run["any_zero_share"].mean().mean()
     )
+
+
+def _without_any_zero(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """An export from before the ``any_zero_share`` column."""
+    return {
+        **frames,
+        "eval_episodes": frames["eval_episodes"].drop(columns="any_zero_share"),
+    }
+
+
+def test_survivor_falls_back_to_the_bound_for_an_export_without_the_column(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    old = radar_table(_without_any_zero(frames)).set_index([
+        "benchmark",
+        "method",
+        "axis",
+    ])
+    new = radar_table(frames).set_index(["benchmark", "method", "axis"])
+    eps = _method_eps(_without_any_zero(frames), "sil", "1m")
+    zero = eps[[f"zero_share/{s}" for s in figures_game.STATS]].max(axis=1)
+    want = 1 - zero.groupby(eps["run_id"]).mean().mean()
+    assert old.loc[("1m", "sil", "survivor"), "raw"] == pytest.approx(want)
+    assert new.loc[("1m", "sil", "survivor"), "raw"] < want  # the bound overstates it
+    other = [a for a in figures_game.RADAR_AXES if a != "survivor"]
+    for a in other:
+        assert old.loc[("1m", "sil", a), "raw"] == new.loc[("1m", "sil", a), "raw"]
 
 
 def test_f17_draws_one_polygon_per_method_at_the_scaled_values(
@@ -1162,10 +1188,19 @@ def test_radar_explorer_and_mage_follow_their_definitions(
     assert mage == pytest.approx(0.25)  # fixture: only drink_potion, in slots 2 and 3
 
 
-def test_the_radar_says_survivor_is_an_upper_bound(
+def test_the_radar_defines_survivor_by_the_any_zero_share(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
-    assert "upper bound of survival" in said(plot_radar(frames, tmp_path))
+    text = said(plot_radar(frames, tmp_path))
+    assert "share of steps with any stat at zero" in text
+    assert "upper bound" not in text
+
+
+def test_the_radar_says_survivor_is_an_upper_bound_without_the_column(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    text = said(plot_radar(_without_any_zero(frames), tmp_path))
+    assert "upper bound of survival" in text
 
 
 def test_f11_says_the_new_tile_rate_is_an_episode_mean(

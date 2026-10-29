@@ -265,8 +265,9 @@ def test_the_row_has_the_contract_columns_and_survives_json() -> None:
                 "unlock_step/collect_wood", "stalls", "n_stalls", "max_stall",
                 "fights", "kills/zombie", "kills/passive", "damage_dealt",
                 "damage_taken", "close_calls", "close_calls_recovered",
-                "low_share/food", "zero_share/energy", "action_count/noop",
-                "action_entropy", "wasted_share", "noop_share", "forced_share",
+                "low_share/food", "zero_share/energy", "any_zero_share",
+                "action_count/noop", "action_entropy", "wasted_share", "noop_share",
+                "forced_share",
                 "gathered/wood", "used/ruby", "use_ratio", "steps_per_achievement",
                 "wasted_crafts", "wood_to_diamond", "adv/read_book",
                 "split/make_diamond_pickaxe", "split/enter_graveyard"):  # fmt: skip
@@ -277,6 +278,19 @@ def test_the_row_has_the_contract_columns_and_survives_json() -> None:
     assert np.isnan(row["survival/level/food"])
     stall = json.loads(json.dumps(row["stalls"]))[0]
     assert {"start", "end", "length", "floor", "ending", "ended_by"} <= set(stall)
+
+
+def test_any_zero_share_counts_each_step_with_a_stat_at_zero_once() -> None:
+    ev = quiet(10)
+    ev["stat_zero"][0:4, FOOD] = True  # food and drink are zero together on 2 steps
+    ev["stat_zero"][2:6, DRINK] = True
+    row = record(ev).row()
+    assert row["any_zero_share"] == pytest.approx(6 / 10)
+    assert row["zero_share/food"] == pytest.approx(4 / 10)
+    assert row["zero_share/drink"] == pytest.approx(4 / 10)
+    assert row["any_zero_share"] > max(row["zero_share/food"], row["zero_share/drink"])
+    assert record(quiet(10)).row()["any_zero_share"] == 0
+    assert record(quiet(10, 22), game="classic").row()["any_zero_share"] == 0
 
 
 def test_close_calls_need_50_more_steps_and_recover_at_health_5() -> None:

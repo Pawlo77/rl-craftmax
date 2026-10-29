@@ -77,6 +77,11 @@ def _episodes(eps: pd.DataFrame) -> pd.DataFrame:
         out[f"low_share/{stat}"] = 0.05 * (s + 1) + 0.01 * pos
         out[f"zero_share/{stat}"] = 0.02 * (s + 1) + 0.005 * slot
         out[f"survival/level/{stat}"] = np.where(pos == 3, np.nan, 2.0 + s + 0.1 * pos)
+    zero = out[[f"zero_share/{s}" for s in STAT_NAMES]]
+    # between the largest single-stat share and their sum, so it differs from both
+    out["any_zero_share"] = zero.max(axis=1) + 0.5 * (
+        zero.sum(axis=1) - zero.max(axis=1)
+    )
     counts = {a: (3 + pos + i * slot + 2 * i) for i, a in enumerate(ACTIONS)}
     for a, c in counts.items():
         out[f"action_count/{a}"] = c

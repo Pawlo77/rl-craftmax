@@ -494,6 +494,16 @@ def test_replay_columns_are_filled_where_the_replay_wrote_them_and_nan_elsewhere
     assert str(schema.field("unique_positions").type) == "int64"
 
 
+def test_any_zero_share_is_exported_for_stored_and_replayed_files(
+    exported: Exported,
+) -> None:
+    ep = _episodes(exported)
+    zero = ep[[c for c in ep.columns if c.startswith("zero_share/")]]
+    assert ep["any_zero_share"].notna().all()  # not a replay-only column
+    assert (ep["any_zero_share"] >= zero.max(axis=1)).all()
+    assert (ep["any_zero_share"] <= zero.sum(axis=1)).all()
+
+
 def test_a_tuning_phase_gives_eval_episodes_the_hash_as_config_ref(
     exported: Exported,
 ) -> None:
@@ -557,6 +567,7 @@ def test_the_analysis_loaders_read_the_export(exported: Exported) -> None:
     assert set(frames) == {"runs", "curves", "eval_episodes"}
     stalls = frames["eval_episodes"]["stalls"]
     assert stalls.map(len).sum() == frames["eval_episodes"]["n_stalls"].sum()
+    assert frames["eval_episodes"]["any_zero_share"].notna().all()
     both = load_phases(["final-1m", "tune-coarse"], exported.out)
     assert both["runs"]["run_id"].is_unique
 

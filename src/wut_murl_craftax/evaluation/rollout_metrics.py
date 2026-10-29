@@ -66,10 +66,10 @@ EPISODE_COLUMNS = (
     "n_stalls", "max_stall", "fights", "kills/", "kills/passive", "damage_dealt",
     "damage_taken", "projectile_damage", "close_calls", "close_calls_recovered",
     "coverage/", "new_tiles_per_100", "revisit_rate", "unique_positions", "low_share/",
-    "zero_share/", "survival/count/", "survival/gap/", "survival/level/",
-    "action_count/", "action_entropy", "wasted_share", "noop_share", "forced_share",
-    "gathered/", "used/", "use_ratio", "steps_per_achievement", "wasted_crafts",
-    "wood_to_diamond", "adv/", "split/",
+    "zero_share/", "any_zero_share", "survival/count/", "survival/gap/",
+    "survival/level/", "action_count/", "action_entropy", "wasted_share", "noop_share",
+    "forced_share", "gathered/", "used/", "use_ratio", "steps_per_achievement",
+    "wasted_crafts", "wood_to_diamond", "adv/", "split/",
 )  # fmt: skip
 """Columns of ``eval_episodes`` in contracts.md section 1 order; a name ending in
 ``/`` is a family the game expands (`episode_columns`; ``kills/`` holds the hostile
