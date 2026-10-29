@@ -5,7 +5,7 @@ domain: interpretation
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, interpretation]
 created: 2026-10-24
-updated: 2026-10-28
+updated: 2026-10-29
 related-code:
   - "[[src/wut_murl_craftax/interpretation/__init__.py]]"
   - "[[src/wut_murl_craftax/interpretation/features.py]]"
@@ -69,7 +69,7 @@ related-code:
 - Splits: `CAPS` states per episode, train 2000 (plan), validation 2000 (it only scores `val_top1`), test 10,000 (keeps whole 1M episodes, bounds a 1B one).
 - Method folder `<out>/<budget>/<method>/`: `curve.csv`, `closed_loop.csv`, `importance.csv` (every policy and fit, identity columns in front), `complexity.json` (`median_run`, every policy summary), `rules_16.txt` (the seed with the lower-median final score, one section per fit), `fidelity_vs_leaves.png` (a line per seed) and its `captions.csv`, skill methods `top_level.json` (every seed, tried view main, default beside it with `optimistic_share`) and the median seed's `top_level_rules.txt`; logged as run `distill-<budget>-<method>` of experiment `analysis` (tags `analysis/kind=distill`, `analysis/phases`, `analysis/budget`, `analysis/method`) without the `*.npz` datasets; `.logged` holds the run id.
 - Budget folder: `complexity.csv` (`COLUMNS`: contracts section 3 plus `top_optimistic_share`, `l90_censored` and the R106 columns `majority`, `gain_16/64/256`, `peak_val_leaves`, `group_<action group>` and `spearman_score_fid256`/`spearman_fid256_p`, all read from the policy folders by `policy_extras`: `test.npz` labels, `curve_<variant>.csv` `val_top1`, `failure_<variant>.json`), a sibling `policies.csv` (one row per policy and variant with the same numbers), one row per (method, config_ref, variant) over every policy summary under the folder; `fidelity_vs_leaves.png` and `captions.csv` (id `FID`) (PNG only; an old `.pdf` is deleted; report theme, column width, size class curve, no legend, title or label on the image: the method legend figure gives the colours, the caption the 0.9 level, median base curve per unit), copied to `--figures/<budget>/` with its caption row.
-- `censored_median(levels)`: lower median with None as inf, so it is a grid size and inf exactly when more than half the seeds never reach the level; `level_text` prints inf as `> 4096`; `spearman(scores, levels)`: rho and p with None ranked above 4096, NaN under 3 seeds or under `latex.MIN_UNCENSORED` = 3 reached levels; `uncensored_median(values)`: the L90 depth median, NaN under 3 reached seeds; `complexity_table(summaries, budget)`.
+- `censored_median(levels)`: lower median with None as inf, so it is a grid size and inf exactly when more than half the seeds never reach the level; `level_text` prints inf as `> 4096`; `spearman(scores, levels)`: rho and p with None ranked above 4096, NaN under 3 seeds, under `latex.MIN_UNCENSORED` = 3 reached levels or for constant scores or levels (no scipy warning); `uncensored_median(values)`: the L90 depth median, NaN under 3 reached seeds; `complexity_table(summaries, budget)`.
 - Ordinal codes (a split such as `direction <= 2.5` means "left or right"; rules must translate thresholds into sets):
 
 | Column | Codes |
@@ -119,7 +119,7 @@ related-code:
 - The greedy skill of a key is the unmasked argmax of its row, so an untried optimistic entry can win; `tried=True` is the view without them.
 - Only the final checkpoint is read: the greedy table holds every checkpoint, so rows are always filtered to one `update`.
 - `run` distils at `run.updates[-1]` and passes that update to every reader; a greedy table without keys at it fails the policy (no silent fallback to an earlier checkpoint).
-- `run` is resumable per policy: datasets, each fit and the top level are written once, atomically, and `complexity.json` last; a policy with it (and its `dagger` fit under `--dagger`) is skipped; `--force` empties the policy folder first.
+- `run` is resumable per policy: datasets, each fit and the top level are written once, atomically, and `complexity.json` last; a policy with it (and its `dagger` fit under `--dagger`) is skipped; `--force` empties the policy folder first. The summary records `split_seeds` (seeds per split): one written for other counts (a `--max-seeds` smoke) is not skipped, its folder is emptied and the policy redone; a summary without the key counts as finished.
 - Censored levels: L-values that are None stay None in the policy files, inf in `complexity.csv`, `> 4096` in text; key-tree levels go only to `top_l90`, never the L90 columns or the Spearman.
 - `run` never writes the training store: datasets come from fresh rollouts or stored eval files, and only `distill-*` runs of `analysis` are written (none with `--no-log`).
 

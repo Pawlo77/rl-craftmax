@@ -208,7 +208,7 @@ def collect(
     Raises:
         ValueError: If ``seeds`` is empty.
     """
-    if not seeds:
+    if len(seeds) == 0:
         msg = "collect needs at least one seed"
         raise ValueError(msg)
     played = (p for a, rows in _batches(run, update, seeds) for p in _played(a, rows))

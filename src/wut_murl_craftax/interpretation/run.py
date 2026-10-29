@@ -147,18 +147,26 @@ def uncensored_median(values: Sequence[float]) -> float:
     return float(np.median(values)) if len(values) >= MIN_UNCENSORED else math.nan
 
 
+def _rank_correlation(x: Sequence[float], y: Sequence[float]) -> tuple[float, float]:
+    """Spearman's rho and p; NaN (no scipy warning) if either list is constant."""
+    if len(set(x)) < 2 or len(set(y)) < 2:
+        return math.nan, math.nan
+    res = stats.spearmanr(x, y)
+    return float(res.statistic), float(res.pvalue)
+
+
 def spearman(
     scores: Sequence[float], levels: Sequence[float | None]
 ) -> tuple[float, float]:
     """Spearman's rho and p of score vs L90; None ranks above every size.
 
-    NaN for fewer than 3 seeds, or fewer than `MIN_UNCENSORED` reached levels: with
-    the rest tied above the grid, the rank order rests on one or two seeds.
+    NaN for fewer than 3 seeds, fewer than `MIN_UNCENSORED` reached levels (with the
+    rest tied above the grid, the rank order rests on one or two seeds) or constant
+    scores or levels.
     """
     if len(scores) < 3 or sum(v is not None for v in levels) < MIN_UNCENSORED:
         return math.nan, math.nan
-    res = stats.spearmanr(scores, _censor(levels))
-    return float(res.statistic), float(res.pvalue)
+    return _rank_correlation(scores, _censor(levels))
 
 
 # ----------------------------------------------------------------------- files
@@ -402,6 +410,7 @@ def distil_policy(
         "env_steps": run.env_steps(update),
         "family": train.family,
         "recurrent": train.recurrent,
+        "split_seeds": _split_counts(seeds),
         "states": {k: len(v.label) for k, v in data.items()},
         "fits": fits,
         "top_level": top,
@@ -616,8 +625,8 @@ def _spearman_values(x: Sequence[float], y: Sequence[float]) -> tuple[float, flo
     ]
     if len(pairs) < 3:
         return math.nan, math.nan
-    res = stats.spearmanr(*zip(*pairs, strict=True))
-    return float(res.statistic), float(res.pvalue)
+    x, y = zip(*pairs, strict=True)
+    return _rank_correlation(x, y)
 
 
 def _row(
@@ -780,9 +789,29 @@ def sum_up_budget(folder: Path, figures: Path) -> None:
 # ------------------------------------------------------------------------- driver
 
 
-def _finished(folder: Path, dagger: bool) -> bool:
+def _split_counts(seeds: Mapping[str, Sequence[int]]) -> dict[str, int]:
+    return {k: len(v) for k, v in seeds.items()}
+
+
+def _stale(folder: Path, seeds: Mapping[str, Sequence[int]]) -> bool:
+    """Whether the summary was written for other seed counts (a ``--max-seeds`` smoke).
+
+    A summary from before the counts were recorded is not stale.
+    """
     path = folder / SUMMARY
-    return path.is_file() and (not dagger or DAGGER in _read_json(path)["fits"])
+    if not path.is_file():
+        return False
+    have = _read_json(path).get("split_seeds")
+    return have is not None and have != _split_counts(seeds)
+
+
+def _finished(folder: Path, dagger: bool, seeds: Mapping[str, Sequence[int]]) -> bool:
+    path = folder / SUMMARY
+    return (
+        path.is_file()
+        and not _stale(folder, seeds)
+        and (not dagger or DAGGER in _read_json(path)["fits"])
+    )
 
 
 def _distil_method(
@@ -798,14 +827,16 @@ def _distil_method(
 ) -> bool:
     """Distil the method's unfinished policies; whether any was (re)computed."""
     rows = runs.sort_values(["config_ref", "seed"]).to_dict("records")
-    todo = [r for r in rows if force or not _finished(folder / r["run_id"], dagger)]
+    todo = [
+        r for r in rows if force or not _finished(folder / r["run_id"], dagger, seeds)
+    ]
     summary.skipped += [r["run_id"] for r in rows if r not in todo]
     if not todo:
         return False
     dirs = run_dirs([r["run_id"] for r in todo], tracking_uri)  # one short read
     for r in todo:
         rid, t0 = str(r["run_id"]), time.time()
-        if force:
+        if force or _stale(folder / rid, seeds):  # no datasets of other seed counts
             shutil.rmtree(folder / rid, ignore_errors=True)
         try:
             run = EvalRun.load(dirs[rid])

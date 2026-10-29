@@ -200,6 +200,15 @@ def test_two_collections_of_a_network_policy_are_identical(ppo_run: EvalRun) -> 
 def test_an_empty_seed_list_is_refused(ppo_run: EvalRun) -> None:
     with pytest.raises(ValueError, match="at least one seed"):
         collect(ppo_run, 0, ())
+    with pytest.raises(ValueError, match="at least one seed"):
+        collect(ppo_run, 0, np.array([], np.int64))
+
+
+def test_seeds_may_be_a_numpy_array(ppo_run: EvalRun) -> None:
+    as_list = collect(ppo_run, 0, SEEDS[:2])
+    as_array = collect(ppo_run, 0, np.array(SEEDS[:2]))
+    np.testing.assert_array_equal(as_array.features, as_list.features)
+    np.testing.assert_array_equal(as_array.label, as_list.label)
 
 
 def test_probs_and_labels_are_network_outputs_over_each_stochastic_episode(
