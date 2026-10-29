@@ -117,14 +117,15 @@ def mann_whitney_holm(
 ) -> pd.DataFrame:
     """Two-sided Mann-Whitney U per pair, Holm-corrected over the whole mapping.
 
+    Only 1M comparisons (10 seeds) are significance claims. A pair whose smallest
+    attainable two-sided exact p-value is already at or above ``alpha`` (3 seeds a
+    side: 0.1) can never be rejected; the call logs a warning naming such pairs, and
+    it still counts in the Holm family.
+
     Returns:
         One row per comparison key with ``u`` (of the first sample), ``p``,
         ``p_holm`` and ``reject`` (``p_holm < alpha``). The mapping is one Holm
         family: pass the pairs of one table together, a block of its own apart.
-
-    Only 1M comparisons (10 seeds) are significance claims. A pair whose smallest
-    attainable two-sided exact p-value is already at or above ``alpha`` (3 seeds a
-    side: 0.1) can never be rejected; the call logs a warning naming such pairs.
     """
     stuck = [
         k

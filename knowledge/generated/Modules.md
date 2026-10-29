@@ -17,7 +17,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/captions.py]] | Figure and table notes of one benchmark, built from the captions the stages wrote. |  | [[2026-10-20-craftax-comparison-and-results]] | 263 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1424 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1425 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1174 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2591 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 931 | [[analysis]] |
@@ -40,7 +40,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/rollout_metrics.py]] | Offline metrics of stored eval episodes: every seed of an eval file replayed at once. |  |  | 756 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. |  |  | 560 |  |
 | [[src/wut_murl_craftax/evaluation/stability.py]] | Learning stability of one run (drawdowns, drops, collapse) and tuning sensitivity. |  |  | 239 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 267 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 268 | [[evaluation]] |
 | [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 158 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/dataset.py]] | Distillation datasets: named features and network labels at stochastic-policy states. |  |  | 252 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
