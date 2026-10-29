@@ -147,6 +147,7 @@ Needs `training/wrappers.py` ([[2026-10-20-craftax-method-ppo]] Task 2), which r
   - On one GPU node: `uv sync --all-groups`, then `uv run python scripts/cluster/check_recompute.py` (cuda profile, 1B config, 3 updates; it fails loudly without a GPU). Record the largest log-prob and value gaps in the "Device verification" table of [[PPO-RNN design]].
   - Exit 0 (gaps below 1e-4, a tenth of the 1e-3 guard band): remove `ppo/ratio_first_mb` from `unmeasured_limits` in `configs/profiles/cuda.yaml`. That also makes the bound permanent for `count-bonus-ppo-rnn` and SIL, which the script does not measure (other shapes). Exit 2 (over the bound; exit 1 is a crash): rerun with `--precision highest`; if that passes, pinning the matmul precision on CUDA is a decision for [[Experiment decisions]]; until then hits stay retried once.
   - After the array: copy back only what is needed, `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json node-stores/ <laptop>:node-stores/` (`cuda.yaml` sets `drop_state_on_finish: true`, so a finished run has no `state/` left; an unfinished one keeps it on the cluster to resume), then `make merge-mlflow SRC=node-stores/mlruns-node-<i>.db` per node; reused runs bring back their new eval files and `eval/*` points. The merge refuses unfinished node runs without `state/`. Expected about 0.4-0.65 GB per finished 1B run.
+  - Per-job GPU memory, host RAM, cores, disk and time limit, and the one-array-per-entry request lines: [[2026-10-20-craftax-compute-budget]] 1B job resources.
 
 ### Task 7: Smoke phase end to end
 
