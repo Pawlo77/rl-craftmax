@@ -30,9 +30,9 @@ def assert_done_step_unlock_counted(
     """
     real, calls = wrappers.step_events, []
 
-    def patched(game: Any, s: Any, action: Any, s2: Any) -> Any:
+    def patched(game: Any, s: Any, action: Any, s2: Any, **kw: Any) -> Any:
         calls.append(game)
-        events = real(game, s, action, s2)
+        events = real(game, s, action, s2, **kw)
         dying = s2.player_health <= 0
         return events.replace(unlocked=events.unlocked.at[MARKER].set(dying))
 
