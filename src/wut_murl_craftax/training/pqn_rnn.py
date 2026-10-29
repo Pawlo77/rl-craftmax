@@ -689,8 +689,12 @@ def learn(
     Reads ``traj.obs`` (network-wide), ``actions``, ``rewards``, ``dones`` (no target
     crosses one), ``extra["last_actions"]`` and, if present, ``extra["r_int"]`` and
     ``extra["episode_dones"]`` (LSTM resets; default ``dones``); ``loss_mask``
-    ``(steps, envs)`` drops transitions from the loss. ``h0`` is the float32 start
-    carry after step 0's reset (default: ``traj.hidden[0]``, rounded to float16).
+    ``(steps, envs)`` drops transitions from the loss only: kept steps still bootstrap
+    through masked ones, and with all steps masked the optimizer moments still move
+    the params, the LR count advances and BatchRenorm updates its statistics. ``h0``
+    is the float32 start carry after step 0's reset (default: ``traj.hidden[0]``,
+    rounded to float16). The LR schedule counts optimizer steps and assumes one call
+    per update: a caller that learns more often decays the LR faster.
     Returns the train state and the mean ``td_loss`` and ``grad_norm`` of its steps,
     with the `Q_STATS`, ``lr`` and the input BatchRenorm's ``bn_*`` (`_make_learn`).
 
