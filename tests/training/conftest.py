@@ -1,5 +1,6 @@
 """Shared fixtures of the training tests: recurrent configs, equality, CPU runs."""
 
+import functools
 import importlib
 import os
 import subprocess
@@ -94,6 +95,12 @@ def _same(a: Any, b: Any) -> bool:
 def same() -> Callable[[Any, Any], bool]:
     """Every leaf equal bit for bit; typed keys compared by their key data."""
     return _same
+
+
+@pytest.fixture(scope="session")
+def copied() -> Callable[[Any], Any]:
+    """A copy of a state, for a test that reuses it: ``train_chunk`` may donate it."""
+    return functools.partial(jax.tree.map, jnp.copy)
 
 
 def _start_on_cpus(script: str, devices: int, out: Path) -> subprocess.Popen[str]:

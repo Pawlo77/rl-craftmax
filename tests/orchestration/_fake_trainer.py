@@ -1,7 +1,9 @@
 """A deterministic 3-update trainer with the shape of a registry entry."""
 
+import gc
 import os
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -50,7 +52,8 @@ class FakeTrainer:
     update number to the method metrics reported at it (``{"ppo/entropy": 0.1}``);
     ``loss_columns`` makes the trainer report only those loss columns (NaN in the
     others, as PQN-RNN leaves the PPO-only ones) and ``loss_nan_at`` turns the
-    reported ones NaN at that update.
+    reported ones NaN at that update. ``held`` counts, at the start of each chunk,
+    the earlier states (``init`` outputs, earlier chunks' inputs) still alive.
     """
 
     def __init__(
@@ -72,6 +75,8 @@ class FakeTrainer:
         self.cpu_devices = 0
         self.init_steps: list[int | None] = []
         self.init_configs: list[dict[str, Any]] = []
+        self.held: list[int] = []
+        self._seen: list[weakref.ref[jax.Array]] = []
 
     def steps_per_update(self, config: Mapping[str, Any]) -> int:
         return self.spu
@@ -81,8 +86,10 @@ class FakeTrainer:
         self.init_steps.append(config.get("steps"))
         self.init_configs.append(dict(config))
         k_w, key = jax.random.split(key)
+        w = jax.random.normal(k_w, (3,)) * config["lr"]
+        self._seen.append(weakref.ref(w))
         return {
-            "params": {"w": jax.random.normal(k_w, (3,)) * config["lr"]},
+            "params": {"w": w},
             "opt": {"mu": jnp.zeros(3), "count": jnp.zeros((), jnp.int32)},
             "env": {"t": jnp.zeros(ENVS, jnp.int32), "alive": jnp.ones(ENVS, bool)},
             "key": key,
@@ -133,6 +140,11 @@ class FakeTrainer:
     def train_chunk(
         self, state: dict[str, Any], n_updates: int
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        gc.collect()  # only references keep a state alive, not pending garbage
+        w = state["params"]["w"]
+        alive = {id(x) for r in self._seen if (x := r()) is not None and x is not w}
+        self.held.append(len(alive))
+        self._seen.append(weakref.ref(w))
         rows = []
         for _ in range(n_updates):
             state, metrics = self._update(state)

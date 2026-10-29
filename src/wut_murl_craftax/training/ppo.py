@@ -493,6 +493,26 @@ def place_on_actor(
     return jax.tree.map(put, tree)
 
 
+def unshared[T](tree: T) -> T:
+    """``tree`` with every leaf that shares a buffer with an earlier leaf copied.
+
+    For a state a jit donates: XLA refuses a donated buffer passed twice, and init
+    states reuse one array for several fields (zero counters, Dyna-Q's empty model).
+    """
+    seen: set[int] = set()
+
+    def own(x: Any) -> Any:
+        if not isinstance(x, jax.Array):
+            return x
+        buffers = {s.data.unsafe_buffer_pointer() for s in x.addressable_shards}
+        if buffers & seen:
+            return jnp.copy(x)
+        seen.update(buffers)
+        return x
+
+    return cast(T, jax.tree.map(own, tree))
+
+
 @functools.cache
 def _setup(cfg: PPOConfig) -> _Setup:
     """Cached per config so every chunk and resume reuses the compiled steps.

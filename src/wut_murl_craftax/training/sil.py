@@ -41,7 +41,9 @@ TIE_SEED = 0
 """Seed of the random order among unlocks of one tier when a rollout has more unlocks
 than ``insert_cap`` (folded with the next stamp, so each rollout draws anew)."""
 PEAK_COPIES = 3
-"""Copies of the SIL state alive at the runner's peak (`check_memory`)."""
+"""Copies of the SIL state `check_memory` counts. The runner once held the init state
+and the update a copy beside the live one; now a resume briefly holds 2. Kept at 3 so
+the same configs pass."""
 KL_LIMIT, KL_UPDATES = 0.5, 20
 """``sil/kl_after`` above ``KL_LIMIT`` for ``KL_UPDATES`` updates in a row: the SIL
 steps dominate the policy, and ``sil/dominates`` turns NaN (a guard in
@@ -263,9 +265,8 @@ def check_memory(
 ) -> SILBytes:
     """`buffer_bytes` of the run in ``spec``, refused when its peak passes the limit.
 
-    The peak is `PEAK_COPIES` times the state: the runner keeps the fresh init state
-    (its ``state/`` template), the live state, and `ppo_rnn.train_chunk` donates a
-    copy per chunk to the update.
+    The peak is taken as `PEAK_COPIES` times the state (a bound above the one live,
+    in-place donated state).
 
     Raises:
         MemoryLimitError: If that peak exceeds ``memory_limit_bytes``.

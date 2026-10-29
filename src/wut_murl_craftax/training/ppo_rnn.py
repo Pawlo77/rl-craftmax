@@ -72,6 +72,7 @@ from .ppo import (
     place_on_actor,
     ppo_metrics,
     ppo_terms,
+    unshared,
 )
 from .records import achievement_names
 
@@ -372,8 +373,8 @@ def _make_learn(
     normalisation, the learning rate of this update's first optimizer step, the mean
     ratio of epoch 1's first minibatch) and the method's metrics (extra-loss metrics
     averaged over the extra steps, then ``metrics_fn`` if the state is on the
-    learner). The method state argument is donated: the caller passes a copy it no
-    longer needs (`train_chunk`).
+    learner). The method state argument is donated: `train_chunk` passes the state's
+    own, which its caller no longer reads.
     """
     on_learner = bool(_LEARNER_HOOKS & set(hk.active))
     lr_at = (
@@ -651,19 +652,16 @@ def train_chunk(
 
     Besides the `ChunkMetrics` arrays: the ``ppo/*`` metrics of `ppo_metrics`,
     ``ppo/ratio_first_mb`` and the `ROLLOUT_STATS`, then every method metric name with
-    its per-update values.
+    its per-update values. A method state the update reads on the learner is donated
+    in place: the caller must not read the input state afterwards.
 
     Raises:
         ValueError: If a method reports the name of a control metric.
     """
     s = _setup(state.cfg)
     losses, advs, stats, eps, method = [], [], [], [], []
-    ms = state.method_state
-    if s.resident:  # `learn` donates it: the caller's state stays valid
-        state = state.replace(method_state=jax.tree.map(jnp.copy, ms))
-    elif isinstance(ms, SplitState):  # its learner part is donated alike
-        learner = jax.tree.map(jnp.copy, ms.learner)
-        state = state.replace(method_state=ms.replace(learner=learner))
+    if s.resident or isinstance(state.method_state, SplitState):
+        state = unshared(state)  # `learn` donates the (learner) method state in place
     for _ in range(n_updates):
         state, batch, traj, ep = collect(state, s.with_traj)
         put = functools.partial(jax.device_put, device=s.learner)
