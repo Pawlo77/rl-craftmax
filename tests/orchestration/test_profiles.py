@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import yaml
 
@@ -505,3 +506,33 @@ def test_check_recompute_imports_resolve_and_its_help_runs() -> None:
         check=True,
     )
     assert "--precision" in out.stdout
+
+
+def test_project_guards_fits_the_log_log_growth_and_names_a_resize() -> None:
+    """The cluster watch rule: a power law is recovered, a young run is not judged."""
+    guards = _script("project_guards")
+    steps = np.arange(1, 21) * 5e6  # 5 % to 100 % of 100M, a count growing as t^1.5
+    count = 1e-6 * steps**1.5
+    got = guards.project(steps, count, budget=1e9)
+    assert got == pytest.approx(1e-6 * 1e9**1.5, rel=1e-6)
+    assert math.isnan(guards.project(steps[:4], count[:4], budget=1e9))
+    assert math.isnan(guards.project([], [], budget=1e9))
+    flat = guards.project(steps, np.full(20, 40.0), budget=1e9)
+    assert flat == pytest.approx(40.0)
+    config = {
+        "log2_rows": 24,
+        "model_pairs": 2**25,
+        "log2_k": 22,
+        "max_occupancy": 0.25,
+    }
+    assert guards.GUARDS["smdp/keys_visited"](config) == 0.25 * 2**24
+    assert guards.GUARDS["dyna/pairs_visited"](config) == 2**25
+    assert guards.GUARDS["count/distinct_keys"](config) == 0.25 * 2**22
+
+
+def test_project_guards_imports_resolve() -> None:
+    path = ARRAY.parent / "project_guards.py"
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("wut_"):
+            module = importlib.import_module(str(node.module))
+            assert [a.name for a in node.names if not hasattr(module, a.name)] == []
