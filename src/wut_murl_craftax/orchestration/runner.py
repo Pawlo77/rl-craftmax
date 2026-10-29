@@ -112,7 +112,7 @@ from .store import (
     is_partial,
     merge_stores,
 )
-from .tracking import _resolve_tracking_uri, artifact_path, build_mlflow_tracker
+from .tracking import artifact_path, build_mlflow_tracker, resolve_tracking_uri
 from .train_metrics import (
     compile_seconds,
     log_every,
@@ -1182,7 +1182,7 @@ def _child(job: _Job, stop_set: Any, stop_signum: Any, trained: Any, done: Any) 
     if job.spec.registry_name not in trainers:
         msg = f"no trainer registered for {job.spec.registry_name!r} in {job.registry}"
         raise ValueError(msg)
-    mlflow.set_tracking_uri(_resolve_tracking_uri(job.experiment.mlflow.tracking_uri))
+    mlflow.set_tracking_uri(resolve_tracking_uri(job.experiment.mlflow.tracking_uri))
     trainer = trainers[job.spec.registry_name]
     trained.value = _run_spec(
         job.spec, trainer, job.experiment, job.machine, evaluate, stop
@@ -1391,7 +1391,7 @@ def main(
         experiment = replace(
             experiment, mlflow=replace(experiment.mlflow, tracking_uri=tracking_uri)
         )
-    mlflow.set_tracking_uri(_resolve_tracking_uri(experiment.mlflow.tracking_uri))
+    mlflow.set_tracking_uri(resolve_tracking_uri(experiment.mlflow.tracking_uri))
     _check_node_store(seed_from, tracking_uri, num_workers, node)
     run_one = (
         _runs_in_children(machine, experiment, registry, evaluate)

@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, training]
 created: 2026-10-21
-updated: 2026-10-28
+updated: 2026-10-29
 related-code:
   - "[[src/wut_murl_craftax/training/__init__.py]]"
   - "[[src/wut_murl_craftax/training/ppo.py]]"
@@ -39,7 +39,8 @@ One line each; signatures and details: [[Modules]].
 
 - `interface`: `METHODS` registry (name to `Trainer`) and the `Policy` protocol evaluation uses.
 - `ppo`, `ppo_rnn`, `pqn_rnn`: the controls and the learners later methods reuse (`pqn_rnn.learn`).
-- `hooks`: `HookFields`, the extension points of the recurrent controls (`None` hooks cost nothing).
+- `hooks`: `HookFields`, the extension points of the recurrent controls (`None` hooks cost nothing); metric names are `group/name` strings (`check_metric_names`).
+- `skills`, `smdp`, `dyna_q`: the skill library (`decode_obs` takes one observation, vmap a batch), SMDP Q-learning over it and Dyna-Q planning on its table; `dyna_q` reuses the underscore helpers of `smdp` on purpose and refuses `monte_carlo`.
 - `batch_renorm`: BatchRenorm of the PQN-RNN input.
 - `wrappers`: Craftax_Baselines env wrappers; the wrapper step also computes `StepEvents`.
 - `checkpoints`: log-spaced params-only checkpoints, the full resume state (`state/`) and the prune marker (`ckpt/pruned.json`).

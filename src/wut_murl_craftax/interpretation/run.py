@@ -15,7 +15,6 @@ import argparse
 import json
 import logging
 import math
-import os
 import pickle  # nosec B403 - only trees this module wrote (scikit-learn persists by pickle)
 import shutil
 import statistics
@@ -40,7 +39,7 @@ from ..analysis.figures import (
 )
 from ..analysis.figures import _theme as figure_theme
 from ..analysis.latex import MIN_UNCENSORED
-from ..analysis.load import METRICS_ROOT, load_phases
+from ..analysis.load import METRICS_ROOT, atomic_path, load_phases, write_text_atomic
 from ..evaluation.select_pair import SKILL_METHODS
 from ..orchestration.tracking import log_analysis_run
 from ..training.smdp import GREEDY_TABLE_FILE
@@ -147,18 +146,26 @@ def uncensored_median(values: Sequence[float]) -> float:
     return float(np.median(values)) if len(values) >= MIN_UNCENSORED else math.nan
 
 
+def _rank_correlation(x: Sequence[float], y: Sequence[float]) -> tuple[float, float]:
+    """Spearman's rho and p; NaN (no scipy warning) if either list is constant."""
+    if len(set(x)) < 2 or len(set(y)) < 2:
+        return math.nan, math.nan
+    res = stats.spearmanr(x, y)
+    return float(res.statistic), float(res.pvalue)
+
+
 def spearman(
     scores: Sequence[float], levels: Sequence[float | None]
 ) -> tuple[float, float]:
     """Spearman's rho and p of score vs L90; None ranks above every size.
 
-    NaN for fewer than 3 seeds, or fewer than `MIN_UNCENSORED` reached levels: with
-    the rest tied above the grid, the rank order rests on one or two seeds.
+    NaN for fewer than 3 seeds, fewer than `MIN_UNCENSORED` reached levels (with the
+    rest tied above the grid, the rank order rests on one or two seeds) or constant
+    scores or levels.
     """
     if len(scores) < 3 or sum(v is not None for v in levels) < MIN_UNCENSORED:
         return math.nan, math.nan
-    res = stats.spearmanr(scores, _censor(levels))
-    return float(res.statistic), float(res.pvalue)
+    return _rank_correlation(scores, _censor(levels))
 
 
 # ----------------------------------------------------------------------- files
@@ -173,22 +180,14 @@ def _plain(value: Any) -> Any:
     raise TypeError(msg)
 
 
-def _write(path: Path, text: str) -> None:
-    """Replace ``path`` atomically, so a file that exists is complete."""
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")  # one per process
-    tmp.write_text(text)
-    tmp.replace(path)
-
-
 def _write_csv(frame: pd.DataFrame, path: Path) -> None:
     """Replace ``path`` atomically with ``frame`` (a reader never sees half a CSV)."""
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    frame.to_csv(tmp, index=False)
-    tmp.replace(path)
+    with atomic_path(path) as tmp:
+        frame.to_csv(tmp, index=False)
 
 
 def _write_json(path: Path, data: Any) -> None:
-    _write(path, json.dumps(data, indent=1, default=_plain) + "\n")
+    write_text_atomic(path, json.dumps(data, indent=1, default=_plain) + "\n")
 
 
 def _read_json(path: Path) -> Any:
@@ -251,7 +250,9 @@ def _save_fit(
     for n in KEPT:
         with _tree_path(folder, n, variant).open("wb") as f:
             pickle.dump(leaf[n], f)
-    _write(folder / f"rules_16_{variant}.txt", rules_text(leaf[16], game=game) + "\n")
+    write_text_atomic(
+        folder / f"rules_16_{variant}.txt", rules_text(leaf[16], game=game) + "\n"
+    )
     tree = leaf[CLOSED_LOOP_LEAVES]
     rows = pd.DataFrame(importance(tree, test)).assign(variant=variant)
     rows.to_csv(folder / f"importance_{variant}.csv", index=False)
@@ -358,7 +359,7 @@ def _top_level(update: int, run: EvalRun, folder: Path) -> Json:
         *_top_text("tried", tried),
         *_top_text("default", default),
     ]
-    _write(folder / "top_level_rules.txt", "\n".join(lines))
+    write_text_atomic(folder / "top_level_rules.txt", "\n".join(lines))
     data = {"main": "tried", "tried": _top_json(tried), "default": _top_json(default)}
     _write_json(path, data)
     return data
@@ -402,6 +403,7 @@ def distil_policy(
         "env_steps": run.env_steps(update),
         "family": train.family,
         "recurrent": train.recurrent,
+        "split_seeds": _split_counts(seeds),
         "states": {k: len(v.label) for k, v in data.items()},
         "fits": fits,
         "top_level": top,
@@ -507,7 +509,7 @@ def sum_up_method(folder: Path) -> None:
         frame = curves if table == "curve" else _concat(folder, summaries, table)
         _write_csv(frame, folder / f"{table}.csv")
     _write_json(folder / SUMMARY, {"median_run": median["run_id"], "seeds": summaries})
-    _write(folder / "rules_16.txt", _rules_text(folder, median))
+    write_text_atomic(folder / "rules_16.txt", _rules_text(folder, median))
     if median["top_level"] is not None:
         shutil.copyfile(
             folder / median["run_id"] / "top_level_rules.txt",
@@ -616,8 +618,8 @@ def _spearman_values(x: Sequence[float], y: Sequence[float]) -> tuple[float, flo
     ]
     if len(pairs) < 3:
         return math.nan, math.nan
-    res = stats.spearmanr(*zip(*pairs, strict=True))
-    return float(res.statistic), float(res.pvalue)
+    x, y = zip(*pairs, strict=True)
+    return _rank_correlation(x, y)
 
 
 def _row(
@@ -720,9 +722,8 @@ def _read_curve(path: Path) -> pd.DataFrame | None:
 
 
 def _copy_atomic(src: Path, dst: Path) -> None:
-    tmp = dst.with_name(f"{dst.name}.{os.getpid()}.tmp")
-    shutil.copyfile(src, tmp)
-    tmp.replace(dst)
+    with atomic_path(dst) as tmp:
+        shutil.copyfile(src, tmp)
 
 
 def policy_table(summaries: Sequence[tuple[Json, Path]]) -> pd.DataFrame:
@@ -780,9 +781,39 @@ def sum_up_budget(folder: Path, figures: Path) -> None:
 # ------------------------------------------------------------------------- driver
 
 
-def _finished(folder: Path, dagger: bool) -> bool:
+def _split_counts(seeds: Mapping[str, Sequence[int]]) -> dict[str, int]:
+    return {k: len(v) for k, v in seeds.items()}
+
+
+def _recorded(folder: Path) -> dict[str, int] | None:
+    """The seed counts a policy's summary was written for; None if unknown."""
     path = folder / SUMMARY
-    return path.is_file() and (not dagger or DAGGER in _read_json(path)["fits"])
+    return _read_json(path).get("split_seeds") if path.is_file() else None
+
+
+def _stale(folder: Path, seeds: Mapping[str, Sequence[int]]) -> bool:
+    """Whether the summary was written for fewer seeds than requested (a smoke run).
+
+    A summary from before the counts were recorded is not stale, and one with more
+    seeds than requested is never: a ``--max-seeds`` call must not replace a full one.
+    """
+    have, want = _recorded(folder), _split_counts(seeds)
+    return have is not None and any(have.get(k, 0) < n for k, n in want.items())
+
+
+def _larger(folder: Path, seeds: Mapping[str, Sequence[int]]) -> bool:
+    """Whether the summary holds more seeds than requested (kept, not redone)."""
+    have, want = _recorded(folder), _split_counts(seeds)
+    return have is not None and any(have.get(k, 0) > n for k, n in want.items())
+
+
+def _finished(folder: Path, dagger: bool, seeds: Mapping[str, Sequence[int]]) -> bool:
+    path = folder / SUMMARY
+    return (
+        path.is_file()
+        and not _stale(folder, seeds)
+        and (not dagger or DAGGER in _read_json(path)["fits"])
+    )
 
 
 def _distil_method(
@@ -798,14 +829,21 @@ def _distil_method(
 ) -> bool:
     """Distil the method's unfinished policies; whether any was (re)computed."""
     rows = runs.sort_values(["config_ref", "seed"]).to_dict("records")
-    todo = [r for r in rows if force or not _finished(folder / r["run_id"], dagger)]
+    todo = [
+        r for r in rows if force or not _finished(folder / r["run_id"], dagger, seeds)
+    ]
     summary.skipped += [r["run_id"] for r in rows if r not in todo]
+    for r in rows:
+        if r not in todo and _larger(folder / r["run_id"], seeds):
+            logger.warning(
+                "%s: finished with more seeds than requested, kept", r["run_id"]
+            )
     if not todo:
         return False
     dirs = run_dirs([r["run_id"] for r in todo], tracking_uri)  # one short read
     for r in todo:
         rid, t0 = str(r["run_id"]), time.time()
-        if force:
+        if force or _stale(folder / rid, seeds):  # no datasets of other seed counts
             shutil.rmtree(folder / rid, ignore_errors=True)
         try:
             run = EvalRun.load(dirs[rid])
@@ -837,7 +875,7 @@ def _log_method(folder: Path, phases: Sequence[str], tracking_uri: str) -> None:
         name = f"distill-{budget}-{method}"
         paths = sorted(stage.iterdir())
         run_id = log_analysis_run(stage, paths, name, tags, tracking_uri)
-    _write(folder / LOGGED, run_id + "\n")
+    write_text_atomic(folder / LOGGED, run_id + "\n")
     logger.info("logged %s to run %s", folder, run_id)
 
 

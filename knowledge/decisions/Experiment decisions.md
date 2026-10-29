@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-24
+updated: 2026-10-29
 ---
 # Experiment decisions
 
@@ -326,3 +326,11 @@ Decision: Phase 4 (analysis) runs on the 1M finals only (`final-1m`, `combo-1m`)
 Why: the analysis was requested before the 1B finals (which need the cluster). The full ruling log with costs-if-wrong is the Phase 4 part of the project's SDD ledger (`.superpowers/sdd/2026-10-20-craftax-project/progress.md`, git-ignored).
 
 Consequences: the tuning-runs obstacles table remains open; the 1M results notes in `knowledge/results/` state which numbers are 1M-only.
+
+## 2026-10-29 - Abort guards end a run for good
+
+Decision: a metric under a method's `abort.permanent` (a guard: full count table, SIL dominance, diverged Q values) or outside an `abort.limits` bound (the recompute ratio of the RNN controls) ends the run for good: tag `abort/guard`, and the queue skips it (`queue.permanently_ended`), as it does for `abort/memory`. A non-finite loss keeps one retry from `state/`, then `abort/bug`. A bound a profile has not measured on its devices (`unmeasured_limits`) is retried like a loss abort (tag `abort/unmeasured`).
+
+Why: a guard reads a state that a retry from the same checkpoint reaches again, so a second run only repeats the abort.
+
+Consequences: a guard-aborted run ends FAILED; `coarse_results` takes finished runs only, so such a config is left out of the ranking (with `--min-complete` when enough configs are complete, or `--allow-partial`), not scored as a failure; without either, the fine-grid selection fails naming its missing runs. The chunk that aborted is not logged and the tag holds the metric and update, not its value. The abort rules are in the method YAML files; `abort.py` and [[orchestration]] describe them.

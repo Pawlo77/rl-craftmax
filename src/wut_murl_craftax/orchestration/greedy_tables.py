@@ -13,10 +13,9 @@ import logging
 import mlflow
 import pyarrow.parquet as pq
 
-from ..training.smdp import rebuild_greedy_table
 from .queue import TAG_CONFIG_HASH, TAG_METHOD, _runs
 from .runner import TAG_WARN_ARTIFACTS
-from .tracking import _resolve_tracking_uri, artifact_path
+from .tracking import artifact_path, resolve_tracking_uri
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +34,9 @@ def regenerate(client: mlflow.MlflowClient, config_hash: str) -> dict[str, int]:
     Raises:
         ValueError: If a run of the hash is not `METHOD` (checked before any write).
     """
+    # imported here: smdp loads Craftax and JAX, which `orchestration` imports lazily
+    from ..training.smdp import rebuild_greedy_table
+
     runs = _runs(client, f"tags.{TAG_CONFIG_HASH} = '{config_hash}'")
     if other := sorted(
         r.info.run_name for r in runs if r.data.tags.get(TAG_METHOD) != METHOD
@@ -59,7 +61,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--config-hash", required=True)
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    client = mlflow.MlflowClient(_resolve_tracking_uri(a.tracking_uri))
+    client = mlflow.MlflowClient(resolve_tracking_uri(a.tracking_uri))
     rows = regenerate(client, a.config_hash)
     logger.info("rebuilt %d runs of %s", len(rows), a.config_hash)
 

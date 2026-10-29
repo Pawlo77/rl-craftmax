@@ -16,6 +16,7 @@ from _contract import assert_done_step_unlock_counted
 
 from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration import device_roles
+from wut_murl_craftax.orchestration.abort import unreported
 from wut_murl_craftax.orchestration.queue import load_method, resolve_config
 from wut_murl_craftax.training.hooks import HookFields
 from wut_murl_craftax.training.interface import METHODS
@@ -319,6 +320,31 @@ def test_a_chunk_returns_the_ppo_and_recurrent_metrics_per_update(
     assert ((got["rnn/reset_share"] >= 0) & (got["rnn/reset_share"] <= 1)).all()
     assert (got["reward/intrinsic"] == 0).all()  # the control has no hooks
     assert (got["ppo/adv_std"] > 0).all()
+
+
+def test_the_logged_learning_rate_is_the_annealed_one(
+    cfg: PPORNNConfig, three_updates: Any, rnn_cfg: Callable[..., PPORNNConfig]
+) -> None:
+    want = [cfg.lr * (1 - u / cfg.n_updates) for u in range(3)]
+    np.testing.assert_allclose(three_updates["ppo/lr"], want, rtol=1e-6)
+    flat = rnn_cfg(anneal_lr=False)
+    _, m = train_chunk(init_state(flat, jax.random.key(1)), 2)
+    np.testing.assert_allclose(m["ppo/lr"], [flat.lr] * 2, rtol=1e-6)  # type: ignore[literal-required]
+
+
+@pytest.mark.parametrize("budget", ["1m", "1b"])
+def test_every_abort_rule_of_the_yaml_names_a_reported_metric(budget: str) -> None:
+    """A rename of a reported metric must reach ppo-rnn.yaml (else the rule is dead)."""
+    rules = load_method("ppo-rnn").abort_rules("ppo-rnn", budget) or {}
+    assert (
+        unreported(
+            rules.get("flags", []),
+            rules.get("finite", []),
+            METRIC_NAMES,
+            rules.get("limits", []),
+        )
+        == []
+    )
 
 
 def test_the_first_minibatch_ratio_is_one_before_any_gradient_step(

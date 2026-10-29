@@ -27,6 +27,7 @@ from wut_murl_craftax.analysis.load import (
     MissingPhaseError,
     SchemaError,
     _control_maps,
+    atomic_path,
     base_control,
     final_checkpoint,
     in_phase,
@@ -165,6 +166,25 @@ def test_a_run_of_two_phases_is_kept_once_from_the_first(export_root: Path) -> N
         assert (episodes["config_ref"] == episodes["run_id"].map(owner)).all()
 
 
+def test_a_phase_listed_twice_loads_once(export_root: Path) -> None:
+    once = load_phases(["final-1m"], export_root)
+    twice = load_phases(["final-1m", "final-1m"], export_root)
+    for name, frame in once.items():
+        pd.testing.assert_frame_equal(frame, twice[name])
+
+
+def test_a_missing_phases_tag_is_a_schema_error(
+    tmp_path: Path, export_writer: Callable[..., Path]
+) -> None:
+    root = export_writer(tmp_path, ("final-1m",))
+    path = root / "final-1m" / "runs.parquet"
+    runs = pd.read_parquet(path)
+    runs.loc[runs.index[0], "phases"] = None
+    runs.to_parquet(path)
+    with pytest.raises(SchemaError, match="tag `phases`"):
+        load_phase(root / "final-1m")
+
+
 def test_load_phases_selects_by_the_phases_tag_not_the_experiment(
     export_root: Path,
 ) -> None:
@@ -176,6 +196,40 @@ def test_load_phases_selects_by_the_phases_tag_not_the_experiment(
     assert set(controls["phase"]) == {"final-1m"}
     assert in_phase(runs, "final-1m").all()
     assert set(runs[in_phase(runs, "tune-coarse")]["method"]) == {"ppo", "ppo-rnn"}
+
+
+# --- atomic writes --------------------------------------------------------------
+
+
+def test_atomic_path_replaces_on_success_and_leaves_no_temporary(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "f.txt"
+    target.write_text("old")
+    with atomic_path(target) as tmp:
+        assert tmp.parent == tmp_path
+        tmp.write_text("new")
+        assert target.read_text() == "old"  # until the block ends
+    assert target.read_text() == "new"
+    assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
+
+
+def test_atomic_path_keeps_the_old_file_and_removes_the_temporary_on_an_error(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "f.txt"
+    target.write_text("old")
+
+    def write_and_fail() -> None:
+        with atomic_path(target) as tmp:
+            tmp.write_text("half")
+            msg = "disk full"
+            raise OSError(msg)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_and_fail()
+    assert target.read_text() == "old"
+    assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
 
 
 # --- missing phases (R86) -------------------------------------------------------

@@ -78,7 +78,7 @@ def test_clipped_losses_on_a_hand_computed_batch() -> None:
     }
     loss, aux = ppo_terms(jnp.zeros((2, 2)), jnp.array([1.5, 0.1]), batch, cfg)
     ploss, vloss, ent, kl, clip_frac = (float(x) for x in aux)
-    # policy: -mean(min(1.5, 1.2) * 1, min(-0.9, -0.8)) = -(1.2 - 0.9) / 2
+    # policy: -mean(min(1.5, 1.2) * 1, min(0.9, 0.9) * -1) = -(1.2 - 0.9) / 2
     assert ploss == pytest.approx(-0.15, rel=1e-6)
     # value: clipped prediction 1.2; 0.5 * mean(max(0.25, 0.64), 0.01)
     assert vloss == pytest.approx(0.1625, rel=1e-6)

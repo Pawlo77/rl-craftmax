@@ -7,7 +7,9 @@
 # scheduler's variables as SLURM_ARRAY_TASK_ID and SLURM_ARRAY_TASK_COUNT.
 # Preempted or killed jobs resume: rerun the same command with the same store. A node
 # store records the array size (<db>.array.json); another size is refused until the
-# store is merged, as its runs move to other workers.
+# store is merged, as its runs move to other workers. Another node resumes a killed
+# node's run only if STORE_DIR is on a filesystem every node sees (SQLite on NFS or
+# Lustre needs working file locks: the queue and its child write one database file).
 #
 # Environment: PROFILE (default cuda), STORE_DIR (default node-stores), SEED_FROM (a
 # read-only copy of the main mlruns.db with its mlruns/ beside it: the node first takes

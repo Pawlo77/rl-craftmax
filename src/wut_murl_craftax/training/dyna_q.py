@@ -593,8 +593,13 @@ class DynaTrainConfig:
         """Split a run config: `DYNA_KEYS` to the planning, the rest to `smdp-skills`.
 
         Raises:
-            ValueError: On a missing planning key or a value `DynaConfig` refuses.
+            ValueError: On a missing planning key, a value `DynaConfig` refuses or
+                ``monte_carlo`` (the model plans one-step targets, no run mixes them
+                with a Monte Carlo top level).
         """
+        if config.get("monte_carlo"):
+            msg = "dyna-q plans one-step backups: monte_carlo is not available"
+            raise ValueError(msg)
         if missing := sorted(DYNA_KEYS - config.keys()):
             msg = f"set every planning key: missing {missing}"
             raise ValueError(msg)
@@ -750,6 +755,8 @@ def train_chunk(state: DynaState, n_updates: int) -> tuple[DynaState, "ChunkMetr
     """Run ``n_updates`` updates; the `smdp-skills` metrics plus ``dyna/...``.
 
     The input state stays usable: the rollouts donate copies of its carry and model.
+    The ``smdp/...`` rollout stats of an update (``q_start``, the largest updated value)
+    are taken before its planning, so they see the planned table one update late.
     """
     carry = jax.tree.map(jnp.copy, state.smdp.carry)
     model = jax.tree.map(jnp.copy, state.model)
@@ -789,7 +796,9 @@ def method_metrics(
     ``model_accuracy`` (the rollout's real outcomes whose next key the pair already
     held). Planning: ``backups``, ``plan_td_abs`` and ``bonus_mean`` per backed-up
     outcome, ``ps_above_theta``, ``vi_sweeps``, ``vi_residual`` (0 for the other
-    variants), ``plan_seconds`` and ``plan_wall_share`` (of the update's wall time).
+    variants), ``plan_seconds`` and ``plan_wall_share`` (of the update's wall time; the
+    first update of each process includes the planner's compile, so a flag on this
+    share can only fire early). ``ps_above_theta`` is a count, not a share.
     Empty shares are 0, so every value is finite. The guards ``dyna/nan`` (a
     non-finite planned value), ``dyna/model_full`` (all P pair slots taken) and
     ``dyna/divergence`` (a planned value above ``max_q``, the run's `max_q`) are 0,

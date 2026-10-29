@@ -158,9 +158,17 @@ def init(
     """Zero counts and sums, the SimHash projection and T from ``spec``.
 
     ``batch`` is the env steps of one update, ``game`` the progress-key layout.
+
+    Raises:
+        ValueError: If the table has as many slots as the run has envs (the env mesh
+            would split it as a per-env leaf). ``spec.total_steps`` is not checked:
+            evaluation builds its abstract state with 0 (`beta_t` is not read there).
     """
     width = len(CLASSIC_FIELDS if game == "classic" else FIELDS)
     k = 2**cfg.log2_k
+    if k == spec.n_envs:
+        msg = f"table slots {k} equal envs {spec.n_envs}; pick another log2_k"
+        raise ValueError(msg)
     return CountState(
         table=jnp.zeros(k, jnp.int32),
         seen=jnp.zeros((k if cfg.key == "progress" else 0, width), jnp.int8),

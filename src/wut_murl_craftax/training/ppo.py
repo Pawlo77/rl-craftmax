@@ -110,7 +110,7 @@ class PPOConfig:
     """Anneal the learning rate linearly to ``lr / n_updates`` at the last update."""
     resets: str = "optimistic"
     """``optimistic``: Craftax_Baselines' optimistic resets; ``auto``: Craftax's own
-    auto-reset (the debug comparison)."""
+    auto-reset (the debug comparison; it returns no ``info["events"]``)."""
     reset_ratio: int = 16
     """Envs per new world of an optimistic reset; the wrapper gets ``min(it, envs)``."""
     n_ckpt: int = 12

@@ -29,7 +29,7 @@ warm: ## Build the Craftax texture caches and print the actor/learner devices
 	uv run python -m wut_murl_craftax.orchestration.runtime
 
 queue: ## Run a phase: make queue PHASE=tune-coarse [METHOD=ppo] [FINE=ppo] [DRY_RUN=1] [PROFILE=cuda]
-	$(if $(PHASE),,$(error PHASE is required, e.g. make queue PHASE=tune-coarse))$(QUEUE_MODULE) --phase configs/phases/$(PHASE).yaml --profile configs/profiles/$(PROFILE).yaml $(PHASE_FLAGS)$(if $(DRY_RUN), --dry-run)
+	$(if $(PHASE),,$(error PHASE is required, e.g. make queue PHASE=tune-coarse))$(QUEUE_MODULE) --phase configs/phases/$(PHASE).yaml --profile configs/profiles/$(PROFILE).yaml $(PHASE_FLAGS)$(if $(filter-out 0 false no,$(DRY_RUN)), --dry-run)
 
 status: ## Pending/running/finished/killed runs of a phase: make status PHASE=tune-coarse [METHOD=ppo] [FINE=ppo]
 	$(if $(PHASE),,$(error PHASE is required, e.g. make status PHASE=tune-coarse))$(STORE_MODULE) status --phase configs/phases/$(PHASE).yaml $(PHASE_FLAGS)

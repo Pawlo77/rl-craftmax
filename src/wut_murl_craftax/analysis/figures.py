@@ -89,11 +89,12 @@ HARDWARE_PANELS: tuple[tuple[str, str, tuple[tuple[str, str, float], ...]], ...]
 """F20 files: stem part, x label, then (T4 column, legend name, factor to the unit)."""
 DARK_TEXT, LIGHT_TEXT = charts.INK_LIGHT, charts.SURFACE_LIGHT
 """Text on a light and on a dark heat-map cell."""
-ABLATION_KEY = ["benchmark", "block", "method", "config_ref"]
-"""Key columns of T1 (the first three) and of the ablation table."""
+UNIT_KEY = ["benchmark", "block", "method", "config_ref"]
+"""Key columns of a statistics unit: T1 keys on the first three, the ablation table
+on all four."""
 SERIES_MARKERS = ("o", "D", "^")
-ROWS_BASE = charts.ROWS_BASE_MM
 """Marker of the first, second and third series of a hardware panel."""
+ROWS_BASE = charts.ROWS_BASE_MM
 
 
 Theme = charts.Theme
@@ -522,10 +523,10 @@ def _interval_panel(
         if row.kind == "heading":
             continue
         if row.kind == "ablation" and ablation is not None:
-            key, cols = (budget, row.block, row.method, row.ref), ABLATION_KEY
+            key, cols = (budget, row.block, row.method, row.ref), UNIT_KEY
             stats = _lookup(ablation, key, cols)
         else:
-            stats = _lookup(t1, (budget, row.block, row.method), ABLATION_KEY[:3])
+            stats = _lookup(t1, (budget, row.block, row.method), UNIT_KEY[:3])
         if stats is not None:
             _interval_row(ax, th, budget, row, stats)
     _style(ax, th)

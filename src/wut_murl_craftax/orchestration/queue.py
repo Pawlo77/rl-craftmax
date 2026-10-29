@@ -4,8 +4,8 @@ A run is one (registry entry, config, budget, seed), named
 ``<registry>-<budget>-<confighash8>-s<seed>``; the hash covers the fully resolved
 config (not the seed, the budget or the config's label), so phases that resolve to the
 same config share a run. ``configs/methods/<slug>.yaml`` holds ``base``, ``budgets``,
-``grid``, ``abort`` (flag rules, see `abort`) and ``tuned`` (``load_method``); a config
-resolves shallowly: donor, base, tuned or grid entry, budget, overrides
+``grid``, ``abort`` (finite metrics, guards, limits, flags: see `abort`) and ``tuned``;
+a config resolves shallowly: donor, base, tuned or grid entry, budget, overrides
 (``resolve_config``). ``configs/phases/<phase>.yaml`` picks configs and seeds
 (``expand_phase``). CLI: ``--phase P [--method M] [--dry-run] [--expand-fine SLUG]``
 plus the runner's flags (``--profile``, ``--max-runs``, workers, node stores).
@@ -30,7 +30,7 @@ from typing import Any, Literal, NoReturn, cast
 import yaml
 
 from ..config import load_experiment_config
-from .tracking import _resolve_tracking_uri
+from .tracking import resolve_tracking_uri
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +394,7 @@ def _check_abort(
     if not isinstance(finite, list) or not all(isinstance(m, str) for m in finite):
         _fail(f"{where} abort.finite: expected a list of metric names")
     permanent = block.get("permanent", [])
-    if not isinstance(permanent, list) or not set(permanent) <= set(finite):
+    if not isinstance(permanent, list) or not all(m in finite for m in permanent):
         _fail(f"{where} abort.permanent: expected a list of `finite` metric names")
     flags = block.get("flags", [])
     if not isinstance(flags, list):
@@ -431,6 +431,10 @@ def load_method(slug: str, methods_dir: Path = METHODS_DIR) -> Method:
         _fail(f"{where}: `base` must be a non-empty mapping")
     grid = _check_keys(raw.get("grid", {}), {"coarse", "fine"}, f"{where} grid")
     budgets = raw.get("budgets") or {}
+    if not isinstance(budgets, dict):
+        _fail(f"{where} budgets: expected a mapping of budget label to overrides")
+    if (tuned := raw.get("tuned")) is not None and not isinstance(tuned, dict):
+        _fail(f"{where} tuned: expected a mapping (or null until marked)")
     for label, block in budgets.items():
         budget_steps(label)
         if not isinstance(block, dict):
@@ -607,17 +611,17 @@ def _entry_specs(
             )
         specs += [
             RunSpec(
-                registry,
-                slug,
-                raw["budget"],
-                cfg["env"],
-                seed,
-                cfg,
-                config_hash(cfg),
-                path.stem,
-                raw["eval"],
-                method.abort_rules(registry, raw["budget"]),
-                method.combine,
+                registry_name=registry,
+                config_slug=slug,
+                budget=raw["budget"],
+                env=cfg["env"],
+                seed=seed,
+                config=cfg,
+                config_hash=config_hash(cfg),
+                phase=path.stem,
+                eval_mode=raw["eval"],
+                abort=method.abort_rules(registry, raw["budget"]),
+                combine=method.combine,
             )
             for seed in _seed_list(seeds, f"{where} config {ref}")
         ]
@@ -791,6 +795,10 @@ def _fine_for(
         : rule.get("select", len(ranked))
     ]
     chosen = always + ranked
+    if lacking := [k for k in chosen if k not in cfgs[best]]:
+        _fail(
+            f"{method.path.name}: fine knob {lacking[0]!r} is not a key of the config"
+        )
     values = {
         key: (
             _top_values(method, cfgs, scores, key, knobs[key]["top"], cfgs[best][key])
@@ -862,7 +870,7 @@ def _client(tracking_uri: str | None) -> Any:
     # mlflow takes seconds to import; the dry run and the expansion tests never need it
     mlflow = importlib.import_module("mlflow")
     uri = tracking_uri or load_experiment_config(EXPERIMENT_CONFIG).mlflow.tracking_uri
-    return mlflow.MlflowClient(tracking_uri=_resolve_tracking_uri(uri))
+    return mlflow.MlflowClient(tracking_uri=resolve_tracking_uri(uri))
 
 
 def _runs(client: Any, filter_string: str) -> list[Any]:
@@ -1331,7 +1339,16 @@ def _sqlite_uri(store: str) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Command-line entry point."""
+    """Command-line entry point; a config error exits with its message."""
+    try:
+        _cli(argv)
+    except QueueConfigError as error:
+        logger.debug("config error", exc_info=True)  # the message is the exit text
+        msg = f"error: {error}"
+        raise SystemExit(msg) from error
+
+
+def _cli(argv: Sequence[str] | None) -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--phase", type=Path, help="configs/phases/<phase>.yaml")
     parser.add_argument("--method", help="registry name or config slug to keep")

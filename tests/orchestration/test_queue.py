@@ -364,7 +364,38 @@ def test_combine_names_the_pair_and_their_base(tmp_path: Path) -> None:
     assert load_method("toy", METHODS).combine is None
 
 
-@pytest.mark.parametrize("permanent", ["m", ["n"], [1]])
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        ({"budgets": [1]}, "bad.yaml budgets: expected a mapping"),
+        ({"budgets": "1b"}, "bad.yaml budgets: expected a mapping"),
+        ({"tuned": 5}, "bad.yaml tuned: expected a mapping"),
+        ({"tuned": [1]}, "bad.yaml tuned: expected a mapping"),
+    ],
+)
+def test_budgets_and_tuned_of_the_wrong_type_fail_with_the_file_name(
+    tmp_path: Path, body: dict[str, Any], match: str
+) -> None:
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump({"base": {"env": "X"}, **body}))
+    with pytest.raises(ValueError, match=match):
+        load_method("bad", tmp_path)
+
+
+def test_the_cli_exits_with_the_message_of_a_config_error(tmp_path: Path) -> None:
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump({"base": {}}))
+    phase = {"budget": "1m", "eval": "final", "runs": {"bad": {"configs": ["base"]}}}
+    (tmp_path / "p.yaml").write_text(yaml.safe_dump(phase))
+    with pytest.raises(SystemExit, match=r"bad\.yaml: `base` must be a non-empty") as e:
+        queue.main([
+            "--phase",
+            str(tmp_path / "p.yaml"),
+            "--methods-dir",
+            str(tmp_path),
+        ])
+    assert isinstance(e.value.__cause__, queue.QueueConfigError)  # kept for debugging
+
+
+@pytest.mark.parametrize("permanent", ["m", ["n"], [1], [["m"]], [{"m": 1}]])
 def test_permanent_guards_are_a_list_of_finite_metrics(
     tmp_path: Path, permanent: object
 ) -> None:
@@ -683,6 +714,18 @@ def test_expand_fine_fails_on_missing_results_or_rule() -> None:
         expand_fine("toy", partial, methods_dir=METHODS)
     with pytest.raises(ValueError, match=r"grid\.fine"):
         expand_fine("donor", {}, methods_dir=METHODS)
+
+
+def test_an_always_knob_missing_from_the_config_is_named(tmp_path: Path) -> None:
+    text = (METHODS / "toy.yaml").read_text()
+    knobs = "knobs:\n      - {key: nokey, always: true, mul: [2.0]}\n"
+    (tmp_path / "toyk.yaml").write_text(text.replace("knobs:\n", knobs, 1))
+    results = {
+        config_hash(resolved("toyk", name, methods_dir=tmp_path)): score
+        for name, score in STAGE1.items()
+    }
+    with pytest.raises(ValueError, match="knob 'nokey' is not a key"):
+        expand_fine("toyk", results, methods_dir=tmp_path)
 
 
 def test_a_phase_uses_the_generated_fine_configs() -> None:
@@ -1159,18 +1202,21 @@ def test_min_complete_leaves_out_a_coarse_config_aborted_for_good(
         coarse_results("toy", min_complete=0.9, **kw)
 
 
+@pytest.mark.parametrize("status", ["FAILED", "RUNNING", "KILLED", "not started"])
 def test_min_complete_refuses_a_run_that_may_still_finish(
-    store: Store, tuning: Path
+    store: Store, tuning: Path, status: str
 ) -> None:
     by_hash = {config_hash(resolved("toy", n)): n for n in STAGE1}
     for spec in expand_phase(tuning / "tune-coarse.yaml", methods_dir=METHODS):
         failed = spec.name == _lam_hi_seed_1()
+        if failed and status == "not started":
+            continue
         store.add(
             "toy",
             spec.config,
             STAGE1[by_hash[spec.config_hash]],
             seed=spec.seed,
-            status="FAILED" if failed else "FINISHED",
+            status=status if failed else "FINISHED",
         )
     with pytest.raises(ValueError, match=f"not ended for good: {_lam_hi_seed_1()}"):
         coarse_results(
@@ -1439,7 +1485,7 @@ def test_cli_allow_partial_reaches_the_coarse_results_and_the_expansion(
 
     monkeypatch.setattr(queue, "coarse_results", results)
     argv = ["--methods-dir", str(METHODS), "--expand-fine", "toy", "--dry-run"]
-    with pytest.raises(ValueError, match="shape"):
+    with pytest.raises(SystemExit, match="shape"):  # a config error ends the CLI
         queue.main(argv)
     queue.main([*argv, "--allow-partial"])
     assert seen == [False, True]

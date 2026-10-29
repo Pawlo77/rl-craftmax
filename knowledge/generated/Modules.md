@@ -17,13 +17,13 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/captions.py]] | Figure and table notes of one benchmark, built from the captions the stages wrote. |  | [[2026-10-20-craftax-comparison-and-results]] | 263 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1424 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1425 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1174 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2591 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 931 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 951 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 433 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 446 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/obstacles.py]] | Obstacle detectors of the training analysis, their registry and the obstacles table. |  | [[2026-10-20-craftax-training-analysis]] | 1521 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/results.py]] | Run the method comparison: tables T1-T7, figures F1-F28, report files, MLflow run. |  | [[2026-10-20-craftax-comparison-and-results]] | 919 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/training.py]] | Training analysis of every method: hard scenarios, obstacles and case episodes. |  | [[2026-10-20-craftax-training-analysis]] | 559 | [[analysis]] |
@@ -31,7 +31,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, records, statistics, pair, export. |  |  | 418 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/coverage.py]] | Exploration coverage of an episode: tiles seen per floor, new tiles, revisits. |  |  | 81 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. |  |  | 611 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/episode_records.py]] | Records of eval episodes: one row of the eval-episode table per episode. |  |  | 568 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/episode_records.py]] | Records of eval episodes: one row of the eval-episode table per episode. |  |  | 574 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. |  |  | 394 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/export.py]] | Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 542 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/hardware.py]] | Hardware usage of one run, summarised from its stored MLflow series. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 372 | [[evaluation]] |
@@ -40,48 +40,48 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/rollout_metrics.py]] | Offline metrics of stored eval episodes: every seed of an eval file replayed at once. |  |  | 756 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/select_pair.py]] | Combination pair from final-1m (Phase 3 Task 1 Step 1, ruling R71) into combo.yaml. |  |  | 560 |  |
 | [[src/wut_murl_craftax/evaluation/stability.py]] | Learning stability of one run (drawdowns, drops, collapse) and tuning sensitivity. |  |  | 239 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 267 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/stats.py]] | Seed statistics of the protocol: point estimates, intervals, tests, bands. |  |  | 268 | [[evaluation]] |
 | [[src/wut_murl_craftax/interpretation/__init__.py]] | Policy interpretation: features, datasets, decision-tree distillation and rules. |  |  | 158 | [[interpretation]] |
-| [[src/wut_murl_craftax/interpretation/dataset.py]] | Distillation datasets: named features and network labels at stochastic-policy states. |  |  | 252 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/dataset.py]] | Distillation datasets: named features and network labels at stochastic-policy states. |  |  | 250 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 271 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/rules.py]] | Rules and importance of distilled trees, and the top-level rules of skill methods. |  |  | 510 | [[interpretation]] |
-| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 950 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 988 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/tree_policy.py]] | Decision trees played as policies, and their closed-loop fidelity. |  |  | 345 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow store, retention. |  |  | 146 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/finals.py]] | The dyna-q kappa ablation of final-1m, set once dyna-q is marked tuned. |  |  | 144 |  |
-| [[src/wut_murl_craftax/orchestration/greedy_tables.py]] | Rebuild the SMDP greedy tables of stored runs from their checkpoints (ruling R81). |  |  | 68 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/greedy_tables.py]] | Rebuild the SMDP greedy tables of stored runs from their checkpoints (ruling R81). |  |  | 70 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. |  |  | 74 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/prune.py]] | Storage retention: delete run artifacts no later step reads (dry run by default). |  |  | 399 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. |  |  | 1427 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. |  |  | 1444 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/reproducibility.py]] | Environment reproducibility snapshots for MLflow runs. |  |  | 240 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runner.py]] | Resumable runner: trains, evaluates and logs every RunSpec of this worker. |  |  | 1419 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/runtime.py]] | Fast JAX runtime for Craftax: compile cache, device roles, CPU shards, textures. |  |  | 187 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/store.py]] | MLflow store tools: the status of a phase's runs and the merge of node stores. |  |  | 547 | [[orchestration]] |
-| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 345 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/tracking.py]] | Local MLflow tracking helpers for resumable runs. |  |  | 357 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/train_metrics.py]] | MLflow points of a run's per-update training metrics and its per-run facts. |  |  | 202 | [[orchestration]] |
 | [[src/wut_murl_craftax/training/__init__.py]] | Training: registry, PPO(-RNN), PQN-RNN, hooks, wrappers, checkpoints, metrics. |  |  | 392 | [[training]] |
 | [[src/wut_murl_craftax/training/batch_renorm.py]] | BatchRenorm (Ioffe 2017) as purejaxql ships it: the PQN-RNN input normalisation. |  |  | 119 | [[training]] |
 | [[src/wut_murl_craftax/training/checkpoints.py]] | Log-spaced params-only checkpoints with an index, and the full resume state. |  |  | 308 | [[training]] |
-| [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. |  |  | 350 |  |
-| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. |  |  | 933 |  |
-| [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. |  |  | 393 | [[training]] |
+| [[src/wut_murl_craftax/training/count_bonus.py]] | Count-based progress bonus: a global count table and ``beta_t / sqrt(N)`` per step. |  |  | 358 |  |
+| [[src/wut_murl_craftax/training/dyna_q.py]] | Dyna-Q over the SMDP skills method: a skill-outcome model, planning and trainer. |  |  | 942 |  |
+| [[src/wut_murl_craftax/training/hooks.py]] | Shared extension points of the recurrent controls: the hooks later methods set. |  |  | 397 | [[training]] |
 | [[src/wut_murl_craftax/training/interface.py]] | Trainer registry: every method's `Trainer`, keyed by registry name, and `Policy`. |  |  | 437 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo.py]] | Baseline PPO on Craftax(-Classic)-Symbolic that records what the videos need. |  |  | 735 | [[training]] |
 | [[src/wut_murl_craftax/training/ppo_rnn.py]] | Recurrent PPO (GRU) on Craftax(-Classic)-Symbolic: the PPO-RNN control and base. |  |  | 804 | [[training]] |
-| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. |  |  | 1075 | [[training]] |
+| [[src/wut_murl_craftax/training/pqn_rnn.py]] | Recurrent PQN (LSTM) on Craftax(-Classic)-Symbolic: the PQN-RNN control and base. |  |  | 1079 | [[training]] |
 | [[src/wut_murl_craftax/training/progress_key.py]] | Progress key of a Craftax state: bucketed integer fields and their hash. |  |  | 138 |  |
 | [[src/wut_murl_craftax/training/records.py]] | Training records on disk: per-update metrics, per-episode log, achievement tables. |  |  | 183 | [[training]] |
 | [[src/wut_murl_craftax/training/sil.py]] | Self-Imitation Learning: a per-env staging ring and a buffer of unlock windows. |  |  | 631 |  |
-| [[src/wut_murl_craftax/training/skills.py]] | Skill library of the skill methods: observation decoder, key, masks, skill ends. |  |  | 569 |  |
-| [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. |  |  | 1478 |  |
+| [[src/wut_murl_craftax/training/skills.py]] | Skill library of the skill methods: observation decoder, key, masks, skill ends. |  |  | 573 |  |
+| [[src/wut_murl_craftax/training/smdp.py]] | SMDP skills method: top-level table ``Q[2^bits, 25]``, rollout, trainer, policy. |  |  | 1485 |  |
 | [[src/wut_murl_craftax/training/wrappers.py]] | Craftax_Baselines env wrappers (commit 7ce36fa): the one copy every method imports. |  |  | 237 | [[training]] |
 | [[src/wut_murl_craftax/visualisation/__init__.py]] | Gameplay and training videos: rollouts, frames, highlights, review, ffmpeg cuts. |  |  | 124 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/charts.py]] | Chart colours, the seaborn figure theme and the dark animation frames. |  |  | 896 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/curves.py]] | Animated training curves: % of max reward, achievements unlocked, success rates. |  |  | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/cuts.py]] | Cuts from the reviewed CSV: clips, cards, 3-min (16:9, Short) and 12-min cuts, GIFs. |  |  | 410 | [[visualisation]] |
-| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. |  |  | 771 | [[visualisation]] |
+| [[src/wut_murl_craftax/visualisation/eval_rollouts.py]] | Fixed-seed evaluation of checkpoints, stored as replayable episodes. |  |  | 775 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/ffmpeg.py]] | Typed ffmpeg/ffprobe wrappers: argument lists only, never a shell string. |  |  | 452 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/grid.py]] | Checkpoint comparison grid: one eval seed played by four checkpoints, 2x2, synced. |  |  | 151 | [[visualisation]] |
 | [[src/wut_murl_craftax/visualisation/highlights.py]] | Highlight detection: features -> events -> scored windows -> ranked candidates. |  |  | 336 | [[visualisation]] |

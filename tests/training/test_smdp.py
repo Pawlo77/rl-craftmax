@@ -155,6 +155,17 @@ def test_monte_carlo_returns_without_bootstrap() -> None:
     assert int(rec.n[0]) == 0
 
 
+def test_monte_carlo_push_and_update_run_under_jit() -> None:
+    push_j, update_j = jax.jit(mc_push), jax.jit(mc_update, static_argnames="alpha")
+    rec = mc_init(envs=1, length=4)
+    for k, o, r, disc in ((K0, 0, 0.81, 0.729), (K1, 1, 1.0, 0.9)):
+        rec = push_j(rec, *(jnp.array([x]) for x in (True, k, o, r, disc)))
+    q, rec = update_j(toy(), rec, jnp.array([True]), alpha=ALPHA)
+    assert float(q[K0, 0]) == pytest.approx(0.7695)  # as without jit
+    assert float(q[K1, 1]) == pytest.approx(0.5)
+    assert int(rec.n[0]) == 0
+
+
 def test_monte_carlo_waits_for_the_episode_end() -> None:
     rec = mc_init(envs=2, length=4)
     rec = push(rec, [True, False], [K0, K0], [0, 0], [1.0, 1.0], [0.5, 0.5])
@@ -390,8 +401,11 @@ def test_ends_come_from_the_skills_functions(rig: Rig) -> None:
         np.testing.assert_array_equal(got[0], out["success"][t])
         np.testing.assert_array_equal(got[1], out["done"][t])
         np.testing.assert_array_equal(got[2], out["reason"][t])
-        avail = jax.vmap(available)(a)
-        assert bool(avail[jnp.arange(ENVS), out["skill"][t]].all() | (t == 0))
+        # a skill is chosen from the available ones where the last one ended (t = 0
+        # runs the carry's starting skill); in between only its end is tested
+        chosen = jax.vmap(available)(a)[jnp.arange(ENVS), out["skill"][t]]
+        decided = out["done"][t - 1] if t else jnp.zeros(ENVS, bool)
+        assert bool((chosen | ~decided).all())
     ends = np.asarray(c.shared.ends)
     assert ends.shape == (NUM_SKILLS, len(REASONS))
     assert ends.sum() == int(out["done"].sum())

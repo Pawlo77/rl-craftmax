@@ -21,6 +21,7 @@ from wut_murl_craftax.evaluation.events import step_events
 from wut_murl_craftax.training import skills
 from wut_murl_craftax.training.progress_key import fields, unwrap
 from wut_murl_craftax.training.skills import (
+    CLASSIC_OBS,
     NUM_SKILLS,
     REASONS,
     SKILL_IDS,
@@ -348,6 +349,11 @@ def test_classic_decoder_and_key(classic: Game) -> None:
 def test_decode_obs_refuses_other_sizes() -> None:
     with pytest.raises(ValueError, match="observation"):
         decode_obs(jnp.zeros(100))
+
+
+def test_decode_obs_takes_one_observation_and_says_to_vmap_a_batch() -> None:
+    with pytest.raises(ValueError, match="vmap"):
+        decode_obs(jnp.zeros((3, CLASSIC_OBS)))
 
 
 # --- reward and success tests ---

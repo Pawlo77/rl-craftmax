@@ -82,6 +82,9 @@ from .skills import (
 if TYPE_CHECKING:  # the runner imports mlflow; tests of this module do not need it
     from ..orchestration.runner import ChunkMetrics
 
+# `dyna_q` reuses the underscore helpers `_setup`, `_make_collect`, `_rollout_inputs`,
+# `_learn_after_rollout`, `_chunk_metrics`, `_share`, `_smdp_step` and `_update_stats`
+# on purpose: they are trainer internals, change them together.
 EXTRA_DIM = NUM_SKILLS + 1
 """Skill-network inputs after the observation: skill one-hot, step-limit fraction."""
 
@@ -200,6 +203,8 @@ def smdp_update(
 
     Target ``R + gamma^tau (1 - done) max_{o' available} Q[k', o']``; envs ending
     the same (k, o) in this step share one step of ``alpha`` x their mean TD error.
+    A not-done env whose ``avail_next`` has no skill writes -inf into Q: some skill
+    must be available at every key (``fight`` and ``unlock_any`` always are).
     """
     return _smdp_step(q, k, o, ret, disc, k_next, avail_next, done, ended, alpha)[0]
 
@@ -956,8 +961,9 @@ def init_state(cfg: SMDPTrainConfig, key: jax.Array) -> SMDPState:
             batch_stats=v["batch_stats"],
             cfg=cfg.net,
         )
-        # an array from the start, as after an update (see `ppo.init_state`)
-        ts = ts.replace(step=jnp.zeros((), jnp.int32))
+        # an array from the start, as after an update (see `ppo.init_state`); strong
+        # inside the device context, so the convert never dispatches on the default one
+        ts = _strong(ts.replace(step=jnp.zeros((), jnp.int32)))
     with jax.default_device(s.actor):
         zero = jnp.zeros((), jnp.int32)
         eps0, top0 = epsilon(cfg.net, zero), eps_top(cfg, zero)
@@ -965,12 +971,13 @@ def init_state(cfg: SMDPTrainConfig, key: jax.Array) -> SMDPState:
             cfg.top, s.env, s.net, None, k_roll, env_params=s.env_params,
             eps=eps0, eps_top=top0,
         )  # fmt: skip
+        carry = _strong(carry)
         first = decode_obs(carry.per_env.obs[0])
         found = jnp.array([0, -1, -1], jnp.int32)
     at = s.shared_at
     return SMDPState(
-        train_state=cast(QTrainState, jax.device_put(_strong(ts), s.learner)),
-        carry=_place(_strong(carry), s),
+        train_state=cast(QTrainState, jax.device_put(ts, s.learner)),
+        carry=_place(carry, s),
         updates=jax.device_put(jnp.zeros((), jnp.int32), at),
         diamond=jax.device_put(found, at),
         start_key=jax.device_put(carry.per_env.skill.k_start[0], at),

@@ -134,6 +134,11 @@ def test_bonus_ignores_the_pre_step_state(start: Any, picked: Any) -> None:
     np.testing.assert_array_equal(s1.table, s2.table)
 
 
+def test_init_refuses_a_table_as_wide_as_the_envs() -> None:
+    with pytest.raises(ValueError, match="envs"):  # the env mesh would split the table
+        init(_cfg(log2_k=1), jax.random.key(0), SPEC, **SIZES)  # 2 envs, 2 slots
+
+
 def test_init_sizes_from_the_spec() -> None:
     spec = HookSpec(
         n_envs=4, obs_dim=8268, n_actions=43, n_achievements=67, total_steps=10**6

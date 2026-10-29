@@ -240,6 +240,8 @@ def test_check_metric_names_directly() -> None:
         check_metric_names(["count/a", "x"])
     with pytest.raises(ValueError, match="hook/"):
         check_metric_names(["hook/a"])
+    with pytest.raises(ValueError, match="1"):
+        check_metric_names([1])  # type: ignore[list-item]  # a non-str key
 
 
 def test_metrics_check_runs_when_traced_under_jit() -> None:

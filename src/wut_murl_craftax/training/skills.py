@@ -260,8 +260,12 @@ def decode_obs(obs: jax.Array) -> ObsView:
     """View of one symbolic observation; the game is told by its size.
 
     Raises:
-        ValueError: On a size that is neither `CRAFTAX_OBS` nor `CLASSIC_OBS`.
+        ValueError: On a size that is neither `CRAFTAX_OBS` nor `CLASSIC_OBS`, or on a
+            batch (``jax.vmap`` it).
     """
+    if obs.ndim != 1:
+        msg = f"decode_obs takes one observation, got shape {obs.shape}: vmap a batch"
+        raise ValueError(msg)
     match obs.shape[-1]:
         case 8268:
             return _decode_craftax(obs)

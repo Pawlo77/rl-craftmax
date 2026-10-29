@@ -571,6 +571,65 @@ def test_a_logging_failure_keeps_the_previous_artifacts(
     assert client.get_run(run_id).info.status == "FINISHED"
 
 
+def test_a_failed_upload_leaves_the_run_failed_not_running(
+    store: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wut_murl_craftax.orchestration.tracking import log_analysis_run
+
+    (tmp_path / "f.txt").write_text("1")
+    paths = [tmp_path / "f.txt"]
+    run_id = log_analysis_run(tmp_path, paths, "r", {}, store)
+    client = mlflow.MlflowClient(store)
+
+    def boom(*a: Any, **k: Any) -> None:
+        msg = "upload failed"
+        raise OSError(msg)
+
+    with monkeypatch.context() as m:
+        m.setattr(mlflow.MlflowClient, "log_artifact", boom)
+        with pytest.raises(OSError, match="upload failed"):
+            log_analysis_run(tmp_path, paths, "r", {}, store)
+    assert client.get_run(run_id).info.status == "FAILED"
+    assert log_analysis_run(tmp_path, paths, "r", {}, store) == run_id
+    assert client.get_run(run_id).info.status == "FINISHED"
+
+
+def test_the_upload_error_is_raised_even_if_marking_the_run_failed_fails(
+    store: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wut_murl_craftax.orchestration.tracking import log_analysis_run
+
+    (tmp_path / "f.txt").write_text("1")
+
+    def upload_fails(*a: Any, **k: Any) -> None:
+        msg = "upload failed"
+        raise OSError(msg)
+
+    def store_locked(*a: Any, **k: Any) -> None:
+        msg = "database is locked"
+        raise RuntimeError(msg)
+
+    with monkeypatch.context() as m:
+        m.setattr(mlflow.MlflowClient, "log_artifact", upload_fails)
+        m.setattr(mlflow.MlflowClient, "set_terminated", store_locked)
+        with pytest.raises(OSError, match="upload failed"):
+            log_analysis_run(tmp_path, [tmp_path / "f.txt"], "r", {}, store)
+
+
+def test_a_nested_file_keeps_its_folder_and_survives_a_rerun(
+    store: str, tmp_path: Path
+) -> None:
+    from wut_murl_craftax.orchestration.tracking import log_analysis_run
+
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "a.txt").write_text("1")
+    paths = [tmp_path / "d" / "a.txt"]
+    run_id = log_analysis_run(tmp_path, paths, "r", {}, store)
+    assert log_analysis_run(tmp_path, paths, "r", {}, store) == run_id  # the rerun
+    client = mlflow.MlflowClient(store)
+    assert {a.path for a in client.list_artifacts(run_id, "d")} == {"d/a.txt"}
+
+
 # ------------------------------------------------------------- replay inputs
 
 

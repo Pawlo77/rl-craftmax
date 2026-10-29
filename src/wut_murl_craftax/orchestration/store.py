@@ -37,7 +37,7 @@ from .queue import (
     permanently_ended,
     phase_specs,
 )
-from .tracking import _artifact_location, _resolve_tracking_uri, artifact_path
+from .tracking import _artifact_location, artifact_path, resolve_tracking_uri
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ prefers the other copy, a resume starts afresh."""
 def _main_uri(tracking_uri: str | None) -> str:
     """``tracking_uri``, else the one of ``configs/experiment.yaml``, made absolute."""
     uri = tracking_uri or load_experiment_config(EXPERIMENT_CONFIG).mlflow.tracking_uri
-    return _resolve_tracking_uri(uri)
+    return resolve_tracking_uri(uri)
 
 
 def _all_runs(client: Any) -> list[Any]:
