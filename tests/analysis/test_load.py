@@ -165,6 +165,25 @@ def test_a_run_of_two_phases_is_kept_once_from_the_first(export_root: Path) -> N
         assert (episodes["config_ref"] == episodes["run_id"].map(owner)).all()
 
 
+def test_a_phase_listed_twice_loads_once(export_root: Path) -> None:
+    once = load_phases(["final-1m"], export_root)
+    twice = load_phases(["final-1m", "final-1m"], export_root)
+    for name, frame in once.items():
+        pd.testing.assert_frame_equal(frame, twice[name])
+
+
+def test_a_missing_phases_tag_is_a_schema_error(
+    tmp_path: Path, export_writer: Callable[..., Path]
+) -> None:
+    root = export_writer(tmp_path, ("final-1m",))
+    path = root / "final-1m" / "runs.parquet"
+    runs = pd.read_parquet(path)
+    runs.loc[runs.index[0], "phases"] = None
+    runs.to_parquet(path)
+    with pytest.raises(SchemaError, match="tag `phases`"):
+        load_phase(root / "final-1m")
+
+
 def test_load_phases_selects_by_the_phases_tag_not_the_experiment(
     export_root: Path,
 ) -> None:
