@@ -19,6 +19,7 @@ from wut_murl_craftax.training.ppo import (
     main,
     ppo_terms,
     train_chunk,
+    unshared,
 )
 from wut_murl_craftax.training.records import (
     LOSS_COLUMNS,
@@ -155,3 +156,17 @@ def test_the_logged_learning_rate_is_the_annealed_one(three_updates: Any) -> Non
     flat = dataclasses.replace(CHUNK, anneal_lr=False)
     _, m = train_chunk(init_state(flat, jax.random.key(1)), 2)
     np.testing.assert_allclose(m["ppo/lr"], [1e-3, 1e-3], rtol=1e-6)  # type: ignore[literal-required]
+
+
+def test_unshared_copies_each_later_leaf_of_a_shared_buffer() -> None:
+    """A jit may then donate the tree: XLA refuses one buffer donated twice."""
+    z, one = jnp.zeros(3), jnp.ones(2)
+    tree = {"a": z, "b": z, "c": one, "d": jax.device_put(z, jax.devices("cpu")[0])}
+    got = unshared(tree)
+    assert got["a"] is z
+    assert got["c"] is one
+    pointers = {x.unsafe_buffer_pointer() for x in jax.tree.leaves(got)}
+    assert len(pointers) == 4
+    assert all((got[k] == tree[k]).all() for k in tree)
+    donate = jax.jit(lambda t: jax.tree.map(lambda x: x + 1, t), donate_argnums=0)
+    jax.block_until_ready(donate(got))  # type: ignore[no-untyped-call]  # jax API

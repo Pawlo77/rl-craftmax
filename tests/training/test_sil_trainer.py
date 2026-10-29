@@ -240,7 +240,7 @@ def test_a_sil_step_with_no_active_step_leaves_adam_untouched(
 
 
 def test_kl_after_skips_its_forward_passes_when_every_step_is_skipped(
-    methods_dir: Path, monkeypatch: pytest.MonkeyPatch
+    methods_dir: Path, monkeypatch: pytest.MonkeyPatch, copied: Callable[[Any], Any]
 ) -> None:
     """``kl_after`` is 0 without the two batch passes; an applied step runs them."""
     calls: list[int] = []
@@ -254,7 +254,7 @@ def test_kl_after_skips_its_forward_passes_when_every_step_is_skipped(
     cfg = METHODS["sil"].config(_config(methods_dir, width=21))  # traces the patch
     cfg = dataclasses.replace(cfg, observe=None)  # the buffer is what the test writes
     start = ppo_rnn.init_state(cfg, jax.random.key(0))
-    _, m = ppo_rnn.train_chunk(start, 1)
+    _, m = ppo_rnn.train_chunk(copied(start), 1)
     jax.effects_barrier()
     assert (calls, float(m["sil/kl_after"][0])) == ([], 0.0)  # type: ignore[typeddict-item]
     _, m = ppo_rnn.train_chunk(_with_window(start, 100.0), 1)
@@ -292,12 +292,12 @@ def test_a_sil_step_with_active_steps_moves_the_params(
 
 
 @pytest.fixture(scope="module")
-def entry(methods_dir: Path) -> Any:
+def entry(methods_dir: Path, copied: Callable[[Any], Any]) -> Any:
     """(trainer, config, start state, 2-update result) of the SIL entry."""
     trainer = METHODS["sil"]
     cfg = _config(methods_dir)
     start = trainer.init(cfg, jax.random.key(0))
-    return trainer, cfg, start, trainer.train_chunk(start, 2)
+    return trainer, cfg, start, trainer.train_chunk(copied(start), 2)
 
 
 def test_the_entry_exposes_the_trainer_interface(entry: Any) -> None:
@@ -333,22 +333,36 @@ def test_two_updates_report_chunk_and_sil_metrics(entry: Any) -> None:
 
 
 def test_chunks_of_one_equal_one_chunk_of_two(
-    entry: Any, same: Callable[[Any, Any], bool]
+    entry: Any, same: Callable[[Any, Any], bool], copied: Callable[[Any], Any]
 ) -> None:
-    """Also: a chunk leaves its input state usable (the learner donates a copy)."""
     trainer, _, start, (whole, m) = entry
-    one, m1 = trainer.train_chunk(start, 1)
+    one, m1 = trainer.train_chunk(copied(start), 1)
     two, m2 = trainer.train_chunk(one, 1)
     assert same(two, whole)
     joined = {k: np.concatenate([np.asarray(m1[k]), np.asarray(m2[k])]) for k in m}
     assert same(joined, {k: np.asarray(v) for k, v in m.items()})
 
 
+def test_a_chunk_donates_the_buffer_and_trains_as_on_a_copy(
+    entry: Any, same: Callable[[Any, Any], bool]
+) -> None:
+    """The resident buffer updates in place (no copy), bit for bit as on a copy."""
+    trainer, cfg, _, (whole, m) = entry
+    start = trainer.init(cfg, jax.random.key(0))
+    state, donated_m = trainer.train_chunk(start, 2)
+    assert all(x.is_deleted() for x in jax.tree.leaves(start.method_state))
+    assert same(state, whole)
+    assert same(*({k: np.asarray(v) for k, v in x.items()} for x in (donated_m, m)))
+
+
 def test_the_buffer_is_saved_and_a_resume_continues_it(
-    entry: Any, same: Callable[[Any, Any], bool], tmp_path: Path
+    entry: Any,
+    same: Callable[[Any, Any], bool],
+    copied: Callable[[Any], Any],
+    tmp_path: Path,
 ) -> None:
     trainer, cfg, start, (whole, _) = entry
-    one, _ = trainer.train_chunk(start, 1)
+    one, _ = trainer.train_chunk(copied(start), 1)
     save_state(tmp_path, one)
     restored = load_state(tmp_path, trainer.init(cfg, jax.random.key(1)))
     assert same(restored.method_state, one.method_state)

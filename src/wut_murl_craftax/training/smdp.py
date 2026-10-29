@@ -39,7 +39,7 @@ from ..evaluation.episode_metrics import (
 from ..orchestration import shard_envs
 from .checkpoints import load_index, pruned_updates
 from .hooks import Traj
-from .ppo import env_placement, make_train_env
+from .ppo import env_placement, make_train_env, unshared
 from .pqn_rnn import (
     FILLED_LOSS_COLUMNS,
     NO_ACTION,
@@ -863,8 +863,8 @@ def _make_collect(
 
     ``observe(aux, ends, t)`` folds every step's real skill outcomes (`_rollout_step`)
     at env-step count ``t`` into the extra carry ``aux`` (Dyna-Q's model); without it
-    ``aux`` passes through. The carry and ``aux`` are donated (`train_chunk` hands
-    them copies of the state's).
+    ``aux`` passes through. The carry and ``aux`` are donated (`train_chunk` passes
+    the state's own).
     """
     envs, steps = cfg.net.envs, cfg.net.num_steps
 
@@ -1039,10 +1039,12 @@ def _learn_after_rollout(
 def train_chunk(state: SMDPState, n_updates: int) -> tuple[SMDPState, "ChunkMetrics"]:
     """Run ``n_updates`` rollout-and-update steps; metrics stacked per update.
 
-    The input state stays usable: the rollouts donate a copy of its carry.
+    The rollouts donate the input state's carry, so the table updates in place: the
+    caller must not read the input state afterwards (copy it to keep it).
     """
     s = _setup(state.cfg)
-    carry = jax.tree.map(jnp.copy, state.carry)
+    state = unshared(state)
+    carry = state.carry
     records, chunks = [], []
     for _ in range(n_updates):
         state, carry, record, chunk = _one_update(state, s, carry)

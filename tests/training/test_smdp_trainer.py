@@ -183,12 +183,12 @@ def test_the_learner_cuts_targets_at_skill_ends_and_resets_at_episode_ends() -> 
 
 
 @pytest.fixture(scope="module")
-def entry(methods_dir: Path) -> Any:
+def entry(methods_dir: Path, copied: Callable[[Any], Any]) -> Any:
     """(trainer, config, start state, 2-update result) of the entry."""
     trainer = METHODS[NAME]
     cfg = _config(methods_dir)
     start = trainer.init(cfg, jax.random.key(0))
-    return trainer, cfg, start, trainer.train_chunk(start, 2)
+    return trainer, cfg, start, trainer.train_chunk(copied(start), 2)
 
 
 def test_the_entry_exposes_the_trainer_interface(entry: Any) -> None:
@@ -245,11 +245,10 @@ def test_training_moves_the_network_and_the_table(
 
 
 def test_chunks_of_one_equal_one_chunk_of_two(
-    entry: Any, same: Callable[[Any, Any], bool]
+    entry: Any, same: Callable[[Any, Any], bool], copied: Callable[[Any], Any]
 ) -> None:
-    """Also: a chunk leaves its input state usable."""
     trainer, _, start, (whole, m) = entry
-    one, m1 = trainer.train_chunk(start, 1)
+    one, m1 = trainer.train_chunk(copied(start), 1)
     two, m2 = trainer.train_chunk(one, 1)
     assert same(two, whole)
     joined = {k: np.concatenate([np.asarray(m1[k]), np.asarray(m2[k])]) for k in m}
@@ -270,11 +269,26 @@ def test_updates_after_the_first_reuse_its_executables(
     assert lowerings() == before
 
 
+def test_a_chunk_donates_the_carry_and_trains_as_on_a_copy(
+    entry: Any, same: Callable[[Any, Any], bool]
+) -> None:
+    """The table updates in place (no copy of the carry), bit for bit as on a copy."""
+    trainer, cfg, _, (whole, m) = entry
+    start = trainer.init(cfg, jax.random.key(0))
+    state, donated_m = trainer.train_chunk(start, 2)
+    assert all(x.is_deleted() for x in jax.tree.leaves(start.carry))
+    assert same(state, whole)
+    assert same(*({k: np.asarray(v) for k, v in x.items()} for x in (donated_m, m)))
+
+
 def test_the_table_and_skill_state_are_saved_and_a_resume_continues(
-    entry: Any, same: Callable[[Any, Any], bool], tmp_path: Path
+    entry: Any,
+    same: Callable[[Any, Any], bool],
+    copied: Callable[[Any], Any],
+    tmp_path: Path,
 ) -> None:
     trainer, cfg, start, (whole, _) = entry
-    one, _ = trainer.train_chunk(start, 1)
+    one, _ = trainer.train_chunk(copied(start), 1)
     save_state(tmp_path, one)
     restored = load_state(tmp_path, trainer.init(cfg, jax.random.key(1)))
     assert same(restored, one)

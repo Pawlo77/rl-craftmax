@@ -25,6 +25,7 @@ import numpy as np
 import pyarrow as pa
 from flax import struct
 
+from .ppo import unshared
 from .pqn_rnn import FILLED_LOSS_COLUMNS
 from .records import achievement_names
 from .skills import NUM_SKILLS, SKILLS
@@ -754,12 +755,13 @@ def _one_update(
 def train_chunk(state: DynaState, n_updates: int) -> tuple[DynaState, "ChunkMetrics"]:
     """Run ``n_updates`` updates; the `smdp-skills` metrics plus ``dyna/...``.
 
-    The input state stays usable: the rollouts donate copies of its carry and model.
+    The rollouts donate the input state's carry and model, so the tables update in
+    place: the caller must not read the input state afterwards (copy it to keep it).
     The ``smdp/...`` rollout stats of an update (``q_start``, the largest updated value)
     are taken before its planning, so they see the planned table one update late.
     """
-    carry = jax.tree.map(jnp.copy, state.smdp.carry)
-    model = jax.tree.map(jnp.copy, state.model)
+    state = unshared(state)
+    carry, model = state.smdp.carry, state.model
     records, chunks, dyna = [], [], []
     for _ in range(n_updates):
         state, carry, model, (record, chunk, d) = _one_update(state, carry, model)
