@@ -7,6 +7,7 @@ refuse the repo-root store under pytest (``orchestration.tracking``), and
 queue does that too: set ``WUT_MURL_STORE_GUARD=off`` to run tests beside one).
 """
 
+import gc
 import os
 import subprocess
 import sys
@@ -47,6 +48,24 @@ def pytest_configure(config: pytest.Config) -> None:
     env = os.environ | {"JAX_PLATFORMS": "cpu"}
     cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.runtime"]  # make warm
     subprocess.run(cmd, check=True, capture_output=True, env=env)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(
+    item: pytest.Item, nextitem: pytest.Item | None
+) -> Iterator[None]:
+    """Drop JAX's compiled executables once a test file is done.
+
+    Every config a test compiles stays cached for the life of the process: an xdist
+    worker grew past 12 GB over its share of the suite, more than a CI runner holds.
+    Clearing per file keeps the executables a file's tests share (clearing after
+    every test made the serial suite 36% slower).
+    """
+    yield
+    jax = sys.modules.get("jax")
+    if jax is not None and (nextitem is None or nextitem.path != item.path):
+        jax.clear_caches()
+        gc.collect()
 
 
 @pytest.fixture(autouse=True, scope="session")
