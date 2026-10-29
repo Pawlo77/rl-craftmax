@@ -147,6 +147,29 @@ def _analysis_experiment(client: Any, uri: str) -> Any:
     return exp
 
 
+def _upload(
+    client: Any, run_id: str, folder: Path, paths: Sequence[Path], *, replace: bool
+) -> None:
+    """Log ``paths`` under the run; ``replace`` deletes the old artifacts they lack."""
+    kept: set[Path] = set()
+    for path in paths:
+        rel = path.relative_to(folder)
+        if path.is_dir():
+            client.log_artifacts(run_id, str(path), rel.as_posix())
+            kept |= {rel / f.relative_to(path) for f in path.rglob("*") if f.is_file()}
+        else:
+            parent = rel.parent.as_posix()
+            client.log_artifact(run_id, str(path), None if parent == "." else parent)
+            kept.add(rel)
+    if replace and (uri_of := client.get_run(run_id).info.artifact_uri):
+        root = artifact_path(uri_of)
+        for old in sorted(root.rglob("*"), reverse=True):  # children before parents
+            if old.is_file() and old.relative_to(root) not in kept:
+                old.unlink()  # raises if it cannot delete
+            elif old.is_dir() and not any(old.iterdir()):
+                old.rmdir()
+
+
 def log_analysis_run(
     folder: Path,
     paths: Sequence[Path],
@@ -161,6 +184,8 @@ def log_analysis_run(
     analysis run never sets those. ``tracking_uri`` may end in ``?timeout=<s>``. A
     rerun reuses the run of that name: it is RUNNING while the new files are logged,
     and the old artifacts the new upload lacks are deleted only after that succeeded.
+    A file keeps its folder relative to ``folder``. A failed upload leaves the run
+    FAILED, with the old artifacts in place.
 
     Returns:
         The run id.
@@ -187,22 +212,11 @@ def log_analysis_run(
         run_id = client.create_run(exp.experiment_id, run_name=name).info.run_id
     for key, value in tags.items():
         client.set_tag(run_id, key, value)
-    kept: set[Path] = set()
-    for path in paths:
-        rel = path.relative_to(folder)
-        if path.is_dir():
-            client.log_artifacts(run_id, str(path), rel.as_posix())
-            kept |= {rel / f.relative_to(path) for f in path.rglob("*") if f.is_file()}
-        else:
-            client.log_artifact(run_id, str(path))
-            kept.add(rel)
-    if found and (uri_of := client.get_run(run_id).info.artifact_uri):
-        root = artifact_path(uri_of)
-        for old in sorted(root.rglob("*"), reverse=True):  # children before parents
-            if old.is_file() and old.relative_to(root) not in kept:
-                old.unlink()  # raises if it cannot delete
-            elif old.is_dir() and not any(old.iterdir()):
-                old.rmdir()
+    try:
+        _upload(client, run_id, folder, paths, replace=bool(found))
+    except BaseException:
+        client.set_terminated(run_id, "FAILED")  # never left RUNNING
+        raise
     client.set_terminated(run_id)
     return str(run_id)
 
