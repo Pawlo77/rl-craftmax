@@ -230,18 +230,30 @@ def rank_methods(
     return sorted(ranked, key=lambda r: (-r.iqm, -r.poi, r.registry))
 
 
+def _common_places(
+    ranking: Sequence[Ranked], other: Sequence[Ranked]
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Places (from 1) of the methods ranked in both rankings, counted over those."""
+    both = {r.registry for r in ranking} & {r.registry for r in other}
+    return tuple(  # type: ignore[return-value]
+        {r.registry: i for i, r in enumerate((x for x in rk if x.registry in both), 1)}
+        for rk in (ranking, other)
+    )
+
+
 def rank_sum(ranking: Sequence[Ranked], other: Sequence[Ranked]) -> list[Ranked]:
     """The methods of both rankings by the sum of their places (the plan's Step 1b).
 
-    Ties go to the higher probability of improvement in ``other`` (the 1M ranking),
-    then to the name. The entries are ``ranking``'s (its seeds, IQM and PoI); a
-    method ranked in only one of the two is left out.
+    Places count over the methods ranked in both (one missing from either leaves
+    no gap). Ties go to the higher probability of improvement in ``other`` (the 1M
+    ranking), then to the name. The entries are ``ranking``'s (its seeds, IQM, PoI).
     """
-    there = {r.registry: (i, r) for i, r in enumerate(other)}
+    here, there = _common_places(ranking, other)
+    poi = {r.registry: r.poi for r in other}
     keyed = [
-        (i + there[r.registry][0], -there[r.registry][1].poi, r.registry, r)
-        for i, r in enumerate(ranking)
-        if r.registry in there
+        (here[r.registry] + there[r.registry], -poi[r.registry], r.registry, r)
+        for r in ranking
+        if r.registry in here
     ]
     return [k[-1] for k in sorted(keyed, key=lambda k: k[:3])]
 
@@ -533,8 +545,7 @@ def _rank_summed(
     other = _phase_path(args.rank_sum_with)
     _, there, notes = _rank(args, other)
     summed = rank_sum(ranking, there)
-    here = {r.registry: i for i, r in enumerate(ranking, 1)}
-    then = {r.registry: i for i, r in enumerate(there, 1)}
+    here, then = _common_places(ranking, there)
     print(f"rank sum with {other.stem}: rank method places (here + {other.stem})")
     lines = [
         f"{i} {r.registry} {here[r.registry]} + {then[r.registry]}"

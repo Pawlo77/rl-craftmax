@@ -450,9 +450,21 @@ def test_rank_sum_adds_the_places_and_breaks_ties_by_the_other_poi() -> None:
         Ranked("x", "c", 10, 1.9, 0.9),
         Ranked("a", "c", 10, 1.0, 0.6),
     ]
-    out = rank_sum(here, there)  # a: 0 + 2, b: 1 + 0; x is not ranked here
-    assert [r.registry for r in out] == ["b", "a"]
-    assert out[0] is here[1]  # the entries keep their own seeds, IQM and PoI
+    out = rank_sum(here, there)  # x is not ranked here: a 1 + 2, b 2 + 1, tie to a
+    assert [r.registry for r in out] == ["a", "b"]
+    assert out[0] is here[0]  # the entries keep their own seeds, IQM and PoI
+    gap = rank_sum(  # b is missing in `there`: places count over a and c only
+        [
+            Ranked("a", "c", 3, 3.0, 0.2),
+            Ranked("b", "c", 3, 2.5, 0.1),
+            Ranked("c", "c", 3, 2.0, 0.3),
+        ],
+        [Ranked("c", "c", 10, 2.0, 0.9), Ranked("a", "c", 10, 1.0, 0.4)],
+    )
+    assert [r.registry for r in gap] == [
+        "c",
+        "a",
+    ]  # 1 + 0 each: the tie goes to c's PoI
     tied = rank_sum(
         [Ranked("a", "c", 3, 3.0, 0.2), Ranked("b", "c", 3, 2.0, 0.9)],
         [Ranked("b", "c", 10, 2.0, 0.4), Ranked("a", "c", 10, 1.0, 0.6)],
