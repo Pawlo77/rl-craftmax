@@ -14,7 +14,13 @@ import numpy as np
 import pandas as pd
 import pytest
 from _compare_fixture import ABLATIONS
-from _figures_fixture import ACHIEVEMENTS, figure_frames, tuning_frames
+from _figures_fixture import (
+    ACHIEVEMENTS,
+    Built,
+    figure_cache,
+    figure_frames,
+    tuning_frames,
+)
 from matplotlib.artist import Artist
 from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
@@ -152,6 +158,27 @@ def literature(
     )
 
 
+@pytest.fixture(scope="module")
+def built(
+    frames: dict[str, pd.DataFrame],
+    tuning: dict[str, pd.DataFrame],
+    literature: pd.DataFrame,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[..., Built]:
+    """``built(fid, theme, width)``: a figure drawn once for the tests that read it."""
+    return figure_cache(
+        lambda fid, theme, width, out: draw(
+            fid, frames, tuning, literature, out, theme, width
+        ),
+        tmp_path_factory,
+    )
+
+
+def own_width(fid: str) -> str:
+    """The legend spans both columns; every other core figure is one column wide."""
+    return "double" if fid == "LEG" else "column"
+
+
 def draw(
     fid: str,
     frames: dict[str, pd.DataFrame],
@@ -227,21 +254,13 @@ def _none_lit() -> pd.DataFrame:
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", list(NAMES))
 def test_each_figure_writes_its_files_as_png_with_captions(
-    fid: str,
-    theme: str,
-    frames: dict[str, pd.DataFrame],
-    tuning: dict[str, pd.DataFrame],
-    literature: pd.DataFrame,
-    tmp_path: Path,
+    fid: str, theme: str, built: Callable[..., Built]
 ) -> None:
-    width = "double" if fid == "LEG" else "column"  # the legend spans both columns
-    with capture_captions() as caps:
-        figs = draw(fid, frames, tuning, literature, tmp_path, theme, width)
+    figs, out, caps = built(fid, theme, own_width(fid))
     assert sorted(figs.figs) == sorted(STEMS[fid])
     suffix = "_video" if theme == "video" else ""
-    for stem in STEMS[fid]:
-        assert not (tmp_path / f"{stem}{suffix}.pdf").exists()
-        assert (tmp_path / f"{stem}{suffix}.png").read_bytes().startswith(PNG)
+    for stem in STEMS[fid]:  # the PNG header and "no PDF" are `test_figure_style`'s
+        assert (out / f"{stem}{suffix}.png").is_file()
     assert sorted(c.stem for c in caps) == sorted(STEMS[fid])
     assert FIGURES[fid] is getattr(figures, FIGURES[fid].__name__)
     for want in LABELS[fid]:
@@ -275,14 +294,10 @@ def test_a_figure_shows_one_benchmark_at_a_time(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("fid", list(NAMES))
 def test_report_figures_are_one_column_wide_with_7pt_fonts(
-    fid: str,
-    frames: dict[str, pd.DataFrame],
-    tuning: dict[str, pd.DataFrame],
-    literature: pd.DataFrame,
-    tmp_path: Path,
+    fid: str, built: Callable[..., Built]
 ) -> None:
-    figs = draw(fid, frames, tuning, literature, tmp_path)
-    for fig in figs.figs.values():
+    """The 1080p frame of the video is audited by `test_figure_style`."""
+    for fig in built(fid).figs.figs.values():
         assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
         fig.canvas.draw()
         sizes = {
@@ -294,31 +309,14 @@ def test_report_figures_are_one_column_wide_with_7pt_fonts(
         assert not small, small
 
 
-@pytest.mark.parametrize("fid", list(NAMES))
-def test_video_figures_fill_a_1080p_frame(
-    fid: str,
-    frames: dict[str, pd.DataFrame],
-    tuning: dict[str, pd.DataFrame],
-    literature: pd.DataFrame,
-    tmp_path: Path,
-) -> None:
-    for fig in draw(fid, frames, tuning, literature, tmp_path, "video").figs.values():
-        width, height = fig.get_size_inches() * fig.dpi
-        assert (round(width), round(height)) == (1920, 1080)
-
-
 @pytest.mark.parametrize("fid", [f for f in NAMES if f != "LEG"])
 def test_a_column_figure_is_not_drawn_at_the_double_width(
-    fid: str,
-    frames: dict[str, pd.DataFrame],
-    tuning: dict[str, pd.DataFrame],
-    literature: pd.DataFrame,
-    tmp_path: Path,
+    fid: str, built: Callable[..., Built]
 ) -> None:
     """Every core figure but the legend fits the column: one image, no 170 mm copy."""
-    figs = draw(fid, frames, tuning, literature, tmp_path, width="double")
+    figs, out, _ = built(fid, width="double")
     assert not figs.figs
-    assert not list(tmp_path.iterdir())
+    assert not list(out.iterdir())
 
 
 def test_a_listed_stem_is_one_170_mm_image_without_a_column_copy(
@@ -971,14 +969,9 @@ def _hexes(artist: Artist) -> set[str]:
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", list(NAMES))
 def test_every_method_artist_is_drawn_in_a_method_colour(
-    fid: str,
-    theme: str,
-    frames: dict[str, pd.DataFrame],
-    tuning: dict[str, pd.DataFrame],
-    literature: pd.DataFrame,
-    tmp_path: Path,
+    fid: str, theme: str, built: Callable[..., Built]
 ) -> None:
-    fig = draw(fid, frames, tuning, literature, tmp_path, theme)
+    fig = built(fid, theme).figs
     palette = {to_hex(c) for c in _colors(theme).values()}
     checked = 0
     for kind in METHOD_KINDS:
