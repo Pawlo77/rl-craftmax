@@ -291,6 +291,7 @@ def test_each_method_is_logged_without_its_datasets(world: World) -> None:
     assert tags["analysis/kind"] == "distill"
     assert (tags["analysis/budget"], tags["analysis/method"]) == ("1m", "smdp-skills")
     assert tags["analysis/phases"] == "final-1m"  # combo-1m has no export
+    assert not {"phases", "method", "budget", "seed", "config_hash"} & set(tags)
     root = artifact_path(run.info.artifact_uri)
     logged = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
     assert logged >= METHOD_FILES | SKILL_FILES
