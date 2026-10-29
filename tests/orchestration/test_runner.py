@@ -384,6 +384,7 @@ def test_a_combo_run_records_its_pair_in_config_json_only(store: Store) -> None:
     assert config == spec.config | {queue.COMBINE_KEY: pair}
     assert queue.COMBINE_KEY not in spec.config
     assert trainer.init_steps == [spec.steps]
+    assert [queue.COMBINE_KEY in c for c in trainer.init_configs] == [False]
 
 
 def test_the_tracker_comes_from_experiment_yaml_named_after_the_phase(

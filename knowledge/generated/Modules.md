@@ -51,7 +51,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow store, retention. |  |  | 146 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/finals.py]] | The dyna-q kappa ablation of final-1m, set once dyna-q is marked tuned. |  |  | 144 |  |
-| [[src/wut_murl_craftax/orchestration/greedy_tables.py]] | Rebuild the SMDP greedy tables of stored runs from their checkpoints (ruling R81). |  |  | 68 | [[orchestration]] |
+| [[src/wut_murl_craftax/orchestration/greedy_tables.py]] | Rebuild the SMDP greedy tables of stored runs from their checkpoints (ruling R81). |  |  | 70 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/profiles.py]] | Machine profiles: runtime settings of a laptop or cluster node, no hyperparameters. |  |  | 74 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/prune.py]] | Storage retention: delete run artifacts no later step reads (dry run by default). |  |  | 399 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/queue.py]] | Run identity and queue expansion: method and phase YAML files become RunSpecs. |  |  | 1443 | [[orchestration]] |
