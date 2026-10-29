@@ -31,9 +31,16 @@ base:
     key: progress
     max_occupancy: 0.25
 
-# At 1B only the PQN-RNN variant's dead-input flag changes, as in pqn-rnn.yaml.
+# At 1B the table has 2^22 slots, so `count/table_full` ends a run at 1.05 million keys, not
+# 262,144. The tuned 1M runs end at 16-115 keys; projected to 1B, the largest seed's
+# whole-run log-log fit is 36,700 keys (PPO-RNN variant; 1,050 PQN-RNN) and its last
+# quarter's rate 199,000 (53,000): margins to the new guard 28.6 x and 5.3 x (PPO-RNN
+# variant), 1000 x and 20 x (PQN-RNN variant), against 7.1 x and 1.3 x at 2^20 slots.
+# Only capacity and collisions change. The PQN-RNN variant's dead-input flag changes too,
+# as in pqn-rnn.yaml.
 budgets:
   1b:
+    log2_k: 22
     abort:
       pqn-rnn:
         flags:

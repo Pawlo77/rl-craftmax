@@ -21,13 +21,17 @@ base:
   vi_tol: 1.0e-3
   vi_max_sweeps: 50
 
-# Craftax-1B: the tuned 1M runs visit 355-1,645 pairs and still add about 1.2 pairs per
-# 1,000 steps at 1M. Extrapolated to 1B, the last quarter's rate gives up to 2.75 million
-# pairs (median 1.2) and a power-law fit up to 1.65 million (median 0.14); the 1M model
-# (2^16) would end every run with `dyna/model_full`. 2^22 pairs hold them (about 0.35 GB
-# at M = 4); the table rows grow with the smdp-skills 1B shape (`base_from`).
+# Craftax-1B tables, sized from a log-log fit of each tuned 1M run's rows and pairs against
+# env steps (fit over 10-100 % of the run, projected to 1e9, largest of the 10 seeds):
+# 1.2 million rows and 23 million pairs (median 8,600 rows and 0.11 million pairs). The
+# smallest rows with the projection at most half the guard (`smdp/table_full` at a quarter
+# of the rows) are 2^24; the pairs would need 2^26, but 2^25 is the largest the device
+# memory allows (6.7 GB of tables at 1B, 2.0 GB at 2^22 rows/pairs; the 1M model is 0.3 GB):
+# its margin to `dyna/model_full` is 1.45 x the largest projection (11.8 x the 90th
+# percentile, 2.9 million pairs). Capacity and collisions only; smdp-skills keeps 2^20
+# rows (its projection, 50,000, is a fifth of its guard).
 budgets:
-  1b: {model_pairs: 4194304}
+  1b: {log2_rows: 24, model_pairs: 33554432}
 
 grid:
   # Stage 1: (uniform, prioritized) x n (1, 5, 20) x kappa (0, 0.003, 0.03), plus value
@@ -67,7 +71,7 @@ grid:
 # loss as value_loss, grad_norm) or a metric in `finite` aborts the run. The smdp-skills
 # guards (smdp/nan, smdp/table_full, smdp/divergence) watch the real updates; the Dyna-Q
 # guards of training/dyna_q.py are 0 and turn NaN on a NaN or inf in a planned table value
-# (dyna/nan), all P model pair slots taken (dyna/model_full; 2^16 at 1M, 2^22 at 1B), or a planned value
+# (dyna/nan), all P model pair slots taken (dyna/model_full; 2^16 at 1M, 2^25 at 1B), or a planned value
 # above the run's bound (dyna/divergence). In Dyna runs both divergence guards use
 # 300 + plan_kappa sqrt(1000) / (1 - gamma_top) (dyna_q.max_q): a stale tau = 1 self-loop
 # with the full Dyna-Q+ bonus settles near it, healthy optimism; kappa 0 keeps the

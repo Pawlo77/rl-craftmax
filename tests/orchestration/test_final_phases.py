@@ -214,12 +214,13 @@ def test_1b_controls_follow_their_tuned_block_like_the_donors(tmp_path: Path) ->
 def test_1b_methods_take_their_1m_knobs_on_the_1b_control_settings(
     methods: Path, registry: str, control: str, knobs: dict[str, Any]
 ) -> None:
-    """Every key of the control's 1B final (or smdp-skills' for dyna-q) is unchanged."""
+    """Every key of the control's 1B final (or smdp-skills' for dyna-q) is unchanged,
+    but the table size dyna-q's own `budgets.1b` block sets."""
     configs = {s.registry_name: s.config for s in _specs("final-1b", methods)}
     cfg, base = configs[registry], configs[control]
-    assert {k: cfg[k] for k in base if k != "method"} == {
-        k: v for k, v in base.items() if k != "method"
-    }
+    own = {"log2_rows"} if registry == "dyna-q" else set()
+    keep = {k: v for k, v in base.items() if k != "method" and k not in own}
+    assert {k: cfg[k] for k in keep} == keep
     assert {k: cfg[k] for k in knobs} == knobs
 
 
@@ -259,30 +260,43 @@ def _real(phase: str) -> list[RunSpec]:
     return expand_phase(PHASES / f"{phase}.yaml")
 
 
-def test_the_1b_skill_tables_are_sized_for_a_1b_run() -> None:
-    """the tuned 1M runs end at 47-362 rows and 247-1,645 pairs, still growing: the 1M
-    shapes (2^20 rows, 2^16 pairs) would abort a 1B run (`smdp/table_full` at a quarter
-    of the rows, `dyna/model_full` at the last pair)."""
+@pytest.mark.parametrize(
+    ("slug", "registry"),
+    [
+        ("count-bonus", "count-bonus-ppo-rnn"),
+        ("count-bonus", "count-bonus-pqn-rnn"),
+        ("combo", "combo"),
+    ],
+)
+def test_the_1b_count_tables_have_four_times_the_1m_slots(
+    slug: str, registry: str
+) -> None:
+    """The 1M tuned runs end at 16-115 keys; the largest whole-run log-log projection
+    is 36,700 keys at 1B (199,000 by the last quarter's rate): 7.1 x (1.3 x) the
+    guard of 2^20 slots, 28.6 x (5.3 x) that of 2^22."""
+    ref = "combined" if slug == "combo" else "tuned"
+    method = load_method(slug)
+    for budget, log2_k in (("1m", 20), ("1b", 22)):
+        cfg = resolve_config(method, registry, budget, ref=ref)
+        assert (cfg["log2_k"], cfg["max_occupancy"]) == (log2_k, 0.25)
+
+
+def test_the_1b_dyna_tables_are_sized_for_a_1b_run() -> None:
+    """A log-log fit of the tuned 1M runs projects 1.2 million rows and 23 million
+    pairs at 1B (smdp-skills 50,000 rows): the 1M shapes (2^20 rows with
+    `smdp/table_full` at a quarter of them, 2^16 pairs with `dyna/model_full` at the
+    last one) would end dyna-q runs for good, and 2^24 / 2^25 is what 8 GB allows."""
     shape = {
-        b: {r: resolve_config(load_method(r), r, b) for r in ("smdp-skills", "dyna-q")}
+        (b, r): resolve_config(load_method(r), r, b)
         for b in ("1m", "1b")
+        for r in ("smdp-skills", "dyna-q")
     }
-    assert shape["1m"]["smdp-skills"]["log2_rows"] == 20
-    assert (
-        shape["1m"]["dyna-q"]["log2_rows"],
-        shape["1m"]["dyna-q"]["model_pairs"],
-    ) == (
-        20,
-        2**16,
-    )
-    assert shape["1b"]["smdp-skills"]["log2_rows"] == 22
-    assert (
-        shape["1b"]["dyna-q"]["log2_rows"],
-        shape["1b"]["dyna-q"]["model_pairs"],
-    ) == (
-        22,
-        2**22,
-    )
+    assert shape["1m", "smdp-skills"]["log2_rows"] == 20
+    assert shape["1b", "smdp-skills"]["log2_rows"] == 20  # its projection fits 2^20
+    assert shape["1m", "dyna-q"]["log2_rows"] == 20
+    assert shape["1m", "dyna-q"]["model_pairs"] == 2**16
+    assert shape["1b", "dyna-q"]["log2_rows"] == 24
+    assert shape["1b", "dyna-q"]["model_pairs"] == 2**25
 
 
 def test_a_zero_tuned_kappa_makes_the_kappa_ablation_fail_loudly(
