@@ -359,6 +359,8 @@ def enchant_redundant(view: ObsView) -> jax.Array:
 
     The start condition of ``enchant`` excludes this state (`available`); a mask
     without the table-type test would allow it, and the skill would run to its timeout.
+    No gear at all is not this state (the skill has nothing to enchant either way, but
+    only the redundant case is the flaw the audit looks for).
     """
     held = (view.sword > 0) | (view.bow > 0) | (jnp.sum(view.armour) > 0)
     return held & ~_enchantable(view)

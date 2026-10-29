@@ -494,6 +494,25 @@ def test_replay_columns_are_filled_where_the_replay_wrote_them_and_nan_elsewhere
     assert str(schema.field("unique_positions").type) == "int64"
 
 
+def test_the_export_warns_how_many_files_lack_a_replay_table(
+    store: Store,
+    exported: Exported,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        export_phase(
+            "final-1m",
+            tmp_path / "x",
+            tracking_uri=store.uri,
+            replay_root=exported.replay,
+        )
+    files = len(_final(store)) * len(UPDATES) * 2
+    assert f"final-1m: {files - 1} of {files} eval files have no replay table" in (
+        caplog.text
+    )
+
+
 def test_any_zero_share_is_exported_for_stored_and_replayed_files(
     exported: Exported,
 ) -> None:

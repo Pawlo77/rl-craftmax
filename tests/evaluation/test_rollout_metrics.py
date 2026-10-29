@@ -260,6 +260,19 @@ def test_recompute_of_an_agreeing_file_has_no_mismatch(
     assert tables.mismatches.empty
 
 
+def test_recompute_raises_for_a_field_the_rules_did_not_change(
+    rp: Replayer, stochastic: dict[str, np.ndarray]
+) -> None:
+    bad = _stale(stochastic)  # kills and damage_dealt differ: allowed
+    bad["events/health_delta"] = stochastic["events/health_delta"].copy()
+    bad["events/health_delta"][1, 3] += 1
+    where = "run run-x update 2 mode stochastic"
+    with pytest.raises(
+        ReplayMismatchError, match=rf"{where} seed 10001 differs.*\['health_delta'\]"
+    ):
+        file_tables(rp, bad, UPDATE, "stochastic", ID, recompute=True)
+
+
 def test_recompute_still_raises_on_a_skill_end_mismatch(
     rp: Replayer, stochastic: dict[str, np.ndarray]
 ) -> None:
@@ -289,6 +302,17 @@ def test_process_recompute_writes_the_mismatch_csv_before_the_done_marker(
     assert sorted(m["field"]) == ["damage_dealt", "kills"]
     with pytest.raises(ReplayMismatchError, match="differs"):  # strict is the default
         process_file(rp, ident, UPDATE, "greedy", tmp_path)
+
+
+def test_a_rerun_without_mismatches_removes_a_stale_csv(
+    rp: Replayer, tmp_path: Path
+) -> None:
+    ident = Identity("run-x", "1m", 3)
+    stale = mismatch_path(tmp_path, "run-x", UPDATE, "stochastic")
+    stale.parent.mkdir(parents=True)
+    stale.write_text("old\n")
+    assert process_file(rp, ident, UPDATE, "stochastic", tmp_path, recompute=True)
+    assert not stale.exists()
 
 
 def test_a_stored_skill_start_the_replay_does_not_end_raises(
@@ -535,7 +559,7 @@ def test_the_cli_recomputes_a_mismatching_file_with_the_flag(
     run_id = _run_in_store(client, skill_run, tmp_path, "final-1m", "final-1m")
     run_dir = Path(client.get_run(run_id).info.artifact_uri.removeprefix("file://"))
     bad = load_eval(run_dir, UPDATE, greedy=True)
-    bad["events/health_delta"][0, 2] += 1
+    bad["events/damage_dealt"][0, 2] += 1
     np.savez_compressed(run_dir / "eval" / "greedy" / f"{UPDATE:05d}.npz", **bad)
     out = tmp_path / "out"
     argv = ["--run", run_id, "--tracking-uri", uri, "--out", str(out), "--no-log"]
@@ -546,10 +570,32 @@ def test_the_cli_recomputes_a_mismatching_file_with_the_flag(
     )
     assert (row["eval_seed"], row["field"], row["first_step"]) == (
         10000,
-        "health_delta",
+        "damage_dealt",
         2,
     )
     assert row["old"] - row["new"] == 1
+
+
+def test_the_cli_flag_does_not_excuse_another_field(
+    skill_run: Path, tmp_path: Path
+) -> None:
+    uri, client = _store(tmp_path)
+    run_id = _run_in_store(client, skill_run, tmp_path, "final-1m", "final-1m")
+    run_dir = Path(client.get_run(run_id).info.artifact_uri.removeprefix("file://"))
+    bad = load_eval(run_dir, UPDATE, greedy=True)
+    bad["events/health_delta"][0, 2] += 1
+    np.savez_compressed(run_dir / "eval" / "greedy" / f"{UPDATE:05d}.npz", **bad)
+    argv = ["--run", run_id, "--tracking-uri", uri, "--out", str(tmp_path / "out")]
+    with pytest.raises(SystemExit, match=r"1 files failed.*health_delta"):
+        main([
+            *argv,
+            "--no-log",
+            "--updates",
+            "2",
+            "--mode",
+            "greedy",
+            "--recompute-events",
+        ])
 
 
 def test_plan_skips_runs_without_eval_files(tmp_path: Path) -> None:

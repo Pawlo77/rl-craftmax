@@ -1196,6 +1196,26 @@ def test_the_radar_defines_survivor_by_the_any_zero_share(
     assert "upper bound" not in text
 
 
+def test_survivor_uses_the_bound_only_for_the_rows_that_lack_the_column(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    mixed = frames["eval_episodes"].copy()
+    mixed.loc[mixed["method"] == "sil", "any_zero_share"] = np.nan
+    mixed_frames = {**frames, "eval_episodes": mixed}
+    mine = radar_table(mixed_frames).set_index(["benchmark", "method", "axis"])["raw"]
+    keys = ["benchmark", "method", "axis"]
+    old = radar_table(_without_any_zero(frames)).set_index(keys)["raw"]
+    exact = radar_table(frames).set_index(keys)["raw"]
+    assert mine["1m", "sil", "survivor"] == pytest.approx(old["1m", "sil", "survivor"])
+    assert mine["1m", "ppo", "survivor"] == pytest.approx(
+        exact["1m", "ppo", "survivor"]
+    )
+    assert not np.isnan(mine["1m", "sil", "survivor"])
+    assert "upper bound for the episodes of an older export" in said(
+        plot_radar(mixed_frames, tmp_path)
+    )
+
+
 def test_the_radar_says_survivor_is_an_upper_bound_without_the_column(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:

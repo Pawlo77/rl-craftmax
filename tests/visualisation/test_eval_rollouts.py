@@ -1,5 +1,6 @@
 """Tests for fixed-seed evaluation: chunked rollouts, eval files, replay, schedule."""
 
+import dataclasses
 import inspect
 import json
 import os
@@ -400,6 +401,26 @@ def test_replaying_seed_and_actions_rebuilds_observations_and_events() -> None:
             want = ev[f"events/{f.name}"][i, :n]
             np.testing.assert_array_equal(getattr(ep.events, f.name), want)
         np.testing.assert_allclose(ep.reward.sum(), returns[i], atol=1e-4)
+
+
+def test_env_step_takes_the_despawn_distance_of_the_env_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = EvalRun.load(tiny_run())
+    seen: list[int] = []
+    real = eval_rollouts.step_events
+
+    def spy(game: Any, s: Any, a: Any, s2: Any, despawn: int = 14) -> Any:
+        seen.append(despawn)
+        return real(game, s, a, s2, despawn)
+
+    monkeypatch.setattr(eval_rollouts, "step_events", spy)
+    params = run.env_params.replace(mob_despawn_distance=9)
+    run = dataclasses.replace(run, env_params=params)
+    key = jax.random.PRNGKey(0)
+    _, state = run.env.reset(key, params)
+    run.env_step(state, jnp.int32(0), key)
+    assert seen == [9]
 
 
 @pytest.mark.parametrize(

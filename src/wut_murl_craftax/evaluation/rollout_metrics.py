@@ -98,6 +98,10 @@ _TYPES = {"stalls": pa.list_(_STALL), "fights": pa.list_(_FIGHT)}
 """Arrow types numpy cannot infer: an all-empty column would be typed null and refuse
 to concatenate with the other files (the R81 bug class)."""
 _TEXT = {"skill": pa.string(), "reason": pa.string(), "mode": pa.string()}
+RECOMPUTABLE = ("kills", "passive_kills", "damage_dealt", "projectile_damage")
+"""The `StepEvents` fields ``recompute`` may replace: the kill and despawn rules
+(`events._losses`) are the only ones that changed after the 1M files were written. A
+difference in any other field means the replay diverged, and still raises."""
 MISMATCH_COLUMNS = (
     "run_id", "update", "mode", "eval_seed", "field", "steps", "first_step", "old",
     "new",
@@ -308,8 +312,11 @@ def _event_diffs(
     return rows
 
 
-def _check_events(diffs: Sequence[Mapping[str, Any]], where: str) -> None:
-    """Raise `ReplayMismatchError` for the first seed with a differing field."""
+def _check_events(
+    diffs: Sequence[Mapping[str, Any]], where: str, allowed: Sequence[str] = ()
+) -> None:
+    """Raise `ReplayMismatchError` for the first seed differing outside ``allowed``."""
+    diffs = [d for d in diffs if d["field"] not in allowed]
     if diffs:
         seed = diffs[0]["eval_seed"]
         bad = [d["field"] for d in diffs if d["eval_seed"] == seed]
@@ -344,19 +351,18 @@ def replay_file(
 ) -> FileReplay:
     """Replay every seed of an eval file's arrays and check them against the file.
 
-    ``recompute`` accepts events that differ (the code that computes them changed since
-    the file was written): they are listed in ``mismatches``, and ``events`` holds the
-    replayed ones. Skill ends are checked either way.
+    ``recompute`` accepts a difference in the `RECOMPUTABLE` fields (the rules that
+    compute them changed since the file was written): it is listed in ``mismatches``,
+    and ``events`` holds the replayed ones. Skill ends are checked either way.
 
     Raises:
-        ReplayMismatchError: If a seed's replayed events (unless ``recompute``) or
-            skill ends differ from the stored ones; the message names ``where`` (run,
-            update, mode) and seed.
+        ReplayMismatchError: If a seed's replayed events (except the `RECOMPUTABLE`
+            ones under ``recompute``) or skill ends differ from the stored ones; the
+            message names ``where`` (run, update, mode), the seed and the fields.
     """
     first, out, seen = _run_chunks(rp, arrays)
     diffs = _event_diffs(arrays, out["events"])
-    if not recompute:
-        _check_events(diffs, where)
+    _check_events(diffs, where, RECOMPUTABLE if recompute else ())
     length = np.asarray(arrays["length"])
     traces = [
         Trace(
@@ -637,10 +643,13 @@ def process_file(
     else:
         arrays = load_eval(rp.run.dir, update, mode == "greedy")
         t = file_tables(rp, arrays, update, mode, ident, recompute)
+        csv = mismatch_path(out, ident.run_id, update, mode)
+        csv.unlink(missing_ok=True)  # a rerun that finds none leaves no stale list
         if not t.mismatches.empty:
-            csv = mismatch_path(out, ident.run_id, update, mode)
             csv.parent.mkdir(parents=True, exist_ok=True)
-            t.mismatches.to_csv(csv, index=False)
+            tmp = csv.with_suffix(".tmp")
+            t.mismatches.to_csv(tmp, index=False)
+            tmp.replace(csv)
         if t.skill_ends is not None:
             _write(t.skill_ends, paths["skill_ends"])
         _write(t.inventory, paths["inventory"])

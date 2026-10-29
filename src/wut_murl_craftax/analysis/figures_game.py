@@ -2440,8 +2440,9 @@ def _radar_raw(eps: pd.DataFrame) -> pd.DataFrame:
     """The eight radar axes per run: the mean over its episodes (metrics plan).
 
     Explorer: mean coverage of visited floors; Survivor: 1 - ``any_zero_share``, the
-    share of steps with any stat zero (an export without that column gets 1 - the
-    largest of the three stats' zero shares, an upper bound of survival); Fighter:
+    share of steps with any stat zero (an episode without it, or an export without the
+    column, gets 1 - the largest of the three stats' zero shares, an upper bound of
+    survival); Fighter:
     hostile kills per 1000 steps; Crafter: tech depth; Diver: max floor; Efficient:
     achievements per 1000 steps; Mage: share of the advanced mechanics used; Precise:
     1 - wasted share. NaN where a column is missing.
@@ -2452,10 +2453,11 @@ def _radar_raw(eps: pd.DataFrame) -> pd.DataFrame:
     kills = [c for c in eps.columns if c.startswith("kills/") and c != "kills/passive"]
     adv = [c for c in eps.columns if c.startswith("adv/")]
     nan = pd.Series(np.nan, index=eps.index)
-    if SURVIVOR_COLUMN in eps.columns:
-        survivor = 1 - eps[SURVIVOR_COLUMN]
-    else:
-        survivor = 1 - eps[zero].max(axis=1) if zero else nan
+    survivor = 1 - eps[zero].max(axis=1) if zero else nan  # the bound
+    if (
+        SURVIVOR_COLUMN in eps.columns
+    ):  # exact; a row of an older export keeps the bound
+        survivor = (1 - eps[SURVIVOR_COLUMN]).fillna(survivor)
     axes = {
         "explorer": eps[cover].mean(axis=1) if cover else nan,
         "survivor": survivor,
@@ -2537,7 +2539,10 @@ def _radar_cell(
 def _survivor_text(eps: pd.DataFrame) -> str:
     """The caption's definition of the Survivor axis, as `_radar_raw` computes it."""
     if SURVIVOR_COLUMN in eps.columns:
-        return "one minus the share of steps with any stat at zero."
+        exact = "one minus the share of steps with any stat at zero"
+        if eps[SURVIVOR_COLUMN].isna().any():
+            return f"{exact}, an upper bound for the episodes of an older export."
+        return f"{exact}."
     return "one minus the largest single-stat zero share, an upper bound of survival."
 
 
