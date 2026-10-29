@@ -785,16 +785,26 @@ def _split_counts(seeds: Mapping[str, Sequence[int]]) -> dict[str, int]:
     return {k: len(v) for k, v in seeds.items()}
 
 
-def _stale(folder: Path, seeds: Mapping[str, Sequence[int]]) -> bool:
-    """Whether the summary was written for other seed counts (a ``--max-seeds`` smoke).
-
-    A summary from before the counts were recorded is not stale.
-    """
+def _recorded(folder: Path) -> dict[str, int] | None:
+    """The seed counts a policy's summary was written for; None if unknown."""
     path = folder / SUMMARY
-    if not path.is_file():
-        return False
-    have = _read_json(path).get("split_seeds")
-    return have is not None and have != _split_counts(seeds)
+    return _read_json(path).get("split_seeds") if path.is_file() else None
+
+
+def _stale(folder: Path, seeds: Mapping[str, Sequence[int]]) -> bool:
+    """Whether the summary was written for fewer seeds than requested (a smoke run).
+
+    A summary from before the counts were recorded is not stale, and one with more
+    seeds than requested is never: a ``--max-seeds`` call must not replace a full one.
+    """
+    have, want = _recorded(folder), _split_counts(seeds)
+    return have is not None and any(have.get(k, 0) < n for k, n in want.items())
+
+
+def _larger(folder: Path, seeds: Mapping[str, Sequence[int]]) -> bool:
+    """Whether the summary holds more seeds than requested (kept, not redone)."""
+    have, want = _recorded(folder), _split_counts(seeds)
+    return have is not None and any(have.get(k, 0) > n for k, n in want.items())
 
 
 def _finished(folder: Path, dagger: bool, seeds: Mapping[str, Sequence[int]]) -> bool:
@@ -823,6 +833,11 @@ def _distil_method(
         r for r in rows if force or not _finished(folder / r["run_id"], dagger, seeds)
     ]
     summary.skipped += [r["run_id"] for r in rows if r not in todo]
+    for r in rows:
+        if r not in todo and _larger(folder / r["run_id"], seeds):
+            logger.warning(
+                "%s: finished with more seeds than requested, kept", r["run_id"]
+            )
     if not todo:
         return False
     dirs = run_dirs([r["run_id"] for r in todo], tracking_uri)  # one short read

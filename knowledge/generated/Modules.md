@@ -46,7 +46,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/interpretation/distill.py]] | Decision-tree distillation: the tree grid, fidelity curves and complexity levels. |  |  | 194 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/features.py]] | Named, human-readable features of symbolic observations for tree distillation. |  |  | 271 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/rules.py]] | Rules and importance of distilled trees, and the top-level rules of skill methods. |  |  | 510 | [[interpretation]] |
-| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 973 | [[interpretation]] |
+| [[src/wut_murl_craftax/interpretation/run.py]] | Distil every final policy into decision trees: fidelity, complexity and rules. |  | [[2026-10-20-craftax-interpretation-and-ruleset]] | 988 | [[interpretation]] |
 | [[src/wut_murl_craftax/interpretation/tree_policy.py]] | Decision trees played as policies, and their closed-loop fidelity. |  |  | 345 | [[interpretation]] |
 | [[src/wut_murl_craftax/orchestration/__init__.py]] | Orchestration: JAX runtime, run queue, resumable runner, MLflow store, retention. |  |  | 146 | [[orchestration]] |
 | [[src/wut_murl_craftax/orchestration/abort.py]] | Abort rules of the runner: non-finite losses end a run, flags only tag it. |  |  | 186 | [[orchestration]] |
