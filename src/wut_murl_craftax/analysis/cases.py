@@ -502,10 +502,10 @@ def _close_calls_in(health: np.ndarray, a: int, p: int) -> int:
     """
     # the record's own rule, not a copy: counts match the exported close_calls
     from ..evaluation.episode_metrics import CLOSE_STEPS
-    from ..evaluation.episode_records import _close_calls
+    from ..evaluation.episode_records import close_calls
 
     n = len(health)
-    upto = [_close_calls(health[: min(x + CLOSE_STEPS, n)])[0] for x in (a - 1, p)]
+    upto = [close_calls(health[: min(x + CLOSE_STEPS, n)])[0] for x in (a - 1, p)]
     return upto[1] - upto[0]
 
 

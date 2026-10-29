@@ -391,7 +391,7 @@ def _skill_ends(
 def episode_columns(game: Game) -> tuple[str, ...]:
     """`EPISODE_COLUMNS` with each family expanded to the names of ``game``."""
     from .episode_metrics import STATS, creatures
-    from .episode_records import _HOSTILE, _ids, resources
+    from .episode_records import HOSTILE, milestone_ids, resources
     from .milestones import ADVANCED_ACTIONS, FLOORS, achievement_names, action_names
 
     ach = achievement_names(game)
@@ -404,13 +404,13 @@ def episode_columns(game: Game) -> tuple[str, ...]:
     names: dict[str, Sequence[str]] = {
         "ach/": ach,
         "unlock_step/": ach,
-        "kills/": [c for _, c in creatures(game, _HOSTILE)],
+        "kills/": [c for _, c in creatures(game, HOSTILE)],
         "coverage/": [f for f, _ in FLOORS[:floors]],
         "action_count/": action_names(game),
         "gathered/": res,
         "used/": res,
         "adv/": adv,
-        "split/": [ach[a] for a in _ids(game).milestones],
+        "split/": [ach[a] for a in milestone_ids(game)],
     } | dict.fromkeys(stats, STATS)
     return tuple(f"{c}{n}" for c in EPISODE_COLUMNS for n in names.get(c, [""]))
 

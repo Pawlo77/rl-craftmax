@@ -31,7 +31,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, records, statistics, pair, export. |  |  | 418 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/coverage.py]] | Exploration coverage of an episode: tiles seen per floor, new tiles, revisits. |  |  | 81 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. |  |  | 611 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/episode_records.py]] | Records of eval episodes: one row of the eval-episode table per episode. |  |  | 568 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/episode_records.py]] | Records of eval episodes: one row of the eval-episode table per episode. |  |  | 574 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. |  |  | 394 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/export.py]] | Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 542 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/hardware.py]] | Hardware usage of one run, summarised from its stored MLflow series. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 372 | [[evaluation]] |

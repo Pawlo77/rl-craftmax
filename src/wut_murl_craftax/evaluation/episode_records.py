@@ -142,6 +142,11 @@ def _ids(game: Game) -> _Ids:
     )
 
 
+def milestone_ids(game: Game) -> tuple[int, ...]:
+    """Achievement ids of the funnel milestones and ``ENTER_*`` splits of ``game``."""
+    return _ids(game).milestones
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class EpisodeRecord:
     """One eval episode; `row` gives its eval-episode table columns."""
@@ -225,7 +230,7 @@ class EpisodeRecord:
         g, res = self.game, resources(self.game)
         levels = np.full(3, math.nan) if self.need_levels is None else self.need_levels
         names, missing = achievement_names(g), np.full(len(res), math.nan)
-        hostile = creatures(g, _HOSTILE)
+        hostile = creatures(g, HOSTILE)
         adv = [a.lower() for a in ADVANCED_ACTIONS] if g == "craftax" else []
         return {
             "length": self.length,
@@ -281,7 +286,8 @@ class EpisodeRecord:
         }
 
 
-_HOSTILE = ("melee", "ranged")
+HOSTILE = ("melee", "ranged")
+"""Creature kinds whose kills are counted per kind (``kills/<name>``)."""
 
 
 def _cols(prefix: str, names: Sequence[str], values: Any) -> dict[str, Any]:
@@ -369,7 +375,7 @@ def _fights(ev: StepEvents, died: bool) -> tuple[Fight, ...]:
     return tuple(out)
 
 
-def _close_calls(health: np.ndarray) -> tuple[int, int]:
+def close_calls(health: np.ndarray) -> tuple[int, int]:
     """Close calls and how many recovered, as the online rule.
 
     One opens when health falls to `CLOSE_HEALTH` and counts once the episode goes on
@@ -475,7 +481,7 @@ def episode_record(
     ret = ev.unlocked.sum(0) @ reward_weights(game) + 0.1 * ev.health_delta.sum(
         dtype=np.float64
     )
-    close, recovered = _close_calls(health)
+    close, recovered = close_calls(health)
     return EpisodeRecord(
         game=game,
         length=n,
