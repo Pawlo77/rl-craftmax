@@ -11,9 +11,11 @@ import yaml
 from wut_murl_craftax.evaluation import select_pair
 from wut_murl_craftax.evaluation.select_pair import (
     NoPairError,
+    Ranked,
     choose_pair,
     final_scores,
     rank_methods,
+    rank_sum,
     write_combo,
 )
 from wut_murl_craftax.evaluation.stats import iqm, probability_of_improvement
@@ -26,6 +28,7 @@ from wut_murl_craftax.orchestration.queue import (
 
 REPO = Path(__file__).resolve().parents[2]
 FINAL_1M = REPO / "configs" / "phases" / "final-1m.yaml"
+FINAL_1B = REPO / "configs" / "phases" / "final-1b.yaml"
 TUNED = {
     "count-bonus": {"ppo-rnn": {"beta": 0.2}, "pqn-rnn": {"beta": 0.015}},
     "sil": {"lambda_sil": 0.3},
@@ -435,3 +438,56 @@ def test_no_note_when_the_plan_rule_pair_is_the_hook_pair(
     _main(store, methods)
     assert "NOTE" not in capsys.readouterr().out
     assert "NOTE" not in (methods / "combo.yaml").read_text(encoding="utf-8")
+
+
+# --- the 1B re-check: rank sum with final-1m (project plan Step 1b) -------------
+
+
+def test_rank_sum_adds_the_places_and_breaks_ties_by_the_other_poi() -> None:
+    here = [Ranked("a", "c", 3, 3.0, 0.2), Ranked("b", "c", 3, 2.0, 0.9)]
+    there = [
+        Ranked("b", "c", 10, 2.0, 0.4),
+        Ranked("x", "c", 10, 1.9, 0.9),
+        Ranked("a", "c", 10, 1.0, 0.6),
+    ]
+    out = rank_sum(here, there)  # a: 0 + 2, b: 1 + 0; x is not ranked here
+    assert [r.registry for r in out] == ["b", "a"]
+    assert out[0] is here[1]  # the entries keep their own seeds, IQM and PoI
+    tied = rank_sum(
+        [Ranked("a", "c", 3, 3.0, 0.2), Ranked("b", "c", 3, 2.0, 0.9)],
+        [Ranked("b", "c", 10, 2.0, 0.4), Ranked("a", "c", 10, 1.0, 0.6)],
+    )  # both sum to 1: the higher PoI in the other phase (a) first
+    assert [r.registry for r in tied] == ["a", "b"]
+
+
+def test_main_rank_sums_final_1b_with_final_1m(
+    store: Store, methods: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    means_1b = MEANS | {"smdp-skills": 1.0, "dyna-q": 0.9}  # skill methods last at 1B
+    _fill(store, methods, means_1b, phase=FINAL_1B)
+    before = (methods / "combo.yaml").read_text(encoding="utf-8")
+    _main(store, methods, "--rank-sum-with", "final-1m", "--dry-run", phase="final-1b")
+    out = capsys.readouterr().out
+    table = out.split("rank sum with final-1m", 1)[1]
+    order = [ln.split()[1] for ln in table.splitlines() if ln[:1].isdigit()]
+    # places (1b + 1m): cbppo 1 + 3, smdp 4 + 1, sil 2 + 4, dyna 5 + 2, cbpqn 3 + 5
+    assert order == [
+        "count-bonus-ppo-rnn",
+        "smdp-skills",
+        "sil",
+        "dyna-q",
+        "count-bonus-pqn-rnn",
+    ]
+    assert "pair: count-bonus-ppo-rnn + sil on ppo-rnn" in out
+    assert (methods / "combo.yaml").read_text(encoding="utf-8") == before
+
+
+def test_main_rank_sum_refuses_unfinished_runs_of_the_other_phase(
+    tmp_path: Path, methods: Path
+) -> None:
+    store = Store(tmp_path)
+    _fill(store, methods, skip=(_sil_tuned(methods)[0].name,))
+    _fill(store, methods, phase=FINAL_1B)
+    with pytest.raises(SystemExit) as exit_info:
+        _main(store, methods, "--rank-sum-with", "final-1m", phase="final-1b")
+    assert exit_info.value.code == select_pair.UNFINISHED_EXIT

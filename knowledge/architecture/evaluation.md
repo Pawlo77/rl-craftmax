@@ -5,7 +5,7 @@ domain: evaluation
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, evaluation]
 created: 2026-10-21
-updated: 2026-10-24
+updated: 2026-10-29
 related-code:
   - "[[src/wut_murl_craftax/evaluation/__init__.py]]"
   - "[[src/wut_murl_craftax/evaluation/events.py]]"
@@ -57,7 +57,7 @@ One line each; signatures and details: [[Modules]].
 - `coverage`: tiles seen per floor (first-seen step per tile), new tiles and revisits of an episode.
 - `rollout_metrics`: offline replay of the stored eval files (EV6): records with the trace, coverage, the training-analysis frames `skill_ends` and `eval_inventory`, their files, MLflow logging and the phase CLI.
 - `reproduction`: does a control's final score match the published one (`band`, CLI)?
-- `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`.
+- `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`; its `--rank-sum-with final-1m` ranks `final-1b` by the sum of both places (the plan's Step 1b re-check).
 - `stability`: drawdown, drop, collapse and recovery of a run's curve; config scores and hyperparameter sensitivity of a tuning grid ([[2026-10-20-craftax-evaluation-and-metrics]] "Learning stability").
 - `export`: a phase's tidy tables `runs`, `curves`, `eval_episodes` (EV10) from the store and the eval files, merged with the replay tables, and their MLflow run.
 - `hardware`: wall-clock, SPS, compile time, utilisation, memory and energy of a run from its stored series ([[2026-10-20-craftax-evaluation-and-metrics]] "Hardware usage").

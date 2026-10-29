@@ -4,11 +4,11 @@ Each method's tuned config in the phase (ablation items left out) scores the IQM
 its runs' final scores. Methods rank by IQM, ties by the probability of improvement
 over their base control (the end of the ``base_from`` chain), then by name. The pair
 is the compatible one of the smallest rank sum (ties: the better best rank): two hook
-methods on one control that set no knob two ways. Skill methods (`SKILL_METHODS`) are
-left out with a logged reason: ``combine`` composes hook methods only. Exit status 3
-on unfinished tuned runs (``--allow-partial`` ranks without them, ``--min-seeds``
-guards the pair), 1 without a compatible pair. Usage: ``python -m
-wut_murl_craftax.evaluation.select_pair --phase final-1m [--dry-run]``
+methods on one control that set no knob two ways; skill methods (`SKILL_METHODS`) are
+left out, as ``combine`` composes hook methods only. Exit status 3 on unfinished tuned
+runs (``--allow-partial`` ranks without them, ``--min-seeds`` guards the pair), 1
+without a compatible pair. ``python -m wut_murl_craftax.evaluation.select_pair --phase
+final-1m [--dry-run]``; Step 1b: ``--phase final-1b --rank-sum-with final-1m``.
 """
 
 import argparse
@@ -228,6 +228,22 @@ def rank_methods(
         poi = probability_of_improvement(x, scores[control])
         ranked.append(Ranked(registry, control, len(x), iqm(x), poi))
     return sorted(ranked, key=lambda r: (-r.iqm, -r.poi, r.registry))
+
+
+def rank_sum(ranking: Sequence[Ranked], other: Sequence[Ranked]) -> list[Ranked]:
+    """The methods of both rankings by the sum of their places (the plan's Step 1b).
+
+    Ties go to the higher probability of improvement in ``other`` (the 1M ranking),
+    then to the name. The entries are ``ranking``'s (its seeds, IQM and PoI); a
+    method ranked in only one of the two is left out.
+    """
+    there = {r.registry: (i, r) for i, r in enumerate(other)}
+    keyed = [
+        (i + there[r.registry][0], -there[r.registry][1].poi, r.registry, r)
+        for i, r in enumerate(ranking)
+        if r.registry in there
+    ]
+    return [k[-1] for k in sorted(keyed, key=lambda k: k[:3])]
 
 
 def method_knobs(registry: str, methods_dir: Path = METHODS_DIR) -> dict[str, Any]:
@@ -491,14 +507,13 @@ def _short(pair: Sequence[Ranked], min_seeds: int | None) -> list[str]:
     return [f"{r.registry} ({r.n})" for r in pair if r.n < min_seeds]
 
 
-def _choose(
+def _rank(
     args: argparse.Namespace, phase: Path
-) -> tuple[tuple[Ranked, Ranked], list[Ranked], list[str]]:
-    """Rank, print and choose for the CLI: the pair, the ranking and the header notes.
+) -> tuple[dict[str, list[float]], list[Ranked], list[str]]:
+    """Scores and ranking of ``phase`` with its PARTIAL note, printed when it applies.
 
     Raises:
         UnfinishedRunsError: Without ``allow_partial``, if tuned runs do not count.
-        NoPairError: Without a compatible pair or below ``min_seeds``.
     """
     uri = args.tracking_uri and _sqlite_uri(args.tracking_uri)
     scores, gaps = final_results(phase, tracking_uri=uri, methods_dir=args.methods_dir)
@@ -508,8 +523,44 @@ def _choose(
     if gaps:
         notes.append(f"PARTIAL ranking without {'; '.join(gaps)}")
         print(f"PARTIAL: {'; '.join(gaps)}")
-    ranking = rank_methods(scores, methods_dir=args.methods_dir)
+    return scores, rank_methods(scores, methods_dir=args.methods_dir), notes
+
+
+def _rank_summed(
+    args: argparse.Namespace, ranking: list[Ranked]
+) -> tuple[list[Ranked], list[str]]:
+    """``ranking`` by the sum of its places and those of ``--rank-sum-with``'s phase."""
+    other = _phase_path(args.rank_sum_with)
+    _, there, notes = _rank(args, other)
+    summed = rank_sum(ranking, there)
+    here = {r.registry: i for i, r in enumerate(ranking, 1)}
+    then = {r.registry: i for i, r in enumerate(there, 1)}
+    print(f"rank sum with {other.stem}: rank method places (here + {other.stem})")
+    lines = [
+        f"{i} {r.registry} {here[r.registry]} + {then[r.registry]}"
+        for i, r in enumerate(summed, 1)
+    ]
+    print("\n".join(lines))
+    names = ", ".join(
+        f"{r.registry} {here[r.registry]}+{then[r.registry]}" for r in summed
+    )
+    return summed, [*notes, f"rank sum with {other.stem}: {names}"]
+
+
+def _choose(
+    args: argparse.Namespace, phase: Path
+) -> tuple[tuple[Ranked, Ranked], list[Ranked], list[str]]:
+    """Rank, print and choose for the CLI: the pair, the ranking and the header notes.
+
+    Raises:
+        UnfinishedRunsError: Without ``allow_partial``, if tuned runs do not count.
+        NoPairError: Without a compatible pair or below ``min_seeds``.
+    """
+    scores, ranking, notes = _rank(args, phase)
     _print_ranking(scores, ranking)
+    if args.rank_sum_with:
+        ranking, more = _rank_summed(args, ranking)
+        notes += more
     pair = choose_pair(ranking, methods_dir=args.methods_dir)
     if short := _short(pair, args.min_seeds):
         msg = f"pair methods below --min-seeds {args.min_seeds}: {', '.join(short)}"
@@ -537,6 +588,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument(
         "--min-seeds", type=int, help="refuse a pair method with fewer counted runs"
+    )
+    parser.add_argument(
+        "--rank-sum-with",
+        metavar="PHASE",
+        help="rank by the sum of the places here and in this phase (the 1B re-check: "
+        "--phase final-1b --rank-sum-with final-1m)",
     )
     parser.add_argument("--dry-run", action="store_true", help="leave combo.yaml")
     args = parser.parse_args(argv)
