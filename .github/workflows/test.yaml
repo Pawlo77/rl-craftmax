@@ -20,8 +20,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # pytest-xdist runs the suite on every core (addopts); serially it took over 30 min
-    timeout-minutes: 45
+    # The four pytest runs below took 41 min with one worker each on an M-series
+    # laptop; a runner core is ~2x slower: ~85 min with one worker (private runner).
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -47,8 +48,35 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --all-groups --python "$UV_PYTHON"
 
+      # Memory, measured on macOS (phys footprint): a pytest process that runs the whole
+      # suite grows to ~6.6 GB, as compiled JAX code and renderers pile up; one that
+      # runs a quarter of it peaks at 3.9 GB (training, with its JAX subprocesses).
+      # So the suite runs as four pytest processes in turn, each with
+      # (RAM - 2 GB) / 4 GB workers: 1 on the 2-core private runner (7-8 GB),
+      # 3 on the 4-core public one (16 GB). `-n auto` would start one per core.
       - name: Run pytest with coverage
-        run: uv run pytest --cov=./src/wut_murl_craftax --cov-report=xml tests/
+        run: |
+          mem_gb=$(awk '/MemTotal/ {print int($2 / 1048576)}' /proc/meminfo)
+          workers=$(( (mem_gb - 2) / 4 ))
+          workers=$(( workers < 1 ? 1 : workers ))
+          workers=$(( workers > $(nproc) ? $(nproc) : workers ))
+          echo "RAM ${mem_gb} GB, $(nproc) cores: ${workers} pytest worker(s)"
+          rest=(--ignore=tests/training --ignore=tests/orchestration --ignore=tests/evaluation)
+          rest+=(--ignore=tests/analysis --ignore=tests/interpretation)
+          status=0
+          for group in "tests/training" "tests/orchestration tests/evaluation" \
+              "tests/analysis tests/interpretation" "tests ${rest[*]}"; do
+            echo "::group::pytest $group"
+            # shellcheck disable=SC2086  # $group holds several arguments
+            uv run pytest -n "$workers" --cov=./src/wut_murl_craftax --cov-append \
+              --cov-report= $group || status=1
+            echo "::endgroup::"
+          done
+          uv run coverage xml
+          # the measured peak of this job on Linux, to check the budget above
+          cg=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)
+          echo "peak memory: $(( $(cat "$cg/memory.peak" 2>/dev/null || echo 0) >> 20 )) MiB"
+          exit "$status"
 
       - name: Upload coverage to Codecov
         if: matrix.python == '3.12'

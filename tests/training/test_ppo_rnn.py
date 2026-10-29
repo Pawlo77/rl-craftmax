@@ -292,10 +292,16 @@ def test_done_step_unlocks_reach_the_episode_metrics(
     assert_done_step_unlock_counted(METHODS["ppo-rnn"], config, monkeypatch)
 
 
+@pytest.fixture(scope="module")
+def three_updates(cfg: PPORNNConfig) -> Any:
+    """The metrics of 3 updates from a fresh state."""
+    return train_chunk(init_state(cfg, jax.random.key(0)), 3)[1]
+
+
 def test_a_chunk_returns_the_ppo_and_recurrent_metrics_per_update(
-    cfg: PPORNNConfig,
+    three_updates: Any,
 ) -> None:
-    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+    m = three_updates
     got = {k: np.asarray(m[k]) for k in METRIC_NAMES}  # type: ignore[literal-required]
     for name, values in got.items():
         assert values.shape == (3,), name
@@ -316,10 +322,9 @@ def test_a_chunk_returns_the_ppo_and_recurrent_metrics_per_update(
 
 
 def test_the_first_minibatch_ratio_is_one_before_any_gradient_step(
-    cfg: PPORNNConfig,
+    three_updates: Any,
 ) -> None:
-    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
-    np.testing.assert_allclose(m["ppo/ratio_first_mb"], 1.0, atol=1e-3)  # type: ignore[typeddict-item]
+    np.testing.assert_allclose(three_updates["ppo/ratio_first_mb"], 1.0, atol=1e-3)
 
 
 def test_the_rollout_stats_are_means_over_steps_and_envs(

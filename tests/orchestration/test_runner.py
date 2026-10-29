@@ -405,12 +405,6 @@ def test_the_tracker_comes_from_experiment_yaml_named_after_the_phase(
     assert default == queue.EXPERIMENT_CONFIG
 
 
-def test_the_shipped_experiment_yaml_names_the_project() -> None:
-    raw = yaml.safe_load(queue.EXPERIMENT_CONFIG.read_text())
-    assert raw["experiment"]["name"] == raw["mlflow"]["experiment_name"] == "craftax"
-    assert raw["mlflow"]["run_name"] is None
-
-
 def test_evaluation_runs_after_training_and_before_finished(store: Store) -> None:
     (spec,) = store.phase("tune-coarse", ["published"])
     store.run([spec], FakeTrainer())

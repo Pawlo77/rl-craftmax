@@ -493,6 +493,8 @@ def test_status_shows_a_run_aborted_for_good_apart(
     main_store.add(pqn, "entries", status="FAILED")
     status = phase_status(ENTRIES, main_store.uri, methods_dir=METHODS)
     assert (status[ppo], status[pqn]) == ("aborted", "failed")
+    if tag != "abort/guard":
+        return  # the CLI prints the same counts for every tag: start it once
     cmd = [sys.executable, "-m", "wut_murl_craftax.orchestration.store", "status"]
     cmd += ["--phase", str(ENTRIES), "--methods-dir", str(METHODS)]
     # a plain .db path, as the chain passes it

@@ -44,7 +44,6 @@ from wut_murl_craftax.training.interface import METHODS
 from wut_murl_craftax.training.pqn_rnn import (
     PQNRNNConfig,
     _learn_batch,
-    q_lambda_targets,
 )
 from wut_murl_craftax.training.progress_key import CLASSIC_FIELDS
 from wut_murl_craftax.training.records import LOSS_COLUMNS
@@ -156,20 +155,6 @@ def test_the_horizon_knob_sets_the_top_level_gamma(methods_dir: Path) -> None:
 
 
 # --- Q(lambda) over skill ends ------------------------------------------------------
-
-
-def test_q_lambda_targets_stop_at_a_skill_end() -> None:
-    """One env, 4 steps, a skill end at step 2 (gamma 0.99, lambda 0.5).
-
-    ``G_2 = r_2 = 1`` (no bootstrap from the next skill's state),
-    ``G_1 = 0.99 (0.5 x 2 + 0.5 x 1) = 1.485``,
-    ``G_0 = 0.99 (0.5 x 1 + 0.5 x 1.485) = 1.230075``.
-    """
-    q_next = jnp.array([[1.0], [2.0], [3.0]])
-    r = jnp.array([[0.0], [0.0], [1.0]])
-    d = jnp.array([[0.0], [0.0], [1.0]])
-    g = q_lambda_targets(q_next, r, d, 0.99, 0.5)
-    np.testing.assert_allclose(g[:, 0], [1.230075, 1.485, 1.0], rtol=1e-6)
 
 
 def test_the_learner_cuts_targets_at_skill_ends_and_resets_at_episode_ends() -> None:

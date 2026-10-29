@@ -3,6 +3,7 @@
 import dataclasses
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -125,9 +126,18 @@ PPO_METRICS = (
 )
 
 
-def test_a_chunk_returns_the_ppo_metrics_per_update() -> None:
-    cfg = dataclasses.replace(TINY, steps=4096, envs=32, num_steps=8, lr=1e-3)
-    _, m = train_chunk(init_state(cfg, jax.random.key(0)), 3)
+CHUNK = dataclasses.replace(TINY, steps=4096, envs=32, num_steps=8, lr=1e-3)
+"""A 16-update config whose 3-update chunk both metric tests read."""
+
+
+@pytest.fixture(scope="module")
+def three_updates() -> Any:
+    """The metrics of 3 updates of `CHUNK` from a fresh state."""
+    return train_chunk(init_state(CHUNK, jax.random.key(1)), 3)[1]
+
+
+def test_a_chunk_returns_the_ppo_metrics_per_update(three_updates: Any) -> None:
+    m = three_updates
     losses = dict(zip(LOSS_COLUMNS, np.asarray(m["losses"]).T, strict=True))
     for name in PPO_METRICS:
         values = np.asarray(m[f"ppo/{name}"])  # type: ignore[literal-required]  # method metric
@@ -139,12 +149,9 @@ def test_a_chunk_returns_the_ppo_metrics_per_update() -> None:
     assert (np.asarray(m["ppo/adv_std"]) > 0).all()  # type: ignore[literal-required]
 
 
-def test_the_logged_learning_rate_is_the_annealed_one() -> None:
-    cfg = dataclasses.replace(TINY, steps=4096, envs=32, num_steps=8, lr=1e-3)
-    state = init_state(cfg, jax.random.key(1))
-    _, m = train_chunk(state, 3)
-    want = [1e-3 * (1 - u / cfg.n_updates) for u in range(3)]
-    np.testing.assert_allclose(m["ppo/lr"], want, rtol=1e-6)  # type: ignore[literal-required]
-    flat = dataclasses.replace(cfg, anneal_lr=False)
+def test_the_logged_learning_rate_is_the_annealed_one(three_updates: Any) -> None:
+    want = [1e-3 * (1 - u / CHUNK.n_updates) for u in range(3)]
+    np.testing.assert_allclose(three_updates["ppo/lr"], want, rtol=1e-6)
+    flat = dataclasses.replace(CHUNK, anneal_lr=False)
     _, m = train_chunk(init_state(flat, jax.random.key(1)), 2)
     np.testing.assert_allclose(m["ppo/lr"], [1e-3, 1e-3], rtol=1e-6)  # type: ignore[literal-required]
