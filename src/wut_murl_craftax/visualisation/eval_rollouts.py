@@ -632,8 +632,12 @@ def network_outputs(
     if family == "skills" and (skill is None or skill_steps is None):
         msg = f"{run.method} needs the running skill and skill_steps of every step"
         raise ValueError(msg)
-    per_step = {"actions": actions, "dones": dones, "skill": skill}
-    per_step["skill_steps"] = skill_steps
+    per_step = {
+        "actions": actions,
+        "dones": dones,
+        "skill": skill,
+        "skill_steps": skill_steps,
+    }
     if bad := [
         f"{k} has {len(v)} steps"
         for k, v in per_step.items()

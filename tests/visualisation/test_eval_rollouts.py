@@ -749,17 +749,21 @@ def test_network_outputs_refuse_inputs_shorter_or_longer_than_obs() -> None:
     skill, steps = _skill_inputs(ev, 0)
     ep, actions = stored_episode(run, u, seed)
     good = {"actions": actions, "dones": ep.done, "skill": skill, "skill_steps": steps}
+    n = len(ep.obs)
     for name in good:
-        bad = good | {name: good[name][:-1]}
-        n = len(ep.obs)
-        with pytest.raises(ValueError, match=f"{name} has {n - 1} steps, obs {n}"):
-            network_outputs(
-                run,
-                u,
-                ep.obs,
-                bad["actions"],
-                bad["dones"],
-                False,
-                bad["skill"],
-                bad["skill_steps"],
-            )
+        for wrong, cut in ((n - 1, slice(None, -1)), (n + 1, slice(None))):
+            value = good[name][cut]
+            if wrong > n:
+                value = np.concatenate([value, value[-1:]])
+            bad = good | {name: value}
+            with pytest.raises(ValueError, match=f"{name} has {wrong} steps, obs {n}"):
+                network_outputs(
+                    run,
+                    u,
+                    ep.obs,
+                    bad["actions"],
+                    bad["dones"],
+                    False,
+                    bad["skill"],
+                    bad["skill_steps"],
+                )
