@@ -91,7 +91,8 @@ class HookFields:
     env step in the rollout scan (actor); ``t`` is the int32 env-step counter. Never
     compare the two env states across a done, read ``traj.events`` instead."""
     observe: Callable[[State, "Traj"], State] | None = None
-    """``(state, traj) -> state``, once per rollout before GAE (learner device)."""
+    """``(state, traj) -> state``, once per rollout on the learner. PPO's GAE ran on the
+    actor already: ``observe`` cannot change rewards or advantages."""
     extra_loss_fn: (
         Callable[
             [Any, State, jax.Array],
@@ -187,10 +188,13 @@ def check_metric_names(names: Iterable[str]) -> None:
     """Require ``<group>/<name>`` metric names; the old ``hook/`` prefix is refused.
 
     Raises:
-        ValueError: On a name without a ``/`` prefix, with an empty part or with
-            the old ``hook/`` prefix.
+        ValueError: On a name that is no string, without a ``/`` prefix, with an
+            empty part or with the old ``hook/`` prefix.
     """
     for name in names:
+        if not isinstance(name, str):
+            msg = f"metric name {name!r} must be a string like 'count/size'"
+            raise ValueError(msg)  # noqa: TRY004  # one error type for a bad name
         group, _, rest = name.partition("/")
         if name.startswith(OLD_METRIC_PREFIX):
             msg = f"metric name {name!r}: the {OLD_METRIC_PREFIX!r} prefix is retired"

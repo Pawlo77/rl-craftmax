@@ -168,6 +168,11 @@ def test_the_config_splits_the_planning_keys_off(methods_dir: Path) -> None:
         trainer.config({k: v for k, v in _config(methods_dir).items() if k != "vi_tol"})
     with pytest.raises(ValueError, match="plan_variant"):
         trainer.config(_config(methods_dir, plan_variant="sweeps"))
+    with pytest.raises(ValueError, match="monte_carlo"):
+        trainer.config(_config(methods_dir, monte_carlo=True))
+    assert not trainer.config(
+        _config(methods_dir, monte_carlo=False)
+    ).smdp.top.monte_carlo
 
 
 def test_the_model_refuses_pairs_equal_to_the_envs(methods_dir: Path) -> None:
