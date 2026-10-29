@@ -27,7 +27,12 @@ import numpy as np
 from jax.sharding import NamedSharding, PartitionSpec
 
 from ..evaluation.episode_metrics import score_pct
-from ..evaluation.events import NO_SOURCE, StepEvents, step_events
+from ..evaluation.events import (
+    NO_SOURCE,
+    StepEvents,
+    despawn_distance,
+    step_events,
+)
 from ..evaluation.milestones import Game, game_of
 from ..orchestration import (
     configure_runtime,
@@ -224,7 +229,13 @@ class EvalRun:
     ) -> tuple[jax.Array, Any, jax.Array, jax.Array, StepEvents]:
         """``(obs, state, reward, done, events)``; events as the training wrapper's."""
         obs, state2, r, d, _ = self.env.step(key, state, action, self.env_params)
-        ev = step_events(self.game, unwrap_state(state), action, unwrap_state(state2))
+        ev = step_events(
+            self.game,
+            unwrap_state(state),
+            action,
+            unwrap_state(state2),
+            despawn_distance(self.env_params),
+        )
         return obs, state2, r, d, ev
 
     @functools.cached_property

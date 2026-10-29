@@ -24,6 +24,7 @@ from wut_murl_craftax.evaluation.rollout_metrics import (
     HOARD_CAPS,
     IDENTITY,
     INVENTORY_COLUMNS,
+    MISMATCH_COLUMNS,
     RUN_IDENTITY,
     SKILL_ENDS_COLUMNS,
     Identity,
@@ -34,6 +35,7 @@ from wut_murl_craftax.evaluation.rollout_metrics import (
     episode_columns,
     file_tables,
     main,
+    mismatch_path,
     out_paths,
     phase_runs,
     plan_jobs,
@@ -218,6 +220,75 @@ def test_a_stored_event_the_replay_does_not_reproduce_raises(
         ReplayMismatchError, match=f"{where} seed 10001 differs.*health_delta"
     ):
         file_tables(rp, bad, UPDATE, "stochastic", ID)
+
+
+def _stale(stochastic: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """A copy whose stored kills and damage differ from what the replay computes."""
+    bad = dict(stochastic)
+    for k in ("events/damage_dealt", "events/kills"):
+        bad[k] = stochastic[k].copy()
+    bad["events/damage_dealt"][1, 3] += 2
+    bad["events/kills"][0, 5, 0] += 1
+    return bad
+
+
+def test_recompute_takes_the_replayed_events_and_records_each_mismatch(
+    rp: Replayer, stochastic: dict[str, np.ndarray], tables: Any
+) -> None:
+    got = file_tables(rp, _stale(stochastic), UPDATE, "stochastic", ID, recompute=True)
+    pd.testing.assert_frame_equal(got.episodes, tables.episodes)  # the true events
+    m = got.mismatches.sort_values("eval_seed", ignore_index=True)
+    assert tuple(m.columns) == MISMATCH_COLUMNS
+    assert m[["run_id", "update", "mode"]].drop_duplicates().values.tolist() == [
+        ["run-x", UPDATE, "stochastic"]
+    ]
+    assert m[["eval_seed", "field", "steps", "first_step"]].values.tolist() == [
+        [10000, "kills", 1, 5],
+        [10001, "damage_dealt", 1, 3],
+    ]
+    kills, damage = m["old"] - m["new"]
+    assert (kills, damage) == (1.0, 2.0)  # the stored value minus the replayed one
+
+
+def test_recompute_of_an_agreeing_file_has_no_mismatch(
+    rp: Replayer, stochastic: dict[str, np.ndarray], tables: Any
+) -> None:
+    got = file_tables(rp, stochastic, UPDATE, "stochastic", ID, recompute=True)
+    assert got.mismatches.empty
+    assert tuple(got.mismatches.columns) == MISMATCH_COLUMNS
+    pd.testing.assert_frame_equal(got.episodes, tables.episodes)
+    assert tables.mismatches.empty
+
+
+def test_recompute_still_raises_on_a_skill_end_mismatch(
+    rp: Replayer, stochastic: dict[str, np.ndarray]
+) -> None:
+    steps = stochastic["extras/steps_in_skill"].copy()
+    steps[0, int(np.flatnonzero(steps[0] > 0)[0])] = 0
+    bad = stochastic | {"extras/steps_in_skill": steps}
+    with pytest.raises(ReplayMismatchError, match="ends skills"):
+        file_tables(rp, bad, UPDATE, "stochastic", ID, recompute=True)
+
+
+def test_process_recompute_writes_the_mismatch_csv_before_the_done_marker(
+    rp: Replayer, stochastic: dict[str, np.ndarray], tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(
+        "wut_murl_craftax.visualisation.eval_rollouts.load_eval",
+        lambda *a, **k: _stale(stochastic),
+    )
+    ident = Identity("run-x", "1m", 3)
+    assert process_file(rp, ident, UPDATE, "stochastic", tmp_path, recompute=True)
+    csv = mismatch_path(tmp_path, "run-x", UPDATE, "stochastic")
+    assert (
+        csv.parent
+        == out_paths(tmp_path, "run-x", UPDATE, "stochastic")["episodes"].parent
+    )
+    m = pd.read_csv(csv)
+    assert tuple(m.columns) == MISMATCH_COLUMNS
+    assert sorted(m["field"]) == ["damage_dealt", "kills"]
+    with pytest.raises(ReplayMismatchError, match="differs"):  # strict is the default
+        process_file(rp, ident, UPDATE, "greedy", tmp_path)
 
 
 def test_a_stored_skill_start_the_replay_does_not_end_raises(
@@ -455,6 +526,30 @@ def test_the_cli_skips_a_mismatching_file_and_exits_1(
         main([*argv, "--updates", "2"])
     assert out_paths(out, run_id, UPDATE, "stochastic")["episodes"].is_file()
     assert not out_paths(out, run_id, UPDATE, "greedy")["episodes"].exists()
+
+
+def test_the_cli_recomputes_a_mismatching_file_with_the_flag(
+    skill_run: Path, tmp_path: Path
+) -> None:
+    uri, client = _store(tmp_path)
+    run_id = _run_in_store(client, skill_run, tmp_path, "final-1m", "final-1m")
+    run_dir = Path(client.get_run(run_id).info.artifact_uri.removeprefix("file://"))
+    bad = load_eval(run_dir, UPDATE, greedy=True)
+    bad["events/health_delta"][0, 2] += 1
+    np.savez_compressed(run_dir / "eval" / "greedy" / f"{UPDATE:05d}.npz", **bad)
+    out = tmp_path / "out"
+    argv = ["--run", run_id, "--tracking-uri", uri, "--out", str(out), "--no-log"]
+    main([*argv, "--updates", "2", "--mode", "greedy", "--recompute-events"])
+    assert out_paths(out, run_id, UPDATE, "greedy")["episodes"].is_file()
+    (row,) = pd.read_csv(mismatch_path(out, run_id, UPDATE, "greedy")).to_dict(
+        "records"
+    )
+    assert (row["eval_seed"], row["field"], row["first_step"]) == (
+        10000,
+        "health_delta",
+        2,
+    )
+    assert row["old"] - row["new"] == 1
 
 
 def test_plan_skips_runs_without_eval_files(tmp_path: Path) -> None:

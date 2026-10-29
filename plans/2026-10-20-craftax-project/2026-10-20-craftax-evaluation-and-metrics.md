@@ -115,7 +115,7 @@ Deviations of `evaluation/events.py` (2026-10-21, justified by the state the gam
 
 - Damage source: lava under the player is ranked before any hit (Classic sets health to 0 on lava).
 - Damage dealt: a killed slot counts its remaining health, so overkill is excluded.
-- Kill: a live slot dead in `s2` or refilled by a spawn in the same step (jumped more than one tile, or gained health); slots at despawn distance (14, never on the boss floor) are excluded. Replaces the `health <= 0` test: a spawn can refill a killed slot in the same step, and a despawn also clears a slot.
+- Kill: a live slot dead in `s2` or refilled by a spawn in the same step (jumped more than one tile, or gained health); slots at the params' despawn distance (14 by default; melee and ranged mobs never despawn on the boss floor, passive ones do) are excluded; a refill within 1 tile that leaves no health rise is missed. Replaces the `health <= 0` test: a spawn can refill a killed slot in the same step, and a despawn also clears a slot.
 - Projectile damage: damage dealt to a slot off the `DO` target tile, so melee hits are not counted.
 - Effective action: only rises of food, drink and energy, a fall of mana and newly fired player projectiles count as stat changes.
 - `kills` counts hostile (melee and ranged) creatures only; `passive_kills` counts the rest.

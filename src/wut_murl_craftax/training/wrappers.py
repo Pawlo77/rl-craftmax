@@ -30,7 +30,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from ..evaluation.events import step_events
+from ..evaluation.events import despawn_distance, step_events
 from ..evaluation.milestones import game_of
 
 
@@ -125,9 +125,9 @@ class OptimisticResetVecEnvWrapper(GymnaxWrapper):
         rngs = jax.random.split(_rng, self.num_envs)
         obs_st, state_st, reward, done, info = self.step_fn(rngs, state, action, params)
         # before the resets below replace the done envs' terminal states
-        events = jax.vmap(partial(step_events, self.game))(
-            unwrap_state(state), action, unwrap_state(state_st)
-        )
+        events = jax.vmap(
+            partial(step_events, self.game, despawn=despawn_distance(params))
+        )(unwrap_state(state), action, unwrap_state(state_st))
         info["events"] = events
 
         rng, _rng = jax.random.split(rng)
