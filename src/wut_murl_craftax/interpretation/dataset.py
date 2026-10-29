@@ -9,13 +9,13 @@ most ``max_states_per_episode`` states sampled uniformly. Rows hold `FEATURES` p
 [[2026-10-20-craftax-interpretation-and-ruleset]]; files: `dataset_path`.
 """
 
-import os
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import NamedTuple, Self, cast
 
 import numpy as np
 
+from ..analysis.load import atomic_path
 from ..training.skills import NUM_SKILLS, SKILLS
 from ..visualisation.eval_rollouts import (
     EVAL_SEEDS,
@@ -83,16 +83,14 @@ class Dataset(NamedTuple):
     def save(self, path: Path) -> None:
         """Write a compressed ``.npz``; a file that exists is complete."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")  # one per process
-        with tmp.open("wb") as f:
-            arrays = {k: getattr(self, k) for k in _FIELDS}
-            arrays |= {
-                "columns": np.array(self.columns),
-                "family": np.array(self.family),
-                "recurrent": np.array(self.recurrent),
-            }
+        arrays = {k: getattr(self, k) for k in _FIELDS}
+        arrays |= {
+            "columns": np.array(self.columns),
+            "family": np.array(self.family),
+            "recurrent": np.array(self.recurrent),
+        }
+        with atomic_path(path) as tmp, tmp.open("wb") as f:
             np.savez_compressed(f, **arrays)
-        tmp.replace(path)
 
     @classmethod
     def load(cls, path: Path) -> Self:

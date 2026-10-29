@@ -197,6 +197,34 @@ def test_two_collections_of_a_network_policy_are_identical(ppo_run: EvalRun) -> 
     assert (a.family, a.recurrent) == ("ppo", False)  # memory proxies unused
 
 
+def test_a_failed_save_leaves_no_file_and_no_temporary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ds = Dataset(
+        features=np.zeros((2, 3), np.float32),
+        columns=("a", "b", "c"),
+        label=np.zeros(2, np.int8),
+        probs=np.full((2, 4), 0.25, np.float32),
+        episode=np.zeros(2, np.int32),
+        step=np.arange(2, dtype=np.int32),
+        floor=np.zeros(2, np.int8),
+        family="ppo",
+        recurrent=False,
+    )
+
+    def boom(*a: Any, **k: Any) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    monkeypatch.setattr(np, "savez_compressed", boom)
+    with pytest.raises(OSError, match="disk full"):
+        ds.save(tmp_path / "train.npz")
+    assert list(tmp_path.iterdir()) == []
+    monkeypatch.undo()
+    ds.save(tmp_path / "train.npz")
+    assert [p.name for p in tmp_path.iterdir()] == ["train.npz"]
+
+
 def test_an_empty_seed_list_is_refused(ppo_run: EvalRun) -> None:
     with pytest.raises(ValueError, match="at least one seed"):
         collect(ppo_run, 0, ())

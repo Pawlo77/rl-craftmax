@@ -15,7 +15,6 @@ import argparse
 import json
 import logging
 import math
-import os
 import pickle  # nosec B403 - only trees this module wrote (scikit-learn persists by pickle)
 import shutil
 import statistics
@@ -40,7 +39,7 @@ from ..analysis.figures import (
 )
 from ..analysis.figures import _theme as figure_theme
 from ..analysis.latex import MIN_UNCENSORED
-from ..analysis.load import METRICS_ROOT, load_phases
+from ..analysis.load import METRICS_ROOT, atomic_path, load_phases, write_text_atomic
 from ..evaluation.select_pair import SKILL_METHODS
 from ..orchestration.tracking import log_analysis_run
 from ..training.smdp import GREEDY_TABLE_FILE
@@ -181,22 +180,14 @@ def _plain(value: Any) -> Any:
     raise TypeError(msg)
 
 
-def _write(path: Path, text: str) -> None:
-    """Replace ``path`` atomically, so a file that exists is complete."""
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")  # one per process
-    tmp.write_text(text)
-    tmp.replace(path)
-
-
 def _write_csv(frame: pd.DataFrame, path: Path) -> None:
     """Replace ``path`` atomically with ``frame`` (a reader never sees half a CSV)."""
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    frame.to_csv(tmp, index=False)
-    tmp.replace(path)
+    with atomic_path(path) as tmp:
+        frame.to_csv(tmp, index=False)
 
 
 def _write_json(path: Path, data: Any) -> None:
-    _write(path, json.dumps(data, indent=1, default=_plain) + "\n")
+    write_text_atomic(path, json.dumps(data, indent=1, default=_plain) + "\n")
 
 
 def _read_json(path: Path) -> Any:
@@ -259,7 +250,9 @@ def _save_fit(
     for n in KEPT:
         with _tree_path(folder, n, variant).open("wb") as f:
             pickle.dump(leaf[n], f)
-    _write(folder / f"rules_16_{variant}.txt", rules_text(leaf[16], game=game) + "\n")
+    write_text_atomic(
+        folder / f"rules_16_{variant}.txt", rules_text(leaf[16], game=game) + "\n"
+    )
     tree = leaf[CLOSED_LOOP_LEAVES]
     rows = pd.DataFrame(importance(tree, test)).assign(variant=variant)
     rows.to_csv(folder / f"importance_{variant}.csv", index=False)
@@ -366,7 +359,7 @@ def _top_level(update: int, run: EvalRun, folder: Path) -> Json:
         *_top_text("tried", tried),
         *_top_text("default", default),
     ]
-    _write(folder / "top_level_rules.txt", "\n".join(lines))
+    write_text_atomic(folder / "top_level_rules.txt", "\n".join(lines))
     data = {"main": "tried", "tried": _top_json(tried), "default": _top_json(default)}
     _write_json(path, data)
     return data
@@ -516,7 +509,7 @@ def sum_up_method(folder: Path) -> None:
         frame = curves if table == "curve" else _concat(folder, summaries, table)
         _write_csv(frame, folder / f"{table}.csv")
     _write_json(folder / SUMMARY, {"median_run": median["run_id"], "seeds": summaries})
-    _write(folder / "rules_16.txt", _rules_text(folder, median))
+    write_text_atomic(folder / "rules_16.txt", _rules_text(folder, median))
     if median["top_level"] is not None:
         shutil.copyfile(
             folder / median["run_id"] / "top_level_rules.txt",
@@ -729,9 +722,8 @@ def _read_curve(path: Path) -> pd.DataFrame | None:
 
 
 def _copy_atomic(src: Path, dst: Path) -> None:
-    tmp = dst.with_name(f"{dst.name}.{os.getpid()}.tmp")
-    shutil.copyfile(src, tmp)
-    tmp.replace(dst)
+    with atomic_path(dst) as tmp:
+        shutil.copyfile(src, tmp)
 
 
 def policy_table(summaries: Sequence[tuple[Json, Path]]) -> pd.DataFrame:
@@ -868,7 +860,7 @@ def _log_method(folder: Path, phases: Sequence[str], tracking_uri: str) -> None:
         name = f"distill-{budget}-{method}"
         paths = sorted(stage.iterdir())
         run_id = log_analysis_run(stage, paths, name, tags, tracking_uri)
-    _write(folder / LOGGED, run_id + "\n")
+    write_text_atomic(folder / LOGGED, run_id + "\n")
     logger.info("logged %s to run %s", folder, run_id)
 
 

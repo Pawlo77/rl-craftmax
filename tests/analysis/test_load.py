@@ -27,6 +27,7 @@ from wut_murl_craftax.analysis.load import (
     MissingPhaseError,
     SchemaError,
     _control_maps,
+    atomic_path,
     base_control,
     final_checkpoint,
     in_phase,
@@ -195,6 +196,40 @@ def test_load_phases_selects_by_the_phases_tag_not_the_experiment(
     assert set(controls["phase"]) == {"final-1m"}
     assert in_phase(runs, "final-1m").all()
     assert set(runs[in_phase(runs, "tune-coarse")]["method"]) == {"ppo", "ppo-rnn"}
+
+
+# --- atomic writes --------------------------------------------------------------
+
+
+def test_atomic_path_replaces_on_success_and_leaves_no_temporary(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "f.txt"
+    target.write_text("old")
+    with atomic_path(target) as tmp:
+        assert tmp.parent == tmp_path
+        tmp.write_text("new")
+        assert target.read_text() == "old"  # until the block ends
+    assert target.read_text() == "new"
+    assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
+
+
+def test_atomic_path_keeps_the_old_file_and_removes_the_temporary_on_an_error(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "f.txt"
+    target.write_text("old")
+
+    def write_and_fail() -> None:
+        with atomic_path(target) as tmp:
+            tmp.write_text("half")
+            msg = "disk full"
+            raise OSError(msg)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_and_fail()
+    assert target.read_text() == "old"
+    assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
 
 
 # --- missing phases (R86) -------------------------------------------------------
