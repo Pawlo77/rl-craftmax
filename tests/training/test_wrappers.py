@@ -238,6 +238,24 @@ def test_events_equal_the_plain_step_events(boss_step: dict[str, Any]) -> None:
         assert np.array_equal(np.asarray(a)[keep], np.asarray(b)[keep])
 
 
+def test_the_step_events_use_the_params_despawn_distance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[int] = []
+
+    def spy(game: str, s: Any, a: Any, s2: Any, despawn: int = 14) -> Any:
+        seen.append(despawn)
+        return step_events(game, s, a, s2, despawn)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("wut_murl_craftax.training.wrappers.step_events", spy)
+    base = make_craftax_env_from_name(CRAFTAX, auto_reset=False)
+    vec = OptimisticResetVecEnvWrapper(LogWrapper(base), 2, 1)
+    params = vec.default_params.replace(mob_despawn_distance=9)
+    _, st = vec.reset(jax.random.key(0), params)
+    vec.step(jax.random.key(1), st, jnp.zeros(2, jnp.int32), params)
+    assert seen == [9]
+
+
 def test_an_unlock_on_the_timeout_step_is_reported(boss_step: dict[str, Any]) -> None:
     unlocked = np.asarray(boss_step["info"]["events"].unlocked)
     assert np.flatnonzero(unlocked[0]).tolist() == [TABLE]

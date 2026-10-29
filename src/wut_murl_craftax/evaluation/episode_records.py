@@ -176,6 +176,9 @@ class EpisodeRecord:
     low_share: np.ndarray
     zero_share: np.ndarray
     """Share of steps with food, drink, energy ``<= 2`` and ``== 0``."""
+    any_zero_share: float
+    """Share of steps with any of food, drink, energy at 0 (never below the largest
+    ``zero_share``)."""
     action_counts: np.ndarray
     """Actions of the steps not forced."""
     action_entropy: float
@@ -261,6 +264,7 @@ class EpisodeRecord:
             "close_calls_recovered": self.close_calls_recovered,
             **_cols("low_share", STATS, self.low_share),
             **_cols("zero_share", STATS, self.zero_share),
+            "any_zero_share": self.any_zero_share,
             **_cols("action_count", action_names(g), self.action_counts),
             "action_entropy": self.action_entropy,
             "wasted_share": self.wasted_share,
@@ -503,6 +507,7 @@ def episode_record(
         close_calls_recovered=recovered,
         low_share=ev.stat_low.mean(0),
         zero_share=ev.stat_zero.mean(0),
+        any_zero_share=float(ev.stat_zero.any(-1).mean()),
         steps_per_achievement=n / unlocked.sum() if unlocked.any() else math.nan,
         wood_to_diamond=int(diamond - wood) if diamond >= 0 and wood >= 0 else -1,
         **_action_usage(ev, actions, game),

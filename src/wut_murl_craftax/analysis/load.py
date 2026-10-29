@@ -114,7 +114,9 @@ EPISODE_REQUIRED = [
     "wasted_crafts",
     "wood_to_diamond",
 ]
-"""The fixed columns of ``eval_episodes.parquet``; the ``<family>/<name>`` ones vary."""
+"""The fixed columns of ``eval_episodes.parquet``; the ``<family>/<name>`` ones vary.
+Not required: ``any_zero_share``, which older exports lack (the radar's Survivor axis
+falls back to a bound without it, `figures_game.SURVIVOR_COLUMN`)."""
 _REQUIRED = {
     "runs": RUNS_COLUMNS,
     "curves": CURVES_COLUMNS,

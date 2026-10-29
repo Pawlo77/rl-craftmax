@@ -5,9 +5,10 @@
 Definitions: "Shared step events" of the evaluation plan. Hits and kills are read from
 the traces ``craftax_step`` leaves (attack cooldowns, projectile paths, the recover
 counter, mob slots); where the state cannot tell causes apart, ``_damage_source``,
-``_losses`` and ``step_events`` state the rule. Craftax is imported on first use: its
-constants build JAX arrays, which would start the backends before ``configure_runtime``
-splits the CPU.
+``_losses`` and ``step_events`` state the rule. Kills are exact for the despawn distance
+passed in, barring a same-step refill that `_losses` cannot see. Craftax is imported on
+first use: its constants build JAX arrays, which would start the backends before
+``configure_runtime`` splits the CPU.
 """
 
 import importlib
@@ -32,7 +33,13 @@ MELEE_COOLDOWN, RANGED_COOLDOWN = 5, 4
 """Cooldown an attack sets in both games; otherwise it only counts down, so a slot
 holding it in ``s2`` attacked in this step."""
 DESPAWN_DISTANCE = 14
-"""``EnvParams.mob_despawn_distance`` default of both games."""
+"""``EnvParams.mob_despawn_distance`` default of both games; `step_events` takes the
+params' value."""
+
+
+def despawn_distance(params: Any) -> int:
+    """``params.mob_despawn_distance``; ``None`` (the env's default params) reads 14."""
+    return DESPAWN_DISTANCE if params is None else int(params.mob_despawn_distance)
 
 
 @struct.dataclass
@@ -277,17 +284,25 @@ def _damage_source(rules: _Rules, a: _View, b: _View, combat: jax.Array) -> jax.
 
 
 def _losses(
-    a: _Group, b: _Group, p: jax.Array, boss: jax.Array, target: jax.Array
+    a: _Group,
+    b: _Group,
+    p: jax.Array,
+    stays_far: jax.Array,
+    despawn: int,
+    target: jax.Array,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Killed slots, health removed and the part off the ``DO`` target.
 
     A live slot that is dead in ``s2``, or was refilled by a spawn in the same step
     (jumped more than one tile, or gained health: live mobs never heal), was killed
-    unless it was at despawn distance from the player (never on the boss floor); a
-    killed slot loses its remaining health.
+    unless it was ``despawn`` tiles or more from the player (Manhattan) and the game
+    despawns that class there: ``stays_far`` (melee and ranged mobs on the boss floor
+    never despawn, passive ones do). A killed slot loses its remaining health. Missed:
+    a kill whose slot is refilled within 1 tile by a mob with no more health than the
+    dead one had (a full-health mob of the same type), which looks like a live mob.
     """
     refilled = (jnp.abs(b.pos - a.pos).sum(-1) > 1) | (b.health > a.health)
-    stays = (jnp.abs(a.pos - p).sum(-1) < DESPAWN_DISTANCE) | boss
+    stays = (jnp.abs(a.pos - p).sum(-1) < despawn) | stays_far
     killed = a.mask & stays & (~b.mask | refilled)
     lost = jnp.where(killed, a.health, jnp.maximum(a.health - b.health, 0.0))
     dealt = jnp.where(a.mask, lost, 0.0)
@@ -331,10 +346,17 @@ def _hostiles(rules: _Rules, b: _View) -> tuple[jax.Array, jax.Array]:
     return on.sum().astype(jnp.int8), close.sum().astype(jnp.int8)
 
 
-def step_events(game: Game, s: Any, action: jax.Array | int, s2: Any) -> StepEvents:
+def step_events(
+    game: Game,
+    s: Any,
+    action: jax.Array | int,
+    s2: Any,
+    despawn: int = DESPAWN_DISTANCE,
+) -> StepEvents:
     """Events of the step ``s -(action)-> s2`` of ``game`` (raw ``EnvState``s).
 
     ``s2`` is the state before any auto-reset, so unlocks on a done step are kept.
+    ``despawn`` is the params' ``mob_despawn_distance`` (`despawn_distance`).
     Combat damage = health loss - drain (1) - harmful potion (3), clipped at 0; a hit
     hidden by a heal in the same step keeps its source with 0 damage.
     """
@@ -355,8 +377,14 @@ def step_events(game: Game, s: Any, action: jax.Array | int, s2: Any) -> StepEve
     front, do = a.position + c.DIRECTIONS[a.direction], c.Action.DO.value
     boss = b.level == len(FLOORS) - 1
     out = [
-        _losses(ga, gb, b.position, boss, (ga.pos == front).all(-1) & (act == do))
-        for ga, gb in ((a.melee, b.melee), (a.passive, b.passive), (a.ranged, b.ranged))
+        _losses(
+            ga, gb, b.position, far, despawn, (ga.pos == front).all(-1) & (act == do)
+        )
+        for ga, gb, far in (
+            (a.melee, b.melee, boss),
+            (a.passive, b.passive, jnp.bool_(False)),
+            (a.ranged, b.ranged, boss),
+        )
     ]
     (km, dm, pm), (kp, dp, pp), (kr, dr, pr) = out
     kills = (

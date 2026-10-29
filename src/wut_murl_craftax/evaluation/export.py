@@ -262,6 +262,8 @@ class RunTables(NamedTuple):
     episodes: list[pa.Table]
     replay: dict[str, list[pa.Table]]
     """`REPLAY_FRAMES` key -> the replay files found."""
+    stored: int = 0
+    """Eval files without a replay table (their rows come from the stored events)."""
 
 
 def run_episodes(run: RunRef, ref: str, game: Game, replay_root: Path) -> RunTables:
@@ -284,6 +286,7 @@ def run_episodes(run: RunRef, ref: str, game: Game, replay_root: Path) -> RunTab
                 table = table.cast(_stored_schema(table.schema, order))
             else:
                 table = _stored_table(path, head, game, order)
+                out = out._replace(stored=out.stored + 1)
             refs = pa.array([ref] * len(table), pa.string())
             out.episodes.append(
                 table.replace_schema_metadata(None).add_column(2, "config_ref", refs)
@@ -363,7 +366,7 @@ def _build(
     replay_root: Path,
 ) -> dict[str, pa.Table]:
     """Stream the curves into ``stage``; return the other tables of the phase."""
-    rows, episodes = [], []
+    rows, episodes, stored, files = [], [], 0, 0
     replay: dict[str, list[pa.Table]] = {k: [] for k in REPLAY_FRAMES}
     t0 = time.time()
     with (
@@ -382,12 +385,18 @@ def _build(
             csv.write_table(batch)
             tables = run_episodes(run, ref, _game(config_json), replay_root)
             episodes += tables.episodes
+            stored, files = stored + tables.stored, files + len(tables.episodes)
             for kind, frames in tables.replay.items():
                 replay[kind] += frames
             if k % 25 == 0 or k == len(todo):
                 logger.info(
                     "%s: %d/%d runs (%.0fs)", phase, k, len(todo), time.time() - t0
                 )
+    logger.warning(
+        "%s: %d of %d eval files have no replay table in %s (stored events, "
+        "replay-only columns null)",
+        phase, stored, files, replay_root,
+    )  # fmt: skip
     runs_df = pd.DataFrame(rows)
     extra = [c for c in runs_df.columns if c not in RUNS_COLUMNS]
     out = {

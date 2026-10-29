@@ -115,7 +115,7 @@ Deviations of `evaluation/events.py` (2026-10-21, justified by the state the gam
 
 - Damage source: lava under the player is ranked before any hit (Classic sets health to 0 on lava).
 - Damage dealt: a killed slot counts its remaining health, so overkill is excluded.
-- Kill: a live slot dead in `s2` or refilled by a spawn in the same step (jumped more than one tile, or gained health); slots at despawn distance (14, never on the boss floor) are excluded. Replaces the `health <= 0` test: a spawn can refill a killed slot in the same step, and a despawn also clears a slot.
+- Kill: a live slot dead in `s2` or refilled by a spawn in the same step (jumped more than one tile, or gained health); slots at the params' despawn distance (14 by default; melee and ranged mobs never despawn on the boss floor, passive ones do) are excluded; a refill within 1 tile that leaves no health rise is missed. Replaces the `health <= 0` test: a spawn can refill a killed slot in the same step, and a despawn also clears a slot.
 - Projectile damage: damage dealt to a slot off the `DO` target tile, so melee hits are not counted.
 - Effective action: only rises of food, drink and energy, a fall of mana and newly fired player projectiles count as stat changes.
 - `kills` counts hostile (melee and ranged) creatures only; `passive_kills` counts the rest.
@@ -192,7 +192,7 @@ Compared only between runs with the same `profile` tag (profiles loaded by `orch
 | Wasted crafts | crafting or placing actions that consumed resources without raising a tool, armour or item level beyond what was owned, plus tables placed with another table within crafting distance ([[Craftax crafting and placing]]) | `inventory`, `map` | R |
 | Wood-to-diamond time | steps from the first `COLLECT_WOOD` to the first `COLLECT_DIAMOND`, episodes reaching diamond | unlock events | R |
 | Advanced mechanics | per episode use counts and adoption (share of episodes with >= 1 use) of spells cast, books read, potions drunk per colour, sword, armour and bow enchantments, arrows made and shot, attribute level-ups ([[Craftax magic potions and enchanting]]); over training from the achievements `CAST_FIREBALL`, `CAST_ICEBALL`, `LEARN_FIREBALL`, `LEARN_ICEBALL`, `DRINK_POTION`, `ENCHANT_SWORD`, `ENCHANT_ARMOUR`, `MAKE_ARROW`, `FIRE_BOW` | actions, effective flag, `achievements` | U (achievements), R (counts) |
-| Playstyle radar | one radar per method and benchmark from final-checkpoint stochastic eval episodes, 8 axes: Explorer = mean coverage of visited floors; Survivor = 1 - share of steps with any stat zero; Fighter = kills per 1000 steps; Crafter = mean tech depth; Diver = mean max floor; Efficient = achievements per 1000 steps; Mage = mean adoption of advanced mechanics; Precise = 1 - wasted share; each axis min-max scaled over all methods and controls of that benchmark | the families above | M |
+| Playstyle radar | one radar per method and benchmark from final-checkpoint stochastic eval episodes, 8 axes: Explorer = mean coverage of visited floors; Survivor = 1 - share of steps with any stat zero (`any_zero_share`); Fighter = kills per 1000 steps; Crafter = mean tech depth; Diver = mean max floor; Efficient = achievements per 1000 steps; Mage = mean adoption of advanced mechanics; Precise = 1 - wasted share; each axis min-max scaled over all methods and controls of that benchmark | the families above | M |
 
 ---
 

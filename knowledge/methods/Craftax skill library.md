@@ -5,7 +5,7 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, skills, options, hierarchical-rl, prior-knowledge]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-29
 aliases: [Skill library, Hand-defined skills]
 related-code: ["[[src/wut_murl_craftax/training/skills.py]]"]
 ---
@@ -89,7 +89,7 @@ Floors where a resource exists follow [[Craftax blocks and resources#Resource sp
 | 19 | `fight` | always | after a `DO` with a melee or ranged creature on the facing tile, no creature of that type is in the 5 x 5 tiles around the player in the next observation (a survivor moves at most one tile); or the achievement part of the reward is > 0 on an attack step (a first `DEFEAT_*`, the necromancer included) | the 8 kills that open the ladder, `DEFEAT_*` | only melee and ranged kills count; hits on the necromancer that do not finish it are not observable as kills ([[Craftax floors and progression#Ladders]], [[Craftax creatures]], [[Craftax boss fight]]) | 300 |
 | 20 | `descend` | ladder-open flag of the observation set (8 kills on the floor; floor 0 starts open); floor < 8 | floor rises | `ENTER_*` (3-8 reward), new resources, 1 XP | `DESCEND` on the down ladder | 1000 |
 | 21 | `open_chest` | floor 1, 3 or 4 | the facing tile in the map view turns from chest to path | bow (floor 1), books (3, 4), ores, potions | first chest of a floor gives the bow or a book ([[Craftax items and inventory#Chest loot]]) | 500 |
-| 22 | `enchant` | floor 3 or 4; mana >= 9; a sapphire (floor 3) or ruby (floor 4); sword > 0 or an armour piece | a sword, bow or armour enchantment channel changes | elemental damage and defence | the player must face the enchantment table; costs 9 mana and 1 gem ([[Craftax magic potions and enchanting#Enchanting]]) | 500 |
+| 22 | `enchant` | floor 3 or 4; mana >= 9; a sapphire (floor 3) or ruby (floor 4); an owned sword, bow or armour set holding an enchantment other than the table's (ice on floor 3, fire on floor 4; see below) | a sword, bow or armour enchantment channel changes | elemental damage and defence | the player must face the enchantment table; costs 9 mana and 1 gem ([[Craftax magic potions and enchanting#Enchanting]]) | 500 |
 | 23 | `unlock_any` | always | the achievement part of the reward is > 0 (a first unlock this episode) | the achievements no skill targets: sapling, plant, stone and torch placing, arrows, bow and spell use, potions | the one-time achievement reward ([[Craftax achievements]]) | 500 |
 
 ### Primitive options (one step, no network)
@@ -101,6 +101,11 @@ Floors where a resource exists follow [[Craftax blocks and resources#Resource sp
 
 - Primitive options override the network's action for one step; those steps are masked out of the skill network's loss.
 - The tie order for `level_up` is a fixed rule (prior knowledge); the top level still chooses when to spend XP.
+
+### `enchant` start condition
+
+- A table gives its own enchantment (ice on floor 3, fire on floor 4), and `ENCHANT_ARMOUR` picks a slot whose enchantment differs, so the skill can succeed only while some owned item differs from the table's type. The first mask (sword > 0, bow > 0 or an armour piece) stayed true when every owned item already matched; the skill then ran to its 500-step timeout. The 2026-10-21 review found it, and the table-type test (`skills._enchantable`) went in before any tuning or final run: every smdp-skills and dyna-q run of the store was trained at a commit that has it.
+- `skills.enchant_redundant(view)` is that state (gear owned, nothing to change); `evaluation.skill_audit` counts the `enchant` decisions taken in it from stored eval episodes (0 expected). No config knob selects the old mask: it was never trained, and a switch would only reproduce the flaw.
 
 ## Skill dependency graph
 

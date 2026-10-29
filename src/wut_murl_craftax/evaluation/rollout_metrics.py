@@ -2,13 +2,13 @@
 
 `replay_file` replays ``eval/<mode>/<update>.npz`` from seed + actions with
 `EvalRun.env_step` (64 seeds vmapped, split over the CPU devices, jitted `CHUNK`-step
-scans, each seed to its stored ``length``), keeping per step only the `Trace` row, the
+scans, each seed to its stored ``length``), keeping per step the `Trace` row, the
 capped-inventory flag and, for skill policies, the decision key and skill end reason;
 `update_seen` runs inside. Events or skill ends that differ from the file raise
-`ReplayMismatchError`. `file_tables` builds the eval-episode rows and the TA4 frames
-``skill_ends`` and ``eval_inventory`` (contracts.md sections 1, 9); `process_file`
-writes them to ``outputs/metrics/<run_id>/`` and logs them to the run. CLI: ``python
--m wut_murl_craftax.evaluation.rollout_metrics --phase final-1m --tracking-uri URI``.
+`ReplayMismatchError`; ``recompute`` takes the replayed events and lists the
+differences. `file_tables` builds the eval-episode rows and the TA4 frames (contracts.md
+sections 1, 9), `process_file` writes and logs them. CLI: ``python -m
+wut_murl_craftax.evaluation.rollout_metrics --help`` (``--recompute-events``).
 """
 
 import argparse
@@ -66,10 +66,10 @@ EPISODE_COLUMNS = (
     "n_stalls", "max_stall", "fights", "kills/", "kills/passive", "damage_dealt",
     "damage_taken", "projectile_damage", "close_calls", "close_calls_recovered",
     "coverage/", "new_tiles_per_100", "revisit_rate", "unique_positions", "low_share/",
-    "zero_share/", "survival/count/", "survival/gap/", "survival/level/",
-    "action_count/", "action_entropy", "wasted_share", "noop_share", "forced_share",
-    "gathered/", "used/", "use_ratio", "steps_per_achievement", "wasted_crafts",
-    "wood_to_diamond", "adv/", "split/",
+    "zero_share/", "any_zero_share", "survival/count/", "survival/gap/",
+    "survival/level/", "action_count/", "action_entropy", "wasted_share", "noop_share",
+    "forced_share", "gathered/", "used/", "use_ratio", "steps_per_achievement",
+    "wasted_crafts", "wood_to_diamond", "adv/", "split/",
 )  # fmt: skip
 """Columns of ``eval_episodes`` in contracts.md section 1 order; a name ending in
 ``/`` is a family the game expands (`episode_columns`; ``kills/`` holds the hostile
@@ -98,6 +98,18 @@ _TYPES = {"stalls": pa.list_(_STALL), "fights": pa.list_(_FIGHT)}
 """Arrow types numpy cannot infer: an all-empty column would be typed null and refuse
 to concatenate with the other files (the R81 bug class)."""
 _TEXT = {"skill": pa.string(), "reason": pa.string(), "mode": pa.string()}
+RECOMPUTABLE = ("kills", "passive_kills", "damage_dealt", "projectile_damage")
+"""The `StepEvents` fields ``recompute`` may replace: the kill and despawn rules
+(`events._losses`) are the only ones that changed after the 1M files were written. A
+difference in any other field means the replay diverged, and still raises."""
+MISMATCH_COLUMNS = (
+    "run_id", "update", "mode", "eval_seed", "field", "steps", "first_step", "old",
+    "new",
+)  # fmt: skip
+"""Columns of ``event_mismatches_<update>_<mode>.csv``: a row per seed and `StepEvents`
+field the replay computes differently; ``steps`` of the episode differ, the first at
+``first_step``; ``old`` and ``new`` are the episode sums of the stored and replayed
+values."""
 
 
 class ReplayMismatchError(RuntimeError):
@@ -126,6 +138,12 @@ class FileReplay(NamedTuple):
     """Skill policies: `smdp.top_key` of the observation at each step."""
     reasons: np.ndarray | None
     """Skill policies: `skills.REASONS` index of the running skill after each step."""
+    events: StepEvents
+    """The replayed events, seeds first (numpy); equal to the stored ones unless
+    ``recompute``."""
+    mismatches: list[dict[str, Any]]
+    """With ``recompute``: a row of `MISMATCH_COLUMNS` after ``run_id``, ``update`` and
+    ``mode`` for every seed and field whose replayed events differ; else empty."""
 
 
 class Tables(NamedTuple):
@@ -135,6 +153,8 @@ class Tables(NamedTuple):
     skill_ends: pd.DataFrame | None
     """None for policies without skills."""
     inventory: pd.DataFrame
+    mismatches: pd.DataFrame
+    """`MISMATCH_COLUMNS`; empty unless the replay recomputed differing events."""
 
 
 def at_cap(s: Any) -> jax.Array:
@@ -265,21 +285,43 @@ def _run_chunks(rp: Replayer, arrays: Mapping[str, np.ndarray]) -> tuple[Any, ..
     return first, out, np.asarray(seen)
 
 
-def _check_events(arrays: Mapping[str, np.ndarray], replayed: Any, where: str) -> None:
-    """Raise unless each seed's replayed events equal the stored ones up to its end."""
-    seeds, length = np.asarray(arrays["seeds"]), np.asarray(arrays["length"])
-    for i, (seed, n) in enumerate(zip(seeds, length, strict=True)):
-        bad = [
-            f.name
-            for f in fields(StepEvents)
-            if not np.array_equal(
-                np.asarray(arrays[f"events/{f.name}"])[i, :n],
-                np.asarray(getattr(replayed, f.name))[i, :n],
-            )
-        ]
-        if bad:
-            msg = f"replay of {where} seed {int(seed)} differs from the stored {bad}"
-            raise ReplayMismatchError(msg)
+def _event_diffs(
+    arrays: Mapping[str, np.ndarray], replayed: Any
+) -> list[dict[str, Any]]:
+    """A row per seed and field whose replayed events differ from the stored ones.
+
+    Compared up to each seed's ``length``; the row holds ``eval_seed``, ``field``,
+    ``steps`` (how many differ), ``first_step`` and the episode sums ``old`` (stored)
+    and ``new`` (replayed).
+    """
+    rows = []
+    for i, (seed, n) in enumerate(zip(arrays["seeds"], arrays["length"], strict=True)):
+        for f in fields(StepEvents):
+            old = np.asarray(arrays[f"events/{f.name}"])[i, :n]
+            new = np.asarray(getattr(replayed, f.name))[i, :n]
+            differ = (old != new).reshape(len(old), -1).any(-1) if n else old[:0]
+            if differ.any():
+                rows.append({
+                    "eval_seed": int(seed),
+                    "field": f.name,
+                    "steps": int(differ.sum()),
+                    "first_step": int(differ.argmax()),
+                    "old": float(old.sum(dtype=np.float64)),
+                    "new": float(new.sum(dtype=np.float64)),
+                })
+    return rows
+
+
+def _check_events(
+    diffs: Sequence[Mapping[str, Any]], where: str, allowed: Sequence[str] = ()
+) -> None:
+    """Raise `ReplayMismatchError` for the first seed differing outside ``allowed``."""
+    diffs = [d for d in diffs if d["field"] not in allowed]
+    if diffs:
+        seed = diffs[0]["eval_seed"]
+        bad = [d["field"] for d in diffs if d["eval_seed"] == seed]
+        msg = f"replay of {where} seed {seed} differs from the stored {bad}"
+        raise ReplayMismatchError(msg)
 
 
 def _check_skills(
@@ -302,16 +344,25 @@ def _check_skills(
 
 
 def replay_file(
-    rp: Replayer, arrays: Mapping[str, np.ndarray], where: str = "the eval file"
+    rp: Replayer,
+    arrays: Mapping[str, np.ndarray],
+    where: str = "the eval file",
+    recompute: bool = False,
 ) -> FileReplay:
     """Replay every seed of an eval file's arrays and check them against the file.
 
+    ``recompute`` accepts a difference in the `RECOMPUTABLE` fields (the rules that
+    compute them changed since the file was written): it is listed in ``mismatches``,
+    and ``events`` holds the replayed ones. Skill ends are checked either way.
+
     Raises:
-        ReplayMismatchError: If a seed's replayed events (or skill ends) differ from
-            the stored ones; the message names ``where`` (run, update, mode) and seed.
+        ReplayMismatchError: If a seed's replayed events (except the `RECOMPUTABLE`
+            ones under ``recompute``) or skill ends differ from the stored ones; the
+            message names ``where`` (run, update, mode), the seed and the fields.
     """
     first, out, seen = _run_chunks(rp, arrays)
-    _check_events(arrays, out["events"], where)
+    diffs = _event_diffs(arrays, out["events"])
+    _check_events(diffs, where, RECOMPUTABLE if recompute else ())
     length = np.asarray(arrays["length"])
     traces = [
         Trace(
@@ -328,7 +379,9 @@ def replay_file(
     reasons = out.get("reason")
     if reasons is not None:
         _check_skills(arrays, reasons, where)
-    return FileReplay(traces, seen, capped, out.get("key"), reasons)
+    return FileReplay(
+        traces, seen, capped, out.get("key"), reasons, out["events"], diffs
+    )
 
 
 def pair_counts(run_dir: Path, update: int) -> dict[tuple[int, str], int] | None:
@@ -421,8 +474,12 @@ def file_tables(
     update: int,
     mode: str,
     ident: Identity,
+    recompute: bool = False,
 ) -> Tables:
     """The eval-episode rows, ``skill_ends`` and ``eval_inventory`` of one eval file.
+
+    With ``recompute`` the rows come from the replayed events and ``mismatches`` lists
+    where they differ from the stored ones (`replay_file`).
 
     Raises:
         ReplayMismatchError: If the replay disagrees with the file (`replay_file`).
@@ -434,12 +491,12 @@ def file_tables(
             f"{where} has extras/skill but {run.method}'s policy is not a skills policy"
         )
         raise ReplayMismatchError(msg)
-    fr = replay_file(rp, arrays, where)
+    fr = replay_file(rp, arrays, where, recompute)
     actions, steps = np.asarray(arrays["actions"]), run.env_steps(update)
     names = [f.name for f in fields(StepEvents)]
     rows, inv = [], []
     for i, (seed, n) in enumerate(zip(arrays["seeds"], arrays["length"], strict=True)):
-        ev = StepEvents(**{k: np.asarray(arrays[f"events/{k}"])[i, :n] for k in names})  # type: ignore[arg-type]  # numpy rows
+        ev = StepEvents(**{k: np.asarray(getattr(fr.events, k))[i, :n] for k in names})  # type: ignore[arg-type]  # numpy rows
         trace = fr.traces[i]
         record = episode_record(ev, actions[i, :n], trace, game=run.game)
         head = {
@@ -471,7 +528,9 @@ def file_tables(
         odd = set(order) ^ set(episodes.columns)
         msg = f"eval-episode columns differ from EPISODE_COLUMNS: {sorted(odd)}"
         raise ValueError(msg)
-    return Tables(episodes[order], ends, inventory[list(INVENTORY_COLUMNS)])
+    head = {"run_id": ident.run_id, "update": update, "mode": mode}
+    wrong = pd.DataFrame([head | d for d in fr.mismatches], columns=MISMATCH_COLUMNS)
+    return Tables(episodes[order], ends, inventory[list(INVENTORY_COLUMNS)], wrong)
 
 
 def out_paths(out: Path, run_id: str, update: int, mode: str) -> dict[str, Path]:
@@ -482,6 +541,11 @@ def out_paths(out: Path, run_id: str, update: int, mode: str) -> dict[str, Path]
         "inventory": d / f"inventory_{update}_{mode}.parquet",
         "episodes": d / f"eval_{update}_{mode}.parquet",
     }
+
+
+def mismatch_path(out: Path, run_id: str, update: int, mode: str) -> Path:
+    """The event-mismatch CSV of (run, update, mode); written only if events differ."""
+    return Path(out) / run_id / f"event_mismatches_{update}_{mode}.csv"
 
 
 def arrow_table(df: pd.DataFrame) -> pa.Table:
@@ -559,10 +623,13 @@ def process_file(
     mode: str,
     out: Path = OUT_ROOT,
     client: Any = None,
+    recompute: bool = False,
 ) -> bool:
     """Write the tables of one eval file and log them to the run; False if done.
 
-    Idempotent: existing tables are not recomputed. A ``.logging`` marker is written
+    ``recompute`` is `file_tables`'s: differing events go to `mismatch_path`, written
+    before the tables. Idempotent: existing tables are not recomputed (so recompute
+    into a fresh ``out``). A ``.logging`` marker is written
     before the logging and replaced by ``.logged`` after it, so a rerun never logs
     twice: after a cut it logs only the summaries the store lacks.
     """
@@ -575,7 +642,14 @@ def process_file(
         episodes = pd.read_parquet(paths["episodes"])
     else:
         arrays = load_eval(rp.run.dir, update, mode == "greedy")
-        t = file_tables(rp, arrays, update, mode, ident)
+        t = file_tables(rp, arrays, update, mode, ident, recompute)
+        csv = mismatch_path(out, ident.run_id, update, mode)
+        csv.unlink(missing_ok=True)  # a rerun that finds none leaves no stale list
+        if not t.mismatches.empty:
+            csv.parent.mkdir(parents=True, exist_ok=True)
+            tmp = csv.with_suffix(".tmp")
+            t.mismatches.to_csv(tmp, index=False)
+            tmp.replace(csv)
         if t.skill_ends is not None:
             _write(t.skill_ends, paths["skill_ends"])
         _write(t.inventory, paths["inventory"])
@@ -688,6 +762,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--out", type=Path, default=OUT_ROOT)
     p.add_argument("--tracking-uri", required=True)
     p.add_argument("--no-log", action="store_true", help="write tables only")
+    p.add_argument(
+        "--recompute-events",
+        action="store_true",
+        help="use the replayed events where they differ from the stored ones and list "
+        "them in event_mismatches_*.csv, instead of failing the file",
+    )
     p.add_argument("--host-devices", type=int, default=8, help="CPU shards of seeds")
     a = p.parse_args(argv)
     if not a.phase and not a.run:
@@ -733,7 +813,13 @@ def main(argv: list[str] | None = None) -> None:
             rp = Replayer(EvalRun.load(ref.dir))
         try:
             process_file(
-                rp, Identity(ref.run_id, ref.budget, ref.seed), u, m, a.out, client
+                rp,
+                Identity(ref.run_id, ref.budget, ref.seed),
+                u,
+                m,
+                a.out,
+                client,
+                a.recompute_events,
             )
         except ReplayMismatchError as e:
             failed.append(str(e))
@@ -747,6 +833,9 @@ def main(argv: list[str] | None = None) -> None:
             m,
             time.time() - t0,
         )
+    if a.recompute_events:
+        n = len(list(Path(a.out).glob("*/event_mismatches_*.csv")))
+        logger.info("%d files with recomputed events under %s", n, a.out)
     if failed:
         msg = f"{len(failed)} files failed: {failed}"
         raise SystemExit(msg)

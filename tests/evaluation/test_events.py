@@ -11,16 +11,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from craftax.craftax.constants import Achievement, Action, BlockType
+from craftax.craftax.craftax_state import EnvParams
 from craftax.craftax_classic.constants import Action as ClassicAction
 from craftax.craftax_env import make_craftax_env_from_name
 
 from wut_murl_craftax.evaluation.events import (
+    DESPAWN_DISTANCE,
     LAVA,
     NO_SOURCE,
     StepEvents,
+    despawn_distance,
     step_events,
 )
-from wut_murl_craftax.evaluation.milestones import CREATURE_OFFSET, CREATURES
+from wut_murl_craftax.evaluation.milestones import CREATURE_OFFSET, CREATURES, FLOORS
 
 ZOMBIE = CREATURE_OFFSET["melee"]
 SKELETON = CREATURE_OFFSET["ranged"]
@@ -222,6 +225,51 @@ def test_despawn_is_not_a_kill(craftax: Env) -> None:
     ev, _ = craftax.play(s, Action.NOOP.value)  # 14 tiles away: despawns
     assert int(ev.kills.sum()) == 0
     assert float(ev.damage_dealt) == 0
+
+
+def _vanish_on_floor(craftax: Env, group: str, floor: int, dist: int) -> StepEvents:
+    """Events of a slot-0 mob ``dist`` tiles away that is gone in ``s2``."""
+    s = quiet(craftax.start()).replace(player_level=jnp.int32(floor))
+    m = getattr(s, group)
+    alive = m.replace(
+        position=m.position.at[floor, 0].set(jnp.array((24, 24 + dist))),
+        mask=m.mask.at[floor, 0].set(True),
+        health=m.health.at[floor, 0].set(1.0),
+    )
+    s = s.replace(**{group: alive})
+    s2 = s.replace(**{group: alive.replace(mask=alive.mask.at[floor, 0].set(False))})
+    return craftax.events("craftax", s, Action.NOOP.value, s2)
+
+
+def test_the_boss_floor_keeps_melee_and_ranged_mobs_but_not_passive_ones(
+    craftax: Env,
+) -> None:
+    far, boss = 14, len(FLOORS) - 1
+    assert int(_vanish_on_floor(craftax, "melee_mobs", 0, far).kills.sum()) == 0
+    assert int(_vanish_on_floor(craftax, "melee_mobs", boss, far).kills.sum()) == 1
+    assert int(_vanish_on_floor(craftax, "ranged_mobs", boss, far).kills.sum()) == 1
+    cow = _vanish_on_floor(craftax, "passive_mobs", boss, far)
+    assert int(cow.passive_kills) == 0  # a passive mob despawns on the boss floor too
+    assert float(cow.damage_dealt) == 0
+    assert int(_vanish_on_floor(craftax, "passive_mobs", boss, 3).passive_kills) == 1
+
+
+def test_the_despawn_distance_is_an_argument(craftax: Env) -> None:
+    s = put(quiet(craftax.start()), "melee_mobs", (24, 36), health=1.0, type_id=0)
+    m = s.melee_mobs
+    s2 = s.replace(melee_mobs=m.replace(mask=m.mask.at[0, 0].set(False)))
+    act = Action.NOOP.value
+    assert int(craftax.events("craftax", s, act, s2).kills.sum()) == 1  # 12 < 14
+    far = jax.jit(step_events, static_argnames=("game", "despawn"))
+    for dist, kills in ((12, 0), (13, 1)):
+        ev = far("craftax", s, act, s2, despawn=dist)
+        assert int(ev.kills.sum()) == kills
+
+
+def test_despawn_distance_of_the_params() -> None:
+    p = EnvParams()
+    assert despawn_distance(None) == DESPAWN_DISTANCE == p.mob_despawn_distance
+    assert despawn_distance(p.replace(mob_despawn_distance=9)) == 9
 
 
 def _cow_in_front(s: Any) -> Any:
