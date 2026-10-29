@@ -75,7 +75,7 @@ def test_coarse_grid_is_seven_one_knob_entries() -> None:
     for name, over in STAGE_1.items():
         cfg = resolve_config(ppo(), "ppo", "1m", ref=name, methods_dir=METHODS)
         diff = {k for k in cfg if cfg[k] != (TABLE_11 | {"method": "ppo"})[k]}
-        assert diff <= set(over), name
+        assert diff == set(over), name
 
 
 def test_fine_holds_the_rule_and_knobs_and_no_entries() -> None:

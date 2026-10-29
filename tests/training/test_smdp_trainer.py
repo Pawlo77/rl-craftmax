@@ -217,6 +217,22 @@ def test_two_updates_report_the_chunk_metrics(entry: Any) -> None:
     assert np.asarray(m["done"]).dtype == np.asarray(m["ach"]).dtype == bool
 
 
+def test_the_monte_carlo_ablation_trains_through_the_jitted_chunk(
+    methods_dir: Path,
+) -> None:
+    """`monte_carlo: true` (the final-1m ablation): the cond inside the rollout scan,
+    the donated state and the learner run; the guards stay at 0."""
+    trainer = METHODS[NAME]
+    cfg = _config(methods_dir, monte_carlo=True)
+    state, m = trainer.train_chunk(trainer.init(cfg, jax.random.key(0)), 2)
+    assert int(state.updates) == 2
+    losses = np.asarray(m["losses"])
+    for c in trainer.loss_columns:
+        assert np.isfinite(losses[:, LOSS_COLUMNS.index(c)]).all(), c
+    for guard in ("smdp/nan", "smdp/table_full", "smdp/divergence"):
+        assert not np.asarray(m[guard]).any(), guard
+
+
 def test_training_moves_the_network_and_the_table(
     entry: Any, same: Callable[[Any, Any], bool]
 ) -> None:

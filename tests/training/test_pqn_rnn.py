@@ -18,6 +18,8 @@ from _contract import assert_done_step_unlock_counted
 
 from wut_murl_craftax.evaluation.episode_metrics import ONLINE_LAYOUT
 from wut_murl_craftax.orchestration import device_roles
+from wut_murl_craftax.orchestration.abort import unreported
+from wut_murl_craftax.orchestration.queue import load_method
 from wut_murl_craftax.training.checkpoints import (
     load_params,
     load_state,
@@ -621,6 +623,21 @@ def test_a_chunk_returns_the_pqn_metrics_per_update(cfg: PQNRNNConfig) -> None:
     assert (got["rnn/hidden_norm"] > 0).all()
     assert (got["reward/intrinsic"] == 0).all()  # the control has no hooks
     assert ((got["rnn/reset_share"] >= 0) & (got["rnn/reset_share"] <= 1)).all()
+
+
+@pytest.mark.parametrize("budget", ["1m", "1b"])
+def test_every_abort_rule_of_the_yaml_names_a_reported_metric(budget: str) -> None:
+    """A rename of a reported metric must reach pqn-rnn.yaml (else the rule is dead)."""
+    rules = load_method("pqn-rnn").abort_rules("pqn-rnn", budget) or {}
+    assert (
+        unreported(
+            rules.get("flags", []),
+            rules.get("finite", []),
+            PQN_METRICS,
+            rules.get("limits", []),
+        )
+        == []
+    )
 
 
 def test_epsilon_and_the_learning_rate_are_those_of_each_update(
