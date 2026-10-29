@@ -25,6 +25,14 @@ base:
   monte_carlo: false
   mc_length: 1024
 
+# Craftax-1B: the tuned 1M runs decide at 47-213 table rows (dyna-q: 66-362), still adding
+# about 0.15 rows per 1,000 steps at 1M. Extrapolated to 1B, the last quarter's rate gives
+# up to 0.43 million rows (dyna-q 0.73) and a power-law fit up to 0.09 (0.36), against the
+# 262,144 where `smdp/table_full` ends a run of the 1M table (2^20 rows). 2^22 rows only
+# lowers the hash collisions; the method is unchanged. dyna-q takes it through `base_from`.
+budgets:
+  1b: {log2_rows: 22}
+
 grid:
   # Stage 1: alpha x horizon x epsilon decay x timeout multiplier x key granularity,
   # 2 x 2 x 2 x 3 x 2 = 48 configs, 3 seeds each.

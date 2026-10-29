@@ -334,3 +334,11 @@ Decision: a metric under a method's `abort.permanent` (a guard: full count table
 Why: a guard reads a state that a retry from the same checkpoint reaches again, so a second run only repeats the abort.
 
 Consequences: a guard-aborted run ends FAILED; `coarse_results` takes finished runs only, so such a config is left out of the ranking (with `--min-complete` when enough configs are complete, or `--allow-partial`), not scored as a failure; without either, the fine-grid selection fails naming its missing runs. The chunk that aborted is not logged and the tag holds the metric and update, not its value. The abort rules are in the method YAML files; `abort.py` and [[orchestration]] describe them.
+
+## 2026-10-29 - 1B launch readiness
+
+Decision: `final-1b` runs every entry's `tuned` config, as `final-1m` does; the controls' tuned blocks are empty, so their run names are unchanged. The skill tables are sized for 1B in `budgets.1b` blocks only: smdp-skills `log2_rows: 22` (dyna-q inherits it through `base_from`) and dyna-q `model_pairs: 2^22`; every 1M config, name and result is unchanged.
+
+Why: the tuned 1M runs of smdp-skills and dyna-q decide at 47-362 table rows and visit 247-1,645 (key, skill) pairs, and both counts are still growing at 1M. Extrapolating the last quarter of each seed to 1B gives up to 0.73 million rows and 2.75 million pairs (a power-law fit up to 0.36 million rows and 1.65 million pairs). The 1M shapes (2^20 rows with `smdp/table_full` at a quarter of them, 2^16 pairs with `dyna/model_full` at the last one) would end such runs for good. The larger shapes only change hash collisions and capacity, about 0.35 GB more for the model; the method is the same.
+
+Consequences: the 1B skill-method runs differ from the 1M ones in table size only; the report says so. The tuned count-bonus tables (2^20 slots, a quarter full) extrapolate to at most 0.2 million keys at 1B and are unchanged. The abort flags of the PQN-RNN controls at 1B use the dead-input share (`pqn/bn_dead_share`), a bound that does not depend on the update count.

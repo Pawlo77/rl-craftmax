@@ -21,6 +21,14 @@ base:
   vi_tol: 1.0e-3
   vi_max_sweeps: 50
 
+# Craftax-1B: the tuned 1M runs visit 355-1,645 pairs and still add about 1.2 pairs per
+# 1,000 steps at 1M. Extrapolated to 1B, the last quarter's rate gives up to 2.75 million
+# pairs (median 1.2) and a power-law fit up to 1.65 million (median 0.14); the 1M model
+# (2^16) would end every run with `dyna/model_full`. 2^22 pairs hold them (about 0.35 GB
+# at M = 4); the table rows grow with the smdp-skills 1B shape (`base_from`).
+budgets:
+  1b: {model_pairs: 4194304}
+
 grid:
   # Stage 1: (uniform, prioritized) x n (1, 5, 20) x kappa (0, 0.003, 0.03), plus value
   # iteration x kappa: 21 configs, 3 seeds each.
@@ -59,7 +67,7 @@ grid:
 # loss as value_loss, grad_norm) or a metric in `finite` aborts the run. The smdp-skills
 # guards (smdp/nan, smdp/table_full, smdp/divergence) watch the real updates; the Dyna-Q
 # guards of training/dyna_q.py are 0 and turn NaN on a NaN or inf in a planned table value
-# (dyna/nan), all P = 2^16 model pair slots taken (dyna/model_full), or a planned value
+# (dyna/nan), all P model pair slots taken (dyna/model_full; 2^16 at 1M, 2^22 at 1B), or a planned value
 # above the run's bound (dyna/divergence). In Dyna runs both divergence guards use
 # 300 + plan_kappa sqrt(1000) / (1 - gamma_top) (dyna_q.max_q): a stale tau = 1 self-loop
 # with the full Dyna-Q+ bonus settles near it, healthy optimism; kappa 0 keeps the

@@ -223,6 +223,68 @@ def test_1b_methods_take_their_1m_knobs_on_the_1b_control_settings(
     assert {k: cfg[k] for k in knobs} == knobs
 
 
+M1_NAMES = {
+    "ppo": {"e06ac6db"},
+    "ppo-rnn": {"b3ce95c4"},
+    "pqn-rnn": {"10cbfc16"},
+    "count-bonus-ppo-rnn": {"9403d21d", "b0b1c535"},
+    "count-bonus-pqn-rnn": {"e6e1fafa"},
+    "sil": {"57a864f9", "6f8690ad"},
+    "smdp-skills": {"0b84c247", "1f559f2c", "20ec0807", "89f3c98f"},
+    "dyna-q": {"3fd02b70", "74c22d85"},
+    "combo": {"fd6c4333"},
+}
+"""Config hashes of the finished final-1m and combo-1m runs (the shipped methods)."""
+
+
+@pytest.mark.parametrize("phase", ["final-1m", "combo-1m"])
+def test_1m_finals_keep_the_names_that_ran(phase: str) -> None:
+    """A change meant for 1B (a `budgets.1b` block, a donor) must not rename them."""
+    hashes: dict[str, set[str]] = {}
+    for s in expand_phase(PHASES / f"{phase}.yaml"):
+        hashes.setdefault(s.registry_name, set()).add(s.config_hash)
+    assert hashes == {k: v for k, v in M1_NAMES.items() if k in hashes}
+    assert len(hashes) == (1 if phase == "combo-1m" else 8)
+
+
+def test_1b_run_names_never_meet_a_1m_name() -> None:
+    names_1b = {s.name for p in ("final-1b", "combo-1b") for s in _real(p)}
+    names_1m = {s.name for p in ("final-1m", "combo-1m") for s in _real(p)}
+    assert len(names_1b) == 27
+    assert not names_1b & names_1m
+    assert all(re.fullmatch(r"[a-z-]+-1b-[0-9a-f]{8}-s[0-2]", n) for n in names_1b)
+
+
+def _real(phase: str) -> list[RunSpec]:
+    return expand_phase(PHASES / f"{phase}.yaml")
+
+
+def test_the_1b_skill_tables_are_sized_for_a_1b_run() -> None:
+    """the tuned 1M runs end at 47-362 rows and 247-1,645 pairs, still growing: the 1M
+    shapes (2^20 rows, 2^16 pairs) would abort a 1B run (`smdp/table_full` at a quarter
+    of the rows, `dyna/model_full` at the last pair)."""
+    shape = {
+        b: {r: resolve_config(load_method(r), r, b) for r in ("smdp-skills", "dyna-q")}
+        for b in ("1m", "1b")
+    }
+    assert shape["1m"]["smdp-skills"]["log2_rows"] == 20
+    assert (
+        shape["1m"]["dyna-q"]["log2_rows"],
+        shape["1m"]["dyna-q"]["model_pairs"],
+    ) == (
+        20,
+        2**16,
+    )
+    assert shape["1b"]["smdp-skills"]["log2_rows"] == 22
+    assert (
+        shape["1b"]["dyna-q"]["log2_rows"],
+        shape["1b"]["dyna-q"]["model_pairs"],
+    ) == (
+        22,
+        2**22,
+    )
+
+
 def test_a_zero_tuned_kappa_makes_the_kappa_ablation_fail_loudly(
     tmp_path: Path,
 ) -> None:
