@@ -87,7 +87,8 @@ def measure(budget: str, updates: int, seed: int, shape: dict[str, int]) -> floa
     )
 
     trainer = METHODS["ppo-rnn"]
-    config = resolve_config(load_method("ppo-rnn"), "ppo-rnn", budget) | shape
+    ppo_rnn = load_method("ppo-rnn")
+    config = resolve_config(ppo_rnn, "ppo-rnn", budget, ref="tuned") | shape
     state = trainer.init(config | {"steps": budget_steps(budget)}, jax.random.key(seed))
     roles = device_roles()
     apply = jax.jit(functools.partial(apply_network, trainer.policy(state).net))
