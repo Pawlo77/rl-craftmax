@@ -341,6 +341,29 @@ def _below_cap(v: ObsView, name: str, g: Granularity) -> jax.Array:
     return bucket(name, _n(v, name), g) < bucket(name, 9 if v.classic else 99, g)
 
 
+def _enchantable(v: ObsView) -> jax.Array:
+    """Some owned item carries an enchantment other than the floor's table's.
+
+    The table is ice on floor 3 and fire on floor 4; ``ENCHANT_ARMOUR`` picks a slot
+    that differs.
+    """
+    kind = jnp.where(v.floor == 3, 2, 1)
+    gear = ((v.sword > 0) & (v.ench_sword != kind)) | (
+        (v.bow > 0) & (v.ench_bow != kind)
+    )
+    return gear | ((jnp.sum(v.armour) > 0) & jnp.any(v.ench_armour != kind))
+
+
+def enchant_redundant(view: ObsView) -> jax.Array:
+    """Gear is owned but every item already carries the table's enchantment.
+
+    The start condition of ``enchant`` excludes this state (`available`); a mask
+    without the table-type test would allow it, and the skill would run to its timeout.
+    """
+    held = (view.sword > 0) | (view.bow > 0) | (jnp.sum(view.armour) > 0)
+    return held & ~_enchantable(view)
+
+
 def available(view: ObsView, granularity: Granularity = "recipe") -> jax.Array:
     """Start condition per skill id, bool[25]; ``fight`` and ``unlock_any`` always.
 
@@ -362,12 +385,6 @@ def available(view: ObsView, granularity: Granularity = "recipe") -> jax.Array:
     armour = ((_n(v, "iron") >= 3) & (_n(v, "coal") >= 3) & jnp.any(v.armour == 0)) | (
         (diamond >= 3) & jnp.any(v.armour < 2)
     )
-    kind = jnp.where(v.floor == 3, 2, 1)  # ice table on floor 3, fire on floor 4
-    gear = ((v.sword > 0) & (v.ench_sword != kind)) | (
-        (v.bow > 0) & (v.ench_bow != kind)
-    )
-    # ENCHANT_ARMOUR picks a slot whose enchantment differs from the table's
-    gear |= (jnp.sum(v.armour) > 0) & jnp.any(v.ench_armour != kind)
     attrs = jnp.stack([v.dexterity, v.strength, v.intelligence])
 
     def collect(name: str, tool: jax.Array, floors: tuple[int, ...]) -> jax.Array:
@@ -396,7 +413,7 @@ def available(view: ObsView, granularity: Granularity = "recipe") -> jax.Array:
         "fight": True,
         "descend": v.ladder_open & (v.floor < 8),
         "open_chest": _on(v, (1, 3, 4)),
-        "enchant": _on(v, (3, 4)) & (v.mana >= 9) & gem & gear,
+        "enchant": _on(v, (3, 4)) & (v.mana >= 9) & gem & _enchantable(v),
         "unlock_any": True,
         "read_book": (_n(v, "books") >= 1) & ~jnp.all(v.spells),
         "level_up": (v.xp >= 1) & (jnp.min(attrs) < 5),

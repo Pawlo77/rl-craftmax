@@ -334,3 +334,11 @@ Decision: a metric under a method's `abort.permanent` (a guard: full count table
 Why: a guard reads a state that a retry from the same checkpoint reaches again, so a second run only repeats the abort.
 
 Consequences: a guard-aborted run ends FAILED; `coarse_results` takes finished runs only, so such a config is left out of the ranking (with `--min-complete` when enough configs are complete, or `--allow-partial`), not scored as a failure; without either, the fine-grid selection fails naming its missing runs. The chunk that aborted is not logged and the tag holds the metric and update, not its value. The abort rules are in the method YAML files; `abort.py` and [[orchestration]] describe them.
+
+## 2026-10-29 - Evaluation rules fixed before 1B
+
+Decision: the evaluation, not the training, changes before the 1B launch: (1) the radar Survivor axis is 1 - `any_zero_share`, a new `eval_episodes` column (share of steps with any of food, drink, energy at 0), where it was 1 - the largest single-stat zero share, an upper bound; an export without the column keeps the bound and says so in the figure; (2) a kill needs the mob's class to despawn at that distance (melee and ranged mobs never despawn on the boss floor, passive ones do) and the despawn distance comes from the env params, where it was the default 14 for every class; (3) the replay takes `--recompute-events`, which builds the tables from the replayed events and lists every differing (seed, field) in `event_mismatches_<update>_<mode>.csv`, so the 1M tables follow the corrected rules without retraining.
+
+Why: the 1M eval files keep their stored events, but the code that computes them must be the final one before 1B bakes its events into the files; the strict replay would fail every file whose kills changed.
+
+Consequences: 1M kill and damage columns change only where the rules differ (a passive mob far from the player on floor 8), and the mismatch CSV counts them (none in the two final eval files replayed as a check); the Survivor axis of every radar moves to the exact value. The skill methods' `enchant` start condition needed no change: the table-type test was already in the code every smdp-skills and dyna-q run was trained with ([[Craftax skill library]]); `evaluation.skill_audit` counts the redundant choices from the stored episodes.

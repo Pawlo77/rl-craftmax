@@ -19,6 +19,7 @@ related-code:
   - "[[src/wut_murl_craftax/evaluation/stability.py]]"
   - "[[src/wut_murl_craftax/evaluation/hardware.py]]"
   - "[[src/wut_murl_craftax/evaluation/export.py]]"
+  - "[[src/wut_murl_craftax/evaluation/skill_audit.py]]"
 ---
 # evaluation
 
@@ -56,6 +57,7 @@ One line each; signatures and details: [[Modules]].
 - `episode_records`: per-episode records of eval episodes (end, cause, stalls, fights, splits, combat, needs and survival timing, actions, resources, wasted crafts).
 - `coverage`: tiles seen per floor (first-seen step per tile), new tiles and revisits of an episode.
 - `rollout_metrics`: offline replay of the stored eval files (EV6): records with the trace, coverage, the training-analysis frames `skill_ends` and `eval_inventory`, their files, MLflow logging and the phase CLI.
+- `skill_audit`: how often the skill methods chose `enchant` with gear owned and every item already enchanted as the table (`enchant_counts`, `audit_file`, `audit_runs`, CLI writing one CSV row per eval file); a run trained with the table-type start condition shows 0 ([[Craftax skill library]]).
 - `reproduction`: does a control's final score match the published one (`band`, CLI)?
 - `stats`: the statistics protocol (IQM, bootstrap and t intervals, probability of improvement, Holm-corrected Mann-Whitney, seed spread, curve bands); `select_pair` uses `iqm` and `probability_of_improvement`.
 - `stability`: drawdown, drop, collapse and recovery of a run's curve; config scores and hyperparameter sensitivity of a tuning grid ([[2026-10-20-craftax-evaluation-and-metrics]] "Learning stability").
@@ -105,4 +107,4 @@ One line each; signatures and details: [[Modules]].
 
 ## Tests
 
-- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]], [[tests/evaluation/test_hardware.py]], [[tests/evaluation/test_rollout_metrics.py]], [[tests/evaluation/test_export.py]]
+- [[tests/evaluation/test_events.py]], [[tests/evaluation/test_milestones.py]], [[tests/evaluation/test_episode_metrics.py]], [[tests/evaluation/test_episode_records.py]], [[tests/evaluation/test_coverage.py]], [[tests/evaluation/test_reproduction.py]], [[tests/evaluation/test_stats.py]], [[tests/evaluation/test_stability.py]], [[tests/evaluation/test_hardware.py]], [[tests/evaluation/test_rollout_metrics.py]], [[tests/evaluation/test_export.py]], [[tests/evaluation/test_skill_audit.py]]

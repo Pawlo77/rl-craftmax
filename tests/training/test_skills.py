@@ -5,6 +5,7 @@ and the reward; ``EnvState`` is read here to build the states and the expected v
 """
 
 import inspect
+import itertools
 import subprocess
 import sys
 from collections.abc import Callable
@@ -517,6 +518,65 @@ def test_open_chest_and_enchant(craftax: Game) -> None:
     assert can("enchant", craftax.view(helmet))
     all_fire = helmet.replace(armour_enchantments=jnp.ones(4, jnp.int32))
     assert not can("enchant", craftax.view(all_fire))
+
+
+def _gear_views(craftax: Game) -> tuple[list[ObsView], list[dict[str, Any]]]:
+    """Views at an enchantment table with a gem and mana, over a grid of gear."""
+    s = inv(craftax.start().replace(player_mana=jnp.int32(9)), ruby=1, sapphire=1)
+    base = craftax.view(s)
+    helmet, mixed = jnp.array([1, 0, 0, 0]), jnp.array([1, 1, 1, 0])
+    views, grid = [], []
+    for floor, sword, bow, armour, e_sword, e_bow, e_armour in itertools.product(
+        (1, 3, 4), (0, 1), (0, 1), (jnp.zeros(4, int), helmet),
+        (0, 1, 2), (0, 1, 2), (jnp.zeros(4, int), jnp.ones(4, int), mixed, 2 * mixed),
+    ):  # fmt: skip
+        fields = {
+            "floor": floor, "sword": sword, "bow": bow, "armour": armour,
+            "ench_sword": e_sword, "ench_bow": e_bow, "ench_armour": e_armour,
+        }  # fmt: skip
+        views.append(
+            base.replace(**{k: jnp.asarray(v, jnp.int32) for k, v in fields.items()})
+        )
+        grid.append(fields)
+    return views, grid
+
+
+def _loose(v: dict[str, Any]) -> bool:
+    """The mask before the table-type test: any sword, bow or armour piece."""
+    return bool(v["sword"] or v["bow"] or np.sum(v["armour"]))
+
+
+def _tight(v: dict[str, Any]) -> bool:
+    """Some held item carries an enchantment other than the table's (ice on floor 3)."""
+    kind = 2 if v["floor"] == 3 else 1
+    return bool(
+        (v["sword"] and v["ench_sword"] != kind)
+        or (v["bow"] and v["ench_bow"] != kind)
+        or (np.sum(v["armour"]) and np.any(np.asarray(v["ench_armour"]) != kind))
+    )
+
+
+def test_the_enchant_mask_needs_an_item_the_table_would_change(craftax: Game) -> None:
+    """The current mask, pinned over a grid of gear: floors, items, enchantments."""
+    views, grid = _gear_views(craftax)
+    stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *views)
+    got = np.asarray(jax.vmap(available)(stacked)[:, SKILL_IDS["enchant"]])
+    want = [g["floor"] in (3, 4) and _tight(g) for g in grid]
+    assert got.tolist() == want
+    assert got.any()
+    assert any(
+        _loose(g) and g["floor"] in (3, 4) and not w
+        for g, w in zip(grid, want, strict=True)
+    )
+
+
+def test_enchant_redundant_is_gear_held_with_nothing_to_change(craftax: Game) -> None:
+    views, grid = _gear_views(craftax)
+    stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *views)
+    got = np.asarray(jax.vmap(skills.enchant_redundant)(stacked))
+    assert got.tolist() == [_loose(g) and not _tight(g) for g in grid]
+    assert got.any()
+    assert not got.all()
 
 
 def test_unlock_any_reads_the_achievement_part(craftax: Game) -> None:
