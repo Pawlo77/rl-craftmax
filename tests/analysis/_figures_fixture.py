@@ -7,9 +7,15 @@ methods with config grids whose learning rate matters and whose clip does not (F
 
 import itertools
 import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, NamedTuple
 
 import pandas as pd
+import pytest
 from _compare_fixture import LEVEL, make_frames
+
+from wut_murl_craftax.visualisation.charts import Caption, capture_captions
 
 ACHIEVEMENTS = (
     "collect_wood", "place_table", "defeat_zombie", "make_arrow", "enter_dungeon",
@@ -92,3 +98,34 @@ def tuning_frames() -> dict[str, pd.DataFrame]:
                         }),
                     })
     return {"runs": pd.DataFrame(rows)}
+
+
+class Built(NamedTuple):
+    """One figure call: what it returned, its folder and the captions it made."""
+
+    figs: Any
+    out: Path
+    captions: list[Caption]
+
+
+def figure_cache(
+    draw_into: Callable[[str, str, str, Path], Any],
+    factory: pytest.TempPathFactory,
+) -> Callable[..., Built]:
+    """``build(fid, theme, width)``: ``draw_into`` once per key, in a folder of its own.
+
+    The tests that only read a figure (its PNG, size, fonts, colours) share one call
+    instead of drawing it each; a folder per key keeps "nothing written" checks exact.
+    """
+    done: dict[tuple[str, str, str], Built] = {}
+
+    def build(fid: str, theme: str = "report", width: str = "column") -> Built:
+        key = (fid, theme, width)
+        if key not in done:
+            out = factory.mktemp(f"{fid}-{theme}-{width}")
+            with capture_captions() as caps:
+                figs = draw_into(fid, theme, width, out)
+            done[key] = Built(figs, out, caps)
+        return done[key]
+
+    return build

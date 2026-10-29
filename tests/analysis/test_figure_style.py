@@ -351,7 +351,9 @@ def test_the_saved_pixels_match_the_declared_size(
     for f in saved(case):
         for got, want in zip(f.pixels, f.expected_px, strict=True):
             assert abs(got - want) <= 1, f"{f.path.name}: {f.pixels} != {f.expected_px}"
-        if f.expected_px != VIDEO_PIXELS:
+        if f.path.stem.endswith("_video") or f.path.stem == "timeline":
+            assert f.expected_px == VIDEO_PIXELS, f"{f.path.name}: {f.expected_px}"
+        elif f.expected_px != VIDEO_PIXELS:
             width = f.size_mm[0]
             assert any(abs(width - w) < 0.1 for w in REPORT_WIDTHS_MM), (
                 f"{f.path.name}: {width:.2f} mm wide"

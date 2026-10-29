@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from _compare_fixture import LEVEL
+from _figures_fixture import Built, figure_cache
 from _game_fixture import FLOOR_COLUMNS, game_frames
 from matplotlib.artist import Artist
 from matplotlib.colors import to_hex
@@ -78,7 +79,6 @@ race = _bundled(fg.race)
 N = 100
 """Bootstrap resamples and permutations in tests."""
 THEMES = ("report", "video")
-PNG = b"\x89PNG\r\n\x1a\n"
 NOT_LOGGED = ("ppo", "ppo-rnn")
 """The reused runs without the online families (R78)."""
 FIGS = ["F6", "F7", "F7G", "F8", "F8T", "F9", "F9S"] + [f"F{i}" for i in range(10, 18)]
@@ -149,6 +149,22 @@ def frames_1b() -> dict[str, pd.DataFrame]:
     return game_frames(("1b",))
 
 
+@pytest.fixture(scope="module")
+def built(
+    frames: dict[str, pd.DataFrame], tmp_path_factory: pytest.TempPathFactory
+) -> Callable[..., Built]:
+    """``built(fid, theme, width)``: a figure drawn once for the tests that read it."""
+    return figure_cache(
+        lambda fid, theme, width, out: draw(fid, frames, out, theme, width),
+        tmp_path_factory,
+    )
+
+
+def own_width(fid: str) -> str:
+    """The order graphs print node names, so they take 170 mm; the rest one column."""
+    return "double" if fid in DOUBLE else "column"
+
+
 def draw(
     fid: str,
     frames: dict[str, pd.DataFrame],
@@ -213,17 +229,13 @@ def ydata(artist: Artist) -> float:
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", FIGS)
 def test_each_figure_writes_its_files_as_png_with_captions(
-    fid: str, theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
+    fid: str, theme: str, built: Callable[..., Built]
 ) -> None:
-    width = "double" if fid in DOUBLE else "column"
-    figs = draw(fid, frames, tmp_path, theme, width)
-    assert sorted(figs.figs) == sorted(STEMS[fid]) or fid == "F6"
-    if fid == "F6":  # the wall-clock and the env-steps race, a file per block
-        assert sorted(figs.figs) == sorted(STEMS[fid])
+    figs, out, _ = built(fid, theme, own_width(fid))
+    assert sorted(figs.figs) == sorted(STEMS[fid])  # F6: a file per clock and block
     suffix = "_video" if theme == "video" else ""
-    for name in STEMS[fid]:
-        assert not (tmp_path / f"{name}{suffix}.pdf").exists()
-        assert (tmp_path / f"{name}{suffix}.png").read_bytes().startswith(PNG)
+    for name in STEMS[fid]:  # the PNG header and "no PDF" are `test_figure_style`'s
+        assert (out / f"{name}{suffix}.png").is_file()
         assert figs.captions[name].strip(), name
     for want in LABELS[fid]:
         assert want in axis_labels(figs), (fid, want, axis_labels(figs))
@@ -238,9 +250,10 @@ def test_every_figure_id_has_a_function_and_a_stem() -> None:
 
 @pytest.mark.parametrize("fid", [f for f in FIGS if f not in DOUBLE])
 def test_report_figures_are_one_column_wide_with_7pt_fonts(
-    fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
+    fid: str, built: Callable[..., Built]
 ) -> None:
-    for fig in draw(fid, frames, tmp_path).figs.values():
+    """The 1080p frame of the video is audited by `test_figure_style`."""
+    for fig in built(fid).figs.figs.values():
         assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
         fig.canvas.draw()
         small = {
@@ -252,32 +265,22 @@ def test_report_figures_are_one_column_wide_with_7pt_fonts(
 
 
 @pytest.mark.parametrize("fid", FIGS)
-def test_video_figures_fill_a_1080p_frame(
-    fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
-) -> None:
-    for fig in draw(fid, frames, tmp_path, "video").figs.values():
-        width, height = fig.get_size_inches() * fig.dpi
-        assert (round(width), round(height)) == (1920, 1080)
-
-
-@pytest.mark.parametrize("fid", FIGS)
 def test_a_figure_has_one_report_image_at_its_own_width(
-    fid: str, frames: dict[str, pd.DataFrame], tmp_path: Path
+    fid: str, built: Callable[..., Built]
 ) -> None:
-    figs = draw(fid, frames, tmp_path, width="double")
+    figs, out, _ = built(fid, width="double")
     if fid not in DOUBLE:
         assert not figs.figs
-        assert not list(tmp_path.iterdir())
+        assert not list(out.iterdir())
         return
     for fig in figs.figs.values():
         assert fig.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
     for name in STEMS[fid]:  # the node names need 170 mm: the one image has no suffix
-        assert (tmp_path / f"{name}.png").read_bytes().startswith(PNG)
-        assert not (tmp_path / f"{name}_double.png").exists()
-    assert not draw(
-        fid, frames, tmp_path / "col", width="column"
-    ).figs  # no low-res copy
-    assert not list((tmp_path / "col").glob("*.png"))
+        assert (out / f"{name}.png").is_file()
+        assert not (out / f"{name}_double.png").exists()
+    column = built(fid, width="column")  # no low-res copy
+    assert not column.figs.figs
+    assert not list(column.out.glob("*.png"))
     texts(figs)
     for fig in figs.figs.values():
         small = [
@@ -1025,9 +1028,9 @@ def _hexes(artist: Artist) -> set[str]:
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("fid", FIGS)
 def test_every_method_artist_is_drawn_in_its_method_colour(
-    fid: str, theme: str, frames: dict[str, pd.DataFrame], tmp_path: Path
+    fid: str, theme: str, built: Callable[..., Built]
 ) -> None:
-    fig = draw(fid, frames, tmp_path, theme, "double" if fid in DOUBLE else "column")
+    fig = built(fid, theme, own_width(fid)).figs
     colors = METHOD_COLORS if theme == "video" else METHOD_COLORS_LIGHT
     checked = 0
     for kind in METHOD_KINDS:

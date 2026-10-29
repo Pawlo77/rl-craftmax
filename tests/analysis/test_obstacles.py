@@ -7,8 +7,6 @@ and the optional inputs (eval actions and the replay frames of evaluation Task 6
 
 import fnmatch
 import json
-import subprocess
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1103,14 +1101,3 @@ def test_a_missing_deep_skill_is_not_logged() -> None:
     o = result(world("smdp-skills", run=drop), "smdp-skills", "Deep-skill starvation")
     assert o.status == NOT_LOGGED
     assert "descend" in o.evidence
-
-
-def test_importing_the_module_loads_no_mlflow() -> None:
-    code = (
-        "import sys, wut_murl_craftax.analysis.obstacles; "
-        "print('mlflow' in sys.modules, 'jax' in sys.modules)"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
-    assert out.stdout.split() == ["False", "False"]

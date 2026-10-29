@@ -457,6 +457,23 @@ def test_parquet_only_use_imports_neither_jax_nor_mlflow(export_root: Path) -> N
     assert done.returncode == 0, done.stderr
 
 
+LIGHT_MODULES = ("hard", "obstacles", "cases", "training", "results")
+"""Analysis modules whose file-only use must not pull in JAX or MLflow."""
+
+
+def test_the_analysis_modules_import_neither_jax_nor_mlflow() -> None:
+    """One interpreter imports them in turn: the first to load a heavy one is named."""
+    code = (
+        "import importlib, sys\n"
+        f"for name in {LIGHT_MODULES!r}:\n"
+        "    importlib.import_module(f'wut_murl_craftax.analysis.{name}')\n"
+        "    bad = [m for m in ('jax', 'mlflow') if m in sys.modules]\n"
+        "    assert not bad, (name, bad)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+
+
 def test_a_dropped_duplicate_with_another_phase_or_config_ref_is_warned_about(
     export_root: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

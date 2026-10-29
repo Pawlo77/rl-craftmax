@@ -6,8 +6,6 @@ export fixture checks the summaries on real parquet types and over several units
 """
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -777,9 +775,9 @@ def test_never_and_never_in_eval_are_drawn_apart(
     dots = [c for c in ax.collections if c.get_label() not in labels]
     assert never.get_zorder() > max(c.get_zorder() for c in dots)  # never under a dot
     assert unknown.get_zorder() > max(c.get_zorder() for c in dots)
-    # and the caption of the saved figure names both
-    status = achievement_status(achievement_frame())  # no curves: never in eval
-    assert (status["status"] == NEVER_EVAL).any()
+    # and the caption of the saved figure names both: without curves the fixture's
+    # collect_diamond is "never in eval" (`test_achievement_never_needs_...`)
+    status = achievement_status(achievement_frame())
     with charts.capture_captions() as caps:
         plot_achievement_status(status, tmp_path)
     (caption,) = caps
@@ -906,17 +904,6 @@ def test_summaries_on_the_export_fixture(export_root: Path, tmp_path: Path) -> N
     assert_png(stall_png)
     for path in plot_death_causes(death_causes(sil), tmp_path).values():
         assert_png(path)
-
-
-def test_import_is_light() -> None:
-    code = (
-        "import sys, wut_murl_craftax.analysis.hard; "
-        "print('mlflow' in sys.modules, 'jax' in sys.modules)"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
-    assert out.stdout.split() == ["False", "False"]
 
 
 def test_variants_share_rows_and_the_never_unlocked_go_to_the_caption(

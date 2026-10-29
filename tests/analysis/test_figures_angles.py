@@ -28,6 +28,7 @@ from _angles_fixture import (
     write_distillation,
 )
 from _compare_fixture import LEVEL
+from _figures_fixture import Built, figure_cache
 from matplotlib.artist import Artist
 from matplotlib.collections import PathCollection, QuadMesh
 from matplotlib.figure import Figure
@@ -65,7 +66,6 @@ from wut_murl_craftax.visualisation.charts import (
 
 N = 100
 """Bootstrap resamples in tests."""
-PNG = b"\x89PNG\r\n\x1a\n"
 FIGS = [f"F{i}" for i in range(21, 29)]
 LABELS = {
     "F21": ("env steps", "greedy minus stochastic"),
@@ -95,6 +95,22 @@ def trees(
     frames: dict[str, pd.DataFrame], tmp_path_factory: pytest.TempPathFactory
 ) -> Path:
     return write_distillation(tmp_path_factory.mktemp("interpretation"), frames["runs"])
+
+
+@pytest.fixture(scope="module")
+def built(
+    frames: dict[str, pd.DataFrame],
+    trees: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[..., Built]:
+    """``built(fid, theme, width)``: each figure drawn once for the tests that read it.
+
+    Every angle figure is one 170 mm report image, so ``double`` is the default width.
+    """
+    return figure_cache(
+        lambda fid, theme, width, out: draw(fid, frames, out, theme, width, trees),
+        tmp_path_factory,
+    )
 
 
 def optimism_table(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -207,25 +223,22 @@ def test_every_figure_id_has_a_function_and_its_stems() -> None:
 @pytest.mark.parametrize("theme", ["report", "video"])
 @pytest.mark.parametrize("fid", FIGS)
 def test_each_figure_writes_its_pngs_with_its_labels(
-    fid: str, theme: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+    fid: str, theme: str, built: Callable[..., Built]
 ) -> None:
-    fig = draw(fid, frames, tmp_path, theme, trees=trees)
+    fig, out, _ = built(fid, theme, "double")
     suffix = "_video" if theme == "video" else ""
-    for stem in STEMS[fid]:
-        assert (tmp_path / f"{stem}{suffix}.png").read_bytes().startswith(PNG)
+    for stem in STEMS[fid]:  # the PNG header is `test_figure_style`'s
+        assert (out / f"{stem}{suffix}.png").is_file()
     for want in LABELS[fid]:
         assert want in axis_labels(fig), (fid, want, axis_labels(fig))
 
 
 @pytest.mark.parametrize("fid", FIGS)
-def test_sizes_are_the_report_widths_and_1080p(
-    fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
-) -> None:
-    fig = draw(fid, frames, tmp_path, width="column", trees=trees)
+def test_sizes_are_the_report_widths(fid: str, built: Callable[..., Built]) -> None:
+    """The 1080p frame of the video is audited by `test_figure_style`."""
+    fig, out, _ = built(fid, "report", "column")
     assert fig.get_size_inches()[0] * 25.4 == pytest.approx(80.0, abs=0.01)
-    assert not list(tmp_path.glob("*.png")), (
-        "every angle figure is 170 mm: no column file"
-    )
+    assert not list(out.glob("*.png")), "every angle figure is 170 mm: no column file"
     fig.canvas.draw()
     small = [
         t.get_text()
@@ -233,24 +246,21 @@ def test_sizes_are_the_report_widths_and_1080p(
         if t.get_visible() and t.get_text().strip() and t.get_fontsize() < 7
     ]
     assert not small, small
-    wide = draw(fid, frames, tmp_path, width="double", trees=trees)
+    wide, out, _ = built(fid, "report", "double")
     assert wide.get_size_inches()[0] * 25.4 == pytest.approx(170.0, abs=0.01)
     for stem in STEMS[fid]:  # the figure's one report image, no suffix
-        png = (tmp_path / f"{stem}.png").read_bytes()
+        png = (out / f"{stem}.png").read_bytes()
         assert int.from_bytes(png[16:20], "big") == pytest.approx(
             170 / 25.4 * 300, abs=1
         )
-        assert not (tmp_path / f"{stem}_double.png").exists()
-    video = draw(fid, frames, tmp_path, "video", trees=trees)
-    w, h = video.get_size_inches() * video.dpi
-    assert (round(w), round(h)) == (1920, 1080)
+        assert not (out / f"{stem}_double.png").exists()
 
 
 @pytest.mark.parametrize("fid", FIGS)
 def test_a_figure_declares_a_size_class_and_has_no_title_or_text_of_its_own(
-    fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+    fid: str, built: Callable[..., Built]
 ) -> None:
-    fig = draw(fid, frames, tmp_path, trees=trees)
+    fig = built(fid).figs
     assert fig.shape in set(Shape)  # type: ignore[attr-defined]
     assert not fig.texts
     assert getattr(fig, "_suptitle", None) is None
@@ -262,9 +272,9 @@ def test_a_figure_declares_a_size_class_and_has_no_title_or_text_of_its_own(
 
 @pytest.mark.parametrize("fid", FIGS)
 def test_every_stem_registers_a_caption_with_the_question_and_no_budget_words(
-    fid: str, frames: dict[str, pd.DataFrame], trees: Path, tmp_path: Path
+    fid: str, built: Callable[..., Built]
 ) -> None:
-    got = captions_of(fid, frames, tmp_path, trees=trees)
+    got = {c.stem: c for c in built(fid, "report", "double").captions}
     assert set(got) == set(STEMS[fid])
     for caption in got.values():
         assert caption.title.strip()
