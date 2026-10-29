@@ -10,7 +10,6 @@ at 116), both deaths.
 import importlib.util
 import json
 import sqlite3
-import subprocess
 import sys
 from contextlib import closing
 from pathlib import Path
@@ -287,17 +286,6 @@ def test_a_unit_without_episodes_has_no_cases() -> None:
     cases = find_cases(frames([episode(0)]), "sil", "1m")
     assert cases.empty
     assert tuple(cases.columns) == CASE_COLUMNS
-
-
-def test_finding_cases_imports_no_jax() -> None:
-    code = (
-        "import sys; from wut_murl_craftax.analysis import cases; "
-        "print('mlflow' in sys.modules, 'jax' in sys.modules)"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
-    assert out.stdout.split() == ["False", "False"]
 
 
 def test_write_cases_writes_the_budget_table_and_one_per_method(

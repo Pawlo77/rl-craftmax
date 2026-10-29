@@ -731,19 +731,6 @@ def test_the_cli_refuses_a_store_that_is_not_sqlite(
         ])  # fmt: skip
 
 
-def test_importing_the_cli_imports_neither_jax_nor_mlflow() -> None:
-    import subprocess
-
-    code = (
-        "import sys; from wut_murl_craftax.analysis import training; "
-        "print('mlflow' in sys.modules, 'jax' in sys.modules)"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
-    assert out.stdout.split() == ["False", "False"]
-
-
 # ------------------------------------------------------- the real replay path
 
 

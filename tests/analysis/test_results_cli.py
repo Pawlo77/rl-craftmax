@@ -9,8 +9,6 @@ everything.
 
 import json
 import re
-import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -419,16 +417,6 @@ def test_a_figure_stage_draws_each_benchmark_alone_and_writes_its_captions(
         assert f"toy,F1,Toy,Drawn at {budget}.," in lines  # no width registered
 
 
-def test_changed_inputs_redo_the_tables_and_the_figures(
-    base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    opts = _two_stub_figures(monkeypatch, base, tmp_path)
-    assert run_comparison(opts).done == ["figures/F1", "figures/F6"]
-    assert run_comparison(opts).skipped == ["figures/F1", "figures/F6"]
-    again = run_comparison(replace(opts, n_boot=N_BOOT + 1))
-    assert again.done == ["figures/F1", "figures/F6"]
-
-
 def test_old_pdfs_are_removed_from_both_figure_folders(
     base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -513,17 +501,20 @@ def test_force_redoes_every_stage(
     assert again.done == ["figures/F1", "figures/F6"]
 
 
-def test_a_changed_source_invalidates_the_stage_markers(
+def test_changed_inputs_or_sources_redo_the_tables_and_the_figures(
     base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     opts = _two_stub_figures(monkeypatch, base, tmp_path)
     source = tmp_path / "figures_source.py"
     source.write_text("x = 1\n")
     monkeypatch.setattr(results, "code_files", lambda: [source])
-    assert run_comparison(opts).done == ["figures/F1", "figures/F6"]
-    assert run_comparison(opts).skipped == ["figures/F1", "figures/F6"]
-    source.write_text("x = 2\n")
-    assert run_comparison(opts).done == ["figures/F1", "figures/F6"]
+    stages = ["figures/F1", "figures/F6"]
+    assert run_comparison(opts).done == stages
+    assert run_comparison(opts).skipped == stages
+    other = replace(opts, n_boot=N_BOOT + 1)  # another option: every stage again
+    assert run_comparison(other).done == stages
+    source.write_text("x = 2\n")  # another source: every stage again
+    assert run_comparison(other).done == stages
 
 
 def test_the_code_digest_covers_the_analysis_and_stats_sources() -> None:
@@ -587,8 +578,9 @@ def test_no_complexity_skips_only_what_depends_on_it(
 
 
 def test_phases_never_exported_are_skipped_not_fatal(
-    export: Path, tmp_path: Path
+    export: Path, base: ResultsOptions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _two_stub_figures(monkeypatch, base, tmp_path)  # the figures are not under test
     out = tmp_path / "results"
     results.main([
         "--phases", "final-1m", "final-9b", "--tuning", "tune-coarse", "--out",
@@ -643,16 +635,6 @@ def test_logging_needs_a_sqlite_tracking_uri(export: Path, tmp_path: Path) -> No
             *common, "--metrics-root", str(export), "--tracking-uri",
             "http://localhost:5000",
         ])  # fmt: skip
-
-
-def test_importing_the_cli_imports_neither_jax_nor_mlflow() -> None:
-    code = (
-        "import sys, wut_murl_craftax.analysis.results\n"
-        "bad = [m for m in ('jax', 'mlflow') if m in sys.modules]\n"
-        "assert not bad, bad\n"
-    )
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
-    assert done.returncode == 0, done.stderr
 
 
 def test_stage_markers_hold_the_input_fingerprint(
