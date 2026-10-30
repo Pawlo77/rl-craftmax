@@ -33,7 +33,7 @@ dependencies = [
   # The environment and the RL stack. jax stays below 0.12 because metaljax (Apple GPU) needs >=0.11,<0.12;
   # versions are the ones tested on Apple Silicon in knowledge/craftax/Craftax on Apple GPU.md.
   "craftax==1.6.1",
-  "flax==0.12.10",
+  "flax==0.12.12",
   "jax==0.11.2",
   "jaxlib==0.11.2",
   "optax==0.2.8",
