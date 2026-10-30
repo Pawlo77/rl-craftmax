@@ -1,6 +1,6 @@
 """Two branches that change a generated note merge without a conflict.
 
-@see [[.gitattributes]]
+The rule is the ``knowledge/generated/**`` line of ``.gitattributes``.
 """
 
 import shutil
