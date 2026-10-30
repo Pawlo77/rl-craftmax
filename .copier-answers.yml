@@ -1,5 +1,5 @@
 # Changes here will be overwritten by Copier; run `copier update` instead.
-_commit: v1.3.0
+_commit: v1.4.0
 _src_path: gh:Pawlo77/python-kit-template
 affiliation: ''
 author_email: pozorski.paul@gmail.com
@@ -11,6 +11,7 @@ owner: Pawlo77
 plgrid: true
 research: false
 scaffold: experiment
+scaffold_stubs: true
 slug: wut_murl_craftax
 vault: true
 year: '2026'
