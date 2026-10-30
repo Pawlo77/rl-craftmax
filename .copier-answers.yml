@@ -8,7 +8,7 @@ description: Reinforcement learning on Craftax
 eden: true
 module: wut_murl_craftax
 owner: Pawlo77
-plgrid: true
+plgrid: false
 research: false
 scaffold: experiment
 scaffold_stubs: false
