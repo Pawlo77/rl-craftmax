@@ -13,6 +13,7 @@ KILLED. Trainers: `Trainer` (``training.interface.METHODS``); eval: `evaluate_sp
 
 import functools
 import importlib
+import itertools
 import json
 import logging
 import math
@@ -372,12 +373,20 @@ class _Stop:
     signum: int | None = None
     at: float = 0.0
     """`time.monotonic` of the first signal."""
+    _calls: Iterator[int] = field(default_factory=itertools.count, repr=False)
+
+    def __post_init__(self) -> None:
+        """A preset ``signum`` counts as the first signal."""
+        if self.signum is not None:
+            next(self._calls)
 
     def __call__(self, signum: int, _frame: FrameType | None) -> None:
         """Record the signal; a second one stops at once, unless it is an echo."""
-        if self.signum is not None:
-            if time.monotonic() - self.at < ECHO_S:
-                return
+        # ``next`` is one C call, so a handler that runs inside this one (Python runs
+        # them between any two bytecodes) cannot also see itself as the first
+        if next(self._calls):
+            if self.signum is None or time.monotonic() - self.at < ECHO_S:
+                return  # the first is still being recorded, or this is its echo
             raise KeyboardInterrupt
         self.signum, self.at = signum, time.monotonic()
         logger.warning("signal %d: stopping after the current chunk", signum)

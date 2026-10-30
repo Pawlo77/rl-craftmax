@@ -1991,6 +1991,29 @@ def test_a_repeated_signal_within_a_second_is_one_signal(
         stop(signal.SIGINT, None)
 
 
+def test_a_signal_landing_inside_the_first_one_is_the_same_stop(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Python runs a handler between any two bytecodes, also inside another handler.
+
+    Under load ``kill <uv>`` beside ``kill <python>`` landed there: both handlers saw
+    no stop yet, logged it twice and the second pair of copies counted as a new stop.
+    """
+    stop = runner._Stop()
+    real, nested = time.monotonic, []
+
+    def monotonic() -> float:
+        if not nested:  # while the first handler is still recording its signal
+            nested.append(True)
+            stop(signal.SIGTERM, None)
+        return real()
+
+    monkeypatch.setattr(runner.time, "monotonic", monotonic)
+    stop(signal.SIGTERM, None)
+    assert caplog.text.count("stopping after the current chunk") == 1
+    assert stop.signum == signal.SIGTERM
+
+
 def test_a_stop_before_the_run_is_opened_leaves_the_store_untouched(
     store: Store,
 ) -> None:
