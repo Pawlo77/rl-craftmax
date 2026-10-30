@@ -7,8 +7,8 @@ The changed files are the diff of ``HEAD`` against the merge base with ``--base`
 closure reaches a changed Python file, or when it or one of its local modules names a
 changed file (path, name or dotted module in a string: ``python -m`` calls, data files).
 Docs, notes and agent settings select nothing. The whole suite runs for a change to the
-test setup, the dependencies or the build files, a deleted Python file, or when no base
-is found; ``[tool.agent-kit.tests]`` ``full`` adds glob patterns that force it.
+test setup, the build files, the dependencies (``pyproject.toml`` outside `UNRELATED`),
+a deleted Python file or no base; ``[tool.agent-kit.tests]`` ``full`` adds globs.
 """
 
 import argparse
@@ -16,6 +16,7 @@ import ast
 import fnmatch
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -25,10 +26,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CODE_DIRS = ("src", "scripts", "tests")
 """Where imports resolve; ``src`` and ``scripts`` are import roots as well."""
 FULL = (
-    "pyproject.toml", "uv.lock", "Makefile", "kit.mk", ".python-version",
+    "uv.lock", "Makefile", "kit.mk", ".python-version",
     "conftest.py", "*/conftest.py", "pytest.ini", "tox.ini", "setup.cfg",
 )  # fmt: skip
-"""Changes that can move any test."""
+"""Changes that can move any test (``pyproject.toml``: see `_moves_tests`)."""
+UNRELATED = (
+    ("project", "urls"), ("project", "description"), ("project", "authors"),
+    ("project", "maintainers"), ("project", "keywords"), ("project", "classifiers"),
+    ("tool", "agent-kit"), ("tool", "ruff"), ("tool", "codespell"), ("tool", "bandit"),
+    ("tool", "mypy"),
+)  # fmt: skip
+"""``pyproject.toml`` tables a test run does not read."""
 IGNORED = (
     "*.md", "*.rst", "LICENSE", "*.cff", "knowledge/*", "plans/*", "research/*",
     "report/*", "docs/*", ".remember/*", ".obsidian/*", ".github/*", ".cursor/*",
@@ -43,11 +51,14 @@ def _git(root: Path, *args: str) -> str | None:
     done = subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=False
     )
-    return done.stdout.strip() if done.returncode == 0 else None
+    # rstrip only the newline: the first `status --porcelain` line starts with a space
+    return done.stdout.rstrip("\n") if done.returncode == 0 else None
 
 
-def changed_files(root: Path, base: str | None) -> tuple[list[str], list[str]] | None:
-    """Return (existing, deleted) paths changed since the merge base, or ``None``."""
+def changed_files(
+    root: Path, base: str | None
+) -> tuple[list[str], list[str], str] | None:
+    """Return (existing, deleted, merge base) of the changes, or ``None``."""
     for ref in (base, "@{upstream}", "origin/main", "origin/master"):
         point = ref and _git(root, "merge-base", "HEAD", ref)
         if point:
@@ -58,7 +69,7 @@ def changed_files(root: Path, base: str | None) -> tuple[list[str], list[str]] |
     dirty = _git(root, "status", "--porcelain", "--untracked-files=all") or ""
     paths = set(names.splitlines()) | {line[3:] for line in dirty.splitlines()}
     present = sorted(p for p in paths if (root / p).is_file())
-    return present, sorted(paths - set(present))
+    return present, sorted(paths - set(present)), point
 
 
 def _modules(root: Path) -> dict[str, Path]:
@@ -174,16 +185,32 @@ def select(root: Path, changed: list[str]) -> list[str]:
     return picked
 
 
+def _moves_tests(root: Path, point: str) -> bool:
+    """Whether ``pyproject.toml`` differs from the merge base outside `UNRELATED`."""
+    old = _git(root, "show", f"{point}:pyproject.toml")
+    try:
+        before = tomllib.loads(old or "")
+        after = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError):
+        return True
+    for table, key in UNRELATED:
+        before.get(table, {}).pop(key, None)
+        after.get(table, {}).pop(key, None)
+    return before != after
+
+
 def plan(root: Path, base: str | None) -> list[str] | None:
     """Return the tests to run, or ``None`` for the whole suite."""
     found = changed_files(root, base)
     if found is None:
         return None
-    present, deleted = found
+    present, deleted, point = found
     extra = tuple(load_config(root).get("tests", {}).get("full", ()))
     if any(p.endswith(".py") for p in deleted):
         return None
     if any(fnmatch.fnmatch(p, pat) for p in present for pat in (*FULL, *extra)):
+        return None
+    if "pyproject.toml" in present and _moves_tests(root, point):
         return None
     relevant = [p for p in present if not any(fnmatch.fnmatch(p, g) for g in IGNORED)]
     return select(root, relevant) if relevant else []

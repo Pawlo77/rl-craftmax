@@ -25,6 +25,12 @@ def selector() -> ModuleType:
     return module
 
 
+PYPROJECT = (
+    '[project]\nname = "pkg"\ndependencies = ["a"]\n\n'
+    '[project.urls]\nHomepage = "https://example.com/old"\n\n[tool.agent-kit]\n'
+)
+
+
 def _write(root: Path, files: dict[str, str]) -> None:
     for rel, text in files.items():
         path = root / rel
@@ -38,7 +44,7 @@ def repo(tmp_path: Path) -> Path:
     _write(
         tmp_path,
         {
-            "pyproject.toml": "[tool.agent-kit]\n",
+            "pyproject.toml": PYPROJECT,
             "src/pkg/__init__.py": "from pkg import a, b\n",
             "src/pkg/core.py": "X = 1\n",
             "src/pkg/a.py": "from pkg.core import X\n",
@@ -94,7 +100,7 @@ def test_documentation_selects_nothing(
     assert _tests(selector, repo, **{changed: "text\n"}) == []
 
 
-@pytest.mark.parametrize("changed", ["pyproject.toml", "tests__conftest.py", "uv.lock"])
+@pytest.mark.parametrize("changed", ["tests__conftest.py", "uv.lock"])
 def test_setup_changes_run_everything(
     selector: ModuleType, repo: Path, changed: str
 ) -> None:
@@ -113,3 +119,29 @@ def test_deleted_python_file_runs_everything(selector: ModuleType, repo: Path) -
 def test_unknown_base_runs_everything(selector: ModuleType, repo: Path) -> None:
     """Without a merge base nothing can be told apart."""
     assert selector.plan(repo, "no-such-ref") is None
+
+
+def test_a_dependency_change_runs_everything(selector: ModuleType, repo: Path) -> None:
+    """Dependencies move every test."""
+    changed = PYPROJECT.replace('["a"]', '["a", "b"]')
+    assert _tests(selector, repo, **{"pyproject.toml": changed}) is None
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [("example.com/old", "example.com/new"), ("[tool.agent-kit]", "[tool.ruff]")],
+)
+def test_metadata_and_tool_settings_do_not_run_everything(
+    selector: ModuleType, repo: Path, old: str, new: str
+) -> None:
+    """Project URLs and the settings of linters leave the tests alone."""
+    picked = _tests(selector, repo, **{"pyproject.toml": PYPROJECT.replace(old, new)})
+    assert picked == []
+
+
+def test_an_uncommitted_change_is_read_whole(selector: ModuleType, repo: Path) -> None:
+    """The first `git status` line starts with a space; its path stays whole."""
+    (repo / "src/pkg/b.py").write_text("Y = 3\n", encoding="utf-8")
+    picked = selector.plan(repo, "main")
+    assert picked is not None
+    assert {Path(p).name for p in picked} == {"test_b.py"}
