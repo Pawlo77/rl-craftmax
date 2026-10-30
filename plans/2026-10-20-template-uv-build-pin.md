@@ -3,16 +3,16 @@ title: "Template uv-build pin implementation plan"
 type: plan
 domain: build
 parent: "[[wut_murl_craftax]]"
-status: draft
+status: in progress
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template uv-build Pin Implementation Plan
 
-Status: draft
+Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fix an upstream issue in `Pawlo77/python-kit-template` v0.13.0: the rendered `pyproject.toml` pins `uv_build>=0.11.0,<0.12.0`, behind the uv in use (0.12.23), so every `uv sync` and `uv run` that builds the project warns. Harmless, but it is noise on every command and the pin goes stale with each uv minor release. This is a template issue recorded here because the template repo is private to another owner and no GitHub issue can be opened.
 
@@ -32,9 +32,9 @@ Status: draft
 **Files:**
 - Modify: `template/pyproject.toml.jinja` (or wherever `[build-system]` is rendered)
 
-- [ ] **Step 1:** Set `requires = ["uv_build>=0.12.0,<0.13.0"]`.
-- [ ] **Step 2:** Have the dependency updater (or `scripts/upgrade.py`) bump the `uv_build` range with each uv minor release.
-- [ ] **Step 3:** Fresh render, `uv lock && make install` prints no `build_system.requires` warning; `make check` passes. Commit `build: track the current uv_build minor version`.
+- [x] **Step 1:** Set `requires = ["uv_build>=0.12.0,<0.13.0"]`.
+- [x] **Step 2:** Have the dependency updater (or `scripts/upgrade.py`) bump the `uv_build` range with each uv minor release.
+- [x] **Step 3:** Fresh render, `uv lock && make install` prints no `build_system.requires` warning; `make check` passes. Commit `build: track the current uv_build minor version`.
 
 ### Task 3: Take the fix here
 

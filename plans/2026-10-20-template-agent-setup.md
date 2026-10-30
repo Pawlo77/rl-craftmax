@@ -3,16 +3,16 @@ title: "Template agent setup implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: draft
+status: in progress
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template Agent Setup Implementation Plan
 
-Status: draft
+Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fix an upstream issue in `Pawlo77/python-kit-template` v0.13.0: when an agent creates a repo from the template, or clones a repo made from it, it never runs a proper setup. It does not run `make install` (env, prek hooks), copy the Obsidian settings, run `make obsidian-plugins` or run the tests. The agent should detect a repo that was never set up and finish the setup before other work. This is a template issue recorded here because the template repo is private to another owner and no GitHub issue can be opened.
 
@@ -32,8 +32,8 @@ Status: draft
 **Files:**
 - Modify: `template/kit.mk`, `template/README.md`, `template/CONTRIBUTING.md`
 
-- [ ] **Step 1:** Add `make setup`: `install`, then (vault scaffold) seed the Obsidian settings and `obsidian-plugins` (see [[2026-10-20-template-obsidian-onboarding]] Task 2), then `make tests`. Every step skips work already done, so rerunning is cheap.
-- [ ] **Step 2:** Point README's quick start and CONTRIBUTING's setup sections at `make setup`.
+- [x] **Step 1:** Add `make setup`: `install`, then (vault scaffold) seed the Obsidian settings and `obsidian-plugins` (see [[2026-10-20-template-obsidian-onboarding]] Task 2), then `make tests`. Every step skips work already done, so rerunning is cheap.
+- [x] **Step 2:** Point README's quick start and CONTRIBUTING's setup sections at `make setup`.
 
 ### Task 3: Detect a repo that was never set up
 
@@ -41,17 +41,17 @@ Status: draft
 - Modify: `template/scripts/hooks/session_start.sh`
 - Test: `template/tests/hooks/test_session_start.py`
 
-- [ ] **Step 1: Write the failing test:** with no `.venv`, no installed prek hook in `.git/hooks`, or (vault scaffold) a missing or empty `.obsidian/app.json` or `community-plugins.json`, or plugins missing from `.obsidian/plugins/`, the session-start context includes `- setup: incomplete (<what is missing>); run make setup before other work`. A repo that was set up shows `- setup: ok`.
-- [ ] **Step 2:** Implement the checks in `state()`; keep them filesystem-only (no `uv run`) so the hook stays fast.
+- [x] **Step 1: Write the failing test:** with no `.venv`, no installed prek hook in `.git/hooks`, or (vault scaffold) a missing or empty `.obsidian/app.json` or `community-plugins.json`, or plugins missing from `.obsidian/plugins/`, the session-start context includes `- setup: incomplete (<what is missing>); run make setup before other work`. A repo that was set up shows `- setup: ok`.
+- [x] **Step 2:** Implement the checks in `state()`; keep them filesystem-only (no `uv run`) so the hook stays fast.
 
 ### Task 4: Tell the agents
 
 **Files:**
 - Modify: `template/AGENTS.md`, the `development` skill
 
-- [ ] **Step 1:** Make `AGENTS.md` start with: on a new render or fresh clone, or when session start reports `setup: incomplete`, run `make setup` before anything else and report its result.
-- [ ] **Step 2:** Make the `development` skill's first step run `make setup` when setup is incomplete.
-- [ ] **Step 3:** Fresh render and fresh clone, each started in a new agent session: the agent runs `make setup` unprompted, and env, git hooks, Obsidian settings, plugins and tests are all in place; `make check` passes. Commit `feat: detect and run project setup in new agent sessions`.
+- [x] **Step 1:** Make `AGENTS.md` start with: on a new render or fresh clone, or when session start reports `setup: incomplete`, run `make setup` before anything else and report its result.
+- [x] **Step 2:** Make the `development` skill's first step run `make setup` when setup is incomplete.
+- [x] **Step 3:** Fresh render and fresh clone, each started in a new agent session: the agent runs `make setup` unprompted, and env, git hooks, Obsidian settings, plugins and tests are all in place; `make check` passes. Commit `feat: detect and run project setup in new agent sessions`.
 
 ### Task 5: Take the fix here
 

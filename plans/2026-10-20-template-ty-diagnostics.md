@@ -3,16 +3,16 @@ title: "Template ty diagnostics implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: draft
+status: in progress
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template Ty Diagnostics Implementation Plan
 
-Status: draft
+Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fix an upstream issue in `Pawlo77/python-kit-template` v0.13.0: a fresh render fails `ty`, with 54 diagnostics in template-shipped files that are unchanged since the scaffold commit. The `ty` hook is advisory (`uv run ty check src || true`) and checks only `src/`, so the errors go unnoticed. This is a template issue recorded here because the template repo is private to another owner and no GitHub issue can be opened.
 
@@ -37,11 +37,11 @@ Status: draft
 **Files:**
 - Modify: the files listed in Task 1 (under `template/`), `.pre-commit-config.yaml` (`ty` hook)
 
-- [ ] **Step 1:** `config.py`: annotate the merged mapping `dict[str, Any]` before `cls(**...)`.
-- [ ] **Step 2:** `upgrade.py`: unpack `old, new = match.groups()` and pass `where=PRE_COMMIT` by keyword.
-- [ ] **Step 3:** `check_vault.py`: add `scripts` to ty's `extra-paths` in `[tool.ty]`, or keep a `# ty: ignore[unresolved-import]` with a reason.
-- [ ] **Step 4:** Tests: generator fixtures `-> Iterator[None]`; widen `CLAUDE` to `dict[str, object]` (or use `Mapping[str, object]` parameters); fix the rest that `ty` lists.
-- [ ] **Step 5:** `uv run ty check src scripts tests` reports 0 diagnostics; make the hook blocking (drop `|| true`, check `src scripts tests`), then `make check` passes. Commit `fix: make the rendered project pass ty`.
+- [x] **Step 1:** `config.py`: annotate the merged mapping `dict[str, Any]` before `cls(**...)`.
+- [x] **Step 2:** `upgrade.py`: unpack `old, new = match.groups()` and pass `where=PRE_COMMIT` by keyword.
+- [x] **Step 3:** `check_vault.py`: add `scripts` to ty's `extra-paths` in `[tool.ty]`, or keep a `# ty: ignore[unresolved-import]` with a reason.
+- [x] **Step 4:** Tests: generator fixtures `-> Iterator[None]`; widen `CLAUDE` to `dict[str, object]` (or use `Mapping[str, object]` parameters); fix the rest that `ty` lists.
+- [x] **Step 5:** `uv run ty check src scripts tests` reports 0 diagnostics and `make check` passes. Won't do: the blocking hook, which would fail every downstream project's own `src`; the kit's CI runs `ty` on each render instead. Commit `fix: make the rendered project pass ty`.
 
 ### Task 3: Take the fix here
 

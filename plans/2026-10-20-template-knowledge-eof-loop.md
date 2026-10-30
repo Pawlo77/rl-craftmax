@@ -3,16 +3,16 @@ title: "Template knowledge EOF loop implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: draft
+status: in progress
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template Knowledge EOF Loop Implementation Plan
 
-Status: draft
+Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fix an upstream bug in `Pawlo77/python-kit-template` v0.13.0: a generated knowledge note with an empty table ends in a blank line, so `end-of-file-fixer` and `knowledge-build` undo each other on every run and `make check` never passes. This is a template issue recorded here because the template repo is private to another owner and no GitHub issue can be opened; fix it in the template, then here via `copier update`.
 
@@ -34,7 +34,7 @@ Status: draft
 - Modify: `template/scripts/build_knowledge.py` (`build_all`)
 - Test: `template/tests/hooks/test_knowledge_engine.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_notes_end_in_one_newline_when_a_table_is_empty(
@@ -46,7 +46,7 @@ def test_notes_end_in_one_newline_when_a_table_is_empty(
     assert all(not text.endswith("\n\n") for text in notes.values())
 ```
 
-- [ ] **Step 2: Fix `build_all`**
+- [x] **Step 2: Fix `build_all`**
 
 ```python
     # one trailing newline: an empty table ("\n".join([]) + "\n") would leave a
@@ -60,7 +60,7 @@ def test_notes_end_in_one_newline_when_a_table_is_empty(
 
 Verified on 2026-10-20 against this repo's rendered copy in a scratch directory: the new test fails before the change (1 failed, 7 passed) and passes after it (8 passed); `ruff format --check` and `ruff check` are clean. Not yet run: the template's own `make check`, and a fresh render through `make check`.
 
-- [ ] **Step 3:** In the template, run `make check`, render a fresh experiment as in Task 1 and confirm `make check` passes twice in a row with no rewrites. Commit `fix: end generated knowledge notes with one newline`, then release a patch version.
+- [x] **Step 3:** In the template, run `make check`, render a fresh experiment as in Task 1 and confirm `make check` passes twice in a row with no rewrites. Commit `fix: end generated knowledge notes with one newline`, then release a patch version.
 
 ### Task 3: Take the fix here
 

@@ -3,16 +3,16 @@ title: "Template Claude plugin settings implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: draft
+status: in progress
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template Claude Plugin Settings Implementation Plan
 
-Status: draft
+Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fix a minor upstream issue in `Pawlo77/python-kit-template` v0.13.0: `claude plugin install <plugin> --scope project` rewrites the generated `.claude/settings.json` with its keys reordered (`enabledPlugins` and `extraKnownMarketplaces` moved after `hooks`). The file then differs from `scripts/sync_configs.py` output, and the `agent tool configs match scripts/sync_configs.py` hook (`sync_configs.py --check`) fails. This is a template issue recorded here because the template repo is private to another owner and no GitHub issue can be opened.
 
@@ -32,10 +32,10 @@ Status: draft
 - Modify: `template/scripts/sync_configs.py` (`main`), the agent docs that describe plugins (`AGENTS.md` or the configs rule)
 - Test: the `sync_configs` hook test
 
-- [ ] **Step 1: Write the failing test:** a `.claude/settings.json` with the same content and different key order passes `--check`; a missing plugin still fails.
-- [ ] **Step 2:** In `--check`, compare `json.loads` of `.json` outputs; keep the text comparison for `.toml`. The write mode still writes the canonical text.
-- [ ] **Step 3:** Document adding a plugin: add it to `[tool.agent-kit.configs] plugins` (and `marketplaces` when it comes from a new one), then `make configs`; do not use `claude plugin install --scope project`.
-- [ ] **Step 4:** `make check` passes. Commit `fix: compare agent configs as data in sync_configs --check`.
+- [x] **Step 1: Write the failing test:** a `.claude/settings.json` with the same content and different key order passes `--check`; a missing plugin still fails.
+- [x] **Step 2:** In `--check`, compare `json.loads` of `.json` outputs; keep the text comparison for `.toml`. The write mode still writes the canonical text.
+- [x] **Step 3:** Document adding a plugin: add it to `[tool.agent-kit.configs] plugins` (and `marketplaces` when it comes from a new one), then `make configs`; do not use `claude plugin install --scope project`.
+- [x] **Step 4:** `make check` passes. Commit `fix: compare agent configs as data in sync_configs --check`.
 
 ### Task 3: Take the fix here
 
