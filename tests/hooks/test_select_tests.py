@@ -145,3 +145,15 @@ def test_an_uncommitted_change_is_read_whole(selector: ModuleType, repo: Path) -
     picked = selector.plan(repo, "main")
     assert picked is not None
     assert {Path(p).name for p in picked} == {"test_b.py"}
+
+
+def test_an_unresolvable_base_runs_everything_even_with_an_origin(
+    selector: ModuleType, repo: Path
+) -> None:
+    """A CI push whose ``before`` sha is gone must not fall back to ``origin/main``."""
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")  # merge base: HEAD
+    _write(repo, {"src/pkg/b.py": "Y = 9\n"})
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "feat: change")
+    assert selector.plan(repo, "0" * 40) is None
+    assert selector.plan(repo, None) is not None  # no base given: the origin fallback
