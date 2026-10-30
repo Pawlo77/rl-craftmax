@@ -3,8 +3,8 @@
   <p><strong>Textbook reinforcement learning on Craftax, measured beyond the score.</strong></p>
   <p>Course project for <em>Mathematical Underpinning of Reinforcement Learning</em> (MURL), Warsaw University of Technology.</p>
   <p>
-    <a href="https://github.com/Pawlo77/wut_murl_craftax/actions/workflows/test.yaml"><img src="https://github.com/Pawlo77/wut_murl_craftax/actions/workflows/test.yaml/badge.svg" alt="Pytest"></a>
-    <a href="https://github.com/Pawlo77/wut_murl_craftax/actions/workflows/prek.yaml"><img src="https://github.com/Pawlo77/wut_murl_craftax/actions/workflows/prek.yaml/badge.svg" alt="Prek Checks"></a>
+    <a href="https://github.com/Pawlo77/rl-craftmax/actions/workflows/test.yaml"><img src="https://github.com/Pawlo77/rl-craftmax/actions/workflows/test.yaml/badge.svg" alt="Pytest"></a>
+    <a href="https://github.com/Pawlo77/rl-craftmax/actions/workflows/prek.yaml"><img src="https://github.com/Pawlo77/rl-craftmax/actions/workflows/prek.yaml/badge.svg" alt="Prek Checks"></a>
     <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"></a>
     <a href="https://github.com/MichaelTMatthews/Craftax"><img src="https://img.shields.io/badge/env-Craftax%201.6.1-green.svg" alt="Craftax 1.6.1"></a>
     <a href="https://github.com/jax-ml/jax"><img src="https://img.shields.io/badge/JAX-0.11-orange.svg" alt="JAX 0.11"></a>
@@ -46,8 +46,8 @@ Observations and rewards per method: [`knowledge/methods/Methods.md`](knowledge/
 Requires Python 3.12 and [uv](https://docs.astral.sh/uv/); `ffmpeg` on `PATH` for videos.
 
 ```bash
-git clone https://github.com/Pawlo77/wut_murl_craftax.git
-cd wut_murl_craftax
+git clone https://github.com/Pawlo77/rl-craftmax.git
+cd rl-craftmax
 make install          # uv sync: Craftax, JAX, Apple GPU (metaljax) or CUDA backend
 make warm             # build the Craftax texture caches, print the devices in use
 cp .env.example .env  # persistent XLA compilation cache for every make target
@@ -94,7 +94,7 @@ Please cite this repository ([`CITATION.cff`](CITATION.cff)) and Craftax:
   author = {Pozorski, Pawe{\l}},
   title = {wut\_murl\_craftax: Textbook reinforcement learning on Craftax},
   year = {2026},
-  howpublished = {\url{https://github.com/Pawlo77/wut_murl_craftax}},
+  howpublished = {\url{https://github.com/Pawlo77/rl-craftmax}},
   note = {Course project, Mathematical Underpinning of Reinforcement Learning, Warsaw University of Technology}
 }
 

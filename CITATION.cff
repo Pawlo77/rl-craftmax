@@ -13,7 +13,7 @@ authors:
     email: "pozorski.paul@gmail.com"
     affiliation: "Warsaw University of Technology"
 license: MIT
-repository-code: "https://github.com/Pawlo77/wut_murl_craftax"
+repository-code: "https://github.com/Pawlo77/rl-craftmax"
 keywords:
   - reinforcement learning
   - Craftax
