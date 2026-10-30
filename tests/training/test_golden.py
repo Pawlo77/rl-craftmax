@@ -20,11 +20,13 @@ RECORDED_ON = ("Darwin", "arm64", "0.11.2")
 """OS, machine and JAX version the hashes were recorded with; XLA's CPU kernels may
 round differently elsewhere."""
 GOLDEN = {
-    "ppo": "e140c632f539482d2eb594cd66956855dcc1a136759de78b07bd15893a7d65cd",
-    "ppo-rnn": "d762a28585967ce7756be646d8d8c12a32a09928dd0f6214223b35b48fa0471b",
-    "pqn-rnn": "8bf2ef28f730fc057a9992c0849ffca78b5ba8a1f26e999d1b3d290c0721dd51",
+    "ppo": "2a0562c92ab2e75e31e6baee15ea00dcea4d126573eb8051f70176ed19aef895",
+    "ppo-rnn": "914e14a787f258c52baaeb6eb29f4d0c6af7260e5d090ef95d0d16fe6badd1b5",
+    "pqn-rnn": "b3137c175687b6b5c6dec80d7f81c6c3fc7dd3db7175773f2b9d98292c1c5f9c",
 }
-"""Registry name -> SHA-256 of params and losses after 2 updates (from a968039)."""
+"""Registry name -> SHA-256 of params and losses after 2 updates, re-recorded
+2026-10-30: the 2026-10-21 hashes no longer reproduced even at their own commit, while
+the rounding-tolerant `VALUES` still matched (a macOS or toolchain update)."""
 VALUES = {
     "ppo": [
         -0.0025813993997871876,
