@@ -66,7 +66,7 @@ Repository = "https://github.com/Pawlo77/wut_murl_craftax"
 Issues = "https://github.com/Pawlo77/wut_murl_craftax/issues"
 
 [build-system]
-requires = ["uv_build>=0.11.0,<0.12.0"]
+requires = ["uv_build>=0.11.0,<1.0.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
@@ -103,7 +103,7 @@ line-length = 88
 # Generated rules and skill Markdown hold Python fences; the vendored skill stays as shipped.
 # The book skills' helpers keep their own style; the book notebooks are executed outputs.
 extend-exclude = [
-  ".claude/rules", ".agents/skills/caveman", ".agents/**/*.md",
+  ".claude/rules", ".agents/skills/ponytail", ".agents/**/*.md",
   ".agents/skills/book-chapter-*", "research/*/notebooks",
 ]
 

@@ -4,7 +4,9 @@
 ``.cursor/hooks.json`` come from a shared base plus ``[tool.agent-kit.configs]``:
 ``delivery`` (``ask`` or ``autopilot``: may Claude commit, push and merge unasked),
 ``allow``, ``deny``, ``marketplaces``, ``plugins``, ``post-edit-hooks``,
-``codex-approval``. Never edit the outputs.
+``codex-approval``. Never edit the outputs. Add a plugin to ``plugins`` (and
+``marketplaces``) there and run ``make configs``; ``claude plugin install --scope
+project`` is lost on the next run.
 
 Usage: ``uv run python scripts/sync_configs.py [--check]``; exits 1 if stale.
 """
@@ -21,7 +23,10 @@ from kit_config import load as load_config
 ROOT = Path(__file__).resolve().parents[1]
 """Repository root."""
 
-MARKETPLACES = {"astral-sh": "astral-sh/claude-code-plugins"}
+MARKETPLACES = {
+    "astral-sh": "astral-sh/claude-code-plugins",
+    "ponytail": "DietrichGebert/ponytail",
+}
 """Plugin marketplaces every repository declares."""
 
 PLUGINS = (
@@ -32,6 +37,7 @@ PLUGINS = (
     "skill-creator@claude-plugins-official",
     "remember@claude-plugins-official",
     "astral@astral-sh",
+    "ponytail@ponytail",
 )
 """Plugins every repository enables."""
 
@@ -79,6 +85,9 @@ ALLOW = (
     "Bash(make vault-check*)",
 )
 """Permission rules that are safe in every repository."""
+
+RESEARCH_ALLOW = ("WebFetch(domain:api.openalex.org)", "Edit(research/**)")
+"""Added when the repository has ``research/`` (the ``research`` answer)."""
 
 AUTOPILOT = (
     "Bash(git commit*)",
@@ -189,7 +198,13 @@ def claude_settings(root: Path = ROOT) -> dict[str, Any]:
     post += [
         _command(_claude(n), POST_EDIT_TIMEOUT) for n in cfg.get("post-edit-hooks", [])
     ]
-    allow = [*ALLOW, *(AUTOPILOT if autopilot else ()), *cfg.get("allow", [])]
+    research = RESEARCH_ALLOW if (root / "research").is_dir() else ()
+    allow = [
+        *ALLOW,
+        *research,
+        *(AUTOPILOT if autopilot else ()),
+        *cfg.get("allow", []),
+    ]
     return {
         "extraKnownMarketplaces": {
             name: {"source": {"source": "github", "repo": repo}}
@@ -359,6 +374,19 @@ def render(root: Path = ROOT) -> dict[str, str]:
     }
 
 
+def _is_current(path: Path, content: str) -> bool:
+    """Whether ``path`` holds ``content``; JSON compares as data (key order is free)."""
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if path.suffix != ".json":
+        return text == content
+    try:
+        return json.loads(text) == json.loads(content)
+    except json.JSONDecodeError:
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     """Write the configs, or with ``--check`` report the stale ones."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -368,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     stale = []
     for rel, content in render(args.root).items():
         path = args.root / rel
-        if path.is_file() and path.read_text(encoding="utf-8") == content:
+        if _is_current(path, content):
             continue
         stale.append(rel)
         if not args.check:

@@ -97,6 +97,17 @@ def test_delivery_switch_controls_commit_push_and_merge(
     assert "Bash(gh api graphql*)" in allow
 
 
+def test_research_permissions_follow_the_research_folder(
+    configs: ModuleType, tmp_path: Path
+) -> None:
+    plain = configs.claude_settings(_root(tmp_path / "plain"))["permissions"]["allow"]
+    assert not set(configs.RESEARCH_ALLOW) & set(plain)
+    root = _root(tmp_path / "research")
+    (root / "research").mkdir()
+    allow = configs.claude_settings(root)["permissions"]["allow"]
+    assert set(configs.RESEARCH_ALLOW) <= set(allow)
+
+
 def test_secrets_and_force_pushes_are_always_denied(
     configs: ModuleType, tmp_path: Path
 ) -> None:
@@ -168,3 +179,18 @@ def test_check_reports_stale_files_and_write_fixes_them(
     capsys.readouterr()
     assert configs.main(["--check", "--root", str(root)]) == 1
     assert "stale: .cursor/hooks.json" in capsys.readouterr().out
+
+
+def test_check_ignores_json_key_order_but_not_content(
+    configs: ModuleType, tmp_path: Path
+) -> None:
+    """``claude plugin install`` reorders keys; that is not stale, a missing key is."""
+    root = _root(tmp_path)
+    assert configs.main(["--root", str(root)]) == 0
+    path = root / ".claude" / "settings.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps(dict(reversed(data.items()))), encoding="utf-8")
+    assert configs.main(["--check", "--root", str(root)]) == 0
+    del data["hooks"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert configs.main(["--check", "--root", str(root)]) == 1
