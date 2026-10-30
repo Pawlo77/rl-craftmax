@@ -52,3 +52,6 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 - [[Visualisation decisions]]: video formats, footage, audio, review, metrics, code location.
 
 ## Handbook
+
+- [[EDEN compute]]: the WUT MiNI Slurm cluster (access, storage, GPU jobs, templates).
+- [[PLGrid compute]]: PLGrid and Helios (grants, Slurm, software, storage).
