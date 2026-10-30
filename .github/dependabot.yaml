@@ -9,6 +9,11 @@ updates:
     groups:
       python:
         update-types: [minor, patch]
+    ignore:
+      # jax moves with metaljax (Apple GPU), which caps it below 0.12, and with the exact
+      # jaxlib and jax[cuda12] pins: one bump alone never resolves. Bump the stack by hand.
+      - dependency-name: "jax*"
+      - dependency-name: "metaljax"
     commit-message:
       prefix: "build"
     labels: [dependencies]
