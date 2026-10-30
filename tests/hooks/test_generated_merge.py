@@ -1,6 +1,9 @@
 """Two branches that change a generated note merge without a conflict.
 
-@see [[.gitattributes]]
+The rule is the ``knowledge/generated/**`` line of ``.gitattributes``; the notes it
+covers are the ones the builder writes.
+
+@see [[scripts/build_knowledge.py]]
 """
 
 import shutil
