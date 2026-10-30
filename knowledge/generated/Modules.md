@@ -14,7 +14,7 @@ parent: "[[wut_murl_craftax]]"
 |---|---|---|---|---|---|
 | [[src/wut_murl_craftax/__init__.py]] | wut_murl_craftax experiment package. |  |  | 3 |  |
 | [[src/wut_murl_craftax/analysis/__init__.py]] | Phase 4 analysis: run loading, training analysis, cases and method comparison. |  |  | 494 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/captions.py]] | Figure and table notes of one benchmark, built from the captions the stages wrote. |  | [[2026-10-20-craftax-comparison-and-results]] | 263 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/captions.py]] | Figure and table notes of one benchmark, built from the captions the stages wrote. |  | [[2026-10-20-craftax-comparison-and-results]] | 264 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/cases.py]] | Case episodes of the training analysis: find, export and describe them. |  | [[2026-10-20-craftax-training-analysis]] | 583 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/compare.py]] | Result tables of the method comparison (T1-T4, T6, T7, PoI matrix, ablations). |  | [[2026-10-20-craftax-comparison-and-results]] | 1108 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1425 | [[analysis]] |

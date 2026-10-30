@@ -73,7 +73,10 @@ def test_each_row_is_a_figure_link_and_the_title_with_the_description(
         "80 mm | **Training score.** Mean score. |"
     )
     plot = next(ln for ln in text.splitlines() if "floor_reach" in ln)
-    assert "(../../outputs/analysis/1m/ppo/plots/floor_reach.png)" in plot
+    assert (
+        "`outputs/analysis/1m/ppo/plots/floor_reach.png`" in plot
+    )  # untracked: no link
+    assert "](../../outputs/" not in text
 
 
 def test_the_table_note_links_the_csv_and_the_tex_that_exist(
@@ -83,8 +86,8 @@ def test_the_table_note_links_the_csv_and_the_tex_that_exist(
         "1m", stages["results"], stages["repo"], today="2026-10-28"
     )
     main = next(ln for ln in text.splitlines() if "Final score per method" in ln)
-    assert "main.csv" in main
-    assert "main.tex" in main
+    assert "`outputs/results/tables/1m/main.csv`" in main  # untracked: no link
+    assert "[main.tex](../../report/tables/1m/main.tex)" in main
     sens = next(ln for ln in text.splitlines() if "Per tuning phase" in ln)
     assert "sensitivity.csv" not in sens  # no file: the stem alone, never a dead link
     assert "## Main results" in text

@@ -68,12 +68,13 @@ def _cell(row: dict[str, str]) -> str:
 
 
 def _ref(repo: Path, rel: str, label: str) -> str:
-    """A link to the repository file ``rel`` if it exists, else its path in code font.
+    """A link to the tracked file ``rel`` of the repository if it exists, else its path.
 
-    The vault check rejects links to files that are not there (``outputs/`` is not
-    tracked), so a note built before the files exist names them without a link.
+    The vault check rejects links to files that are not there. ``outputs/`` is not
+    tracked, so CI never has it: its files are named without a link, as are files a
+    note was built before.
     """
-    if (repo / rel).is_file():
+    if not rel.startswith("outputs/") and (repo / rel).is_file():
         return f"[{label}]({UP}/{rel})"
     return f"`{rel}`"
 

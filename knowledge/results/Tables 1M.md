@@ -4,8 +4,8 @@ type: concept
 domain: analysis
 parent: "[[Final results]]"
 tags: [concept, results, tables, craftax-1m]
-created: 2026-10-29
-updated: 2026-10-29
+created: 2026-10-30
+updated: 2026-10-30
 related-code:
   - "[[src/wut_murl_craftax/analysis/captions.py]]"
   - "[[src/wut_murl_craftax/analysis/results.py]]"
@@ -18,30 +18,30 @@ Each file holds the rows of this benchmark only; the CSV is in `outputs/results/
 
 | Table | Description |
 |---|---|
-| [ablation.csv](../../outputs/results/tables/1m/ablation.csv) | **Ablations.** Each ablation against the tuned runs of its method: difference of means with a bootstrap CI, IQM, PoI and Mann-Whitney p (Holm over a block); never pooled with the method. |
-| [main.csv](../../outputs/results/tables/1m/main.csv) [main.tex](../../report/tables/1m/main.tex) | **Main results.** Final score of every tuned method (and control) per block: mean with s.e., IQM or median with 95% bootstrap CIs, the final-checkpoint eval means, and against each control the probability of improvement with Holm-adjusted p. |
+| `outputs/results/tables/1m/ablation.csv` | **Ablations.** Each ablation against the tuned runs of its method: difference of means with a bootstrap CI, IQM, PoI and Mann-Whitney p (Holm over a block); never pooled with the method. |
+| `outputs/results/tables/1m/main.csv` [main.tex](../../report/tables/1m/main.tex) | **Main results.** Final score of every tuned method (and control) per block: mean with s.e., IQM or median with 95% bootstrap CIs, the final-checkpoint eval means, and against each control the probability of improvement with Holm-adjusted p. |
 | [main_vs_controls.tex](../../report/tables/1m/main_vs_controls.tex) | **Comparison with the controls.** Probability of improvement with its 95% CI and the Holm p of every method against each control, per block (LaTeX table of the main results). |
-| [poi_matrix.csv](../../outputs/results/tables/1m/poi_matrix.csv) | **Probability of improvement matrix.** P(row beats column) with its 95% CI between every two methods of one block (the source of the PoI matrix figure); no cross-block pair. |
+| `outputs/results/tables/1m/poi_matrix.csv` | **Probability of improvement matrix.** P(row beats column) with its 95% CI between every two methods of one block (the source of the PoI matrix figure); no cross-block pair. |
 
 ## Literature
 
 | Table | Description |
 |---|---|
-| [literature.csv](../../outputs/results/tables/1m/literature.csv) [literature.tex](../../report/tables/1m/literature.tex) | **Literature comparison.** Our rows beside the published rows of the comparable score kind, with our CI and the reproduction-gate status of the controls; published rows keep their protocol, seeds and spread as copied. |
-| [reproduction_gate.csv](../../outputs/results/tables/1m/reproduction_gate.csv) | **Reproduction gate.** Each control's final score against its published value: pass or fail with the gap and the band half-width h. |
+| `outputs/results/tables/1m/literature.csv` [literature.tex](../../report/tables/1m/literature.tex) | **Literature comparison.** Our rows beside the published rows of the comparable score kind, with our CI and the reproduction-gate status of the controls; published rows keep their protocol, seeds and spread as copied. |
+| `outputs/results/tables/1m/reproduction_gate.csv` | **Reproduction gate.** Each control's final score against its published value: pass or fail with the gap and the band half-width h. |
 
 ## Stability
 
 | Table | Description |
 |---|---|
-| [stability.csv](../../outputs/results/tables/1m/stability.csv) | **Stability.** Seed sd and CV of the final score and, per run with a score curve, the deepest drawdown, drops and collapses. |
-| [stability_runs.csv](../../outputs/results/tables/1m/stability_runs.csv) | **Stability per run.** The per-run part of the stability table: deepest drawdown, any drop and collapse of each tuned run with a score curve. |
+| `outputs/results/tables/1m/stability.csv` | **Stability.** Seed sd and CV of the final score and, per run with a score curve, the deepest drawdown, drops and collapses. |
+| `outputs/results/tables/1m/stability_runs.csv` | **Stability per run.** The per-run part of the stability table: deepest drawdown, any drop and collapse of each tuned run with a score curve. |
 
 ## Hardware
 
 | Table | Description |
 |---|---|
-| [hardware.csv](../../outputs/results/tables/1m/hardware.csv) | **Hardware.** Run medians per hardware profile (steps per second, wall-clock, compile time, memory, utilisation); profiles are never compared, laptop timings are context only. |
+| `outputs/results/tables/1m/hardware.csv` | **Hardware.** Run medians per hardware profile (steps per second, wall-clock, compile time, memory, utilisation); profiles are never compared, laptop timings are context only. |
 
 ## Stability and hardware
 
@@ -53,12 +53,12 @@ Each file holds the rows of this benchmark only; the CSV is in `outputs/results/
 
 | Table | Description |
 |---|---|
-| [game_summary.csv](../../outputs/results/tables/1m/game_summary.csv) [game_summary.tex](../../report/tables/1m/game_summary.tex) | **In-game summary.** Per method: race wins, deepest floor, most frequent cause of death, coverage, wasted share and adoption of the advanced mechanics. |
-| [race.csv](../../outputs/results/tables/1m/race.csv) | **First-unlock race.** Median first unlock of every achievement per method (env steps and wall-clock) with the eligibility rule and the winners, per block. |
+| `outputs/results/tables/1m/game_summary.csv` [game_summary.tex](../../report/tables/1m/game_summary.tex) | **In-game summary.** Per method: race wins, deepest floor, most frequent cause of death, coverage, wasted share and adoption of the advanced mechanics. |
+| `outputs/results/tables/1m/race.csv` | **First-unlock race.** Median first unlock of every achievement per method (env steps and wall-clock) with the eligibility rule and the winners, per block. |
 
 ## Tuning
 
 | Table | Description |
 |---|---|
-| [sensitivity.csv](../../outputs/results/tables/1m/sensitivity.csv) | **Hyperparameter sensitivity.** Per tuning phase and method: configs tried, the best config, robust share, the noise floor and the two most sensitive hyperparameters. |
-| [tuning_optimism.csv](../../outputs/results/tables/1m/tuning_optimism.csv) | **Tuning optimism.** Mean score of the tuned configuration during tuning against fresh seeds of the same configuration, per method. |
+| `outputs/results/tables/1m/sensitivity.csv` | **Hyperparameter sensitivity.** Per tuning phase and method: configs tried, the best config, robust share, the noise floor and the two most sensitive hyperparameters. |
+| `outputs/results/tables/1m/tuning_optimism.csv` | **Tuning optimism.** Mean score of the tuned configuration during tuning against fresh seeds of the same configuration, per method. |
