@@ -59,11 +59,11 @@ def changed_files(
     root: Path, base: str | None
 ) -> tuple[list[str], list[str], str] | None:
     """Return (existing, deleted, merge base) of the changes, or ``None``."""
-    for ref in (base, "@{upstream}", "origin/main", "origin/master"):
-        point = ref and _git(root, "merge-base", "HEAD", ref)
-        if point:
-            break
-    else:
+    # a base that was asked for must resolve: CI passes the pushed ``before`` sha, which
+    # is gone after a force push, and ``origin/main`` would then be the wrong base
+    refs = (base,) if base else ("@{upstream}", "origin/main", "origin/master")
+    point = next((p for r in refs if (p := _git(root, "merge-base", "HEAD", r))), None)
+    if point is None:
         return None
     names = _git(root, "diff", "--name-only", point, "HEAD") or ""
     dirty = _git(root, "status", "--porcelain", "--untracked-files=all") or ""
