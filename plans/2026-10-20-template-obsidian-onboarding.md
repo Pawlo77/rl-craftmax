@@ -3,14 +3,14 @@ title: "Template Obsidian onboarding implementation plan"
 type: plan
 domain: vault
 parent: "[[wut_murl_craftax]]"
-status: in progress
+status: done
 created: 2026-10-20
 updated: 2026-10-25
 tags: [plan, template, bug]
 ---
 # Template Obsidian Onboarding Implementation Plan
 
-Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
+Status: done
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -52,5 +52,5 @@ The experiment scaffold renders `configs/`, `outputs/` and `notebooks/`, but nei
 
 ### Task 4: Take the fix here
 
-- [ ] **Step 1:** `uvx copier update --trust` to the fixed template version.
-- [ ] **Step 2:** `make check` passes; mark this plan `done`.
+- [x] **Step 1:** `uvx copier update --trust` to the fixed template version.
+- [x] **Step 2:** `make check` passes; mark this plan `done`.

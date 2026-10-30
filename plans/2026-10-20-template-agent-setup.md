@@ -3,14 +3,14 @@ title: "Template agent setup implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: in progress
+status: done
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template Agent Setup Implementation Plan
 
-Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
+Status: done
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -55,5 +55,5 @@ Status: in progress (template change in Pawlo77/python-kit-template#13; open: ta
 
 ### Task 5: Take the fix here
 
-- [ ] **Step 1:** `uvx copier update --trust` to the fixed template version.
-- [ ] **Step 2:** A fresh clone of this repo in a new agent session sets itself up; `make check` passes; mark this plan `done`.
+- [x] **Step 1:** `uvx copier update --trust` to the fixed template version.
+- [x] **Step 2:** A fresh clone of this repo in a new agent session sets itself up; `make check` passes; mark this plan `done`.

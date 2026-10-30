@@ -3,14 +3,14 @@ title: "Template ty diagnostics implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: in progress
+status: done
 created: 2026-10-20
 updated: 2026-10-20
 tags: [plan, template, bug]
 ---
 # Template Ty Diagnostics Implementation Plan
 
-Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
+Status: done
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -45,5 +45,5 @@ Status: in progress (template change in Pawlo77/python-kit-template#13; open: ta
 
 ### Task 3: Take the fix here
 
-- [ ] **Step 1:** `uvx copier update --trust` to the fixed template version; `uv run ty check src scripts tests` is clean except for this repo's own files (the book skills' `references/notebook-skeleton.py` is a placeholder skeleton, not template code).
-- [ ] **Step 2:** `make check` passes; mark this plan `done`.
+- [x] **Step 1:** `uvx copier update --trust` to the fixed template version; `uv run ty check src scripts tests` is clean except for this repo's own files (the book skills' `references/notebook-skeleton.py` is a placeholder skeleton, not template code).
+- [x] **Step 2:** `make check` passes; mark this plan `done`.

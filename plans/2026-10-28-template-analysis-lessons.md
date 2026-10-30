@@ -3,14 +3,14 @@ title: "Template analysis lessons implementation plan"
 type: plan
 domain: scripts
 parent: "[[wut_murl_craftax]]"
-status: in progress
+status: done
 created: 2026-10-28
 updated: 2026-10-28
 tags: [plan, template]
 ---
 # Template Analysis Lessons Implementation Plan
 
-Status: in progress (template change in Pawlo77/python-kit-template#13; open: take it here with `copier update`)
+Status: done
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -133,5 +133,5 @@ A grown project's suite (about 1,500 tests here, 33 min serially on a laptop) ca
 
 ### Task 11: Take the fixes here
 
-- [ ] **Step 1:** `uvx copier update --trust` to the fixed template version; drop the local copies of Tasks 3-6 and 10 where the template now matches.
-- [ ] **Step 2:** `make check` passes; mark this plan `done`.
+- [x] **Step 1:** `uvx copier update --trust` to the fixed template version; drop the local copies of Tasks 3-6 and 10 where the template now matches.
+- [x] **Step 2:** `make check` passes; mark this plan `done`.
