@@ -53,4 +53,5 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 ## Handbook
 
+- [[Course project requirements]]: grading, deadlines, checkpoint criteria and deliverables of the course.
 - [[EDEN compute]]: the WUT MiNI Slurm cluster (access, storage, GPU jobs, templates).
