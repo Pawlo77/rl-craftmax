@@ -63,14 +63,14 @@ Cluster facts used by the plan ([[EDEN Slurm basics and partitions]], [[EDEN GPU
 - [x] **Step 1:** (done 2026-10-31, `ec56d91`) record the three update lines of `check_recompute.py` above in the Device verification table of [[PPO-RNN design]] and remove `ppo/ratio_first_mb` from `unmeasured_limits` in `configs/profiles/cuda.yaml` (exit 0 rule of [[2026-10-20-craftax-infrastructure]] Task 6 Step 5).
 - [x] **Step 2:** `combo-1b` waits for `select_pair --rank-sum-with final-1m` after `final-1b` ([[2026-10-20-craftax-project]] Step 1b); do not submit it first.
 - [x] **Step 3:** (done 2026-10-31) `git clone https://github.com/Pawlo77/rl-craftmax.git ~/craftax-eden-1b` and `git checkout <pushed commit>`: a clone, not a `git archive`, so each run's reproducibility report records a clean commit. Then `uv sync --frozen --all-groups` once. `run_array.sh` calls `uv run`, which installs only the default groups: the first launch skipped this and every run stopped in seconds with `JAX has no GPU backend (platforms ['cpu'])`. Submit with `UV_NO_SYNC=1` so concurrent jobs do not race on the environment.
-- [x] **Step 4:** (done) cap of 12 concurrent A100s (`%2` on ppo, ppo-rnn, pqn-rnn and count-bonus-ppo-rnn, `%1` on the other four) and the time limit per entry: `short` allows 24 h, a run is 4 to 6 h of training plus evaluation, so `--time=14:00:00` (`--time=18:00:00` for Dyna-Q and SIL); `--signal=B:TERM@600` resumes what the limit cuts. `sfree` showed free GPUs but few free CPUs: request `--cpus-per-task=4`, not 8.
+- [x] **Step 4:** (done) cap of 12 concurrent A100s (`%2` on ppo, ppo-rnn, pqn-rnn and count-bonus-ppo-rnn, `%1` on the other four) and the time limit per entry: `short` allows 24 h, a run is 4 to 6 h of training plus evaluation, so `--time=14:00:00` (`--time=18:00:00` for Dyna-Q and SIL); `--signal=B:TERM@600` resumes what the limit cuts. `sfree` showed free GPUs but few free CPUs: request `--cpus-per-task=2` (measured: PPO-RNN on 2 CPUs trains at 61,343 steps/s, the 8-CPU probe's rate).
 
 ### Task 2: Submit
 
 - [x] **Step 1:** (done 2026-10-31, jobs 1936132 and 1936134 to 1936140) one submission per entry, 3 seeds each, from `~/craftax-eden-1b`; `<group>` is the research account (`sacctmgr show assoc user=$USER` lists it):
 
 ```
-STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0-2%2 --cpus-per-task=4 --mem=12G -J cx-ppo --time=14:00:00 scripts/cluster/run_array.sh final-1b --method ppo
+STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0-2%2 --cpus-per-task=2 --mem=8G -J cx-ppo --time=14:00:00 scripts/cluster/run_array.sh final-1b --method ppo
 ```
 
   The other 7 entries are the same line with their `--method`, `STORE_DIR`, cap and memory (12 GB ppo-rnn and count-bonus-ppo-rnn, 16 GB pqn-rnn, count-bonus-pqn-rnn, sil and smdp-skills, 24 GB dyna-q); `sbatch --test-only` first shows the planned node and start.
@@ -92,6 +92,10 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 - First launch failed in seconds on every run (no `cuda` group in the venv, see Task 1 Step 3); nothing trained, stores and logs were cleared.
 - Second launch (jobs 1936132 and 1936134 to 1936140): PPO seeds 0 and 1 train on `dgx-4` at 79,100 steps/s steady (probe 78,200; 3.5 h of training), 8.2 GB device memory, 95 % GPU utilisation.
 - The other arrays wait: other users' `long` jobs held 126 of 128 CPUs on `dgx-2` and `dgx-3` (5 free A100s each, stranded) and `dgx-4` had 11 GB of free RAM. Lowering `--mem` to the measured host peaks plus margin (8 GB for the PPO family, 10 GB for pqn-rnn, count-bonus-pqn-rnn, sil and smdp-skills, 16 GB for dyna-q; `scontrol update JobId=<array> MinMemoryNode=<MB>`) let seed 1 start at once. The scheduler's own estimates for the rest ranged from hours to days: check `squeue --start`.
+
+- Two CPUs per job let the arrays use the A100s other users' CPU-only jobs strand (126 of 128 CPUs allocated, 5 GPUs free): PPO-RNN seeds started on `dgx-2` and `dgx-3` within seconds. The arrays of the other six entries were resubmitted with `--cpus-per-task=2` (jobs 1936153 and 1936158 to 1936163).
+- A task on `dgx-2` sat 11 minutes with no child process, 0 % GPU and no database (node load 29, probably I/O): `scontrol requeue <jobid>` restarted it. Check `nvidia-smi` through `srun --jobid=<id> --overlap` when a log stays empty.
+- A store records its array size: never resubmit single seeds of an array under a different size.
 
 ### Risks
 
