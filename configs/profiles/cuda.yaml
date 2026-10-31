@@ -7,9 +7,10 @@ device_roles: gpu
 memory_limit_bytes: 68719476736
 checkpoint_every: 50  # a GPU run advances fast and is preempted rarely; state saves cost more per update
 # A stop waits for the chunk (<= 50 updates, about 40 s at 1B): run_array.sh asks for SIGTERM 600 s early.
-# Not yet measured on CUDA (TF32): a hit is retried, not final. Run scripts/cluster/check_recompute.py
-# on a node before final-1b, record it in PPO-RNN design (Device verification), then empty this list.
-unmeasured_limits: [ppo/ratio_first_mb]
+# Measured on an A100 (TF32) on 2026-10-31: worst recompute gap 5.5e-5, below the 1e-4 bound
+# (PPO-RNN design, Device verification), so every limit is final. A GPU class not measured yet
+# lists ppo/ratio_first_mb here again: a hit is then retried, not final.
+unmeasured_limits: []
 # 1B storage: a finished, fully evaluated run's state/ (0.45-1.8 GB at 1,024 envs) is deleted at
 # once, so the copy back to the laptop is ckpt/, eval/ and the logs only (0.4-0.65 GB a run).
 # Killed, failed and unevaluated runs keep it to resume.

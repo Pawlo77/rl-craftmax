@@ -75,11 +75,11 @@ def test_cuda_profile_runs_everything_on_one_device() -> None:
     assert cuda.checkpoint_every > 0
 
 
-def test_only_the_cuda_profile_has_an_unmeasured_recompute_bound() -> None:
-    """ctrl-metrics review: measured on CPU and Metal, not yet on CUDA (TF32);
-    ``scripts/cluster/check_recompute.py`` measures it, then cuda.yaml drops it."""
+def test_no_profile_has_an_unmeasured_recompute_bound() -> None:
+    """ctrl-metrics review: measured on CPU, Metal and an A100 (TF32) with
+    ``scripts/cluster/check_recompute.py``; a new GPU class lists the metric again."""
     cuda = load_profile(PROFILES / "cuda.yaml")
-    assert cuda.unmeasured_limits == ("ppo/ratio_first_mb",)
+    assert cuda.unmeasured_limits == ()
     assert load_profile(PROFILES / "laptop.yaml").unmeasured_limits == ()
 
 

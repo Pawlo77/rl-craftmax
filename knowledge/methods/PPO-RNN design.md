@@ -5,7 +5,7 @@ domain: training
 parent: "[[Methods]]"
 tags: [concept, method, control, ppo, recurrent, actor-critic]
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-31
 aliases: [PPO-RNN control, PPO-GRU]
 related-code: ["[[src/wut_murl_craftax/training/ppo.py]]"]
 ---
@@ -81,8 +81,9 @@ Recompute check on Craftax-Symbolic (8268 inputs, 8 envs, 4 seeds x 2 minibatche
 |---|---|---|---|
 | CPU (`JAX_PLATFORMS=cpu`) | 4.8e-7 | 0 | 1e-5 |
 | Metal (`JAX_PLATFORMS=metal,cpu`, laptop profile) | 7.2e-7 | 1.76e-6 | 1e-5 |
+| CUDA, A100 40 GB (TF32, `cuda.yaml`, 1B config: 1,024 envs x 64 steps, 3 updates; EDEN, 2026-10-31) | 5.5e-5 | 4.8e-4 | 1e-4 |
 
-Metal stays below 1e-5, so no looser bound is needed; the first-minibatch ratio rule keeps its 1e-3 limit in the abort rule.
+Metal stays below 1e-5, so no looser bound is needed; the first-minibatch ratio rule keeps its 1e-3 limit in the abort rule. On the A100 the log-prob gap (the quantity the script bounds, at 1e-4) is 5.5e-5 and `ppo/ratio_first_mb` stays within 1e-7 of 1; the value gap is larger because values are not bounded in the ratio. `cuda.yaml` therefore no longer lists `ppo/ratio_first_mb` as unmeasured.
 
 ## Fixed vs tuned
 
