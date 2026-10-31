@@ -3,14 +3,14 @@ title: "Craftax EDEN 1B execution implementation plan"
 type: plan
 domain: orchestration
 parent: "[[2026-10-20-craftax-project]]"
-status: draft
+status: in progress
 created: 2026-10-31
 updated: 2026-10-31
 tags: [plan, eden, compute, 1b]
 ---
 # Craftax EDEN 1B execution implementation plan
 
-Status: draft
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -60,21 +60,21 @@ Cluster facts used by the plan ([[EDEN Slurm basics and partitions]], [[EDEN GPU
 **Files:**
 - Modify: `configs/profiles/cuda.yaml` (`unmeasured_limits`), [[PPO-RNN design]] (Device verification table)
 
-- [ ] **Step 1:** record the three update lines of `check_recompute.py` above in the Device verification table of [[PPO-RNN design]] and remove `ppo/ratio_first_mb` from `unmeasured_limits` in `configs/profiles/cuda.yaml` (exit 0 rule of [[2026-10-20-craftax-infrastructure]] Task 6 Step 5).
-- [ ] **Step 2:** `combo-1b` waits for `select_pair --rank-sum-with final-1m` after `final-1b` ([[2026-10-20-craftax-project]] Step 1b); do not submit it first.
-- [ ] **Step 3:** copy the code to the cluster (`git archive HEAD | ssh eden 'mkdir -p ~/craftax-eden && tar -x -C ~/craftax-eden'`) and keep the uv cache warm: the first node pays the 195 s sync, later nodes less.
-- [ ] **Step 4:** fix the cap on concurrent GPUs (suggested 12 of the 32 A100s; `sfree` first) and the time limit per entry: `short` allows 24 h, a run is 4 to 6 h of training plus evaluation, so request `--time=14:00:00` (`--time=18:00:00` for Dyna-Q and SIL) and let `--signal=B:TERM@600` resume what the limit cuts.
+- [x] **Step 1:** (done 2026-10-31, `ec56d91`) record the three update lines of `check_recompute.py` above in the Device verification table of [[PPO-RNN design]] and remove `ppo/ratio_first_mb` from `unmeasured_limits` in `configs/profiles/cuda.yaml` (exit 0 rule of [[2026-10-20-craftax-infrastructure]] Task 6 Step 5).
+- [x] **Step 2:** `combo-1b` waits for `select_pair --rank-sum-with final-1m` after `final-1b` ([[2026-10-20-craftax-project]] Step 1b); do not submit it first.
+- [x] **Step 3:** (done 2026-10-31) `git clone https://github.com/Pawlo77/rl-craftmax.git ~/craftax-eden-1b` and `git checkout <pushed commit>`: a clone, not a `git archive`, so each run's reproducibility report records a clean commit. Then `uv sync --frozen --all-groups` once. `run_array.sh` calls `uv run`, which installs only the default groups: the first launch skipped this and every run stopped in seconds with `JAX has no GPU backend (platforms ['cpu'])`. Submit with `UV_NO_SYNC=1` so concurrent jobs do not race on the environment.
+- [x] **Step 4:** (done) cap of 12 concurrent A100s (`%2` on ppo, ppo-rnn, pqn-rnn and count-bonus-ppo-rnn, `%1` on the other four) and the time limit per entry: `short` allows 24 h, a run is 4 to 6 h of training plus evaluation, so `--time=14:00:00` (`--time=18:00:00` for Dyna-Q and SIL); `--signal=B:TERM@600` resumes what the limit cuts. `sfree` showed free GPUs but few free CPUs: request `--cpus-per-task=4`, not 8.
 
 ### Task 2: Submit
 
-- [ ] **Step 1:** one submission per entry, 3 seeds each, from `~/craftax-eden`; `<group>` is the research account (`sacctmgr show assoc user=$USER` lists it):
+- [x] **Step 1:** (done 2026-10-31, jobs 1936132 and 1936134 to 1936140) one submission per entry, 3 seeds each, from `~/craftax-eden-1b`; `<group>` is the research account (`sacctmgr show assoc user=$USER` lists it):
 
 ```
-STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0-2%3 --cpus-per-task=8 --mem=32G --time=14:00:00 scripts/cluster/run_array.sh final-1b --method ppo
+STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0-2%2 --cpus-per-task=4 --mem=12G -J cx-ppo --time=14:00:00 scripts/cluster/run_array.sh final-1b --method ppo
 ```
 
-  The other 7 entries are the same line with their `--method` and `STORE_DIR`; `sbatch --test-only` first shows the planned node and start.
-- [ ] **Step 2:** start without `SEED_FROM` (no 1B run exists), as the compute-budget Task 2 Step 1 says.
+  The other 7 entries are the same line with their `--method`, `STORE_DIR`, cap and memory (12 GB ppo-rnn and count-bonus-ppo-rnn, 16 GB pqn-rnn, count-bonus-pqn-rnn, sil and smdp-skills, 24 GB dyna-q); `sbatch --test-only` first shows the planned node and start.
+- [x] **Step 2:** start without `SEED_FROM` (no 1B run exists), as the compute-budget Task 2 Step 1 says.
 
 ### Task 3: Watch
 
@@ -86,6 +86,12 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 
 - [ ] **Step 1:** only finished runs, as in [[2026-10-20-craftax-compute-budget]] Task 2 Step 2: `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json eden:craftax-eden/node-stores/ node-stores/`, then `make merge-mlflow SRC=node-stores/<entry>/mlruns-node-<i>.db` per node.
 - [ ] **Step 2:** replace the estimates of [[2026-10-20-craftax-compute-budget]] with the table above and the measured evaluation times; mark this plan `done` when `make status PHASE=final-1b` shows 24 finished and `combo-1b` 3.
+
+### Launch note (2026-10-31)
+
+- First launch failed in seconds on every run (no `cuda` group in the venv, see Task 1 Step 3); nothing trained, stores and logs were cleared.
+- Second launch (jobs 1936132 and 1936134 to 1936140): PPO seeds 0 and 1 train on `dgx-4` at 79,100 steps/s steady (probe 78,200; 3.5 h of training), 8.2 GB device memory, 95 % GPU utilisation.
+- The other arrays wait: other users' `long` jobs held 126 of 128 CPUs on `dgx-2` and `dgx-3` (5 free A100s each, stranded) and `dgx-4` had 11 GB of free RAM. Lowering `--mem` to the measured host peaks plus margin (8 GB for the PPO family, 10 GB for pqn-rnn, count-bonus-pqn-rnn, sil and smdp-skills, 16 GB for dyna-q; `scontrol update JobId=<array> MinMemoryNode=<MB>`) let seed 1 start at once. The scheduler's own estimates for the rest ranged from hours to days: check `squeue --start`.
 
 ### Risks
 
