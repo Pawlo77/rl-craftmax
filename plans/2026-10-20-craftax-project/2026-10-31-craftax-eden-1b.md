@@ -97,6 +97,10 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 - A task on `dgx-2` sat 11 minutes with no child process, 0 % GPU and no database (node load 29, probably I/O): `scontrol requeue <jobid>` restarted it. Check `nvidia-smi` through `srun --jobid=<id> --overlap` when a log stays empty.
 - A store records its array size: never resubmit single seeds of an array under a different size.
 
+- H100 on `hopper` (probe 1936172, 2026-11-01): the recompute gap is 5.7e-5 (bound 1e-4); PPO-RNN trains at 81,192 steps/s (3.4 h per run, 1.32 x the A100's 61,400), 6.5 GB device memory, node RAM 1 TB. The node is an H100 PCIe 80 GB. `hopper` starts jobs at once while the A100 queue waits, so the six entries not yet started (pqn-rnn, count-bonus-ppo-rnn, count-bonus-pqn-rnn, sil, smdp-skills, dyna-q) were resubmitted there (jobs 1936176 to 1936181, `-p hopper --gres=gpu:h100:1`, one run per entry at a time, `--time` up to 5 days allowed). ppo and ppo-rnn stay on A100s, so each entry runs on one GPU class (TF32 numerics differ between classes); the GPU class of each run is the node in `sacct`.
+- The account's group GPU limit (`AssocGrpGRES`) holds the last array back when the total of running GPUs is reached (here 12, other jobs of the same account included): it starts when one frees.
+- `hopper-2` (H200) stayed out: three of four full H200s are busy and one is held by a standing reservation; the MIG slices did not start before 2 November.
+
 ### Risks
 
 - Fair share: the group's recent usage decides how soon 12 GPUs start; the dry run (`sbatch --test-only`) estimated hours when the cluster had free A100s, so check `squeue --start` after submitting.
