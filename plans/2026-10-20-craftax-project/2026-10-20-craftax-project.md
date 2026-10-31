@@ -116,7 +116,7 @@ Starts after both `final-1m` and `final-1b` are finished.
 
 ### Phase 6: Report
 
-- [ ] [[2026-10-20-craftax-report]]: 4 pages of content plus page 5 for references, disclosure and acknowledgements; numbers generated from MLflow.
+- [ ] [[2026-10-20-craftax-report]]: 3 pages including figures and tables, references after them (course rule, [[Course project requirements]]); numbers generated from MLflow.
 
 ### Phase 7: Hugging Face release (last)
 

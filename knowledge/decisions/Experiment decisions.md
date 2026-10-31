@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-29
+updated: 2026-11-01
 ---
 # Experiment decisions
 
@@ -359,3 +359,11 @@ Decision: the evaluation, not the training, changes before the 1B launch: (1) th
 Why: the 1M eval files keep their stored events, but the code that computes them must be the final one before 1B bakes its events into the files; the strict replay would fail every file whose kills changed.
 
 Consequences: 1M kill and damage columns change only where the rules differ (a passive mob far from the player on floor 8), and the mismatch CSV counts them (none in the two final eval files replayed as a check); the Survivor axis of every radar moves to the exact value. The skill methods' `enchant` start condition needed no change: the table-type test was already in the code every smdp-skills and dyna-q run was trained with ([[Craftax skill library]]); `evaluation.skill_audit` counts the redundant choices from the stored episodes.
+
+## 2026-11-01 - Report length
+
+Decision: the report has 3 pages including text, figures and tables; only the references go beyond them. The generative-AI disclosure and the acknowledgements stay inside the 3 pages as two short paragraphs at the end of Section 7. This supersedes the 2026-10-20 decision of 4 pages of content plus a page 5.
+
+Why: the course rules ([[Course project requirements]]) cap the report at 3 pages, references excluded, and do not exclude the disclosure or the acknowledgements. The Interspeech allowance for a page 5 does not apply to the course limit.
+
+Consequences: [[2026-10-20-craftax-report]] budgets 3.00 pages (results 0.90, methods 0.45, setup 0.35) and cuts the report to 3 figures and 1 table (F1, F2, F3, T1); the radars, the fidelity-versus-leaves figure and the stability and hardware table live in the Space and the README. The video plan is unchanged.
