@@ -20,12 +20,14 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/analysis/figures.py]] | Core comparison figures F1-F5 and F18-F20: curves, intervals, PoI, spread, hardware. |  | [[2026-10-20-craftax-comparison-and-results]] | 1425 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_angles.py]] | Analysis-angle figures F21-F28: questions the core figures leave open. |  | [[2026-10-20-craftax-comparison-and-results]] | 1174 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/figures_game.py]] | In-game figures F6-F17: race, order graphs, funnel, deaths, splits, radars. |  | [[2026-10-20-craftax-comparison-and-results]] | 2608 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/figures_scale.py]] | The 1M vs 1B figures S1-S3: where each method stands at the two budgets. |  | [[2026-10-20-craftax-comparison-and-results]] | 164 |  |
 | [[src/wut_murl_craftax/analysis/hard.py]] | Hard scenarios of the training analysis: floors, achievements, deaths and stalls. |  | [[2026-10-20-craftax-training-analysis]] | 931 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/latex.py]] | LaTeX export of the report: booktabs tables, number macros and report figures. |  | [[2026-10-20-craftax-comparison-and-results]] | 951 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/literature.py]] | Published Craftax scores a result is compared with: the rows of blocks A, A2 and D. |  | [[2026-10-20-craftax-comparison-and-results]] | 85 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/load.py]] | Loaders of the export tables (contracts.md section 1) and the run selectors on them. |  | [[2026-10-20-craftax-training-analysis]] | 448 | [[analysis]] |
 | [[src/wut_murl_craftax/analysis/obstacles.py]] | Obstacle detectors of the training analysis, their registry and the obstacles table. |  | [[2026-10-20-craftax-training-analysis]] | 1521 | [[analysis]] |
-| [[src/wut_murl_craftax/analysis/results.py]] | Run the method comparison: tables T1-T7, figures F1-F28, report files, MLflow run. |  | [[2026-10-20-craftax-comparison-and-results]] | 927 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/results.py]] | Run the method comparison: tables T1-T7, figures F1-F28, report files, MLflow run. |  | [[2026-10-20-craftax-comparison-and-results]] | 983 | [[analysis]] |
+| [[src/wut_murl_craftax/analysis/scale.py]] | The 1M vs 1B angles: rank agreement, advantage over the control, scaling, precision. |  |  | 233 |  |
 | [[src/wut_murl_craftax/analysis/training.py]] | Training analysis of every method: hard scenarios, obstacles and case episodes. |  | [[2026-10-20-craftax-training-analysis]] | 559 | [[analysis]] |
 | [[src/wut_murl_craftax/config.py]] | Typed experiment configuration loaded from YAML. |  |  | 149 |  |
 | [[src/wut_murl_craftax/evaluation/__init__.py]] | Evaluation and metrics: game tables, events, records, statistics, pair, export. |  |  | 433 | [[evaluation]] |
@@ -33,7 +35,7 @@ parent: "[[wut_murl_craftax]]"
 | [[src/wut_murl_craftax/evaluation/episode_metrics.py]] | Online metrics of training episodes, accumulated from step events inside the rollout. |  |  | 611 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/episode_records.py]] | Records of eval episodes: one row of the eval-episode table per episode. |  |  | 579 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/events.py]] | Per-step events of Craftax and Craftax-Classic: a fixed-size ``StepEvents`` per step. |  |  | 422 | [[evaluation]] |
-| [[src/wut_murl_craftax/evaluation/export.py]] | Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 551 | [[evaluation]] |
+| [[src/wut_murl_craftax/evaluation/export.py]] | Export of one phase to the tidy tables ``runs``, ``curves`` and ``eval_episodes``. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 556 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/export_diff.py]] | Table-by-table comparison of two exports of a phase: what a re-export changed. |  |  | 154 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/hardware.py]] | Hardware usage of one run, summarised from its stored MLflow series. |  | [[2026-10-20-craftax-evaluation-and-metrics]] | 372 | [[evaluation]] |
 | [[src/wut_murl_craftax/evaluation/milestones.py]] | Game tables the metrics share: tech ladder, floors, creatures, actions, radar axes. |  |  | 173 | [[evaluation]] |
@@ -98,6 +100,8 @@ parent: "[[wut_murl_craftax]]"
 ## Modules no architecture note lists
 
 - [[src/wut_murl_craftax/__init__.py]]
+- [[src/wut_murl_craftax/analysis/figures_scale.py]]
+- [[src/wut_murl_craftax/analysis/scale.py]]
 - [[src/wut_murl_craftax/config.py]]
 - [[src/wut_murl_craftax/evaluation/select_pair.py]]
 - [[src/wut_murl_craftax/orchestration/finals.py]]

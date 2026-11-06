@@ -26,6 +26,7 @@ from typing import Any, NamedTuple
 
 import pandas as pd
 
+from . import figures_scale, scale
 from .load import (
     METRICS_ROOT,
     Frames,
@@ -130,6 +131,47 @@ TABLE_CAPTIONS: dict[str, TableCaption] = {
         "Per method, the seed medians of the mean score over the budget (auc), the "
         "budget share at 50 % and 90 % of the final score (to_50, to_90) and the score "
         "gained over the last 20 % of the budget, with the runs that still plateau.",
+    ),
+    "scale_rank": TableCaption(
+        "S1",
+        "Rank agreement",
+        "Spearman and Kendall correlation between the 1M and 1B method means with "
+        "bootstrap CIs that resample the seeds of both budgets.",
+    ),
+    "scale_flips": TableCaption(
+        "S1",
+        "Flipped pairs",
+        "Method pairs whose mean order differs between 1M and 1B, with the difference "
+        "and its CI at each budget.",
+    ),
+    "scale_advantage": TableCaption(
+        "S2",
+        "Advantage over the control",
+        "Gain over the base control in percent at 1M and 1B and its change, with "
+        "bootstrap CIs; a change interval holding 0 leaves the 1M advantage open.",
+    ),
+    "scale_scaling": TableCaption(
+        "S3",
+        "Scaling",
+        "Log of the 1B to 1M mean ratio per method with a bootstrap CI.",
+    ),
+    "scale_precision": TableCaption(
+        "S4",
+        "Precision at 3 seeds",
+        "CI half-widths at both budgets and the smallest difference 3 seeds resolve "
+        "(Welch test, power 0.8, 1M seed sd).",
+    ),
+    "scale_compute": TableCaption(
+        "S5",
+        "Score per compute",
+        "Mean final score against wall-clock hours per profile with the Pareto front; "
+        "laptop timings are context only.",
+    ),
+    "scale_transfer": TableCaption(
+        "S6",
+        "Tuning transfer",
+        "The 1M tuning optimism beside the change of the advantage at 1B; 1B has no "
+        "tuning of its own.",
     ),
     "hardware": TableCaption(
         "T4",
@@ -426,6 +468,15 @@ def build_tables(inputs: _Inputs) -> dict[str, pd.DataFrame]:
         if tuned
         else pd.DataFrame(columns=compare.TUNING_OPTIMISM_COLUMNS)
     )
+    if {"1m", "1b"} <= set(frames["runs"]["budget"]):
+        advantage = scale.advantage_table(frames, **boot)
+        t["scale_rank"] = scale.rank_agreement(frames, **boot)
+        t["scale_flips"] = scale.flipped_pairs(frames, **boot)
+        t["scale_advantage"] = advantage
+        t["scale_scaling"] = scale.scaling_table(frames, **boot)
+        t["scale_precision"] = scale.precision_table(frames)
+        t["scale_compute"] = scale.compute_table(frames)
+        t["scale_transfer"] = scale.transfer_table(advantage, t["tuning_optimism"])
     return t
 
 
@@ -625,6 +676,11 @@ def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) ->
             logger.warning("F20 hardware is drawn for Craftax-1M only (one stem)")
         (_distil_stages(o, st) if fid in DISTIL_FIGURES else st).run(
             f"figures/{fid}", build
+        )
+    if "scale_scaling" in t:  # both budgets ran: the 1M vs 1B figures
+        st.run(
+            "figures/scale",
+            lambda: figures_scale.draw(t, o.out / "figures" / "scale"),
         )
 
 

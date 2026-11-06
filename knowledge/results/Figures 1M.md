@@ -4,7 +4,7 @@ type: concept
 domain: analysis
 parent: "[[Final results]]"
 tags: [concept, results, figures, craftax-1m]
-created: 2026-10-30
+created: 2026-11-06
 updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/captions.py]]"

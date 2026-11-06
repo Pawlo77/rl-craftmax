@@ -20,7 +20,7 @@ PHASE_FLAGS = $(if $(METHOD),--method $(METHOD)) $(if $(FINE),--expand-fine $(FI
 
 include kit.mk
 
-.PHONY: coverage figure-notes merge-mlflow mlflow mlflow-stop queue status train-ppo vis warm
+.PHONY: coverage figure-notes merge-mlflow mlflow mlflow-stop queue report status train-ppo vis warm
 
 coverage: ## Run tests with coverage report
 	uv run pytest --cov=./src/wut_murl_craftax --cov-report=term-missing tests/
@@ -30,6 +30,10 @@ warm: ## Build the Craftax texture caches and print the actor/learner devices
 
 queue: ## Run a phase: make queue PHASE=tune-coarse [METHOD=ppo] [FINE=ppo] [DRY_RUN=1] [PROFILE=cuda]
 	$(if $(PHASE),,$(error PHASE is required, e.g. make queue PHASE=tune-coarse))$(QUEUE_MODULE) --phase configs/phases/$(PHASE).yaml --profile configs/profiles/$(PROFILE).yaml $(PHASE_FLAGS)$(if $(filter-out 0 false no,$(DRY_RUN)), --dry-run)
+
+report: ## Build report/report.pdf and print its page count (3 pages plus references)
+	cd report && latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex
+	@grep -o "Output written on report.pdf ([0-9]* pages" report/report.log
 
 status: ## Pending/running/finished/killed runs of a phase: make status PHASE=tune-coarse [METHOD=ppo] [FINE=ppo]
 	$(if $(PHASE),,$(error PHASE is required, e.g. make status PHASE=tune-coarse))$(STORE_MODULE) status --phase configs/phases/$(PHASE).yaml $(PHASE_FLAGS)
