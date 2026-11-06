@@ -1,0 +1,55 @@
+\begin{tabular}{lrrrr}
+\toprule
+Name & Protocol & n & score (\% of max) & gate \\
+\midrule
+\multicolumn{5}{l}{\emph{Craftax-1B, training score}} \\
+ppo & training-episode return & 3 & 11.72 [11.53, 11.92] & pass (gap \ensuremath{-}0.18, h 0.63) \\
+ppo-rnn & training-episode return & 3 & 16.22 [15.08, 17.37] & fail (gap 0.92, h 0.63) \\
+pqn-rnn & training-episode return & 3 & 16.10 [15.74, 16.47] & pass (gap 0.10, h 0.90) \\
+count-bonus-ppo-rnn & training-episode return & 3 & 16.33 [14.84, 17.82] & -- \\
+count-bonus-pqn-rnn & training-episode return & 3 & 15.99 [15.94, 16.03] & -- \\
+sil & training-episode return & 3 & 15.13 [14.86, 15.40] & -- \\
+combo & training-episode return & 3 & 15.35 [13.98, 16.71] & -- \\
+ppo & training-episode return & 3 & 11.72 [11.53, 11.92] & pass (gap \ensuremath{-}0.18, h 0.63) \\
+ppo-rnn & training-episode return & 3 & 16.22 [15.08, 17.37] & fail (gap 0.92, h 0.63) \\
+pqn-rnn & training-episode return & 3 & 16.10 [15.74, 16.47] & pass (gap 0.10, h 0.90) \\
+dyna-q & training-episode return & 3 & 8.76 [5.87, 11.66] & -- \\
+smdp-skills & training-episode return & 3 & 7.98 [6.40, 9.57] & -- \\
+PPO-GTrXL (Hamon 2024) & n.r. & -- & \textbf{18.30} & -- \\
+Auto-Craftax PPO-GRU (Creus Castanyer 2026) (h096, repo only) & training-episode return & -- & 17.90 & -- \\
+PQN-RNN (Gallici 2025) & n.r. & -- & 16.00 & -- \\
+PPO-RNN (Matthews 2024) & training-episode return & -- & 15.30 & -- \\
+RND (Matthews 2024) & training-episode return & -- & 12.00 & -- \\
+PPO (Matthews 2024) & training-episode return & -- & 11.90 & -- \\
+ICM (Matthews 2024) & training-episode return & -- & 11.90 & -- \\
+E3B (Matthews 2024) & training-episode return & -- & 11.00 & -- \\
+PPO-LSTM port, rerun (Auto-Craftax PPO-GRU (Creus Castanyer 2026)) & training-episode return & -- & 15.00 $\pm$ 0.20 (sd) & -- \\
+PPO port, rerun (Auto-Craftax PPO-GRU (Creus Castanyer 2026)) & training-episode return & -- & 11.90 $\pm$ 0.60 (sd) & -- \\
+\midrule
+\multicolumn{5}{l}{\emph{Craftax-1B, stochastic score}} \\
+ppo & separate evaluation of the trained policy & 3 & 11.71 [10.94, 12.48] & -- \\
+ppo-rnn & separate evaluation of the trained policy & 3 & 16.34 [15.84, 16.85] & -- \\
+pqn-rnn & separate evaluation of the trained policy & 3 & 16.07 [14.59, 17.55] & -- \\
+count-bonus-ppo-rnn & separate evaluation of the trained policy & 3 & 15.96 [13.88, 18.05] & -- \\
+count-bonus-pqn-rnn & separate evaluation of the trained policy & 3 & 16.20 [15.64, 16.75] & -- \\
+sil & separate evaluation of the trained policy & 3 & 14.83 [14.16, 15.50] & -- \\
+combo & separate evaluation of the trained policy & 3 & 15.39 [14.36, 16.42] & -- \\
+ppo & separate evaluation of the trained policy & 3 & 11.71 [10.94, 12.48] & -- \\
+ppo-rnn & separate evaluation of the trained policy & 3 & 16.34 [15.84, 16.85] & -- \\
+pqn-rnn & separate evaluation of the trained policy & 3 & 16.07 [14.59, 17.55] & -- \\
+dyna-q & separate evaluation of the trained policy & 3 & 9.26 [5.20, 13.31] & -- \\
+smdp-skills & separate evaluation of the trained policy & 3 & 7.45 [7.27, 7.63] & -- \\
+PPO-LSTM (Jiralerspong 2026) & separate evaluation of the trained policy & -- & \textbf{19.54 $\pm$ 0.34 (s.e.)} & -- \\
+PPO-Hybrid TrXL + S5, unmasked (Feasibility Classification (Zabounidis 2026)) & separate evaluation of the trained policy & -- & 19.40 & -- \\
+Feasibility Classification (Zabounidis 2026) (Hybrid, masked + KL, learned masks) & separate evaluation of the trained policy & -- & 19.10 & -- \\
+Sable Inference Search (Chalumeau 2025) (zero-shot, no search) & separate evaluation of the trained policy & -- & 18.80 & -- \\
+PPO-GTrXL, rerun (PPO-LSTM (Jiralerspong 2026)) & separate evaluation of the trained policy & -- & 17.79 $\pm$ 0.82 (s.e.) & -- \\
+PPO-RNN (GRU), rerun (Feasibility Classification (Zabounidis 2026)) & separate evaluation of the trained policy & -- & 16.20 & -- \\
+SimBa (Lee 2025) (PPO + SimBa; protocol of `avg\_return` not documented) & n.r. & -- & 12.80 $\pm$ 0.20 (sd) & -- \\
+RePPO (Nishimori 2026) (m = 1.2, no entropy) & separate evaluation of the trained policy & -- & 11.87 $\pm$ 0.16 (sd) & -- \\
+PPO + entropy, rerun (RePPO (Nishimori 2026)) & separate evaluation of the trained policy & -- & 11.66 $\pm$ 0.33 (sd) & -- \\
+RND + entropy, rerun (RePPO (Nishimori 2026)) & separate evaluation of the trained policy & -- & 11.68 $\pm$ 0.30 (sd) & -- \\
+PPO (MLP), rerun (Feasibility Classification (Zabounidis 2026)) & separate evaluation of the trained policy & -- & 11.90 & -- \\
+PPO (MLP), rerun (SimBa (Lee 2025) repo CSV) & n.r. & -- & 11.40 $\pm$ 0.90 (sd) & -- \\
+\bottomrule
+\end{tabular}
