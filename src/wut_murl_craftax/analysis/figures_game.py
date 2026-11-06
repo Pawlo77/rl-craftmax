@@ -1903,7 +1903,7 @@ def _dots(
             if tail:
                 notes.append(f"nothing above zero in {', '.join(tail)}.")
         if dropped and shown.keys:  # rows without any value are not drawn, but said
-            notes.append(f"no value for {', '.join(dropped)}.")
+            notes.append(f"never reached in any episode: {', '.join(dropped)}.")
         if len(shown.keys) > MAX_DOT_ROWS:
             _profile_panel(ax, th, ctx, kind, shown, xlabel, notes, how=how, log=log)
             return

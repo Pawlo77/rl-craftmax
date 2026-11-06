@@ -770,6 +770,17 @@ def test_f11_a_floor_never_visited_is_left_out_not_zero(
     assert visited  # others do
 
 
+def test_f11_floors_with_no_value_say_never_reached(
+    frames: dict[str, pd.DataFrame], tmp_path: Path
+) -> None:
+    eps = frames["eval_episodes"].copy()
+    eps["coverage/gnomish_mines"] = np.nan
+    fig = plot_coverage({**frames, "eval_episodes": eps}, tmp_path, n_boot=N)
+    shown = said(fig)
+    assert "never reached in any episode: gnomish_mines" in shown
+    assert "no value for" not in shown
+
+
 def test_f12_missing_replay_levels_say_not_recorded(
     frames: dict[str, pd.DataFrame], tmp_path: Path
 ) -> None:
