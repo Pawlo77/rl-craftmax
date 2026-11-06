@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 tags: [concept, results, analysis, training, craftax-1m]
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/hard.py]]"
   - "[[src/wut_murl_craftax/analysis/cases.py]]"
@@ -184,3 +184,14 @@ Cases of kappa0 (`cases.csv`, replay files under `training-analysis-1m-dyna-q`):
 | `1m-dyna-q-kappa0-death-1` | death | zombie | `dyna-q-1m-3fd02b70-s1` | 244 | 10038 | `gifs/1m-dyna-q-kappa0-death-1.gif` |
 | `1m-dyna-q-kappa0-death-2` | death | starvation | `dyna-q-1m-3fd02b70-s1` | 244 | 10012 | `gifs/1m-dyna-q-kappa0-death-2.gif` |
 | `1m-dyna-q-kappa0-death-3` | death | arrow | `dyna-q-1m-3fd02b70-s1` | 244 | 10005 | `gifs/1m-dyna-q-kappa0-death-3.gif` |
+
+## Results at 1B
+
+- 1B, 3 seeds (indicative), tuned config: final training score 8.76, from `outputs/analysis/1b/dyna-q/` and `outputs/results/tables/1b/`.
+- Floors reached in the final stochastic eval: overworld 100%, dungeon 23%.
+- Deaths at the final checkpoint: zombie 51.0%, orc_soldier 14.6%, dehydration 13.5%, starvation 9.4%.
+- Stalls: 0.318 per episode, median length 410 steps, 48% escaped by an unlock.
+- Achievements by status: common 30, never 29, rare 8.
+- Obstacles flagged at 1B: Instability 1/3, Numerical failure 3/3, Skill forgetting 3/3, Skill interference 2/3, Stale model 1/3, Survival failure despite flags 1/3; not logged: Value failure.
+- Learning speed (T8): mean score over the budget 5.73, 50 % of the final score at 0.23 and 90 % at 0.70 of the budget, late gain 0.47, 3 of 3 runs plateau.
+- Detector thresholds are the 1M ones; the skill-forgetting detector fires on every seed of every method that runs it at 1M (see Obstacles above), so read its 1B count as context. Cases: `outputs/analysis/1b/cases.csv`.

@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-10-29
+updated: 2026-11-06
 ---
 # Experiment decisions
 
@@ -296,7 +296,7 @@ Decision: the combination is `count-bonus-ppo-rnn` + `sil` on PPO-RNN (`combo-1m
 
 Why: `combo-1m` was to run right after `final-1m`, before `final-1b`, and the plan's rank sum needs the 1B means. With skill methods included, the plan-rule pair is the same (ranks 1 and 2; the PQN-RNN pair is ranks 3 and 4), so there is no R73 deviation; `select_pair` logged no PARTIAL or NOTE line. IQM and PoI come from `evaluation/stats.py`; PoI is P(method > control) over the 100 seed pairs.
 
-Consequences: this departs from the 2026-10-21 decision (pair from both budgets). The ranking is in the header of `configs/methods/combo.yaml`. The 1B re-check is pending: once `final-1b` has run, the plan rule (1M IQM rank plus 1B mean rank, ties by 1M PoI) is recomputed; if it gives another pair, that is recorded here as a deviation and any change for `combo-1b` is a new dated decision, never a silent swap.
+Consequences: this departs from the 2026-10-21 decision (pair from both budgets). The ranking is in the header of `configs/methods/combo.yaml`. The 1B re-check was run on 2026-11-05 (see 2026-11-06 below): the plan rule (1M IQM rank plus 1B mean rank, ties by 1M PoI) is recomputed; if it gives another pair, that is recorded here as a deviation and any change for `combo-1b` is a new dated decision, never a silent swap.
 
 | Rank | Method | Base control | n | IQM | PoI vs control |
 |---|---|---|---|---|---|
@@ -359,3 +359,21 @@ Decision: the evaluation, not the training, changes before the 1B launch: (1) th
 Why: the 1M eval files keep their stored events, but the code that computes them must be the final one before 1B bakes its events into the files; the strict replay would fail every file whose kills changed.
 
 Consequences: 1M kill and damage columns change only where the rules differ (a passive mob far from the player on floor 8), and the mismatch CSV counts them (none in the two final eval files replayed as a check); the Survivor axis of every radar moves to the exact value. The skill methods' `enchant` start condition needed no change: the table-type test was already in the code every smdp-skills and dyna-q run was trained with ([[Craftax skill library]]); `evaluation.skill_audit` counts the redundant choices from the stored episodes.
+
+## 2026-11-01 - Report length
+
+Decision: the report has 3 pages including text, figures and tables; only the references go beyond them. The generative-AI disclosure and the acknowledgements stay inside the 3 pages as two short paragraphs at the end of Section 7. This supersedes the 2026-10-20 decision of 4 pages of content plus a page 5.
+
+Why: the course rules ([[Course project requirements]]) cap the report at 3 pages, references excluded, and do not exclude the disclosure or the acknowledgements. The Interspeech allowance for a page 5 does not apply to the course limit.
+
+Consequences: [[2026-10-20-craftax-report]] budgets 3.00 pages (results 0.90, methods 0.45, setup 0.35) and cuts the report to 3 figures and 1 table (F1, F2, F3, T1); the radars, the fidelity-versus-leaves figure and the stability and hardware table live in the Space and the README. The video plan is unchanged.
+
+## 2026-11-06 - The 1B re-check and the extras the 1M vs 1B comparison needs
+
+Decision: (1) the 1B re-check of the combination's pair (`select_pair --phase final-1b --rank-sum-with final-1m`, 3 seeds) gives count-bonus PPO-RNN + SIL on PPO-RNN again (rank sums 1+1 and 3+2), so `combo.yaml` and `combo-1b` keep the 1M pair. (2) `bridge-1m`: the three controls at 1M, 10 seeds, rerun on the cluster stack, because the recorded `installed_packages` differ between the 1M runs (craftax 1.6.1, flax 0.12.10, macOS arm64) and the 1B runs (craftax 1.7.0, flax 0.12.12, Linux). (3) `ablate-1b`: the six ablations of `final-1m` at 1B, 3 seeds, so the ablation figure has 1B data. (4) 1B has no tuning, so the tuning figures (F18, F25) are 1M-only, and the PoI matrix (F3) stays 1M-only because it needs the 10 seeds of 1M. (5) A floor no episode entered, or a need with no eat, drink or sleep event, stays an empty cell and is labelled "never reached in any episode", never filled with 0.
+
+Why: (1) the rank rule of 2026-10-21 asked for the re-check. (2) and (3) a 1M vs 1B difference that the stack could cause would otherwise read as a budget effect; an empty ablation figure is not a result. (5) a zero would change the definition of coverage (mean over visited floors) and the 1M numbers already quoted.
+
+Consequences: the bridge and ablation runs are not merged into `mlruns.db` under the same names (the bridge hashes equal the laptop runs'); their stores are read for the final scores only. The PPO-RNN reproduction gate fails at 1B because the score is above the published one (issue I1). The T8 learning-speed table and the scale tables (`tables/scale/`) are descriptions with intervals: 1B stays indicative.
+
+Result of (2): the bridge runs finished 2026-11-06 and no control shifted (cluster minus laptop: PPO -0.06, PPO-RNN -0.08, PQN-RNN -0.02, every CI holds 0); the budget comparison stands.

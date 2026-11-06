@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-29
+updated: 2026-11-05
 tags: [plan, analysis, results, statistics, figures]
 ---
 # Craftax comparison and results implementation plan
@@ -167,7 +167,7 @@ Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 (Phase 4 ord
 - [x] **Step 1: Write the failing test** in `tests/analysis/test_results_cli.py`: the CLI on the fixture (phases `final-1m final-1b combo-1m combo-1b`, tuning `tune-coarse tune-fine`, a fixture `complexity.csv`) writes every figure and table of the lists above, both blocks included, and logs `outputs/results/` to a temporary MLflow store as run `comparison-final`; a failing reproduction gate still writes everything. (done 2026-10-28: d523bae; `tests/analysis/test_results_cli.py`)
 - [x] **Step 2: Implement** `uv run python -m wut_murl_craftax.analysis.results --phases <phase> [<phase> ...] --tuning <phase> [<phase> ...] --out outputs/results`. (done 2026-10-28: d523bae, 719b0c0)
 - [x] **Step 3: Run** `uv run pytest tests/analysis/test_results_cli.py -q`; check that `outputs/interpretation/1m/complexity.csv` exists; then `uv run python -m wut_murl_craftax.analysis.results --phases final-1m combo-1m --tuning tune-coarse tune-fine --out outputs/results`. Read the reproduction gate first: on a fail, open the issue note, tell the user the gap and h, and continue. (done 2026-10-28: 1M only: `analysis.results --phases final-1m combo-1m --tuning tune-coarse tune-fine`, 33 stages, exit 0, rerun on main 2026-10-29 00:05 (ledger); the 1B complexity file and phases are Step 3b)
-- [ ] **Step 3b: Run** the comparison with the 1B phases once they exist and `outputs/interpretation/1b/complexity.csv` is written: `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`; read the reproduction gate first as in Step 3.
+- [x] **Step 3b: Run** (done 2026-11-06: 32 stages, exit 0; the PPO-RNN 1B gate fails, [[I1 - PPO-RNN 1B above the reproduction band]]) the comparison with the 1B phases once they exist and `outputs/interpretation/1b/complexity.csv` is written: `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`; read the reproduction gate first as in Step 3.
 - [x] **Step 4: Check** 3 random cells of T1 and 3 points of F1 against the MLflow UI (`make mlflow`). (done 2026-10-29 at 1M, against the store by script instead of the UI: T1 sil mean 2.136867, count-bonus-ppo-rnn eval stochastic 2.243501, ppo-rnn eval greedy 1.555586 equal the seed means of `final_score` / `eval/*/score_pct`; 3 random `train/score_pct` curve points equal the stored metric at the same step)
 
 ### Task 7: Results note
@@ -182,12 +182,29 @@ Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 (Phase 4 ord
 
 ### Task 8: 1B figure and table sets, 1M vs 1B comparison
 
-Runs once `final-1b` and `combo-1b` exist (cluster decision pending). Figures follow the 2026-10-28 standard: PNG only, one panel per file, no text on the image, captions in `knowledge/results/Figures 1M.md` and its 1B counterpart.
+Ran 2026-11-06 once `final-1b` and `combo-1b` existed (cluster, EDEN). Figures follow the 2026-10-28 standard: PNG only, one panel per file, no text on the image, captions in `knowledge/results/Figures 1M.md` and its 1B counterpart.
 
 **Files:**
 - Modify: `analysis/results.py` (figure stage writes `outputs/results/figures/1b/` and `report/figures/1b/`), `analysis/figures_angles.py` or a new `analysis/figures_scale.py` (the 1M vs 1B figures)
 - Create: `knowledge/results/Figures 1B.md` and the 1B tables note (same layout as the 1M notes)
 
-- [ ] **Step 1: Render** the 1B sets: every 1M figure and table that has 1B data, same names under `figures/1b/` and `tables/1b/`; nothing under `1m/` changes.
-- [ ] **Step 2: Write the failing tests, then add** a few 1M vs 1B figures (choose from: final score at 1M vs 1B per method with CIs and a diagonal; rank change per method between benchmarks; per-achievement success rate at 1M vs 1B; learning curves of both benchmarks on a shared normalised step axis; greedy vs stochastic gap at both budgets) and matching 1M vs 1B tables (per method: 1M and 1B score with CIs, rank at each, difference) under `figures/scale/` and `tables/scale/`. 1B stays indicative (3 seeds): intervals, no p-values.
-- [ ] **Step 3: Update** `knowledge/results/Final results.md` with the 1B results and the scale comparison; run `make knowledge` and `make check`.
+- [x] **Step 1: Render** (done 2026-11-06: `report/figures/1b`, `report/tables/1b`, [[Figures 1B]], [[Tables 1B]]) the 1B sets: every 1M figure and table that has 1B data, same names under `figures/1b/` and `tables/1b/`; nothing under `1m/` changes.
+- [x] **Step 2: Write the failing tests, then add** (done 2026-11-06: `analysis/figures_scale.py`, `figures/scale/scale_{scores,advantage,speed}`, tables `tables/scale/`; no per-achievement or greedy-gap 1M vs 1B figure) a few 1M vs 1B figures (choose from: final score at 1M vs 1B per method with CIs and a diagonal; rank change per method between benchmarks; per-achievement success rate at 1M vs 1B; learning curves of both benchmarks on a shared normalised step axis; greedy vs stochastic gap at both budgets) and matching 1M vs 1B tables (per method: 1M and 1B score with CIs, rank at each, difference) under `figures/scale/` and `tables/scale/`. 1B stays indicative (3 seeds): intervals, no p-values.
+- [x] **Step 3: Update** (done 2026-11-06: section `## 1M vs 1B`) `knowledge/results/Final results.md` with the 1B results and the scale comparison; run `make knowledge` and `make check`.
+
+### Task 9: Methodological angles on 1M vs 1B
+
+Motivation (means of `main.csv`, 2026-11-05; 1B has 3 seeds, so descriptive): the Spearman rank correlation of the nine methods is 0.67 (Kendall 0.44); PQN-RNN is the weakest control at 1M (1.36) and the strongest at 1B (16.10); count-bonus PQN-RNN beats its control by 9 % at 1M and trails it by 1 % at 1B; Dyna-Q and SMDP skills trail PQN-RNN by 21 % and 39 % at 1M, 46 % and 50 % at 1B. Seeds are independent between budgets, so every contrast below resamples each budget on its own. 1B stays indicative: intervals, no p-values ([[Experiment decisions]], 2026-10-21).
+
+**Files:**
+- Create: `analysis/scale.py` (the functions), tests in `tests/analysis/test_scale.py`
+- Modify: `analysis/results.py` (tables under `tables/scale/`), `analysis/figures_scale.py` (Task 8)
+
+- [x] **Step 1: Bridge runs** (done 2026-11-06: 30 runs on EDEN, `scale.bridge_table`; cluster minus laptop final score PPO -0.06 [-0.14, 0.01], PPO-RNN -0.08 [-0.17, 0.02], PQN-RNN -0.02 [-0.40, 0.36], all inside the seed noise, none shifted, so the budget comparison stands) (the stack confound). The recorded `installed_packages` differ: the 1M runs used craftax 1.6.1, flax 0.12.10 on macOS arm64; the 1B runs craftax 1.7.0, flax 0.12.12 on Linux x86_64 (A100 with TF32 or H100), after the 2026-10-30 dependency bump that also moved the `pqn-rnn` golden values. Rerun the three controls at 1M, 10 seeds, on EDEN with the 1B stack (about 30 runs of 5 to 6 minutes) as phase `bridge-1m`; compare each with its laptop `final-1m` by IQM, CI and probability of improvement. A shift inside the seed noise lets the budget comparison stand; a larger one goes into the report as a limitation.
+- [x] **Step 2: Rank agreement.** (done 2026-11-06: `scale.rank_agreement`, `scale.flipped_pairs`) Kendall tau and Spearman between the 1M and 1B method means, with a bootstrap CI that resamples the seeds of both budgets; a pair table of the method pairs whose order flips, with the interval overlap of each pair at each budget.
+- [x] **Step 3: Advantage over the base control (done 2026-11-06: `scale.advantage_table`) and its change.** Per method, the difference to its base control in percent at each budget and the difference of the two differences (interaction contrast) with a bootstrap CI: "does the 1M advantage survive at 1B". Base controls as in [[2026-10-20-craftax-training-analysis]].
+- [x] **Step 4: Scaling factor.** (done 2026-11-06: `scale.scaling_table`, T8, figure `scale_speed`) Per method, the log ratio of the 1B to the 1M mean with a bootstrap CI, and the learning-speed table T8 (`compare.speed_table`: area under the curve, budget share at 50 % and 90 % of the final score, late gain, plateau runs) read at both budgets on the shared fraction-of-budget axis of Task 8 Step 2.
+- [x] **Step 5: Precision at 3 seeds.** (done 2026-11-06: `scale.precision_table`; the TOST margin is not computed) The CI width at 1B against 1M and the smallest difference 3 seeds resolve, from the 1M seed sd (power of a Welch test at 80 %); a 1B gap under that reads as unresolved, not equal. Optional: a TOST equivalence margin of one 1M seed sd for "no worse than the control".
+- [x] **Step 6: Score per compute.** (done 2026-11-06: `scale.compute_table`) Score against wall-clock and GPU hours from the hardware table (T4; EDEN timings of [[2026-10-31-craftax-eden-1b]] for 1B, laptop timings context only) with the Pareto front of score against hours; Dyna-Q and the skill methods carry their planning overhead.
+- [x] **Step 7: Tuning transfer.** (done 2026-11-06: `scale.transfer_table`) 1B uses the configs tuned at 1M and no 1B tuning: set the 1M tuning optimism (`compare.tuning_optimism`) against the 1B drop per method, and state the missing 1B tuning as a limitation.
+- [x] **Step 8: Write up.** (done 2026-11-06: `## 1M vs 1B` of [[Final results]]) The primary question is fixed in advance: does the 1M ranking and each method's advantage over its control hold at 1B. Holm correction stays at 1M; the 1B claims are intervals. Add the threats to validity (stack confound and Step 1's result, 3 seeds, A100 against H100 numerics, laptop against cluster timings) to [[Final results]]; run `make knowledge` and `make check`.

@@ -1277,20 +1277,22 @@ def plot_hardware(
     theme: str = "report",
     *,
     width: str = "column",
-    budget: str = "1m",
+    budget: str | None = None,
     table: pd.DataFrame | None = None,
 ) -> Figs:
     """F20 ``hardware_<metric>``: SPS, wall-clock, compile time, memory, utilisation.
 
     One file per metric (steps per joule only if some method measured it), medians over
-    each method's tuned runs at ``budget`` (T4, `compare.hardware_table`); with several
-    profiles each gets its own files (``hardware_<metric>_<profile>``): profiles are
-    never compared. A metric nobody measured is not drawn, the caption says so.
+    each method's tuned runs at ``budget`` (default: the frames' own; T4,
+    `compare.hardware_table`); with several profiles each gets its own files
+    (``hardware_<metric>_<profile>``): profiles are never compared. A metric nobody
+    measured is not drawn, the caption says so.
     """
     th, name = _theme(theme, width), NAMES["F20"]
     runs = frames["runs"]
     if runs.empty:
         return {name: _no_data(name, th, out_dir, "no runs for the hardware figure")}
+    budget = budget or str(runs["budget"].iloc[0])  # one benchmark per call
     t4 = table if table is not None else compare.hardware_table(frames)
     t4 = t4[t4["benchmark"] == budget]
     if t4.empty:

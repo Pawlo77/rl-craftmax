@@ -1,0 +1,21 @@
+\begin{tabular}{lrrrrrrr}
+\toprule
+Method & sd & max drawdown & drops & collapses & SPS & wall (h) & mem (GB) \\
+\midrule
+\multicolumn{8}{l}{\emph{Craftax-1B, cuda, main block}} \\
+ppo & 0.08 & \textbf{0.02} & 0 & 0 & 75465 & 3.69 & 113.3 \\
+ppo-rnn & 0.46 & 0.06 & 0 & 0 & 57558 & 4.89 & 107.4 \\
+pqn-rnn & 0.15 & 0.12 & 0 & 0 & 79841 & 3.48 & 138.1 \\
+count-bonus-ppo-rnn & 0.60 & 0.06 & 0 & 0 & 71988 & 3.90 & 136.4 \\
+count-bonus-pqn-rnn & \textbf{0.02} & 0.20 & 0 & 0 & 79782 & 3.49 & 138.0 \\
+sil & 0.11 & 0.09 & 0 & 0 & 62508 & 4.51 & 136.3 \\
+combo & 0.55 & 0.07 & 0 & 0 & 50101 & 5.60 & 322.3 \\
+\midrule
+\multicolumn{8}{l}{\emph{Craftax-1B, cuda, uses hand-written skills block}} \\
+ppo & \textbf{0.08} & \textbf{0.02} & 0 & 0 & 75465 & 3.69 & 113.3 \\
+ppo-rnn & 0.46 & 0.06 & 0 & 0 & 57558 & 4.89 & 107.4 \\
+pqn-rnn & 0.15 & 0.12 & 0 & 0 & 79841 & 3.48 & 138.1 \\
+dyna-q & 1.17 & 0.81 & 1 & 0 & 59767 & 4.68 & 136.3 \\
+smdp-skills & 0.64 & 0.65 & 1 & 0 & 78323 & 3.55 & 138.1 \\
+\bottomrule
+\end{tabular}

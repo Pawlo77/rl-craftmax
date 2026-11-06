@@ -4,8 +4,8 @@ type: concept
 domain: analysis
 parent: "[[Final results]]"
 tags: [concept, results, figures, craftax-1m]
-created: 2026-10-30
-updated: 2026-10-30
+created: 2026-11-06
+updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/captions.py]]"
   - "[[src/wut_murl_craftax/analysis/results.py]]"
@@ -123,7 +123,7 @@ Every figure is one panel in one PNG without text beyond axes, ticks and a legen
 
 | Figure | Width | Description |
 |---|---|---|
-| [coverage](../../report/figures/1m/coverage.png) | 80 mm | **Exploration coverage per floor.** Share of each floor that an episode sees: median over seeds of each seed's median episode, line = 95% bootstrap interval over seeds. no value for dungeon, gnomish_mines, sewers, vaults, troll_mines, fire_realm, ice_realm, graveyard. |
+| [coverage](../../report/figures/1m/coverage.png) | 80 mm | **Exploration coverage per floor.** Share of each floor that an episode sees: median over seeds of each seed's median episode, line = 95% bootstrap interval over seeds. never reached in any episode: dungeon, gnomish_mines, sewers, vaults, troll_mines, fire_realm, ice_realm, graveyard. |
 | [new_tiles](../../report/figures/1m/new_tiles.png) | 80 mm | **New tiles.** Tiles of the map an episode sees for the first time per 100 steps: median over seeds, line = 95% bootstrap interval. New tiles: the episode mean stored by the replay, not a series over the episode. |
 
 ### Survival
@@ -154,7 +154,7 @@ Every figure is one panel in one PNG without text beyond axes, ticks and a legen
 
 | Figure | Width | Description |
 |---|---|---|
-| [resources_time](../../report/figures/1m/resources_time.png) | 80 mm | **Time to progress.** Steps per achievement and steps from wood to diamond (log axis): median over seeds of each seed's median episode. Episodes reaching diamond: ppo 0%, ppo-rnn 0%, pqn-rnn 0%, count-bonus-ppo-rnn 0%, count-bonus-pqn-rnn 0%, sil 0%, combo 0%, dyna-q 0%, smdp-skills 0%. no value for wood to diamond. |
+| [resources_time](../../report/figures/1m/resources_time.png) | 80 mm | **Time to progress.** Steps per achievement and steps from wood to diamond (log axis): median over seeds of each seed's median episode. Episodes reaching diamond: ppo 0%, ppo-rnn 0%, pqn-rnn 0%, count-bonus-ppo-rnn 0%, count-bonus-pqn-rnn 0%, sil 0%, combo 0%, dyna-q 0%, smdp-skills 0%. never reached in any episode: wood to diamond. |
 | [resources_use](../../report/figures/1m/resources_use.png) | 80 mm | **Gathered and used.** Mean amount gathered against mean amount used per episode, one marker per resource and one colour per method; dashed: used = gathered. |
 
 ### Advanced mechanics

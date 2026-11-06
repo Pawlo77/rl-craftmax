@@ -440,11 +440,11 @@ def test_t2_places_our_ci_against_each_published_value(
     ours = ours.set_index(["score_kind", "benchmark", "name"]).sort_index()
     x = _scores_of(frames, "sil", "1b")
     t_lo, t_hi = t_ci(x.tolist())[1:]
-    row = ours.loc[("training", "1b", "sil")].iloc[0]
+    row = ours.loc[[("training", "1b", "sil")]].iloc[0]
     assert (row["ci_lo"], row["ci_hi"]) == pytest.approx((t_lo, t_hi))
     x = _scores_of(frames, "sil", "1m")
     boot = stratified_bootstrap_ci({"x": x.tolist()}, lambda d: d["x"].mean(), N_BOOT)
-    row = ours.loc[("training", "1m", "sil")].iloc[0]
+    row = ours.loc[[("training", "1m", "sil")]].iloc[0]
     assert (row["ci_lo"], row["ci_hi"]) == pytest.approx((boot.lo, boot.hi))
     assert t["indicative"].eq(t["benchmark"] == "1b").all()
     training = t[(t["score_kind"] == "training") & (t["source"] == "ours")]
@@ -817,3 +817,30 @@ def test_budgets_members_and_tuned_are_the_tables_own_helpers(
     rows = compare.members(compare.tuned(runs[runs["budget"] == "1m"]))
     assert rows[0] == ("main", "ppo", "control")
     assert ("skills", "dyna-q", "method") in rows
+
+
+def test_curve_speed_reads_area_milestones_and_plateau_off_a_known_curve() -> None:
+    steps = np.linspace(1e4, 1e6, 1000)
+    rising = compare.curve_speed(steps, np.linspace(0.0, 10.0, 1000))
+    assert rising["auc"] == pytest.approx(5.0, abs=0.05)
+    assert rising["to_50"] == pytest.approx(0.5, abs=0.03)
+    assert rising["to_90"] == pytest.approx(0.9, abs=0.03)
+    assert rising["late_gain"] == pytest.approx(1.8, abs=0.15)
+    assert not rising["plateau"]
+    flat = compare.curve_speed(steps, np.minimum(np.linspace(0.0, 20.0, 1000), 10.0))
+    assert flat["to_90"] == pytest.approx(0.45, abs=0.03)
+    assert flat["late_gain"] == pytest.approx(0.0, abs=0.1)
+    assert flat["plateau"]
+
+
+def test_speed_table_has_one_row_per_member_with_ordered_milestones(
+    frames: dict[str, pd.DataFrame],
+) -> None:
+    t = compare.speed_table(frames)
+    assert list(t.columns) == compare.SPEED_COLUMNS
+    assert not t.duplicated(["benchmark", "block", "method"]).any()
+    ok = t.dropna(subset=["to_50", "to_90"])
+    assert not ok.empty
+    assert (ok["to_50"] <= ok["to_90"]).all()
+    assert ok["to_90"].between(0, 1).all()
+    assert (t["plateau_runs"] <= t["curve_runs"]).all()

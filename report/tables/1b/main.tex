@@ -1,0 +1,21 @@
+\begin{tabular}{lrrrrr}
+\toprule
+Method & n & mean $\pm$ s.e. & median [95\% CI] & eval & greedy \\
+\midrule
+\multicolumn{6}{l}{\emph{Craftax-1B, indicative (3 seeds): Main block}} \\
+ppo & 3 & 11.72 $\pm$ 0.05 & 11.70 [11.66, 11.81] & 11.71 & 12.18 \\
+ppo-rnn & 3 & 16.22 $\pm$ 0.27 & 16.41 [15.70, 16.56] & \textbf{16.34} & 16.37 \\
+pqn-rnn & 3 & 16.10 $\pm$ 0.09 & 16.04 [16.00, 16.27] & 16.07 & 16.33 \\
+count-bonus-ppo-rnn & 3 & \textbf{16.33 $\pm$ 0.35} & \textbf{16.55 [15.65, 16.78]} & 15.96 & \textbf{16.58} \\
+count-bonus-pqn-rnn & 3 & 15.99 $\pm$ 0.01 & 15.99 [15.97, 16.00] & 16.20 & 16.24 \\
+sil & 3 & 15.13 $\pm$ 0.06 & 15.08 [15.05, 15.25] & 14.83 & 15.29 \\
+combo & 3 & 15.35 $\pm$ 0.32 & 15.33 [14.80, 15.90] & 15.39 & 15.10 \\
+\midrule
+\multicolumn{6}{l}{\emph{Uses hand-written skills block}} \\
+ppo & 3 & 11.72 $\pm$ 0.05 & 11.70 [11.66, 11.81] & 11.71 & 12.18 \\
+ppo-rnn & 3 & \textbf{16.22 $\pm$ 0.27} & \textbf{16.41 [15.70, 16.56]} & \textbf{16.34} & \textbf{16.37} \\
+pqn-rnn & 3 & 16.10 $\pm$ 0.09 & 16.04 [16.00, 16.27] & 16.07 & 16.33 \\
+dyna-q & 3 & 8.76 $\pm$ 0.67 & 8.53 [7.74, 10.03] & 9.26 & 9.29 \\
+smdp-skills & 3 & 7.98 $\pm$ 0.37 & 7.63 [7.60, 8.72] & 7.45 & 7.23 \\
+\bottomrule
+\end{tabular}

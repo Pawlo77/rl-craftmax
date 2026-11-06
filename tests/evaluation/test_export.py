@@ -314,6 +314,19 @@ def test_a_1b_phase_maps_its_own_hashes_by_the_same_rule() -> None:
     assert ("ppo", "e06ac6db") not in refs
 
 
+def test_the_ablation_phase_names_every_item_by_its_set() -> None:
+    refs = config_refs(PHASES_DIR / "ablate-1b.yaml")
+    assert sorted(refs.values()) == sorted([
+        "simhash",
+        "single-buffer",
+        "random-top",
+        "monte-carlo",
+        "no-flags",
+        "kappa0",
+    ])
+    assert "tuned" not in refs.values()
+
+
 def test_an_entry_led_by_an_ablation_is_refused(tmp_path: Path) -> None:
     phase = tmp_path / "final-1m.yaml"
     text = (PHASES_DIR / "final-1m.yaml").read_text()

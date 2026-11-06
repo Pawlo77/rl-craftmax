@@ -54,8 +54,10 @@ TABLES = ("runs", "curves", "eval_episodes")
 """The export tables, by file stem."""
 REPLAY_FRAMES = {"skill_ends": "skill_ends", "inventory": "eval_inventory"}
 """Replay file kind (`out_paths` key) -> phase table stem (contracts.md section 9)."""
-REF_PHASES = ("final-", "combo-")
-"""Phases whose ``config_ref`` comes from the phase file; elsewhere it is the hash."""
+REF_PHASES = ("final-", "combo-", "ablate-")
+"""Phases whose ``config_ref`` comes from the phase file; elsewhere it is the hash.
+
+An ``ablate-`` phase lists ablations only: every item is named by `ABLATIONS`."""
 TUNED_ITEMS = ("tuned", "combined", "base")
 """Names the first ``configs`` item of an entry may have; it plays the tuned role:
 ``combined`` is the combo phases' one config and ``base`` the 1B controls' config."""
@@ -128,11 +130,14 @@ def config_refs(phase_file: Path) -> dict[tuple[str, str], str]:
                 f"but expands to {len(hashes)}"
             )
             raise ValueError(msg)
-        if items[0] not in TUNED_ITEMS:  # an ablation must never become `tuned`
+        ablations_only = phase_file.name.startswith("ablate-")
+        if not ablations_only and items[0] not in TUNED_ITEMS:  # never `tuned`
             msg = f"{phase_file.name}: {registry} starts with {items[0]!r}, not tuned"
             raise ValueError(msg)
-        out[registry, hashes[0]] = "tuned"
-        for item, config_hash in zip(items[1:], hashes[1:], strict=True):
+        if not ablations_only:
+            out[registry, hashes[0]] = "tuned"
+        first = 0 if ablations_only else 1
+        for item, config_hash in zip(items[first:], hashes[first:], strict=True):
             sets = item.get("set", {}) if isinstance(item, dict) else {}
             if (name := ABLATIONS.get(_overrides(registry, **sets))) is None:
                 msg = f"{phase_file.name}: {registry} config {item!r} has no name"

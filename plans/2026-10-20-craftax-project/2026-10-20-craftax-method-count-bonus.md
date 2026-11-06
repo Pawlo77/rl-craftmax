@@ -145,6 +145,7 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 - Both variants: 214 runs, 757.6 laptop training hours (estimate).
 - One 1M run: 0.138 h; one 1B run: 121.5 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.05 = 203,399 steps/s, 1.37 h per run excluding the 1-minute compile, 4.1 h for 3 seeds per variant, 8.2 h for both.
+- 1B measured on EDEN (2026-11-05, 3 seeds, [[2026-10-20-craftax-compute-budget]] Measured at 1B): count bonus 3.9 h (PPO-RNN) and 3.5 h (PQN-RNN) per run, 82,858 and 88,306 steps/s (H100); evaluation 2 to 6 minutes per run.
 - Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; 128,000 eval steps per tuning or smoke run, 1,664,000 per `final-1m` run, 13,312,000 per `final-1b` run, at the method throughput above): per variant smoke 0.01 h, tune-coarse 1.12 h, tune-fine 0.23 h, `final-1m` 4.04 h (PPO-RNN variant, 20 runs) or 2.02 h (PQN-RNN variant), `final-1b` 4.85 h (1.62 h per run, counted at the laptop rate wherever the run trained); 10.3 h and 8.2 h in total, 5.4 h and 3.4 h of it up to `final-1m`.
 - Measured throughput replaces these numbers in [[2026-10-20-craftax-compute-budget]] after the smoke phase.
 
@@ -255,8 +256,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned count-bonus <
 **Files:**
 - Modify: `configs/phases/final-1b.yaml` (add `count-bonus`: `tuned` method knobs on each variant's 1B base settings, 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1b METHOD=count-bonus` (best 1M knobs on the 1B base settings, 3 seeds per variant, 6 runs; laptop or `scripts/cluster/run_array.sh`).
-- [ ] **Step 2: Merge** node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 6 finished for count-bonus.
+- [x] **Step 1: Run** (done 2026-11-01 on EDEN (jobs 1936132 to 1936181), merged and checked 2026-11-05) `make queue PHASE=final-1b METHOD=count-bonus` (best 1M knobs on the 1B base settings, 3 seeds per variant, 6 runs; laptop or `scripts/cluster/run_array.sh`).
+- [x] **Step 2: Merge** (done 2026-11-05: 6 finished for count-bonus, 3 per variant) node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 6 finished for count-bonus.
 
 ### Task 10: Abort rules
 

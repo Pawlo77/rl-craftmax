@@ -311,7 +311,7 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 
 - [x] **Step 1: Write the failing tests** on a temporary SQLite MLflow store with fake series: steady SPS, compile time, wall-clock across 2 resume segments, a constant 100 W for 10 s integrates to 1000 J, a run without power series gives NaN steps per joule. (done 2026-10-24: 5d56f34; `tests/evaluation/test_hardware.py`)
 - [x] **Step 2: Run** the smoke phase ([[2026-10-20-craftax-infrastructure]], Task 7) on the laptop, then `uv run python -m wut_murl_craftax.evaluation.hardware --list-keys --run <smoke run>`; write the logged `system/*` keys into `HARDWARE_KEYS` per profile. (done 2026-10-24: laptop only: `HARDWARE_KEYS["laptop"]` written in 5d56f34 (Metal logs no GPU counters, so those read n.m.))
-- [ ] **Step 2b: Run** the same on one cluster node (`--list-keys`, then the logged `system/*` GPU keys into `HARDWARE_KEYS["cuda"]`); open until a cluster run exists (ledger, R75).
+- [x] **Step 2b: Run** (done 2026-11-06: the stored `system/gpu_0_*` names match the `cuda` patterns; `peak_device_mem_mb` of a cuda run is the larger of the NVML reading, which includes the XLA allocator pool, and the runner's per-chunk peak, so T4 shows 32.9 or 65.2 GB where the per-chunk peak is 6.6 to 18.3 GB; `peak_host_mem_mb` is the whole node) the same on one cluster node (`--list-keys`, then the logged `system/*` GPU keys into `HARDWARE_KEYS["cuda"]`); open until a cluster run exists (ledger, R75).
 - [x] **Step 3: Implement** `hardware_summary(run) -> dict` for every hardware metric above. (done 2026-10-24: 5d56f34, c014055)
 - [x] **Step 4: Run** `uv run pytest tests/evaluation/test_hardware.py -q`. (done 2026-10-24: `tests/evaluation/test_hardware.py` green at merge, 38 tests)
 
@@ -326,7 +326,7 @@ Infrastructure Task 4 logs the score and the achievements from the wrapper's `in
 - [x] **Step 3: Implement** MLflow logging of the exported folder as artifacts of run `export-<phase>` in experiment `analysis`; runs belong to a phase by the MLflow tag `phases` ([[2026-10-20-craftax-infrastructure]] Task 2), so a run reused by a later phase is exported with each phase that lists it. (done 2026-10-24: a9b8177; logged as run `export-<phase>` in experiment `analysis`)
 - [x] **Step 4: Run** `uv run pytest tests/evaluation/test_export.py -q`. (done 2026-10-24: `tests/evaluation/test_export.py` green at merge)
 - [x] **Step 5: Run** after Phase 3, for each phase: `for p in tune-coarse tune-fine final-1m combo-1m; do uv run python -m wut_murl_craftax.evaluation.export --phase $p --out outputs/metrics/$p; done`; `outputs/metrics/<phase>/runs.parquet` lists the three controls in every final phase. (done 2026-10-27: 1M phases only: `outputs/metrics/{tune-coarse,tune-fine,final-1m,combo-1m}` exported 2026-10-27 (ledger, R75); the 1B phases are Step 5b)
-- [ ] **Step 5b: Run** the same export for `final-1b` and `combo-1b` once they exist: `for p in final-1b combo-1b; do uv run python -m wut_murl_craftax.evaluation.export --phase $p --out outputs/metrics/$p; done`; `runs.parquet` lists the three controls in each.
+- [x] **Step 5b: Run** (done 2026-11-05 with `rollout_metrics --phase <p>` first and `--tracking-uri sqlite:///mlruns.db`) the same export for `final-1b` and `combo-1b` once they exist: `for p in final-1b combo-1b; do uv run python -m wut_murl_craftax.evaluation.export --phase $p --out outputs/metrics/$p; done`; `runs.parquet` lists the three controls in each.
 
 ### Task 11: End-to-end check on the smoke phase
 

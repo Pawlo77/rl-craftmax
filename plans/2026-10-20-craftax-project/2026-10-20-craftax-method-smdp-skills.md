@@ -122,6 +122,7 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 
 - One 1M run: 0.144 h; one 1B run: 127.3 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.1 = 194,153 steps/s, 1.43 h per run excluding the 1-minute compile, 4.3 h for 3 seeds.
+- 1B measured on EDEN (2026-11-05, 3 seeds, [[2026-10-20-craftax-compute-budget]] Measured at 1B): SMDP skills 3.6 h per run, 83,318 steps/s (H100); evaluation 2 to 6 minutes per run.
 - Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; 128,000 eval steps per tuning or smoke run, 1,664,000 per `final-1m` run, 13,312,000 per `final-1b` run, at the method throughput above): smoke 0.01 h, tune-coarse 2.35 h, tune-fine 0.39 h, `final-1m` 8.47 h, `final-1b` 5.08 h (1.69 h per run, counted at the laptop rate wherever the run trained); 16.3 h in total, 11.2 h of it up to `final-1m`.
 - Measured throughput replaces these numbers in [[2026-10-20-craftax-compute-budget]] after the smoke phase.
 
@@ -267,8 +268,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned smdp-skills <
 **Files:**
 - Modify: `configs/phases/final-1b.yaml` (add `smdp-skills`: `tuned` method knobs on the 1B skill-network settings, 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1b METHOD=smdp-skills` (best 1M knobs on the 1B skill-network settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
-- [ ] **Step 2: Merge** node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for this method.
+- [x] **Step 1: Run** (done 2026-11-01 on EDEN (jobs 1936132 to 1936181), merged and checked 2026-11-05) `make queue PHASE=final-1b METHOD=smdp-skills` (best 1M knobs on the 1B skill-network settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
+- [x] **Step 2: Merge** (done 2026-11-05: 3 finished) node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for this method.
 
 ### Task 11: Abort rules
 

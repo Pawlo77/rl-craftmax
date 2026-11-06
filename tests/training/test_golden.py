@@ -22,11 +22,13 @@ round differently elsewhere."""
 GOLDEN = {
     "ppo": "2a0562c92ab2e75e31e6baee15ea00dcea4d126573eb8051f70176ed19aef895",
     "ppo-rnn": "914e14a787f258c52baaeb6eb29f4d0c6af7260e5d090ef95d0d16fe6badd1b5",
-    "pqn-rnn": "b3137c175687b6b5c6dec80d7f81c6c3fc7dd3db7175773f2b9d98292c1c5f9c",
+    "pqn-rnn": "7d1b8a04f355d7ff7c7e7378b90a1a707b24884b2a9e5a146be0721793de0487",
 }
 """Registry name -> SHA-256 of params and losses after 2 updates, re-recorded
 2026-10-30: the 2026-10-21 hashes no longer reproduced even at their own commit, while
-the rounding-tolerant `VALUES` still matched (a macOS or toolchain update)."""
+the rounding-tolerant `VALUES` still matched (a macOS or toolchain update). The
+`pqn-rnn` hash and values were re-recorded 2026-11-05 after the 2026-10-30 dependency
+bump (craftax 1.7.0, flax 0.12.12), which moved its losses beyond the tolerance."""
 VALUES = {
     "ppo": [
         -0.0025813993997871876,
@@ -63,11 +65,11 @@ VALUES = {
         27.759996577212686,
     ],
     "pqn-rnn": [
-        0.10180967301130295,
+        0.10180966556072235,
         0.7134021520614624,
-        0.0019197575747966766,
-        0.15152806043624878,
-        57.22927456192564,
+        0.0021087813656777143,
+        0.1580452024936676,
+        57.22927987549785,
     ],
 }
 """Registry name -> the finite losses of both updates, then the params' L2 norm: the

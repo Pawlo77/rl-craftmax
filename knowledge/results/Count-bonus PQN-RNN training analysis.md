@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 tags: [concept, results, analysis, training, craftax-1m]
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/hard.py]]"
   - "[[src/wut_murl_craftax/analysis/cases.py]]"
@@ -137,3 +137,14 @@ The three questions for the three controls, one line each (tuned configs, final 
 ## Ablations
 
 No ablation of this method ran in `final-1m`.
+
+## Results at 1B
+
+- 1B, 3 seeds (indicative), tuned config: final training score 15.99, from `outputs/analysis/1b/count-bonus-pqn-rnn/` and `outputs/results/tables/1b/`.
+- Floors reached in the final stochastic eval: overworld 100%, dungeon 91%.
+- Deaths at the final checkpoint: orc_soldier 56.8%, fireball 16.7%, dehydration 16.1%, zombie 4.7%.
+- Stalls: 0.021 per episode, median length 457 steps, 50% escaped by an unlock.
+- Achievements by status: common 34, never 29, rare 4.
+- Obstacles flagged at 1B: Early-race slowdown 3/3, Hoarding or key cycling 3/3, Numerical failure 3/3, Skill forgetting 1/3; not logged: Value failure.
+- Learning speed (T8): mean score over the budget 13.04, 50 % of the final score at 0.12 and 90 % at 0.43 of the budget, late gain 0.38, 3 of 3 runs plateau.
+- Detector thresholds are the 1M ones; the skill-forgetting detector fires on every seed of every method that runs it at 1M (see Obstacles above), so read its 1B count as context. Cases: `outputs/analysis/1b/cases.csv`.

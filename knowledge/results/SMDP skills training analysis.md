@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 tags: [concept, results, analysis, training, craftax-1m]
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/hard.py]]"
   - "[[src/wut_murl_craftax/analysis/cases.py]]"
@@ -261,3 +261,14 @@ Cases of random-top (`cases.csv`, replay files under `training-analysis-1m-smdp-
 | `1m-smdp-skills-random-top-death-1` | death | zombie | `smdp-skills-1m-1f559f2c-s6` | 244 | 10045 | `gifs/1m-smdp-skills-random-top-death-1.gif` |
 | `1m-smdp-skills-random-top-death-2` | death | starvation | `smdp-skills-1m-1f559f2c-s3` | 244 | 10001 | `gifs/1m-smdp-skills-random-top-death-2.gif` |
 | `1m-smdp-skills-random-top-death-3` | death | arrow | `smdp-skills-1m-1f559f2c-s1` | 244 | 10038 | `gifs/1m-smdp-skills-random-top-death-3.gif` |
+
+## Results at 1B
+
+- 1B, 3 seeds (indicative), tuned config: final training score 7.98, from `outputs/analysis/1b/smdp-skills/` and `outputs/results/tables/1b/`.
+- Floors reached in the final stochastic eval: overworld 100%, dungeon 5%.
+- Deaths at the final checkpoint: zombie 53.6%, dehydration 16.1%, starvation 15.1%, arrow 7.3%.
+- Stalls: 0.198 per episode, median length 407 steps, 39% escaped by an unlock.
+- Achievements by status: never 29, common 24, rare 14.
+- Obstacles flagged at 1B: Instability 1/3, Numerical failure 3/3, Plateau 1/3, Skill forgetting 3/3, Skill interference 2/3, Survival failure despite flags 2/3; not logged: Value failure.
+- Learning speed (T8): mean score over the budget 5.58, 50 % of the final score at 0.22 and 90 % at 0.64 of the budget, late gain 0.11, 3 of 3 runs plateau.
+- Detector thresholds are the 1M ones; the skill-forgetting detector fires on every seed of every method that runs it at 1M (see Obstacles above), so read its 1B count as context. Cases: `outputs/analysis/1b/cases.csv`.

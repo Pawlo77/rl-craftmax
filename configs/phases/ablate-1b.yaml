@@ -1,0 +1,18 @@
+# Ablations of the 1M finals at Craftax-1B, 3 seeds: the same overrides of the tuned
+# config as in final-1m, so the 1B ablation figure has data. The tuned runs are those
+# of final-1b; export names each item by `evaluation.export.ABLATIONS`.
+budget: 1b
+eval: log_spaced
+env: Craftax-Symbolic-v1
+seeds: 3
+runs:
+  count-bonus-ppo-rnn:
+    config: count-bonus
+    configs: [{ref: tuned, set: {key: simhash, log2_k: 24, max_occupancy: 0.1}}]
+  sil: {configs: [{ref: tuned, set: {layout: single}}]}
+  smdp-skills:
+    configs:
+      - {ref: tuned, set: {eps_top_end: 1.0}}
+      - {ref: tuned, set: {monte_carlo: true}}
+      - {ref: tuned, set: {low_flags: false}}
+  dyna-q: {configs: [{ref: tuned, set: {plan_kappa: 0.0}}]}

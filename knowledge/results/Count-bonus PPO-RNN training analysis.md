@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 tags: [concept, results, analysis, training, craftax-1m]
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/hard.py]]"
   - "[[src/wut_murl_craftax/analysis/cases.py]]"
@@ -195,3 +195,14 @@ Cases of simhash (`cases.csv`, replay files under `training-analysis-1m-count-bo
 | `1m-count-bonus-ppo-rnn-simhash-death-1` | death | zombie | `count-bonus-ppo-rnn-1m-9403d21d-s4` | 244 | 10003 | `gifs/1m-count-bonus-ppo-rnn-simhash-death-1.gif` |
 | `1m-count-bonus-ppo-rnn-simhash-death-2` | death | starvation | `count-bonus-ppo-rnn-1m-9403d21d-s8` | 244 | 10011 | `gifs/1m-count-bonus-ppo-rnn-simhash-death-2.gif` |
 | `1m-count-bonus-ppo-rnn-simhash-death-3` | death | arrow | `count-bonus-ppo-rnn-1m-9403d21d-s8` | 244 | 10021 | `gifs/1m-count-bonus-ppo-rnn-simhash-death-3.gif` |
+
+## Results at 1B
+
+- 1B, 3 seeds (indicative), tuned config: final training score 16.33, from `outputs/analysis/1b/count-bonus-ppo-rnn/` and `outputs/results/tables/1b/`.
+- Floors reached in the final stochastic eval: overworld 100%, dungeon 86%.
+- Deaths at the final checkpoint: orc_soldier 38.0%, dehydration 29.7%, fireball 9.4%, zombie 7.8%.
+- Stalls: 0.047 per episode, median length 373 steps, 11% escaped by an unlock.
+- Achievements by status: common 34, never 27, rare 6.
+- Obstacles flagged at 1B: Early-race slowdown 2/3.
+- Learning speed (T8): mean score over the budget 13.19, 50 % of the final score at 0.05 and 90 % at 0.71 of the budget, late gain 1.49, 2 of 3 runs plateau.
+- Detector thresholds are the 1M ones; the skill-forgetting detector fires on every seed of every method that runs it at 1M (see Obstacles above), so read its 1B count as context. Cases: `outputs/analysis/1b/cases.csv`.

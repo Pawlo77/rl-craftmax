@@ -111,6 +111,7 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 - One 1M run: 477 s; one 1B run: 416,727 s = 115.8 h.
 - The 1M reference-code check (Task 6) adds 3 runs of the original script outside the queue, about 0.4 h at the same throughput including compile (estimate), outside the table and without fixed-seed evaluation.
 - final-1b on a CUDA cluster GPU (authors' hardware, estimate): 1e9 / 266,961 steps/s x 1.25 = 1.30 h per run excluding the 1-minute compile (the budget convention), 3.9 h for 3 seeds; laptop hours in the table include it.
+- 1B measured on EDEN (2026-11-05, 3 seeds, [[2026-10-20-craftax-compute-budget]] Measured at 1B): PQN-RNN 3.5 h per run, 84,176 steps/s (H100); evaluation 2 to 6 minutes per run.
 - Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; estimate at 2,400 steps/s, Classic 8,000): smoke 0.01 h, tune-coarse 0.44 h, tune-fine 0.18 h, final-1m 1.93 h, final-1b 4.62 h (1.54 h per run, counted at the laptop rate wherever the run trained); 7.2 h in total, 2.6 h of it up to final-1m.
 
 ## Tasks
@@ -214,8 +215,8 @@ flowchart TD
 - Modify: `configs/phases/final-1m.yaml` (add `pqn-rnn`: `tuned`, 10 seeds), `configs/phases/final-1b.yaml` (add `pqn-rnn`: the repo 1B config, 3 seeds)
 
 - [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=pqn-rnn`; 10 finished. (done 2026-10-24: 10 finished; results in `## Results`)
-- [ ] **Step 2: Run** `make queue PHASE=final-1b METHOD=pqn-rnn` (repo 1B config; laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 3 finished.
-- [ ] **Step 3: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method pqn-rnn --budget 1b --phase final-1b` (n = 3, the wider band); report in [[2026-10-20-craftax-comparison-and-results]] with the note that the paper does not say whether 16.0% is training or greedy-test episodes.
+- [x] **Step 2: Run** (done 2026-11-01 on EDEN (jobs 1936132 to 1936181), merged and checked 2026-11-05: 3 finished) `make queue PHASE=final-1b METHOD=pqn-rnn` (repo 1B config; laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 3 finished.
+- [x] **Step 3: Run** (done 2026-11-06: mean 16.10, SE 0.085, h 0.896 against 16.0, PASS) `uv run python -m wut_murl_craftax.evaluation.reproduction --method pqn-rnn --budget 1b --phase final-1b` (n = 3, the wider band); report in [[2026-10-20-craftax-comparison-and-results]] with the note that the paper does not say whether 16.0% is training or greedy-test episodes.
 
 ### Task 9: PQN-RNN metrics logged per update
 

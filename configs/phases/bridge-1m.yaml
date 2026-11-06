@@ -1,0 +1,12 @@
+# Bridge between the laptop 1M finals and the cluster 1B finals: the three controls at
+# Craftax-1M, 10 seeds, rerun on the cluster stack (craftax 1.7.0, flax 0.12.12, Linux,
+# CUDA). A tuned config hashes like the one in final-1m, so these runs carry the same
+# names: keep their node stores apart from mlruns.db and compare final scores only.
+budget: 1m
+eval: log_spaced
+env: Craftax-Symbolic-v1
+seeds: 10
+runs:
+  ppo: {configs: [tuned]}
+  ppo-rnn: {configs: [tuned]}
+  pqn-rnn: {configs: [tuned]}

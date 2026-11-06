@@ -31,6 +31,9 @@ related-code:
 - SIL (2.137) and the combination (2.132) do not beat PPO or PPO-RNN (PoI 0.33 to 0.37, Holm p 1.000), and the combination is below count-bonus PPO-RNN alone (PoI of the combination over it 0.17 [0.03, 0.38]): at 1M the two components do not add up. Sources: `main.csv`, `poi_matrix.csv`.
 - The PQN-RNN family and both skill methods are well below the PPO family and unstable: means 1.481 (count-bonus PQN-RNN), 1.356 (PQN-RNN), 1.077 (Dyna-Q), 0.831 (SMDP skills) against 2.132 to 2.274 for the PPO family, SIL and the combination; Holm p 0.001 to 0.002 against both PPO controls for the three methods that carry one; seed sd 0.375 to 0.651 against 0.046 to 0.117; runs with a collapse 3, 4, 5, 8 of 10 against 0 or 1. Neither skill method is separable from PQN-RNN (Holm p 0.273 and 0.108). Sources: `main.csv`, `stability.csv`.
 - Reproduction check: all three controls pass (PPO gap -0.027 within h 0.128; PPO-RNN gap -0.112 within h 0.135; PQN-RNN passes its reference-code comparison); no issue note opened. Source: `reproduction_gate.csv`.
+- 1M vs 1B figures and tables: [[Figures SCALE]] and [[Tables SCALE]].
+- 1B figures and tables (24 `final-1b` and 3 `combo-1b` runs, 3 seeds, indicative): [[Figures 1B]] and [[Tables 1B]].
+- Reproduction check at 1B (`final-1b`, 3 seeds, before `combo-1b`): PPO and PQN-RNN pass; PPO-RNN scores 16.22 against the published 15.3 (gap +0.92, h 0.63, above the band): [[I1 - PPO-RNN 1B above the reproduction band]].
 - Every method reaches only floor 0 in the final eval episodes (deepest floor share 1.0), 47 to 54 of the 67 achievements are never unlocked by any seed at any checkpoint (training and eval), and zombies are the top cause of death everywhere (46.6% to 61.1%). Sources: `game_summary.csv`, the nine training-analysis notes below.
 
 ## T1: main results
@@ -244,3 +247,16 @@ Full write-up: [[Decision-tree interpretation]] (90 policies, 9 methods x 10 see
 ## Deferred
 
 - Deferred (R107): the obstacles table of the tuning runs (`tune-coarse`, `tune-fine`, 494 runs).
+
+## 1M vs 1B
+
+Tables `tables/scale/scale_*.csv` and figures `figures/scale/` of `analysis.results` (Task 9 of [[2026-10-20-craftax-comparison-and-results]]). 1B has 3 seeds per method and no tuning of its own, so these are descriptions with intervals, not tests.
+
+- **Ranking:** Spearman 0.67 (95% CI 0.28 to 0.72) and Kendall 0.44 (0.17 to 0.56) over the nine methods. Six pairs flip with both intervals excluding 0: PQN-RNN is below PPO, SIL and Combo at 1M and above them at 1B (PPO minus PQN-RNN: +0.82 at 1M, -4.38 at 1B), and count-bonus PQN-RNN does the same against PPO and SIL.
+- **Advantage over the base control (percent, 1M then 1B):** count-bonus PPO-RNN +3.9 then +0.6; SIL -2.3 then -6.8 (change -4.4, CI -8.4 to -0.4, the only change whose interval excludes 0); Combo -2.6 then -5.4; count-bonus PQN-RNN +9.2 then -0.7 (change CI -47.6 to 14.6); Dyna-Q -20.6 then -45.6; SMDP skills -38.7 then -50.4.
+- **Scaling:** the mean grows 5.4 times for PPO and 11.9 times for PQN-RNN; the PQN-RNN family gains most (log ratio 2.4 to 2.5), PPO least (1.7).
+- **Precision:** a 3-seed difference needs 0.11 (SIL) to 1.49 (SMDP skills) points to be resolved (Welch, power 0.8, 1M seed sd). Count-bonus PPO-RNN against PPO-RNN differs by 0.10 at 1B against 0.24 needed: unresolved, not equal.
+- **Compute (1B, A100 and H100 wall-clock):** the Pareto front of score against hours is PQN-RNN (3.5 h, 16.10) and count-bonus PPO-RNN (3.9 h, 16.33); the combination takes the longest (5.6 h) for 15.35. 1M laptop timings are context only.
+- **Tuning transfer:** the methods with the largest 1M tuning optimism (SMDP skills 0.83, Dyna-Q 0.41, count-bonus PQN-RNN 0.34) lose the most advantage at 1B; SIL (0.00) and count-bonus PPO-RNN (0.08) lose little. Three seeds cannot separate optimism from scale effects.
+- **Stack check (bridge runs):** the three controls at 1M, 10 seeds, rerun on the 1B stack (craftax 1.7.0, Linux, A100) score within the seed noise of the laptop runs: PPO -0.06 (95% CI -0.14 to 0.01), PPO-RNN -0.08 (-0.17 to 0.02), PQN-RNN -0.02 (-0.40 to 0.36); the 1M vs 1B differences above are not a software-stack effect at this resolution.
+- **Threats to validity:** 3 seeds at 1B; A100 against H100 numerics in the 1B set; no 1B tuning; laptop against cluster timings in the compute table; the bridge check covers the controls only.

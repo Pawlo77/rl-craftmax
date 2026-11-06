@@ -1,0 +1,21 @@
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & race wins & deepest floor & top death & coverage & wasted & adoption \\
+\midrule
+\multicolumn{7}{l}{\emph{Main block}} \\
+ppo & 6 & 1 (0.48) & dehydration (0.30) & 0.26 & 0.20 & 0.08 \\
+ppo-rnn & 15 & 1 (0.89) & orc\_soldier (0.43) & 0.25 & 0.10 & 0.18 \\
+pqn-rnn & 6 & 1 (0.91) & orc\_soldier (0.59) & 0.29 & 0.06 & 0.18 \\
+count-bonus-ppo-rnn & 8 & 1 (0.86) & orc\_soldier (0.38) & 0.27 & 0.09 & 0.19 \\
+count-bonus-pqn-rnn & 4 & 1 (0.91) & orc\_soldier (0.57) & \textbf{0.29} & \textbf{0.06} & \textbf{0.19} \\
+sil & 10 & 1 (0.81) & orc\_soldier (0.51) & 0.28 & 0.14 & 0.16 \\
+combo & \textbf{19} & 1 (0.88) & orc\_soldier (0.43) & 0.24 & 0.12 & 0.18 \\
+\midrule
+\multicolumn{7}{l}{\emph{Uses hand-written skills block}} \\
+ppo & 9 & 1 (0.48) & dehydration (0.30) & 0.26 & 0.20 & 0.08 \\
+ppo-rnn & \textbf{26} & 1 (0.89) & orc\_soldier (0.43) & 0.25 & 0.10 & \textbf{0.18} \\
+pqn-rnn & 6 & 1 (0.91) & orc\_soldier (0.59) & 0.29 & \textbf{0.06} & 0.18 \\
+dyna-q & 5 & 1 (0.23) & zombie (0.51) & 0.29 & 0.15 & 0.07 \\
+smdp-skills & 6 & 1 (0.05) & zombie (0.54) & \textbf{0.35} & 0.18 & 0.06 \\
+\bottomrule
+\end{tabular}

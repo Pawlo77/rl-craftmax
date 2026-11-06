@@ -3,14 +3,14 @@ title: "Craftax EDEN 1B execution implementation plan"
 type: plan
 domain: orchestration
 parent: "[[2026-10-20-craftax-project]]"
-status: in progress
+status: done
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-05
 tags: [plan, eden, compute, 1b]
 ---
 # Craftax EDEN 1B execution implementation plan
 
-Status: in progress
+Status: done
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -63,7 +63,7 @@ Cluster facts used by the plan ([[EDEN Slurm basics and partitions]], [[EDEN GPU
 - [x] **Step 1:** (done 2026-10-31, `ec56d91`) record the three update lines of `check_recompute.py` above in the Device verification table of [[PPO-RNN design]] and remove `ppo/ratio_first_mb` from `unmeasured_limits` in `configs/profiles/cuda.yaml` (exit 0 rule of [[2026-10-20-craftax-infrastructure]] Task 6 Step 5).
 - [x] **Step 2:** `combo-1b` waits for `select_pair --rank-sum-with final-1m` after `final-1b` ([[2026-10-20-craftax-project]] Step 1b); do not submit it first.
 - [x] **Step 3:** (done 2026-10-31) `git clone https://github.com/Pawlo77/rl-craftmax.git ~/craftax-eden-1b` and `git checkout <pushed commit>`: a clone, not a `git archive`, so each run's reproducibility report records a clean commit. Then `uv sync --frozen --all-groups` once. `run_array.sh` calls `uv run`, which installs only the default groups: the first launch skipped this and every run stopped in seconds with `JAX has no GPU backend (platforms ['cpu'])`. Submit with `UV_NO_SYNC=1` so concurrent jobs do not race on the environment.
-- [x] **Step 4:** (done) cap of 12 concurrent A100s (`%2` on ppo, ppo-rnn, pqn-rnn and count-bonus-ppo-rnn, `%1` on the other four) and the time limit per entry: `short` allows 24 h, a run is 4 to 6 h of training plus evaluation, so `--time=14:00:00` (`--time=18:00:00` for Dyna-Q and SIL); `--signal=B:TERM@600` resumes what the limit cuts. `sfree` showed free GPUs but few free CPUs: request `--cpus-per-task=2` (measured: PPO-RNN on 2 CPUs trains at 61,343 steps/s, the 8-CPU probe's rate).
+- [x] **Step 4:** (done) cap of 12 concurrent A100s (the account allows 17) (`%2` on ppo, ppo-rnn, pqn-rnn and count-bonus-ppo-rnn, `%1` on the other four) and the time limit per entry: `short` allows 24 h, a run is 4 to 6 h of training plus evaluation, so `--time=14:00:00` (`--time=18:00:00` for Dyna-Q and SIL); `--signal=B:TERM@600` resumes what the limit cuts. `sfree` showed free GPUs but few free CPUs: request `--cpus-per-task=2` (measured: PPO-RNN on 2 CPUs trains at 61,343 steps/s, the 8-CPU probe's rate).
 
 ### Task 2: Submit
 
@@ -78,14 +78,14 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 
 ### Task 3: Watch
 
-- [ ] **Step 1:** `squeue -u $USER`, `sacct -j <id> -o JobID,State,Elapsed,MaxRSS`, and `make status PHASE=final-1b` per `STORE_DIR` through a node or after a copy back.
-- [ ] **Step 2:** once a guarded entry (Dyna-Q, SMDP, count-bonus) passes 5 to 10 % of its budget run `scripts/cluster/project_guards.py` ([[2026-10-20-craftax-compute-budget]] Task 2 Step 1b); a resize restarts all 3 seeds of the entry.
-- [ ] **Step 3:** time the first checkpoint evaluation and the longest 1B episode from the first finished run and replace the 0.43 h per run of the compute budget; resize the time limits if they miss by more than 1.5 x.
+- [x] **Step 1:** (done) `squeue -u $USER`, `sacct -j <id> -o JobID,State,Elapsed,MaxRSS`, and `make status PHASE=final-1b` per `STORE_DIR` through a node or after a copy back.
+- [x] **Step 2:** (not needed: every run finished inside 1.1 x its estimate, no resize) once a guarded entry (Dyna-Q, SMDP, count-bonus) passes 5 to 10 % of its budget run `scripts/cluster/project_guards.py` ([[2026-10-20-craftax-compute-budget]] Task 2 Step 1b); a resize restarts all 3 seeds of the entry.
+- [x] **Step 3:** (done 2026-11-05, table below) time the first checkpoint evaluation and the longest 1B episode from the first finished run and replace the 0.43 h per run of the compute budget; resize the time limits if they miss by more than 1.5 x.
 
 ### Task 4: Copy back
 
-- [ ] **Step 1:** only finished runs, as in [[2026-10-20-craftax-compute-budget]] Task 2 Step 2: `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json eden:craftax-eden/node-stores/ node-stores/`, then `make merge-mlflow SRC=node-stores/<entry>/mlruns-node-<i>.db` per node.
-- [ ] **Step 2:** replace the estimates of [[2026-10-20-craftax-compute-budget]] with the table above and the measured evaluation times; mark this plan `done` when `make status PHASE=final-1b` shows 24 finished and `combo-1b` 3.
+- [x] **Step 1:** (`final-1b` done 2026-11-05: 24 runs, 14 GB, 24 finished in `make status`; `combo-1b` waits) only finished runs, as in [[2026-10-20-craftax-compute-budget]] Task 2 Step 2: `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json eden:craftax-eden/node-stores/ node-stores/`, then `make merge-mlflow SRC=node-stores/<entry>/mlruns-node-<i>.db` per node.
+- [x] **Step 2:** (done 2026-11-06: `combo-1b` finished 2026-11-05, table in [[2026-10-20-craftax-compute-budget]] Measured at 1B) replace the estimates of [[2026-10-20-craftax-compute-budget]] with the table above and the measured evaluation times; mark this plan `done` when `make status PHASE=final-1b` shows 24 finished and `combo-1b` 3.
 
 ### Launch note (2026-10-31)
 
@@ -97,8 +97,30 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 - A task on `dgx-2` sat 11 minutes with no child process, 0 % GPU and no database (node load 29, probably I/O): `scontrol requeue <jobid>` restarted it. Check `nvidia-smi` through `srun --jobid=<id> --overlap` when a log stays empty.
 - A store records its array size: never resubmit single seeds of an array under a different size.
 
+- H100 on `hopper` (probe 1936172, 2026-11-01): the recompute gap is 5.7e-5 (bound 1e-4); PPO-RNN trains at 81,192 steps/s (3.4 h per run, 1.32 x the A100's 61,400), 6.5 GB device memory, node RAM 1 TB. The node is an H100 PCIe 80 GB. `hopper` starts jobs at once while the A100 queue waits, so the six entries not yet started (pqn-rnn, count-bonus-ppo-rnn, count-bonus-pqn-rnn, sil, smdp-skills, dyna-q) were resubmitted there (jobs 1936176 to 1936181, `-p hopper --gres=gpu:h100:1`, one run per entry at a time, `--time` up to 5 days allowed). ppo and ppo-rnn stay on A100s, so each entry runs on one GPU class (TF32 numerics differ between classes); the GPU class of each run is the node in `sacct`.
+- The account's group GPU limit (`AssocGrpGRES`) holds the last array back when the total of running GPUs is reached (the H100 cap is 5, not 12: the account caps are a100 17, h100 5, tesla 3, 20 GPUs in all): it starts when one frees.
+- `hopper-2` (H200) stayed out: three of four full H200s are busy and one is held by a standing reservation; the MIG slices did not start before 2 November.
+
+### Result (2026-11-05)
+
+`final-1b` finished: 24 runs, none killed, all done by 2026-11-01 evening; one task (PPO-RNN seed 2) sat 12 h on `dgx-2` at 10 % of its steps and finished 4.4 h after a requeue off that node. Means over 3 seeds from the merged store (`train/wall_s`, `train/sps`, run start to end):
+
+| Entry | GPU | Train h | Eval min | steps/s | Run GB |
+|---|---|---|---|---|---|
+| ppo | A100 | 3.70 | 3.6 | 80,596 | 0.5 |
+| ppo-rnn | A100 | 4.9 (`sacct`, seeds 0 and 1; seed 2 was requeued) | n/a | 59,407 | 0.4 |
+| pqn-rnn | H100 | 3.48 | 3.6 | 84,176 | 0.4 |
+| count-bonus-ppo-rnn | H100 | 3.89 | 3.0 | 82,858 | 0.4 |
+| count-bonus-pqn-rnn | H100 | 3.49 | 3.0 | 88,306 | 0.4 |
+| sil | H100 | 4.48 | 2.4 | 77,174 | 0.4 |
+| smdp-skills | H100 | 3.57 | 5.4 | 83,318 | 0.4 |
+| dyna-q | H100 | 4.69 | 6.0 | 81,780 | 0.4 |
+
+- 1B evaluation costs 2 to 6 minutes per run, not the 0.43 h of the budget; every run finished within 1.1 x its estimate.
+- The 1B pair check (`select_pair --rank-sum-with final-1m`) kept count-bonus-ppo-rnn + sil on ppo-rnn; `combo-1b` (jobs 1938214, 3 seeds, A100 on `short`: the H100 start was estimated 1.5 days out) started 2026-11-05 10:10. Submit with `PATH` holding `~/.local/bin` (a plain `ssh` has no `uv`).
+
 ### Risks
 
 - Fair share: the group's recent usage decides how soon 12 GPUs start; the dry run (`sbatch --test-only`) estimated hours when the cluster had free A100s, so check `squeue --start` after submitting.
 - Preemption and the 24 h `short` limit: runs resume from `state/` when the same command is submitted again.
-- The 1B evaluation (26 passes) is unmeasured; it may add up to 1 h per run.
+- The 1B evaluation (26 passes) took 2 to 6 minutes per run (measured 2026-11-05, Result above).

@@ -105,6 +105,7 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 
 - One 1M run: 1e6 / 2,400 + 60 s = 477 s; one 1B run: 416,727 s = 115.8 h.
 - final-1b on a CUDA cluster GPU (authors' hardware, estimate): 1e9 / 266,961 steps/s x 1.25 = 1.30 h per run excluding the 1-minute compile (the budget convention), 3.9 h for 3 seeds; laptop hours in the table include it.
+- 1B measured on EDEN (2026-11-05, 3 seeds, [[2026-10-20-craftax-compute-budget]] Measured at 1B): PPO-RNN 4.9 h per run, 59,407 steps/s (A100); evaluation 2 to 6 minutes per run.
 - Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; estimate at 2,400 steps/s, Classic 8,000): smoke 0.01 h, tune-coarse 0.46 h, tune-fine 0.18 h, final-1m 1.93 h, final-1b 4.62 h (1.54 h per run, counted at the laptop rate wherever the run trained); 7.2 h in total, 2.6 h of it up to final-1m.
 - The planning value is replaced by the measurement of infrastructure Task 7 ([[2026-10-20-craftax-compute-budget]]).
 
@@ -233,8 +234,8 @@ flowchart TD
 - Modify: `configs/phases/final-1m.yaml` (add `ppo-rnn`: `tuned`, 10 seeds), `configs/phases/final-1b.yaml` (add `ppo-rnn`: Table 7 and the published network, 3 seeds)
 
 - [x] **Step 1: Run** `make queue PHASE=final-1m METHOD=ppo-rnn`; 10 finished. (done 2026-10-24: 10 finished; results in `## Results`)
-- [ ] **Step 2: Run** `make queue PHASE=final-1b METHOD=ppo-rnn` (laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 3 finished.
-- [ ] **Step 3: Run** `uv run python -m wut_murl_craftax.evaluation.reproduction --method ppo-rnn --budget 1b --phase final-1b` (n = 3, the wider band); report the result in [[2026-10-20-craftax-comparison-and-results]].
+- [x] **Step 2: Run** (done 2026-11-01 on EDEN (jobs 1936132 to 1936181), merged and checked 2026-11-05: 3 finished, seed 2 requeued once) `make queue PHASE=final-1b METHOD=ppo-rnn` (laptop or `scripts/cluster/run_array.sh`, merged with `make merge-mlflow SRC=<store>`); 3 finished.
+- [x] **Step 3: Run** (done 2026-11-06: mean 16.22, SE 0.267, h 0.627 against 15.3, FAIL above the band, issue note [[I1 - PPO-RNN 1B above the reproduction band]]) `uv run python -m wut_murl_craftax.evaluation.reproduction --method ppo-rnn --budget 1b --phase final-1b` (n = 3, the wider band); report the result in [[2026-10-20-craftax-comparison-and-results]].
 
 ### Task 10: Analysis hooks and stop criteria
 
