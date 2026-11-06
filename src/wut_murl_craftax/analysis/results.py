@@ -124,6 +124,13 @@ TABLE_CAPTIONS: dict[str, TableCaption] = {
         "The per-run part of the stability table: deepest drawdown, any drop and "
         "collapse of each tuned run with a score curve.",
     ),
+    "speed": TableCaption(
+        "T8",
+        "Learning speed",
+        "Per method, the seed medians of the mean score over the budget (auc), the "
+        "budget share at 50 % and 90 % of the final score (to_50, to_90) and the score "
+        "gained over the last 20 % of the budget, with the runs that still plateau.",
+    ),
     "hardware": TableCaption(
         "T4",
         "Hardware",
@@ -403,6 +410,7 @@ def build_tables(inputs: _Inputs) -> dict[str, pd.DataFrame]:
         "literature": compare.literature_table(frames, **gate, **boot),
         "stability": compare.stability_table(frames),
         "stability_runs": compare.run_stability(frames),
+        "speed": compare.speed_table(frames),
         "hardware": compare.hardware_table(frames),
         "race": compare.race_table(frames),
         "game": compare.game_summary_table(frames),

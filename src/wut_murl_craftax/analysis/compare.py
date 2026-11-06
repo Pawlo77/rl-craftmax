@@ -62,7 +62,7 @@ from .load import (
     in_phase,
     pair_of,
 )
-from .obstacles import SCORE, drawdown_floor
+from .obstacles import PLATEAU_SHARE, SCORE, drawdown_floor
 
 MAIN, SKILLS = "main", "skills"
 BLOCKS = (MAIN, SKILLS)
@@ -118,6 +118,13 @@ STABILITY_COLUMNS = [
     *_HEAD, "indicative", "seeds", "sd", "cv", "curve_runs", "max_drawdown_median",
     "runs_with_drops", "runs_with_collapse",
 ]  # fmt: skip
+SPEED_COLUMNS = [
+    *_HEAD, "indicative", "seeds", "curve_runs", "auc", "to_50", "to_90", "late_gain",
+    "plateau_runs",
+]  # fmt: skip
+"""T8: seed medians of the learning-speed columns of `curve_speed` (budget shares)."""
+LATE_START = 0.8
+"""Where the late window of `curve_speed` starts, as a share of the budget."""
 RUN_STABILITY_COLUMNS = [
     "benchmark", "run_id", "method", "seed", "max_drawdown", "drops", "collapsed",
 ]  # fmt: skip
@@ -769,6 +776,69 @@ def stability_table(frames: Frames) -> pd.DataFrame:
                 "runs_with_collapse": int(found["collapsed"].sum()),
             })
     return pd.DataFrame(rows, columns=STABILITY_COLUMNS)
+
+
+def curve_speed(steps: np.ndarray, curve: np.ndarray) -> dict[str, Any]:
+    """Learning speed of one score curve, the budget as 1.0 so budgets compare.
+
+    ``auc`` is the mean smoothed score over the run; ``to_50`` and ``to_90`` the first
+    budget share at 50 % and 90 % of the final score (NaN when the final score is not
+    positive); ``late_gain`` the score gained over the last 20 % of the budget, and
+    ``plateau`` when that gain stays under `obstacles.PLATEAU_SHARE` of the best score.
+    """
+    c = smoothed(curve)
+    x = np.asarray(steps, dtype=float) / steps[-1]
+    keep = np.isfinite(c)
+    x, c = x[keep], c[keep]
+    final = float(np.median(c[x >= 0.95]))
+
+    def reach(share: float) -> float:
+        hit = c >= share * final
+        return float(x[np.argmax(hit)]) if final > 0 and hit.any() else _NAN
+
+    gain = final - float(np.interp(LATE_START, x, c))
+    return {
+        "auc": float(np.trapezoid(c, x) / (x[-1] - x[0])),
+        "to_50": reach(0.5),
+        "to_90": reach(0.9),
+        "late_gain": gain,
+        "plateau": gain < PLATEAU_SHARE * float(c.max()),
+    }
+
+
+def speed_table(frames: Frames) -> pd.DataFrame:
+    """T8: how quickly each method learns and whether its score still rises at the end.
+
+    Seed medians of `curve_speed` over the tuned runs with a ``train/score_pct`` curve;
+    ``plateau_runs`` counts the runs whose late gain is under the plateau limit.
+    """
+    curves = frames["curves"]
+    score = curves[curves["metric"] == SCORE[0]].sort_values(["run_id", "env_steps"])
+    rows = []
+    for budget, runs in _budgets(_tuned(frames["runs"])):
+        mine = score[score["run_id"].isin(runs["run_id"])]
+        speed = pd.DataFrame({
+            run_id: curve_speed(g["env_steps"].to_numpy(), g["value"].to_numpy(float))
+            for run_id, g in mine.groupby("run_id")
+        }).T
+        for block, method, role in _members(runs):
+            ids = runs.loc[runs["method"] == method, "run_id"]
+            found = speed.loc[speed.index.intersection(ids)]
+            rows.append({
+                "benchmark": budget,
+                "block": block,
+                "method": method,
+                "role": role,
+                "indicative": budget not in SIGNIFICANCE_BUDGETS,
+                "seeds": len(ids),
+                "curve_runs": len(found),
+                **{
+                    k: found[k].astype(float).median() if len(found) else _NAN
+                    for k in ("auc", "to_50", "to_90", "late_gain")
+                },
+                "plateau_runs": int(found["plateau"].sum()) if len(found) else 0,
+            })
+    return pd.DataFrame(rows, columns=SPEED_COLUMNS)
 
 
 def hardware_table(frames: Frames) -> pd.DataFrame:
