@@ -7,7 +7,9 @@ they do not test.
 """
 
 import itertools
-from collections.abc import Callable
+import sqlite3
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -231,3 +233,56 @@ def transfer_table(advantage: pd.DataFrame, optimism: pd.DataFrame) -> pd.DataFr
     )
     t.insert(0, "benchmark", SCALE)
     return t
+
+
+def node_scores(root: Path) -> dict[str, list[float]]:
+    """Method -> final scores of the runs in the ``mlruns-node-*.db`` files of ``root``.
+
+    The method is the run name up to its ``-<budget>-`` part; a node store holds one
+    run per array task, so the stores are read directly, never merged into the main
+    store (their run names equal the laptop runs').
+    """
+    out: dict[str, list[float]] = {}
+    for path in sorted(root.glob("mlruns-node-*.db")):
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        rows = con.execute(
+            "select r.name, m.value from runs r join latest_metrics m"
+            " on m.run_uuid = r.run_uuid where m.key = 'final_score'"
+            " and r.status = 'FINISHED'"
+        ).fetchall()
+        con.close()
+        for name, value in rows:
+            out.setdefault(name.split("-1m-")[0], []).append(float(value))
+    return out
+
+
+def bridge_table(
+    laptop: Mapping[str, list[float]],
+    cluster: Mapping[str, list[float]],
+    n_boot: int = 1000,
+    seed: int = 0,
+) -> pd.DataFrame:
+    """Final scores of the same controls on the laptop and on the cluster stack.
+
+    ``diff`` is cluster minus laptop with a bootstrap CI over both seed sets;
+    ``diff_sd`` is it in units of the pooled seed sd and ``shifted`` marks a CI that
+    excludes 0. A shift inside the seed noise lets the 1M vs 1B comparison stand.
+    """
+    rows = []
+    for m in sorted(set(laptop) & set(cluster)):
+        a, b = np.asarray(laptop[m], float), np.asarray(cluster[m], float)
+        est, lo, hi = _ci(
+            {"laptop": a.tolist(), "cluster": b.tolist()},
+            lambda d: float(d["cluster"].mean() - d["laptop"].mean()),
+            n_boot,
+            seed,
+        )
+        sd = float(np.sqrt((a.var(ddof=1) + b.var(ddof=1)) / 2))
+        rows.append({
+            "benchmark": SCALE, "method": m, "seeds_laptop": a.size,
+            "seeds_cluster": b.size, "mean_laptop": a.mean(), "mean_cluster": b.mean(),
+            "diff": est, "diff_lo": lo, "diff_hi": hi, "diff_sd": est / sd,
+            "poi": float(np.mean(b[:, None] > a[None, :])),
+            "shifted": bool(lo > 0 or hi < 0),
+        })  # fmt: skip
+    return pd.DataFrame(rows)

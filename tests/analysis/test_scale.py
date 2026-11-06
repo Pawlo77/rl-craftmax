@@ -97,3 +97,32 @@ def test_compute_table_marks_the_pareto_front_of_score_against_hours(
                 (g["hours"] < row.hours) | (g["score"] > row.score)
             )
             assert row.pareto == (not beaten.any())
+
+
+def test_bridge_table_measures_the_stack_shift_against_the_seed_noise() -> None:
+    laptop = {"ppo": [2.0, 2.2, 2.1, 2.3], "pqn-rnn": [1.3, 1.4, 1.5, 1.4]}
+    cluster = {"ppo": [2.1, 2.3, 2.2, 2.4], "pqn-rnn": [1.3, 1.4, 1.5, 1.4]}
+    t = scale.bridge_table(laptop, cluster, n_boot=N_BOOT).set_index("method")
+    assert t.loc["ppo", "diff"] == pytest.approx(0.1)
+    assert t.loc["pqn-rnn", "diff"] == pytest.approx(0.0)
+    assert t.loc["ppo", "diff_lo"] <= t.loc["ppo", "diff"] <= t.loc["ppo", "diff_hi"]
+    assert t.loc["ppo", "diff_sd"] == pytest.approx(
+        0.1 / np.std([2.0, 2.2, 2.1, 2.3], ddof=1), rel=0.3
+    )
+    assert not t.loc["pqn-rnn", "shifted"]
+
+
+def test_node_scores_reads_the_final_score_of_each_run_of_a_node_store(
+    tmp_path,
+) -> None:
+    import sqlite3
+
+    for i, v in enumerate((1.5, 2.5)):
+        db = sqlite3.connect(tmp_path / f"mlruns-node-{i}.db")
+        db.execute("create table runs (run_uuid text, name text, status text)")
+        db.execute("create table latest_metrics (run_uuid text, key text, value real)")
+        db.execute("insert into runs values ('r', 'ppo-1m-abc-s0', 'FINISHED')")
+        db.execute("insert into latest_metrics values ('r', 'final_score', ?)", (v,))
+        db.commit()
+        db.close()
+    assert scale.node_scores(tmp_path) == {"ppo": [1.5, 2.5]}

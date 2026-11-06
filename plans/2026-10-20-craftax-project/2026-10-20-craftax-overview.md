@@ -64,8 +64,8 @@ flowchart LR
 |---|---|---|---|
 | 0 | Infrastructure, metrics, controls tuned and reproduced | 6 smoke + 89 coarse + 36 fine (controls) | measured: 13.0 run-hours, 11.9 h wall-clock (estimate: about 18 laptop hours) |
 | 1 | Each method implemented, tested, tuned at 1M | 10 smoke + 405 coarse + 81 fine (27 more reused from coarse; 102 planned) | measured for 4 of 5 methods: 52.7 run-hours, 30.5 h wall-clock; Dyna-Q 4.8 h wall-clock (estimate 5.4 h; was about 83 laptop hours for all) |
-| 2 | Finals: 10 seeds at 1M, 3 seeds at 1B | 140 `final-1m` + 24 `final-1b` | 1M: measured 9.7 h wall-clock with 2 workers (estimate 13 h; was 49); 1B: about 43 GPU hours on CUDA (33.0 + 10.4; was 72), about 2,077 laptop hours |
-| 3 | Best two methods combined, after both finals | 10 `combo-1m` + 3 `combo-1b` | 1M: measured 1.2 h wall-clock with 2 workers (estimate 1.2 h; was 4); 1B: about 6 GPU hours (5.1 + 1.3; was 11), about 357 laptop hours |
+| 2 | Finals: 10 seeds at 1M, 3 seeds at 1B | 140 `final-1m` + 24 `final-1b` | 1M: measured 9.7 h wall-clock with 2 workers (estimate 13 h; was 49); 1B: about 43 GPU hours on CUDA (33.0 + 10.4; was 72), about 2,077 laptop hours; measured on EDEN 2026-11-05: 24 runs, 3.5 to 4.9 h each, about 100 GPU hours |
+| 3 | Best two methods combined, after both finals | 10 `combo-1m` + 3 `combo-1b` | 1M: measured 1.2 h wall-clock with 2 workers (estimate 1.2 h; was 4); 1B: about 6 GPU hours (5.1 + 1.3; was 11), about 357 laptop hours; measured 2026-11-05: 3 runs of 5.6 to 5.8 h, 17 GPU hours |
 | 4 | Analysis | offline | small |
 | 5-7 | Videos, report, Hugging Face release | offline | small |
 

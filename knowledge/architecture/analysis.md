@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[wut_murl_craftax]]"
 tags: [architecture, analysis]
 created: 2026-10-24
-updated: 2026-10-29
+updated: 2026-11-06
 related-code:
   - "[[src/wut_murl_craftax/analysis/__init__.py]]"
   - "[[src/wut_murl_craftax/analysis/captions.py]]"
@@ -82,7 +82,9 @@ related-code:
 One line each; signatures and details: [[Modules]].
 
 - `cases`: case episodes per unit from the `hard` tables, their replay export (rollout, master, GIF, internals clip) and their facts.
-- `compare`: the comparison's result tables (T1-T4, T6, T7, the PoI matrix, the ablation table, tuning optimism) and the reproduction gate.
+- `compare`: the comparison's result tables (T1-T4, T6, T7, T8, the PoI matrix, the ablation table, tuning optimism) and the reproduction gate. `curve_speed` and `speed_table` (T8) give per method the mean score over the budget, the budget share at 50 % and 90 % of the final score, the late gain and the runs that plateau.
+- `scale`: the 1M vs 1B tables, each a `benchmark == "scale"` frame resampling every (budget, method) stratum on its own: `rank_agreement` and `flipped_pairs` (Spearman, Kendall, pairs whose order flips and whether both intervals exclude 0), `advantage_table` (gain over the base control at each budget and its change), `scaling_table` (log of the 1B to 1M mean ratio), `precision_table` (CI half-widths and the smallest difference 3 seeds resolve), `compute_table` (score against wall-clock hours with a Pareto flag) and `transfer_table` (the 1M tuning optimism beside the change of the advantage). The results CLI writes them to `tables/scale/` when both budgets ran.
+- `figures_scale`: S1-S3 `scale_scores`, `scale_advantage` and `scale_speed`, one report image each at 80 mm and a video variant, drawn from those tables into `figures/scale/` by their own stage of the results CLI.
 - `figures`: the core comparison figures F1-F5 and F18-F20 and the method legend, one panel per PNG, for the report, the Space and the videos.
 - `latex`: the report's booktabs tables (one folder per benchmark), number macros and the report's figure PNGs.
 - `captions`: `Figures 1M.md` and `Tables 1M.md` of [[Final results]] from the `captions.csv` files of the figure, table and training-plot folders (`make figure-notes`).

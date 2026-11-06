@@ -193,7 +193,7 @@ def test_each_benchmark_has_its_own_figure_folder_and_captions(
 ) -> None:
     root = base.out / "figures"
     assert not list(root.glob("*.png")), "no flat figure files"
-    assert {p.name for p in root.iterdir() if p.is_dir()} == {"1m", "1b"}
+    assert {p.name for p in root.iterdir() if p.is_dir()} == {"1m", "1b", "scale"}
     assert (root / "1b" / "curves_score_main.png").is_file()
     assert (root / "1b" / "radar_ppo.png").is_file()
     assert not list((root / "1b").glob("poi_matrix*"))  # the PoI needs 10 seeds
@@ -488,7 +488,7 @@ def test_a_deleted_output_redoes_its_stage(
     again = run_comparison(opts)
     assert (opts.out / "tables" / "1m" / "main.csv").is_file()  # rewritten
     assert again.done == ["figures/F1"]
-    assert again.skipped == ["figures/F6"]
+    assert again.skipped == ["figures/F6", "figures/scale"]
 
 
 def test_force_redoes_every_stage(
@@ -498,7 +498,7 @@ def test_force_redoes_every_stage(
     run_comparison(opts)
     again = run_comparison(replace(opts, force=True))
     assert not again.skipped
-    assert again.done == ["figures/F1", "figures/F6"]
+    assert again.done == ["figures/F1", "figures/F6", "figures/scale"]
 
 
 def test_changed_inputs_or_sources_redo_the_tables_and_the_figures(
@@ -508,7 +508,7 @@ def test_changed_inputs_or_sources_redo_the_tables_and_the_figures(
     source = tmp_path / "figures_source.py"
     source.write_text("x = 1\n")
     monkeypatch.setattr(results, "code_files", lambda: [source])
-    stages = ["figures/F1", "figures/F6"]
+    stages = ["figures/F1", "figures/F6", "figures/scale"]
     assert run_comparison(opts).done == stages
     assert run_comparison(opts).skipped == stages
     other = replace(opts, n_boot=N_BOOT + 1)  # another option: every stage again
@@ -786,7 +786,7 @@ def test_markers_and_numbers_are_written_atomically_and_a_torn_marker_reruns(
     marker.write_text(marker.read_text()[:20])  # a kill mid-write, before this fix
     again = run_comparison(opts)
     assert again.done == ["figures/F1"]
-    assert again.skipped == ["figures/F6"]
+    assert again.skipped == ["figures/F6", "figures/scale"]
     assert json.loads(marker.read_text())["fingerprint"]
 
 

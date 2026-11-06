@@ -108,6 +108,7 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 
 - One 1M run: 0.150 h; one 1B run: 133.1 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.15 = 185,712 steps/s, 1.50 h per run excluding the 1-minute compile, 4.5 h for 3 seeds.
+- 1B measured on EDEN (2026-11-05, 3 seeds, [[2026-10-20-craftax-compute-budget]] Measured at 1B): Dyna-Q 4.7 h per run, 81,780 steps/s (H100); evaluation 2 to 6 minutes per run.
 - Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; 128,000 eval steps per tuning or smoke run, 1,664,000 per `final-1m` run, 13,312,000 per `final-1b` run, at the method throughput above): smoke 0.01 h, tune-coarse 1.07 h, tune-fine 0.41 h, `final-1m` 4.43 h, `final-1b` 5.32 h (1.77 h per run, counted at the laptop rate wherever the run trained); 11.2 h in total, 5.9 h of it up to `final-1m`.
 - Measured throughput replaces these numbers in [[2026-10-20-craftax-compute-budget]] after the smoke phase.
 
@@ -215,8 +216,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned dyna-q <confi
 **Files:**
 - Modify: `configs/phases/final-1b.yaml` (add `dyna-q`: `tuned` planning knobs on the 1B skill-network settings, 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1b METHOD=dyna-q` (best 1M knobs on the 1B skill-network settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
-- [ ] **Step 2: Merge** node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for this method.
+- [x] **Step 1: Run** (done 2026-11-01 on EDEN (jobs 1936132 to 1936181), merged and checked 2026-11-05) `make queue PHASE=final-1b METHOD=dyna-q` (best 1M knobs on the 1B skill-network settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
+- [x] **Step 2: Merge** (done 2026-11-05: 3 finished) node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for this method.
 
 ### Task 10: Abort rules
 

@@ -178,6 +178,17 @@ Every figure is one panel in one PNG without text beyond axes, ticks and a legen
 | [stability_drawdown](../../report/figures/1b/stability_drawdown.png) | 80 mm | **Drawdown per run.** Deepest drawdown (fall from the running maximum of the smoothed score curve, as a share of it) of each tuned run, one dot per seed. Hollow dot: the run had a drop of at least 20% for 2% of the budget; cross: it collapsed and did not recover; bar: the method's median. No dot below the run's drawdown floor (R92). |
 | [stability_events](../../report/figures/1b/stability_events.png) | 80 mm | **Drops and collapses.** Share of each method's runs with a score curve that had a drop (light bar) and that collapsed (solid bar); the same rows and size as the drawdown file. |
 
+### Hardware
+
+| Figure | Width | Description |
+|---|---|---|
+| [hardware_compile](../../report/figures/1b/hardware_compile.png) | 80 mm | **Compile time (s).** Compile time (s): median over each method's tuned runs on the CUDA GPU machine; a dot per method, controls once. Profiles are never compared. |
+| [hardware_efficiency](../../report/figures/1b/hardware_efficiency.png) | 80 mm | **Steps per joule.** Steps per joule: median over each method's tuned runs on the CUDA GPU machine; a dot per method, controls once. Profiles are never compared. |
+| [hardware_memory](../../report/figures/1b/hardware_memory.png) | 80 mm | **Peak memory (gb).** Peak memory (gb): median over each method's tuned runs on the CUDA GPU machine; a dot per method, controls once. Profiles are never compared. |
+| [hardware_sps](../../report/figures/1b/hardware_sps.png) | 80 mm | **Steps per second.** Steps per second: median over each method's tuned runs on the CUDA GPU machine; a dot per method, controls once. Profiles are never compared. |
+| [hardware_utilisation](../../report/figures/1b/hardware_utilisation.png) | 80 mm | **Utilisation (%).** Utilisation (%): median over each method's tuned runs on the CUDA GPU machine; a dot per method, controls once. Profiles are never compared. |
+| [hardware_wall_clock](../../report/figures/1b/hardware_wall_clock.png) | 80 mm | **Wall-clock (h).** Wall-clock (h): median over each method's tuned runs on the CUDA GPU machine; a dot per method, controls once. Profiles are never compared. |
+
 ### Greedy gap
 
 | Figure | Width | Description |

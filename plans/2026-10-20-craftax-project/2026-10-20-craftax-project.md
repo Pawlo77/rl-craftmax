@@ -80,7 +80,7 @@ Timetable (measured, 2 queue workers since 2026-10-22 00:06, about 1.4 x the thr
 - [x] `final-1m`: tuned configuration of every control and method, 10 seeds. (done 2026-10-24 07:23: 140 finished, 0 killed, Fri 23 21:41 to Sat 24 07:23, 9.7 h on the laptop with 2 workers (estimate 13 h); results in each method plan's `## Results`)
 - [x] `final-1b` (done 2026-11-01 on EDEN, 24 runs, none killed): same, 3 seeds, 1B steps (laptop or cluster; same run names); 1B results are indicative, significance claims are made at 1M ([[Experiment decisions]], 2026-10-21). Storage: [[2026-10-20-craftax-compute-budget]] Task 2 (no `SEED_FROM`, `state/` dropped on finish, finished runs copied back without it).
 - [x] Fixed-seed evaluation of every log-spaced checkpoint of each 1M final run (tuning runs evaluate their final checkpoint only), run by the queue before a run is marked FINISHED ([[2026-10-20-craftax-infrastructure]] Task 5). (done 2026-10-24: 13 greedy and 13 stochastic checkpoint evaluations in each of the 140 `final-1m` and 10 `combo-1m` runs)
-- [ ] The same evaluation for `final-1b` (done) and `combo-1b` (running) (the queue runs it before marking each run FINISHED).
+- [x] The same evaluation for `final-1b` and `combo-1b` (done 2026-11-05) (the queue runs it before marking each run FINISHED).
 
 ### Phase 3: Combination of the two best methods
 
@@ -100,7 +100,7 @@ Starts after both `final-1m` and `final-1b` are finished.
 - [x] **Step 4: Write** `configs/methods/combo.yaml` (`base: {base_from: <base control>.tuned}`, the two methods' `tuned` blocks unchanged, `grid: {coarse: [the single combined config], fine: null}`, no retuning) and the phase files `combo-1m.yaml` (10 seeds) and `combo-1b.yaml` (3 seeds), both with log-spaced evaluation. (done: template and phase files in c55bab8, tuned knobs 0f90cac, pair written by `select_pair` in 1dc1b40)
 - [x] **Step 5: Run** `uv run pytest tests/training/test_combo.py -q`; expected: pass. (done 2026-10-24 07:24 with the written `combo.yaml`: 28 passed; full suite on main 20900ed: 1119 passed)
 - [x] **Step 6: Run** (estimate: `combo-1m` 10 runs, about 1.2 h with 2 workers) `make queue PHASE=combo-1m METHOD=combo` (laptop); check `make status PHASE=combo-1m` shows 10 finished. (`combo-1m` done 2026-10-24 07:24 to 08:35: 10 finished, config fd6c4333, mean 2.132, sd 0.093, IQM 2.121)
-- [ ] **Step 6b: Run** (submitted 2026-11-05, jobs 1938214, 3 seeds on A100) `make queue PHASE=combo-1b METHOD=combo PROFILE=cuda` (cluster) after Step 1b; check `make status PHASE=combo-1b` shows 3 finished.
+- [x] **Step 6b: Run** (done 2026-11-05: jobs 1938214, 3 seeds on A100, 3 finished) `make queue PHASE=combo-1b METHOD=combo PROFILE=cuda` (cluster) after Step 1b; check `make status PHASE=combo-1b` shows 3 finished.
 - [x] **Step 7: Check** that every Phase 4 command lists the four final phases `final-1m final-1b combo-1m combo-1b`; the combination is one more method row in every analysis. (checked 2026-10-24 in the Phase 4 plans: the run commands of the metrics export, training analysis, interpretation and comparison list the four phases, and each gives the combination its own row)
 
 ### Phase 4: Analysis

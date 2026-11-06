@@ -218,6 +218,9 @@ mermaid-tools = "dartungar/obsidian-mermaid"
 link-dirs = ["research"]           # book notes: linkable, link-checked, outside the knowledge schema
 flat = [".remember"]               # plans/ may hold one subfolder per multi-file plan
 
+[tool.agent-kit.brevity]
+skip-dirs = ["worktrees"]      # `.claude/worktrees/<session>` copies of this repo
+
 # The book skills came over from the earlier vault at these sizes
 [tool.agent-kit.brevity.existing]
 ".agents/skills/book-chapter-notebooks/SKILL.md|words" = 1409

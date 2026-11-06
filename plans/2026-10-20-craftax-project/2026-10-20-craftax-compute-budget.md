@@ -148,6 +148,8 @@ Per-run minutes: the tuned config's measured minutes (controls: the 1-worker med
 
 ## 1B finals on a CUDA GPU (authors' hardware, estimates)
 
+Measured values from the EDEN runs replace these estimates in [[#Measured at 1B (2026-11-06)]]: 3.5 to 4.9 h per run, 2 to 6 minutes of evaluation.
+
 Training hours per run exclude the 1-minute compile and are the unchanged estimates (authors' 266,961 steps/s divided by the overhead factor). Eval hours per run are 13 checkpoints x 128 episodes x 8,000 steps = 13,312,000 steps at the measured laptop eval rate of 8,500 steps/s (Evaluation assumptions): 0.43 h, instead of 1.23 to 2.00 h at the planning rate; the 8,000-step episode length at 1B stays an estimate.
 
 | Method | Training hours per run | Eval hours per run | 3 seeds, training + eval |
@@ -207,12 +209,12 @@ Expected: about 0.4-0.65 GB per finished 1B run, about 11-18 GB for the 27 runs 
 - Modify: this file (measured sizes)
 
 - [x] **Step 1:** (done 2026-10-31) start the first `final-1b` array without `SEED_FROM` (no 1B run exists in the main store, so seeding would only read the 1M store, about 20 GB of `mlruns/` after the prune plus the 17 GB `mlruns.db`, for nothing); seed a later rerun only from a store holding just the 1B runs ([[2026-10-20-craftax-infrastructure]] Task 6 Step 5).
-- [ ] **Step 1b:** watch the guarded table counts, which still grow faster than linearly at 1M ([[Experiment decisions]], 2026-10-29): once the first `final-1b` dyna-q, smdp-skills, count-bonus and combo runs pass 5-10 % of the budget, run `uv run python scripts/cluster/project_guards.py --tracking-uri sqlite:///<node>.db`. It fits `smdp/keys_visited`, `dyna/pairs_visited` and `count/distinct_keys` against env steps on log-log axes (from 10 % of the steps so far), projects them to 1e9 and exits 2 when one is above 0.7 of its guard (`smdp/table_full` at a quarter of the rows, `dyna/model_full` at the last pair, `count/table_full`). A linear check misses it: a count at 3 % of its guard at 10 % of the budget still overflows with a slope above 1.
+- [x] **Step 1b:** (done 2026-11-06: all 9 guarded runs finished, none aborted or resized) watch the guarded table counts, which still grow faster than linearly at 1M ([[Experiment decisions]], 2026-10-29): once the first `final-1b` dyna-q, smdp-skills, count-bonus and combo runs pass 5-10 % of the budget, run `uv run python scripts/cluster/project_guards.py --tracking-uri sqlite:///<node>.db`. It fits `smdp/keys_visited`, `dyna/pairs_visited` and `count/distinct_keys` against env steps on log-log axes (from 10 % of the steps so far), projects them to 1e9 and exits 2 when one is above 0.7 of its guard (`smdp/table_full` at a quarter of the rows, `dyna/model_full` at the last pair, `count/table_full`). A linear check misses it: a count at 3 % of its guard at 10 % of the budget still overflows with a slope above 1.
   - If it exits 2, resize that entry in its method YAML (`budgets.1b`: dyna-q `log2_rows` and `model_pairs`, count-bonus `log2_k`; device memory first: 6.7 GB of tables at 2^24 rows and 2^25 pairs). The resize changes the config hash, so every seed of the entry restarts under a new run name: stop the old runs (they keep their old name, are not in the phase any more and stay out of the analysis and of `select_pair`), start all 3 seeds of the entry again from scratch. Seeds that already finished under the old table are not mixed in, so an entry never holds two table sizes.
   - Without a resize, a seed that later trips a guard ends FAILED with `abort/guard` and is restarted by the same rule.
 - [x] **Step 2:** (`final-1b` done 2026-11-05, 14 GB) copy back only finished runs: after `make status PHASE=final-1b` on the cluster shows them finished, `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json node-stores/ <laptop>:node-stores/`, then `make merge-mlflow SRC=node-stores/mlruns-node-<i>.db` per node. The merge refuses an unfinished node run without `state/` (it would restart from update 0 beside its checkpoints): such runs stay on the cluster and resume there.
 - [x] **Step 3:** (done 2026-11-05: 0.4 to 0.5 GB per run, Dyna-Q 0.43 GB, far under the 1.1 GB projection) measure the first finished run's synced size (and that of the first finished dyna-q and smdp-skills runs, which carry the skill graph and the sparse table) (`du -sh` of its artifact folder) and replace the 0.4-0.65 GB estimate above; check that its `state/` is gone and its `ckpt/` has 13 files.
-- [ ] **Step 4 (optional, after the 1B training analysis and the video footage are fixed):** `uv run python -m wut_murl_craftax.orchestration.prune --phases final-1b combo-1b` (dry run; `--apply` deletes) keeps the final checkpoint, the case updates and the best and median seeds by `final_score` plus the best seed by `eval_stochastic_score` of each 1B unit, about 6 GB less; not needed for the disk.
+- [x] **Step 4 (won't do 2026-11-06: the cluster home has no quota and the laptop holds all 27 runs, 14 GB) (optional, after the 1B training analysis and the video footage are fixed):** `uv run python -m wut_murl_craftax.orchestration.prune --phases final-1b combo-1b` (dry run; `--apply` deletes) keeps the final checkpoint, the case updates and the best and median seeds by `final_score` plus the best seed by `eval_stochastic_score` of each 1B unit, about 6 GB less; not needed for the disk.
 
 ## 1B job resources
 
@@ -309,9 +311,29 @@ STORE_DIR=node-stores/combo sbatch --array=0-2 --gres=gpu:1 --cpus-per-task=4 --
 **Files:**
 - Modify: this file (replace the extrapolated numbers above with the first-node measurements)
 
-- [ ] **Step 1:** on the first GPU node, run one seed of every entry for 2 to 3 chunks (`peak_device_mb` and `peak_rss_mb` are logged per chunk); replace the "Peak, fresh start" column and the 1.25 x factor. Run it once with `XLA_PYTHON_CLIENT_PREALLOCATE=false` so the card's allocator pool does not hide the peak.
+- [x] **Step 1:** (done 2026-11-06, table under Measured at 1B) on the first GPU node, run one seed of every entry for 2 to 3 chunks (`peak_device_mb` and `peak_rss_mb` are logged per chunk); replace the "Peak, fresh start" column and the 1.25 x factor. Run it once with `XLA_PYTHON_CLIENT_PREALLOCATE=false` so the card's allocator pool does not hide the peak.
 - [ ] **Step 2:** kill a Dyna-Q and a SIL run after 2 chunks and resume them; read the device peak (expected as a fresh start: 20.7 and 10.4 GB) and the host peak of the resume (expected 19 GB for Dyna-Q). With Step 1 it decides whether a 24 GB card is enough for Dyna-Q.
-- [ ] **Step 3:** read the chunk wall time and the `state/` save time of each entry at 1,024 envs (largest for SIL, SMDP, Dyna-Q); they replace the 1 GB/s save rate and, with the steady steps per second, the authors' rate divided by the overhead factor. All must stay far under the 600 s stop grace.
-- [ ] **Step 4:** time the first checkpoint evaluation on the GPU (26 passes) and record the longest 1B eval episode; they replace the 0.43 h and the 8,000-step assumption (Task 1 Step 3b).
-- [ ] **Step 5:** `sacct -o JobID,MaxRSS,TotalCPU,Elapsed,AllocCPUS` of the first runs: replaces the host RAM peak and the 4 cores; `du -sh` of the node store while a run trains and after it finishes: replaces the disk columns (with Task 2 Step 3).
-- [ ] **Step 6:** if the time limits are too short or too long by more than 1.5 x, change them in the request lines; the runner resumes whatever the limit cut.
+- [x] **Step 3:** (done 2026-11-06 except the save time, which is not logged) read the chunk wall time and the `state/` save time of each entry at 1,024 envs (largest for SIL, SMDP, Dyna-Q); they replace the 1 GB/s save rate and, with the steady steps per second, the authors' rate divided by the overhead factor. All must stay far under the 600 s stop grace.
+- [x] **Step 4:** (done 2026-11-06: 2 to 6 min, longest episode 7,398) time the first checkpoint evaluation on the GPU (26 passes) and record the longest 1B eval episode; they replace the 0.43 h and the 8,000-step assumption (Task 1 Step 3b).
+- [x] **Step 5:** (done 2026-11-06, MaxRSS 4.7 to 12.3 GB) `sacct -o JobID,MaxRSS,TotalCPU,Elapsed,AllocCPUS` of the first runs: replaces the host RAM peak and the 4 cores; `du -sh` of the node store while a run trains and after it finishes: replaces the disk columns (with Task 2 Step 3).
+- [x] **Step 6:** (done 2026-11-06: no change needed) if the time limits are too short or too long by more than 1.5 x, change them in the request lines; the runner resumes whatever the limit cut.
+
+### Measured at 1B (2026-11-06)
+
+`final-1b` and `combo-1b` on EDEN (A100 for ppo, ppo-rnn and combo; H100 for the rest), 3 seeds, medians or maxima over runs; `peak_*` are the per-chunk metrics, `MaxRSS` is Slurm's.
+
+| Entry | Device peak GB | Host peak GB | MaxRSS GB | Run h | Eval min | Longest eval episode |
+|---|---|---|---|---|---|---|
+| ppo | 8.4 | 4.6 | 6.7 | 3.7 | 3.6 | 7,398 |
+| ppo-rnn | 6.6 | 4.4 | 4.7 | 4.9 | n/a | 2,635 |
+| pqn-rnn | 12.7 | 6.0 | 6.3 | 3.5 | 3.6 | 2,919 |
+| count-bonus-ppo-rnn | 7.0 | 5.5 | 5.8 | 3.9 | 3.0 | 5,952 |
+| count-bonus-pqn-rnn | 13.0 | 6.2 | 6.5 | 3.5 | 3.0 | 2,250 |
+| sil | 12.1 | 7.1 | 7.3 | 4.5 | 2.4 | 2,717 |
+| smdp-skills | 12.4 | 6.4 | 6.8 | 3.6 | 5.4 | 4,489 |
+| dyna-q | 18.3 | 12.1 | 12.3 | 4.7 | 6.0 | 2,692 |
+| combo | n/a | n/a | 6.2 | 5.6 | n/a | n/a |
+
+- Every run stayed under its `--mem` request (8 to 24 GB) and its time limit (14 h): the longest took 5.8 h, so no limit changed (Task 3 Step 6).
+- The longest evaluation episode of the 24 `final-1b` runs is 7,398 steps (PPO); the mean over all episodes is 320 and 408 at the final checkpoint: the 8,000-step assumption of Task 1 Step 3b holds as an upper bound and the 0.43 h evaluation per run is 2 to 6 minutes in practice.
+- The state save time is not logged; the resume peak of Dyna-Q and SIL (Task 3 Step 2) is read from the `ablate-1b` runs.

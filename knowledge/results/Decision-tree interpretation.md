@@ -296,6 +296,29 @@ Each visited key of the final greedy table is one top-level rule (`smdp-skills/t
 
 - One DAgger round lowers fidelity on the network's own states in 8 of 9 methods (PPO unchanged at 0.491) and raises the closed-loop ratio in all 9: PPO 0.337 -> 0.481, count-bonus PPO-RNN 0.183 -> 0.329, SIL 0.250 -> 0.404, SMDP skills 0.490 -> 0.517 (`complexity.csv`, dagger rows). The validation peak moves to larger trees in 8 of 9 methods (128 to 512 leaves; count-bonus PPO-RNN stays at 256).
 
+## 1B
+
+Distillation of the 27 `final-1b` and `combo-1b` policies (3 seeds each, 9 methods, `--dagger`, 0 failed; `outputs/interpretation/1b/complexity.csv`, per-method 16-leaf rules in `outputs/interpretation/1b/<method>/rules_16.txt`). The trees and the fitting protocol are those of 1M; 3 seeds make the medians indicative.
+
+| Method | Fidelity 16 leaves | 64 | 256 (1M in brackets) | Closed-loop ratio at 256 (1M) | 256 without memory features | 256 with DAgger |
+|---|---|---|---|---|---|---|
+| ppo | 0.58 | 0.57 | 0.58 (0.49) | 0.08 (0.34) | 0.58 | 0.58 |
+| ppo-rnn | 0.62 | 0.63 | 0.64 (0.51) | 0.10 (0.34) | 0.64 | 0.61 |
+| pqn-rnn | 0.60 | 0.64 | 0.66 (0.40) | 0.05 (0.40) | 0.64 | 0.63 |
+| count-bonus-ppo-rnn | 0.63 | 0.64 | 0.66 (0.49) | 0.12 (0.18) | 0.66 | 0.63 |
+| count-bonus-pqn-rnn | 0.62 | 0.65 | 0.67 (0.39) | 0.05 (0.44) | 0.66 | 0.63 |
+| sil | 0.62 | 0.62 | 0.63 (0.51) | 0.11 (0.25) | 0.63 | 0.59 |
+| combo | 0.63 | 0.63 | 0.64 (0.51) | 0.09 (0.24) | 0.64 | 0.61 |
+| smdp-skills | 0.48 | 0.56 | 0.60 (0.43) | 0.09 (0.49) | 0.56 | 0.58 |
+| dyna-q | 0.48 | 0.54 | 0.58 (0.39) | 0.08 (0.38) | 0.56 | 0.55 |
+
+- **Complexity:** the L80, L90 and L95 medians are above 4,096 leaves for every method, as at 1M (`l90_censored` 3 of 3 seeds everywhere); no method's network is matched to 90% agreement by a tree of the sizes fitted.
+- **Fidelity is higher than at 1M:** 0.58 to 0.67 at 256 leaves against 0.39 to 0.51; the largest rise is for the PQN-RNN family (0.40 to 0.66) and the skill methods (0.39 to 0.58 and 0.43 to 0.60).
+- **Closed-loop score is lower:** the 256-leaf tree keeps only 0.05 (PQN-RNN) to 0.12 (count-bonus PPO-RNN) of the network's score, against 0.18 to 0.49 at 1M. A tree that agrees with the 1B network on more states still fails when it acts, so agreement on logged states is not enough to read these policies.
+- **Memory features:** removing them changes the 256-leaf fidelity by at most 0.04, most for SMDP skills (0.60 to 0.56) and Dyna-Q (0.58 to 0.56); the recurrent methods lose nothing (changes under 0.02).
+- **DAgger:** one extra round lowers the held-out fidelity of every method (by 0.01 to 0.04); it lifts the closed-loop ratio for Dyna-Q (0.08 to 0.15), count-bonus PQN-RNN (0.05 to 0.09) and PQN-RNN (0.05 to 0.07) and leaves it lower or unchanged for the other six.
+- **Not done:** the per-method plain-language rule bullets (Step 1 at 1M) and the top-level key-to-skill reading for the skill methods are not written for 1B; the rule files exist.
+
 ## Report draft (section 6, about 0.4 page)
 
 Draft for [[2026-10-20-craftax-report]] (Phase 5 copies it into `report/`). Macros are those of `report/numbers.tex` written by the 2026-10-28 comparison run; the figure is the PNG `figures/1m/fidelity_vs_leaves.png`.

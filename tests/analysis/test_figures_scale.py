@@ -42,3 +42,19 @@ def test_the_score_figure_has_one_dot_per_method(
         if str(a.get_gid()).startswith("scale/")
     }
     assert len(gids) == len(tables["scale_scaling"])
+
+
+def test_the_log_axes_use_few_plain_tick_labels(
+    tables: dict[str, pd.DataFrame], tmp_path
+) -> None:
+    with charts.capture_captions():
+        fig = figures_scale.plot_scores(tables, tmp_path)
+    fig.canvas.draw()
+    ax = fig.axes[0]
+    for axis in (ax.xaxis, ax.yaxis):
+        shown = [t.get_text() for t in axis.get_ticklabels() if t.get_visible()]
+        shown = [t for t in shown if t]
+        assert 2 <= len(shown) <= 6
+        assert not any("\u00d7" in t or "^" in t or "e" in t.lower() for t in shown), (
+            shown
+        )

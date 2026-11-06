@@ -3,14 +3,14 @@ title: "Craftax EDEN 1B execution implementation plan"
 type: plan
 domain: orchestration
 parent: "[[2026-10-20-craftax-project]]"
-status: in progress
+status: done
 created: 2026-10-31
 updated: 2026-11-05
 tags: [plan, eden, compute, 1b]
 ---
 # Craftax EDEN 1B execution implementation plan
 
-Status: in progress
+Status: done
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -85,7 +85,7 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 ### Task 4: Copy back
 
 - [x] **Step 1:** (`final-1b` done 2026-11-05: 24 runs, 14 GB, 24 finished in `make status`; `combo-1b` waits) only finished runs, as in [[2026-10-20-craftax-compute-budget]] Task 2 Step 2: `rsync -a --exclude state/ --exclude '*.tmp' --exclude owner.json eden:craftax-eden/node-stores/ node-stores/`, then `make merge-mlflow SRC=node-stores/<entry>/mlruns-node-<i>.db` per node.
-- [ ] **Step 2:** (compute-budget Step 3b done 2026-11-05; open: `combo-1b` finish) replace the estimates of [[2026-10-20-craftax-compute-budget]] with the table above and the measured evaluation times; mark this plan `done` when `make status PHASE=final-1b` shows 24 finished and `combo-1b` 3.
+- [x] **Step 2:** (done 2026-11-06: `combo-1b` finished 2026-11-05, table in [[2026-10-20-craftax-compute-budget]] Measured at 1B) replace the estimates of [[2026-10-20-craftax-compute-budget]] with the table above and the measured evaluation times; mark this plan `done` when `make status PHASE=final-1b` shows 24 finished and `combo-1b` 3.
 
 ### Launch note (2026-10-31)
 
@@ -123,4 +123,4 @@ STORE_DIR=node-stores/ppo sbatch -A <group> -p short --gres=gpu:a100:1 --array=0
 
 - Fair share: the group's recent usage decides how soon 12 GPUs start; the dry run (`sbatch --test-only`) estimated hours when the cluster had free A100s, so check `squeue --start` after submitting.
 - Preemption and the 24 h `short` limit: runs resume from `state/` when the same command is submitted again.
-- The 1B evaluation (26 passes) is unmeasured; it may add up to 1 h per run.
+- The 1B evaluation (26 passes) took 2 to 6 minutes per run (measured 2026-11-05, Result above).

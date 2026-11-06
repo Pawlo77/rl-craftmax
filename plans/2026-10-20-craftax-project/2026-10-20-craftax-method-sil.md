@@ -123,6 +123,7 @@ Measured 2026-10-23 (laptop, Craftax-Symbolic 1M, run minutes = process start to
 
 - One 1M run: 0.167 h; one 1B run: 150.5 h (both with compile).
 - 1B on a CUDA cluster GPU (authors' hardware, estimate): 266,961 x 0.8 (RNN) / 1.3 = 164,284 steps/s, 1.69 h per run excluding the 1-minute compile, 5.1 h for 3 seeds.
+- 1B measured on EDEN (2026-11-05, 3 seeds, [[2026-10-20-craftax-compute-budget]] Measured at 1B): SIL 4.5 h per run, 77,174 steps/s (H100); evaluation 2 to 6 minutes per run.
 - Fixed-seed evaluation is not in the table (rule and planning values: [[2026-10-20-craftax-evaluation-and-metrics]], "Evaluation cost"; 128,000 eval steps per tuning or smoke run, 1,664,000 per `final-1m` run, 13,312,000 per `final-1b` run, at the method throughput above): smoke 0.01 h, tune-coarse 1.04 h, tune-fine 0.46 h, `final-1m` 5.01 h, `final-1b` 6.01 h (2.00 h per run, counted at the laptop rate wherever the run trained); 12.5 h in total, 6.5 h of it up to `final-1m`.
 - Peak extra memory per run: 1M up to 1.47 GB (staging 310 MB + `S` = 16 buffer); 1B up to 2.40 GB.
 - Measured throughput replaces these numbers in [[2026-10-20-craftax-compute-budget]] after the smoke phase.
@@ -229,8 +230,8 @@ uv run python -m wut_murl_craftax.orchestration.queue --mark-tuned sil <configha
 **Files:**
 - Modify: `configs/phases/final-1b.yaml` (add `sil`: `tuned` SIL knobs on the 1B PPO-RNN settings, 3 seeds)
 
-- [ ] **Step 1: Run** `make queue PHASE=final-1b METHOD=sil` (best 1M knobs on the 1B PPO-RNN settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
-- [ ] **Step 2: Merge** node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for `sil`.
+- [x] **Step 1: Run** (done 2026-11-01 on EDEN (jobs 1936132 to 1936181), merged and checked 2026-11-05) `make queue PHASE=final-1b METHOD=sil` (best 1M knobs on the 1B PPO-RNN settings, 3 seeds; laptop or `scripts/cluster/run_array.sh`).
+- [x] **Step 2: Merge** (done 2026-11-05: 3 finished) node stores with `make merge-mlflow SRC=<store>`; `make status PHASE=final-1b` shows 3 finished for `sil`.
 
 ### Task 10: Abort rules
 

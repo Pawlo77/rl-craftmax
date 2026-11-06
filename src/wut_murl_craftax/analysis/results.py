@@ -224,10 +224,10 @@ DISTIL_FIGURES = ("F27", "F28")
 BUDGET_ONLY: dict[str, tuple[str, ...]] = {
     "F3": ("1m",),
     "F18": ("1m",),
-    "F20": ("1m",),
+    "F25": ("1m",),
 }
-"""Figure ids that exist for some benchmarks only: the PoI matrix needs the 10 seeds of
-1M (3 at 1B), the tuning phases and the hardware figure are 1M's."""
+"""Figure ids that exist for some benchmarks only: the PoI matrix needs the 10 seeds
+of 1M, the tuning phases (F18) and the tuning optimism (F25) are 1M's."""
 FIDELITY = "fidelity_vs_leaves"
 """Stem of the distillation figure; it sits in ``figures/<budget>/`` (contracts 3).
 
@@ -672,8 +672,6 @@ def draw_figures(inputs: _Inputs, st: _Stages, t: Mapping[str, pd.DataFrame]) ->
                 fid,
             )
 
-        if fid == "F20" and "1b" in set(inputs.runs["runs"]["budget"]):
-            logger.warning("F20 hardware is drawn for Craftax-1M only (one stem)")
         (_distil_stages(o, st) if fid in DISTIL_FIGURES else st).run(
             f"figures/{fid}", build
         )

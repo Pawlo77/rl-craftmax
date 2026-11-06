@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from ..visualisation import charts
 from .figures import Theme, _figure, _gid, _labels, _save, _style, _style_of, _theme
@@ -24,6 +25,19 @@ from .figures_angles import _describe
 STEMS = ("scale_scores", "scale_advantage", "scale_speed")
 """One report image each, at the single-column width."""
 Tables = Mapping[str, pd.DataFrame]
+
+
+def _plain_log(ax: Axes, name: str, values: pd.Series) -> None:
+    """Log axis with a few plain ticks (1, 2, 5 times a power of 10) over ``values``."""
+    lo, hi = float(values.min()) / 1.3, float(values.max()) * 1.3
+    ticks = [
+        m * 10.0**e for e in range(-3, 4) for m in (1, 2, 5) if lo <= m * 10.0**e <= hi
+    ]
+    axis = ax.xaxis if name == "x" else ax.yaxis
+    (ax.set_xlim if name == "x" else ax.set_ylim)(lo, hi)
+    axis.set_ticks(ticks)
+    axis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    axis.set_minor_formatter(NullFormatter())
 
 
 def _dot(ax: Axes, th: Theme, method: str, kind: str, x: float, y: float) -> None:
@@ -61,6 +75,8 @@ def plot_scores(
         _dot(ax, th, r.method, "score", r.mean_1m, r.mean_1b)
     ax.set_xscale("log")
     ax.set_yscale("log")
+    _plain_log(ax, "x", t["mean_1m"])
+    _plain_log(ax, "y", t["mean_1b"])
     _style(ax, th, grid="both")
     _labels(ax, th, "mean score at 1M (%)", "mean score at 1B (%)")
     ratios = ", ".join(f"{r.method} x{np.exp(r.log_ratio):.1f}" for r in t.itertuples())
