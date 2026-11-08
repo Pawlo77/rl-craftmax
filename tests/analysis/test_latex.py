@@ -725,3 +725,20 @@ def test_scale_tables_add_rank_and_advantage_macros(
     assert got["scaleChangeSil"] == latex._fmt(sil["change"])
     assert got["scaleGainOneBSil"] == latex._fmt(sil["gain_1b"])
     assert got["scaleGainOneMSil"] == latex._fmt(sil["gain_1m"])
+
+
+def test_gate_numbers_give_mean_published_gap_band_and_status() -> None:
+    gate = pd.DataFrame([
+        {"control": "ppo-rnn", "benchmark": "1b", "mean": 16.2233, "published": 15.3,
+         "gap": 0.9233, "h": 0.6272, "status": "fail"},
+        {"control": "ppo", "benchmark": "1m", "mean": 2.1734, "published": 2.2,
+         "gap": -0.0266, "h": 0.128, "status": "pass"},
+    ])  # fmt: skip
+    got = {n.name: n.text for n in latex.gate_numbers(gate)}
+    assert got["gateMeanOneBPpoRnn"] == "16.22"
+    assert got["gatePubOneBPpoRnn"] == "15.30"
+    assert got["gateGapOneBPpoRnn"] == "0.92"
+    assert got["gateBandOneBPpoRnn"] == "0.63"
+    assert got["gateStatusOneBPpoRnn"] == "outside"
+    assert got["gateStatusOneMPpo"] == "inside"
+    assert got["gateGapOneMPpo"] == latex._fmt(-0.0266)

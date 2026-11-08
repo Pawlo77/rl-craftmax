@@ -755,7 +755,11 @@ def write_report_files(
         latex.write_numbers(
             numbers, inputs.runs,
             tables={"main": t["main"], "ablation": t["ablation"]}
-            | {k: t[k] for k in ("scale_rank", "scale_advantage") if k in t},
+            | {
+                k: t[k]
+                for k in ("scale_rank", "scale_advantage", "reproduction_gate")
+                if k in t
+            },
             complexity_root=o.complexity_root, complexity=o.complexity,
             report=o.report_dir / "report.tex" if o.complexity else None, **boot,
         )  # fmt: skip

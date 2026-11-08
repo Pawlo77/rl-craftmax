@@ -233,6 +233,22 @@ def scale_numbers(rank: pd.DataFrame, advantage: pd.DataFrame) -> list[Number]:
     return out
 
 
+def gate_numbers(gate: pd.DataFrame) -> list[Number]:
+    """Reproduction-gate macros: our mean, the published value, gap, band, verdict."""
+    out = []
+    for r in gate.to_dict("records"):
+        if not _finite(r["published"]):
+            continue  # a control with no published value at this budget
+        for q, col in (
+            ("gateMean", "mean"), ("gatePub", "published"), ("gateGap", "gap"),
+            ("gateBand", "h"),
+        ):  # fmt: skip
+            out.append(Number(macro(q, r["benchmark"], r["control"]), _fmt(r[col])))
+        verdict = "inside" if r["status"] == "pass" else "outside"
+        out.append(Number(macro("gateStatus", r["benchmark"], r["control"]), verdict))
+    return out
+
+
 def _leaves(v: float) -> str:
     if math.isinf(v):
         return NEVER
@@ -346,6 +362,8 @@ def collect_numbers(
         found += _versus_numbers(r, r["benchmark"], r["method"])
     for r in ab.to_dict("records"):
         found += _unit_numbers(r, r["benchmark"], r["method"], r["config_ref"])
+    if "reproduction_gate" in tables:
+        found += gate_numbers(tables["reproduction_gate"])
     if "scale_rank" in tables and "scale_advantage" in tables:
         found += scale_numbers(tables["scale_rank"], tables["scale_advantage"])
     budgets = sorted(set(frames["runs"]["budget"]), key=lambda b: "mb".find(b[-1]))
