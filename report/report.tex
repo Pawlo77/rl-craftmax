@@ -32,7 +32,7 @@ We compare three baseline agents on Craftax-Symbolic (PPO, PPO-RNN and PQN-RNN) 
 
 \section{Introduction}
 
-Craftax \cite{matthews2024craftax} is a survival game written in JAX, with 67 achievements spread over nine floors and a maximum reward of 226. Its scoreboard has two budgets, one million (1M) and one billion (1B) environment steps, and the published baselines are PPO variants and a recurrent PQN. We wanted to know which simple additions to such baselines actually help, and whether a result at 1M still holds when the budget is a thousand times larger. This report contributes:
+Craftax \cite{matthews2024craftax} is a survival game written in JAX, with 67 achievements spread over nine floors and a maximum reward of 226. The achievements come in four tiers worth 1, 3, 5 and 8 points (25, 18, 15 and 9 of them), so most of the points sit in tiers that agents rarely reach. Its scoreboard has two budgets, one million (1M) and one billion (1B) environment steps, and the published baselines are PPO variants and a recurrent PQN. We wanted to know which simple additions to such baselines actually help, and whether a result at 1M still holds when the budget is a thousand times larger. This report contributes:
 \begin{itemize}
 \item a comparison of three baselines, four additions and their combination, with the same protocol at both budgets;
 \item an analysis of how the results change from 1M to 1B (rank agreement, gain over the baseline, learning speed, what three seeds can resolve), and a check that the software stack is not the reason;
@@ -89,7 +89,7 @@ The Craftax paper \cite{matthews2024craftax} reports PPO, a recurrent PPO and th
 
 \begin{description}
 \item[Controls.] PPO \cite{schulman2017proximal} with an MLP policy; PPO-RNN, the same with a GRU for memory; and PQN-RNN, which does online Q($\lambda$) learning on the batch from many parallel environments, without a replay buffer or a target network. PPO-RNN is the base control of the progress bonus on PPO-RNN and of SIL, PQN-RNN of the other methods, and each method is compared with its own base control only.
-\item[Count-based progress bonus.] A bonus of $\beta_t/\sqrt{N[\phi(s_{t+1})]}$ is added to the reward. Here $\phi$ is a short summary of game progress (floor, tools, armour, spells, bucketed inventory) and $N$ counts the visits over the whole run. The idea is to pay the agent for reaching a new stage of the game instead of a new picture, so that exploration points at progress. We use it on PPO-RNN and on PQN-RNN, and we also test a version that hashes the whole observation (SimHash).
+\item[Count-based progress bonus.] A bonus of $\beta_t/\sqrt{N[\phi(s_{t+1})]}$ is added to the reward. Here $\phi$ is a short summary of game progress (floor, tools, armour, spells, bucketed inventory) and $N$ counts the visits over the whole run. It pays the agent for a new stage of the game, not a new picture. We use it on PPO-RNN and on PQN-RNN, and we also test a version that hashes the whole observation (SimHash).
 \item[Self-imitation (SIL).] PPO-RNN with a buffer of the steps that led to each achievement. An extra loss copies a stored action only when the return that followed was higher than the critic expected \cite{oh2018self}. The idea is to learn again from the agent's own best moments.
 \item[Skill methods (use hand-written skills).] SMDP Q-learning keeps a table over hashed progress keys and 25 hand-written options and learns it from the game reward, while one shared recurrent Q-network learns the skills themselves from success rewards. The idea is to choose between whole behaviours such as ``collect wood'' instead of single moves, which leaves far fewer decisions to learn. Dyna-Q adds a learned model of what each skill does and plans with it between environment steps. Since the skills are given by hand, we report these two in a separate block.
 \item[Combination.] The progress bonus and SIL together on PPO-RNN. They are the two best compatible methods by the rank rule that uses both budgets, and the check at 1B gave the same pair.
@@ -160,9 +160,11 @@ To see what a policy does, we copied it into decision trees. We play the final n
 \section{Discussion and conclusion}
 
 We expected the progress bonus to help the recurrent PPO. It does not: the gain is inside the noise at 1M and gone at 1B. The hand-written skills lower the score at both budgets, and clearly so at 1B. The main limits are the three seeds and the missing tuning at 1B, one environment version per budget, two GPU types at 1B, and the PPO-RNN gap that we could not explain. The software stack also differed between the 1M and 1B runs, but rerunning the controls on the cluster gave differences within the seed noise.
+
+The curves add a hint. At 1M, PQN-RNN is still improving when the budget ends: its score has stopped improving on only \speedPlateauOneMPqnRnn\ of \speedRunsOneMPqnRnn\ seeds, against \speedPlateauOneMPpo\ of \speedRunsOneMPpo\ for PPO. It may simply have had too little time and caught up at 1B. SIL is in that position at 1B (\speedPlateauOneBSil\ of \speedRunsOneBSil\ seeds have stopped), so more steps could still move it.
 \begin{description}
-\item[Obstacles.] Detectors on the training curves (plateau, collapse, numerical failure, forgotten skills and others) fire most for the skill methods, which show numerical failures and forgotten skills on every 1B seed, and for SIL and the combination, which overfit to early lucky windows. The forgetting detector fires on almost every seed that has skills, so we do not read it as a property of one method; the per-method notes list the details.
-\item[Future work.] Tuning the methods at 1B, more 1B seeds so that close methods can be ordered, a learned instead of a hand-chosen progress summary, and the intrinsic-reward baselines of the Craftax paper on the same protocol.
+\item[Obstacles.] Our detectors on the training curves fire most for the skill methods (numerical failures and forgotten skills on every 1B seed) and for SIL and the combination (overfitting to early lucky windows).
+\item[Future work.] Tuning and more seeds at 1B, a learned progress summary, RND and E3B.
 \end{description}
 
 \clearpage\raggedbottom
