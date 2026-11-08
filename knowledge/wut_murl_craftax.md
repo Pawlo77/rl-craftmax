@@ -54,4 +54,6 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 ## Handbook
 
 - [[Course project requirements]]: grading, deadlines, checkpoint criteria and deliverables of the course.
+- [[Checkpoint meeting]]: what to show at the checkpoint, the plan from there and the questions to expect.
+- [[Presentation and discussion]]: the 15 + 7 minute slot, the talk outline and the discussion answers.
 - [[EDEN compute]]: the WUT MiNI Slurm cluster (access, storage, GPU jobs, templates).

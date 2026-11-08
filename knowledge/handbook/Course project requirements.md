@@ -44,3 +44,4 @@ Strong performance is not required; the checkpoint grades the progress made by t
 ## How the plans follow it
 
 - The report is planned at 3 pages with the references after them; the disclosure and the acknowledgements sit inside the 3 pages (decision of 2026-11-01 in [[Experiment decisions]], plan [[2026-10-20-craftax-report]]). Confirm with the instructor that this is the reading of "references excluded" if the disclosure should not count.
+- What to show and say at each date: [[Checkpoint meeting]] and [[Presentation and discussion]].
