@@ -742,3 +742,16 @@ def test_gate_numbers_give_mean_published_gap_band_and_status() -> None:
     assert got["gateStatusOneBPpoRnn"] == "outside"
     assert got["gateStatusOneMPpo"] == "inside"
     assert got["gateGapOneMPpo"] == latex._fmt(-0.0266)
+
+
+def test_speed_numbers_count_the_runs_that_still_improve() -> None:
+    speed = pd.DataFrame([
+        {"benchmark": "1m", "method": "pqn-rnn", "curve_runs": 10, "plateau_runs": 1},
+        {"benchmark": "1m", "method": "ppo", "curve_runs": 10, "plateau_runs": 9},
+        {"benchmark": "1b", "method": "sil", "curve_runs": 3, "plateau_runs": 0},
+    ])  # fmt: skip
+    got = {n.name: n.text for n in latex.speed_numbers(speed)}
+    assert got["speedPlateauOneMPqnRnn"] == "1"
+    assert got["speedRunsOneMPqnRnn"] == "10"
+    assert got["speedPlateauOneMPpo"] == "9"
+    assert got["speedPlateauOneBSil"] == "0"

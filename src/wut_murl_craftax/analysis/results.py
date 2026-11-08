@@ -757,7 +757,7 @@ def write_report_files(
             tables={"main": t["main"], "ablation": t["ablation"]}
             | {
                 k: t[k]
-                for k in ("scale_rank", "scale_advantage", "reproduction_gate")
+                for k in ("scale_rank", "scale_advantage", "reproduction_gate", "speed")
                 if k in t
             },
             complexity_root=o.complexity_root, complexity=o.complexity,
