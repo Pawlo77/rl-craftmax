@@ -5,25 +5,131 @@
 \usepackage{graphicx}
 \usepackage{tabularx}
 \usepackage{array}
+\usepackage{booktabs}
+\input{numbers}
+\renewcommand{\topfraction}{0.95}\renewcommand{\dbltopfraction}{0.95}\renewcommand{\floatpagefraction}{0.8}\renewcommand{\dblfloatpagefraction}{0.8}
+\setcounter{dbltopnumber}{4}
 
-\title{TITLE}
+\title{Progress counts, self-imitation and hand-written skills on Craftax at 1M and 1B steps}
 
 \author[affiliation={1}]{Pawe{\l}}{Pozorski}
 
 \address{
-    $^1$
+    $^1$ Warsaw University of Technology, Poland
 }
 
 \email{pozorski.paul@gmail.com}
 
-\keywords{KEYWORDS}
+\keywords{reinforcement learning, Craftax, exploration, self-imitation, skills, benchmark}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-ABSTRACT
+We compare three baselines on Craftax-Symbolic (PPO, PPO-RNN, PQN-RNN) with four methods built on them: a count-based progress bonus, self-imitation, Q-learning over hand-written skills and Dyna-Q over a skill-level model, plus a combination of the two best. Every agent trains for 1M and 1B steps under one protocol, with 10 and 3 seeds. At 1M the progress bonus on PPO-RNN scores \scoreOneMCountBonusPpoRnn\,\% against \scoreOneMPpoRnn\,\% for PPO-RNN, a difference inside the seed noise, and the skill methods are far behind. At 1B the order of the baselines changes: PQN-RNN rises from the weakest to the strongest control, no method resolvably beats its control, and the rank correlation between the two budgets is only \scaleSpearman. A rerun of the baselines on the cluster software stack shows no stack effect. We release code, results and a demo.
 \end{abstract}
+
+\section{Introduction}
+
+Craftax \cite{matthews2024craftax} is an open-ended survival benchmark in JAX: 67 achievements across nine floors, a maximum reward of 226, and a scoreboard at one million (1M) and one billion (1B) environment steps. Its published baselines are PPO variants and a recurrent PQN. We ask which cheap additions to such baselines help, and whether a result at 1M still holds at 1B. Contributions:
+\begin{itemize}
+\item a controlled comparison of three baselines, four methods and their combination under one protocol, at both budgets;
+\item a 1M-versus-1B analysis (rank agreement, advantage over the base control, learning speed, precision at three seeds) and a check that the software stack does not explain it;
+\item decision-tree interpretations of every final policy;
+\item an open release of code, results and an interactive demo.
+\end{itemize}
+
+\section{Related work}
+
+The Craftax paper reports PPO, a recurrent PPO and three intrinsic-reward variants (RND, ICM, E3B) \cite{matthews2024craftax}; PQN with a recurrent network reaches the best published 1B score among the baselines we reproduce \cite{gallici2025simplifying}. We compare only entries of the same protocol (training score, same budget). Self-imitation \cite{oh2018self} and Dyna-style planning \cite{sutton2018reinforcement} are classic ideas we adapt to Craftax's achievement structure. For statistics we follow \cite{agarwal2021deep}: interquartile mean, bootstrap intervals and probability of improvement.
+
+\section{Methods}
+
+\textbf{Controls.} PPO \cite{schulman2017proximal} with an MLP; PPO-RNN, the same with a GRU memory; PQN-RNN, online Q($\lambda$)-learning on the batch of many parallel environments, without replay buffer or target network. Every method is compared with its base control, and only within its block.
+
+\textbf{Count-based progress bonus.} An intrinsic reward $\beta_t/\sqrt{N[\phi(s_{t+1})]}$, where $\phi$ summarises game progress (floor, tools, armour, spells, bucketed inventory) and $N$ counts over the whole run; variants on PPO-RNN and PQN-RNN, and a SimHash-of-the-observation ablation.
+
+\textbf{Self-imitation (SIL).} PPO-RNN plus a buffer of the steps that led to each achievement and an extra loss that imitates a stored action only where the return that followed beat the critic \cite{oh2018self}.
+
+\textbf{Skill methods (use hand-written skills).} SMDP Q-learning: a table over hashed progress keys and 25 hand-written options learns on the native reward, one shared recurrent Q-network learns the skills on success pseudo-rewards. Dyna-Q adds a learned lookup model of skill outcomes and planning updates on it. They are reported in their own block, because the skills are given.
+
+\textbf{Combination.} Progress bonus and SIL on PPO-RNN, the best two compatible methods by the rank rule of both budgets (the re-check at 1B kept the pair).
+
+\section{Experimental setup}
+
+\textbf{Benchmark and budgets.} Craftax-Symbolic at 1M and 1B steps. \textbf{Seeds.} 3 per configuration while tuning, 10 per final at 1M, 3 per final at 1B. \textbf{Tuning.} Two stages at 1M (coarse, then fine grid); the 1B runs reuse the 1M knobs and the published 1B settings of the shared PPO part, so a method can look worse at 1B than its best setting. \textbf{Score.} The mean return of the training episodes over the last 2\,\% of the budget (at least 100 episodes) as a share of the 226 points; a separate evaluation on 64 fixed seeds, stochastic and greedy, is reported alongside. \textbf{Statistics.} Mean $\pm$ s.e., interquartile mean (IQM) with 95\,\% bootstrap intervals over seeds, probability of improvement (PoI) and Holm-corrected Mann--Whitney tests at 1M; 1B has three seeds, so we give intervals and no tests. \textbf{Hardware and software.} 1M on a laptop (Apple silicon), 1B on an A100/H100 cluster; JAX 0.11.2, craftax 1.6.1 (1M) and 1.7.0 (1B), MLflow for every metric. Because budget and stack differ, we reran the three controls at 1M on the cluster stack (10 seeds each).
+
+\begin{table*}[t]
+\centering
+\caption{Final training score (\% of the maximum 226) at 1M (10 seeds) and 1B (3 seeds, indicative). Mean $\pm$ s.e.; IQM with a 95\,\% bootstrap interval. The three controls open the main block; the methods that use hand-written skills are below the line.}
+\label{tab:main}
+\begin{tabular}{lrrr}
+\toprule
+Method & 1M mean $\pm$ s.e. & 1M IQM [95\,\% CI] & 1B mean $\pm$ s.e. \\
+\midrule
+PPO & \scoreOneMPpo\ $\pm$ \scoreSeOneMPpo & \iqmOneMPpo\ [\iqmLoOneMPpo, \iqmHiOneMPpo] & \scoreOneBPpo\ $\pm$ \scoreSeOneBPpo \\
+PPO-RNN & \scoreOneMPpoRnn\ $\pm$ \scoreSeOneMPpoRnn & \iqmOneMPpoRnn\ [\iqmLoOneMPpoRnn, \iqmHiOneMPpoRnn] & \scoreOneBPpoRnn\ $\pm$ \scoreSeOneBPpoRnn \\
+PQN-RNN & \scoreOneMPqnRnn\ $\pm$ \scoreSeOneMPqnRnn & \iqmOneMPqnRnn\ [\iqmLoOneMPqnRnn, \iqmHiOneMPqnRnn] & \scoreOneBPqnRnn\ $\pm$ \scoreSeOneBPqnRnn \\
+Count bonus (PPO-RNN) & \scoreOneMCountBonusPpoRnn\ $\pm$ \scoreSeOneMCountBonusPpoRnn & \iqmOneMCountBonusPpoRnn\ [\iqmLoOneMCountBonusPpoRnn, \iqmHiOneMCountBonusPpoRnn] & \scoreOneBCountBonusPpoRnn\ $\pm$ \scoreSeOneBCountBonusPpoRnn \\
+Count bonus (PQN-RNN) & \scoreOneMCountBonusPqnRnn\ $\pm$ \scoreSeOneMCountBonusPqnRnn & \iqmOneMCountBonusPqnRnn\ [\iqmLoOneMCountBonusPqnRnn, \iqmHiOneMCountBonusPqnRnn] & \scoreOneBCountBonusPqnRnn\ $\pm$ \scoreSeOneBCountBonusPqnRnn \\
+SIL & \scoreOneMSil\ $\pm$ \scoreSeOneMSil & \iqmOneMSil\ [\iqmLoOneMSil, \iqmHiOneMSil] & \scoreOneBSil\ $\pm$ \scoreSeOneBSil \\
+Combination & \scoreOneMCombo\ $\pm$ \scoreSeOneMCombo & \iqmOneMCombo\ [\iqmLoOneMCombo, \iqmHiOneMCombo] & \scoreOneBCombo\ $\pm$ \scoreSeOneBCombo \\
+\midrule
+\multicolumn{4}{l}{\emph{Uses hand-written skills}} \\
+SMDP skills & \scoreOneMSmdpSkills\ $\pm$ \scoreSeOneMSmdpSkills & \iqmOneMSmdpSkills\ [\iqmLoOneMSmdpSkills, \iqmHiOneMSmdpSkills] & \scoreOneBSmdpSkills\ $\pm$ \scoreSeOneBSmdpSkills \\
+Dyna-Q & \scoreOneMDynaQ\ $\pm$ \scoreSeOneMDynaQ & \iqmOneMDynaQ\ [\iqmLoOneMDynaQ, \iqmHiOneMDynaQ] & \scoreOneBDynaQ\ $\pm$ \scoreSeOneBDynaQ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Results}
+
+Table~\ref{tab:main} gives the scores. \textbf{At 1M} the three PPO-family agents are indistinguishable: PPO \scoreOneMPpo, PPO-RNN \scoreOneMPpoRnn, SIL \scoreOneMSil, the combination \scoreOneMCombo. The progress bonus on PPO-RNN is the highest (\scoreOneMCountBonusPpoRnn) but not significantly above its control (PoI \poiOneMCountBonusPpoRnnPpoRnn, Holm $p=\pHolmOneMCountBonusPpoRnnPpoRnn$). The PQN-RNN family is clearly lower (PQN-RNN \scoreOneMPqnRnn, PoI against PPO \poiOneMPqnRnnPpo, Holm $p=\pHolmOneMCountBonusPqnRnnPpo$ for its count-bonus variant), and the skill methods are lowest (Dyna-Q \scoreOneMDynaQ, SMDP \scoreOneMSmdpSkills; Holm $p=\pHolmOneMDynaQPpoRnn$ and $\pHolmOneMSmdpSkillsPpoRnn$ against PPO-RNN) but not significantly below their own control PQN-RNN. The greedy evaluation favours the recurrent PPO (PPO-RNN \evalGreedyOneMPpoRnn, PPO \evalGreedyOneMPpo). No final evaluation episode reaches an iron pickaxe.
+
+\textbf{At 1B} every agent scores several times higher, and the order changes (Fig.~\ref{fig:scale}). PQN-RNN is now level with PPO-RNN (\scoreOneBPqnRnn\ against \scoreOneBPpoRnn), PPO is far behind (\scoreOneBPpo), and the skill methods stay lowest (Dyna-Q \scoreOneBDynaQ, SMDP \scoreOneBSmdpSkills). Over the nine methods the 1M and 1B means correlate with Spearman \scaleSpearman\ (95\,\% CI \scaleSpearmanLo\ to \scaleSpearmanHi). The 1M advantages do not carry over: the bonus on PQN-RNN gains \scaleGainOneMCountBonusPqnRnn\,\% over its control at 1M and \scaleGainOneBCountBonusPqnRnn\,\% at 1B, SIL goes from \scaleGainOneMSil\,\% to \scaleGainOneBSil\,\% (change \scaleChangeSil, the only change whose interval excludes zero). With three seeds a gap below about one point is unresolved, not equal, PPO and PQN-RNN reproduce their published 1B scores (11.9 and 16.0) within our acceptance band, while PPO-RNN lies above its published 15.3 (a gap we did not trace). PPO, PPO-RNN and PQN-RNN stop improving in the last fifth of the budget on all three seeds; SIL and the combination do on none. Learning speed differs too: the share of the budget at which a method first reaches 90\,\% of its final score moves for most methods between the budgets (Fig.~\ref{fig:speed}). The 1B ablations of the skill methods are still being completed; the SimHash variant of the progress bonus aborts after about 3.5 million steps because its hash table overflows.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.40\textwidth]{figures/1m/curves_score_main.png}\hfill
+\includegraphics[width=0.40\textwidth]{figures/1b/curves_score_main.png}
+\caption{Training score (\% of the maximum) over environment steps at 1M (left) and 1B (right); controls dashed, bands are 95\,\% bootstrap intervals over seeds. The 1B curves keep rising for several methods.}
+\label{fig:curves}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.30\textwidth]{figures/1m/aggregate.png}\hfill
+\includegraphics[width=0.40\textwidth]{figures/scale/scale_advantage.png}
+\caption{Left: IQM and mean with 95\,\% intervals at 1M. Right: gain over the base control at 1M against 1B, in percent; on the diagonal the advantage is unchanged, below it the method loses ground at 1B.}
+\label{fig:scale}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.40\textwidth]{figures/scale/scale_scores.png}\hfill
+\includegraphics[width=0.40\textwidth]{figures/scale/scale_speed.png}
+\caption{Left: mean score of every method at 1M against 1B (log axes). Right: share of the budget at which the smoothed training score first reaches 90\,\% of its final value, 1M against 1B; below the diagonal the method gets there earlier at 1B.}
+\label{fig:speed}
+\end{figure*}
+
+\section{Interpretation}
+
+Distilling every final policy into decision trees (16 to 4096 leaves) shows that no tree matches any network on 90\,\% of states. At 256 leaves the trees agree more with the 1B networks than with the 1M ones (PPO-RNN \fidTwoFiftySixOneMPpoRnn\ at 1M, \fidTwoFiftySixOneBPpoRnn\ at 1B), yet the trees keep only a small part of the network's score when they act (closed-loop ratio of PPO-RNN \closedLoopOneBPpoRnn\ at 1B, against \closedLoopOneMPpoRnn\ at 1M): agreement on logged states is not enough to read these policies.
+
+\section{Discussion and conclusion}
+
+The simple conclusion of 1M, that a progress bonus helps a recurrent PPO, is not supported at either budget: the gain is inside the noise at 1M and gone at 1B. Hand-written skills lower the score at both budgets in our setting, clearly so at 1B. Limits: three seeds at 1B, no tuning at 1B, one environment version per budget, two GPU classes at 1B, and the PPO-RNN reproduction gap. The 1M and 1B runs used different software stacks; the cluster rerun of the controls shows differences within seed noise. Per method, the detectors flag: forgetting of skills in the skill methods, numerical failures and instability of the skill methods at 1B, plateaus of the baselines, and, for the progress bonus, a hash table that fills; the notes list them with replays. \textbf{Reproducibility.} Every number and table here is generated from the MLflow store, runs are resumable, and each stores its configuration, package versions and commit; a 1B run takes a few hours on one GPU and the 1M study fits on a laptop. \textbf{Future work.} Tune the methods at 1B, run more 1B seeds so close methods can be ordered, replace the hand-chosen progress summary by a learned one, and add the intrinsic-reward baselines of the Craftax paper on the same protocol. Code, results and the demo: \url{https://github.com/Pawlo77/rl-craftmax}, \url{https://huggingface.co/datasets/Pawlo77/wut-murl-craftax-results} and \url{https://huggingface.co/spaces/Pawlo77/wut-murl-craftax}; the project videos are linked there.
+
+\section{Generative AI Use Disclosure}
+
+The text of this report, the analysis code, the figures and the videos' narration were written with Claude Code (Anthropic) under the author's direction; the author chose the questions, the protocol and the methods, ran the experiments and takes responsibility for the content. The video narration is synthetic speech.
+
+\section{Acknowledgements}
+
+The 1B experiments ran on the EDEN GPU cluster (A100 and H100). Craftax and the baselines are by Matthews et al.\ (MIT licence).
+
+\bibliographystyle{IEEEtran}
+\bibliography{mybib}
 
 \end{document}
