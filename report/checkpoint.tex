@@ -1,0 +1,64 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=1.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\input{numbers}
+
+\title{Checkpoint: reinforcement learning on Craftax}
+\author{Pawe{\l} Pozorski}
+\date{}
+
+\begin{document}
+\small
+\maketitle
+\vspace{-1.2em}
+
+\section*{1. Problem, objective and repository}
+
+\textbf{Problem.} Craftax is an open-ended survival game in JAX: 67 achievements across nine floors, a maximum reward of 226, and a scoreboard at one million (1M) and one billion (1B) environment steps. \textbf{Objective.} Compare three baseline agents (PPO, PPO-RNN, PQN-RNN) with four methods built on them (a count-based progress bonus, self-imitation, Q-learning over hand-written skills, Dyna-Q over a skill-level model) and a combination of the two best, under one protocol at both budgets, and ask whether the 1M ranking holds at 1B. \textbf{Repository.} \url{https://github.com/Pawlo77/rl-craftmax} (public); the README explains setup and execution.
+
+\section*{2. Minimal experiment: environment, agent, measured performance}
+
+The environment is Craftax-Symbolic; the baseline is PPO. After \texttt{make install}, a short run is \texttt{make train-ppo ARGS="--env Craftax-Classic-Symbolic-v1 --steps 1e6"}, and the experiment of the study is \texttt{make queue PHASE=final-1m METHOD=ppo} (10 seeds, resumable, every metric logged to MLflow, \texttt{make mlflow} to browse). Performance is the score: the mean training-episode return over the last 2\,\% of the budget as a share of the 226 points. PPO at 1M scores \scoreOneMPpo\,\% $\pm$ \scoreSeOneMPpo\ (mean $\pm$ s.e. over 10 seeds), and the published value is 2.2\,\%: the reproduction check passes (gap \gateGapOneMPpo, acceptance band \gateBandOneMPpo).
+
+\section*{3. Initial result and its limitations}
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Method & 1M mean $\pm$ s.e. (10 seeds) & 1B mean $\pm$ s.e. (3 seeds) \\
+\midrule
+PPO & \scoreOneMPpo\ $\pm$ \scoreSeOneMPpo & \scoreOneBPpo\ $\pm$ \scoreSeOneBPpo \\
+PPO-RNN & \scoreOneMPpoRnn\ $\pm$ \scoreSeOneMPpoRnn & \scoreOneBPpoRnn\ $\pm$ \scoreSeOneBPpoRnn \\
+PQN-RNN & \scoreOneMPqnRnn\ $\pm$ \scoreSeOneMPqnRnn & \scoreOneBPqnRnn\ $\pm$ \scoreSeOneBPqnRnn \\
+Count bonus (PPO-RNN) & \scoreOneMCountBonusPpoRnn\ $\pm$ \scoreSeOneMCountBonusPpoRnn & \scoreOneBCountBonusPpoRnn\ $\pm$ \scoreSeOneBCountBonusPpoRnn \\
+SIL & \scoreOneMSil\ $\pm$ \scoreSeOneMSil & \scoreOneBSil\ $\pm$ \scoreSeOneBSil \\
+Combination & \scoreOneMCombo\ $\pm$ \scoreSeOneMCombo & \scoreOneBCombo\ $\pm$ \scoreSeOneBCombo \\
+SMDP skills & \scoreOneMSmdpSkills\ $\pm$ \scoreSeOneMSmdpSkills & \scoreOneBSmdpSkills\ $\pm$ \scoreSeOneBSmdpSkills \\
+Dyna-Q & \scoreOneMDynaQ\ $\pm$ \scoreSeOneMDynaQ & \scoreOneBDynaQ\ $\pm$ \scoreSeOneBDynaQ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Score in \% of the maximum (count bonus on PQN-RNN omitted for space). \textbf{Result.} At 1M the progress bonus on PPO-RNN scores highest, but not significantly above PPO-RNN (probability of improvement \poiOneMCountBonusPpoRnnPpoRnn, Holm $p=\pHolmOneMCountBonusPpoRnnPpoRnn$); the skill methods are lowest. At 1B the order changes, with PQN-RNN level with PPO-RNN, and the rank correlation between the budgets is \scaleSpearman\ (95\,\% CI \scaleSpearmanLo\ to \scaleSpearmanHi). \textbf{Limitations.}
+\begin{itemize}
+\item Three seeds at 1B, so those scores are indicative and carry intervals but no tests; no tuning at 1B (the 1M settings are reused).
+\item The 1M runs used a laptop and the 1B runs a GPU cluster with another software version; a rerun of the three controls at 1M on the cluster stack showed no difference beyond seed noise.
+\item The 1B runs use two GPU classes; PPO-RNN scores above its published 1B value (a gap we did not trace).
+\item The 1B ablations are still running; the progress-bonus SimHash variant overflows its hash table at 1B.
+\end{itemize}
+
+\section*{4. Plan for further experiments and division of work}
+
+\begin{enumerate}
+\item Finish the 1B ablations (Dyna-Q without its exploration bonus, three SMDP variants) on the cluster and add them to the ablation figure and the report.
+\item Update the 3-page report (draft done) and publish the results dataset and the interactive demo on Hugging Face.
+\item Upload the three videos (3-minute and vertical short, 12-minute); the narration is synthetic speech.
+\item Candidate extensions after the study: tune the methods at 1B, run more 1B seeds, replace the hand-chosen progress summary by a learned one, add the RND and E3B baselines on the same protocol.
+\end{enumerate}
+\textbf{Division of work.} The repository lists one author, Pawe{\l} Pozorski: experiments, analysis, report and videos.
+
+\end{document}
