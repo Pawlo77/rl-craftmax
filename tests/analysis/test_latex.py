@@ -703,3 +703,25 @@ def test_drop_double_files_needs_the_partner_and_ignores_other_names(
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         "a.png", "b_double.png", "c.png", "c_double.pdf",
     ]  # fmt: skip
+
+
+def test_scale_tables_add_rank_and_advantage_macros(
+    frames: dict[str, pd.DataFrame],
+    tables: dict[str, pd.DataFrame],
+    complexity_root: Path,
+) -> None:
+    from wut_murl_craftax.analysis import scale
+
+    given = {
+        **tables,
+        "scale_rank": scale.rank_agreement(frames, n_boot=N),
+        "scale_advantage": scale.advantage_table(frames, n_boot=N),
+    }
+    got = numbers(frames, given, complexity_root)
+    rank = given["scale_rank"].iloc[0]
+    assert got["scaleSpearman"] == latex._fmt(rank["spearman"])
+    assert got["scaleSpearmanLo"] == latex._fmt(rank["spearman_lo"])
+    sil = given["scale_advantage"].set_index("method").loc["sil"]
+    assert got["scaleChangeSil"] == latex._fmt(sil["change"])
+    assert got["scaleGainOneBSil"] == latex._fmt(sil["gain_1b"])
+    assert got["scaleGainOneMSil"] == latex._fmt(sil["gain_1m"])
