@@ -1,64 +1,62 @@
 \documentclass[10pt,a4paper]{article}
-\usepackage[margin=1.5cm]{geometry}
+\usepackage[margin=1.6cm]{geometry}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{hyperref}
 \usepackage{enumitem}
 \setlist{nosep,leftmargin=*}
+\setlist[description]{labelindent=0pt,leftmargin=1.2em,itemsep=2pt}
 \input{numbers}
 
 \title{Checkpoint: reinforcement learning on Craftax}
-\author{Pawe{\l} Pozorski}
+\author{Pawe{\l} Pozorski\\{\small\href{mailto:pawel.pozorski.stud@pw.edu.pl}{pawel.pozorski.stud@pw.edu.pl}}}
 \date{}
 
 \begin{document}
 \small
 \maketitle
-\vspace{-1.2em}
+\vspace{-1.6em}
 
 \section*{1. Problem, objective and repository}
 
-\textbf{Problem.} Craftax is an open-ended survival game in JAX: 67 achievements across nine floors, a maximum reward of 226, and a scoreboard at one million (1M) and one billion (1B) environment steps. \textbf{Objective.} Compare three baseline agents (PPO, PPO-RNN, PQN-RNN) with four methods built on them (a count-based progress bonus, self-imitation, Q-learning over hand-written skills, Dyna-Q over a skill-level model) and a combination of the two best, under one protocol at both budgets, and ask whether the 1M ranking holds at 1B. \textbf{Repository.} \url{https://github.com/Pawlo77/rl-craftmax} (public); the README explains setup and execution.
+\begin{description}
+\item[Problem.] Craftax is a survival game in which an agent gathers resources, crafts tools and descends through nine floors. It has 67 achievements worth at most 226 points, which makes it a hard test of exploration and long-term planning. Agents are compared at one million (1M) and one billion (1B) steps.
+\item[Objective.] Do ideas that help exploration and learning from experience also help on Craftax? We compare three standard agents (PPO, PPO with memory, PQN with memory) with four additions: a bonus for reaching new stages of the game, self-imitation, Q-learning over hand-written skills, and Dyna-Q over those skills. We also ask whether the ranking at 1M still holds at 1B.
+\item[Repository.] \url{https://github.com/Pawlo77/rl-craftmax} (public); the README explains how to install and run it.
+\end{description}
 
-\section*{2. Minimal experiment: environment, agent, measured performance}
+\section*{2. Minimal experiment}
 
-The environment is Craftax-Symbolic; the baseline is PPO. After \texttt{make install}, a short run is \texttt{make train-ppo ARGS="--env Craftax-Classic-Symbolic-v1 --steps 1e6"}, and the experiment of the study is \texttt{make queue PHASE=final-1m METHOD=ppo} (10 seeds, resumable, every metric logged to MLflow, \texttt{make mlflow} to browse). Performance is the score: the mean training-episode return over the last 2\,\% of the budget as a share of the 226 points. PPO at 1M scores \scoreOneMPpo\,\% $\pm$ \scoreSeOneMPpo\ (mean $\pm$ s.e. over 10 seeds), and the published value is 2.2\,\%: the reproduction check passes (gap \gateGapOneMPpo, acceptance band \gateBandOneMPpo).
+\begin{description}
+\item[Environment and agent.] Craftax-Symbolic, which gives the agent a compact vector description of the world, and a PPO agent as the baseline.
+\item[What we ran.] PPO for one million steps on 10 seeds, with every metric logged to MLflow; one command in the README repeats it.
+\item[Performance.] The score is the mean return over the last 2\,\% of training, as a share of the 226 points. PPO reaches \scoreOneMPpo\,\% $\pm$ \scoreSeOneMPpo\ (mean $\pm$ standard error). The published value is 2.2\,\%, so the baseline is reproduced.
+\end{description}
 
 \section*{3. Initial result and its limitations}
 
 \begin{center}
-\begin{tabular}{lrr}
+\begin{tabular}{lrrr}
 \toprule
-Method & 1M mean $\pm$ s.e. (10 seeds) & 1B mean $\pm$ s.e. (3 seeds) \\
+Score at 1M (\%, 10 seeds) & PPO & PPO-RNN & PQN-RNN \\
 \midrule
-PPO & \scoreOneMPpo\ $\pm$ \scoreSeOneMPpo & \scoreOneBPpo\ $\pm$ \scoreSeOneBPpo \\
-PPO-RNN & \scoreOneMPpoRnn\ $\pm$ \scoreSeOneMPpoRnn & \scoreOneBPpoRnn\ $\pm$ \scoreSeOneBPpoRnn \\
-PQN-RNN & \scoreOneMPqnRnn\ $\pm$ \scoreSeOneMPqnRnn & \scoreOneBPqnRnn\ $\pm$ \scoreSeOneBPqnRnn \\
-Count bonus (PPO-RNN) & \scoreOneMCountBonusPpoRnn\ $\pm$ \scoreSeOneMCountBonusPpoRnn & \scoreOneBCountBonusPpoRnn\ $\pm$ \scoreSeOneBCountBonusPpoRnn \\
-SIL & \scoreOneMSil\ $\pm$ \scoreSeOneMSil & \scoreOneBSil\ $\pm$ \scoreSeOneBSil \\
-Combination & \scoreOneMCombo\ $\pm$ \scoreSeOneMCombo & \scoreOneBCombo\ $\pm$ \scoreSeOneBCombo \\
-SMDP skills & \scoreOneMSmdpSkills\ $\pm$ \scoreSeOneMSmdpSkills & \scoreOneBSmdpSkills\ $\pm$ \scoreSeOneBSmdpSkills \\
-Dyna-Q & \scoreOneMDynaQ\ $\pm$ \scoreSeOneMDynaQ & \scoreOneBDynaQ\ $\pm$ \scoreSeOneBDynaQ \\
+Mean $\pm$ s.e. & \scoreOneMPpo\ $\pm$ \scoreSeOneMPpo & \scoreOneMPpoRnn\ $\pm$ \scoreSeOneMPpoRnn & \scoreOneMPqnRnn\ $\pm$ \scoreSeOneMPqnRnn \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\noindent Score in \% of the maximum (count bonus on PQN-RNN omitted for space). \textbf{Result.} At 1M the progress bonus on PPO-RNN scores highest, but not significantly above PPO-RNN (probability of improvement \poiOneMCountBonusPpoRnnPpoRnn, Holm $p=\pHolmOneMCountBonusPpoRnnPpoRnn$); the skill methods are lowest. At 1B the order changes, with PQN-RNN level with PPO-RNN, and the rank correlation between the budgets is \scaleSpearman\ (95\,\% CI \scaleSpearmanLo\ to \scaleSpearmanHi). \textbf{Limitations.}
-\begin{itemize}
-\item Three seeds at 1B, so those scores are indicative and carry intervals but no tests; no tuning at 1B (the 1M settings are reused).
-\item The 1M runs used a laptop and the 1B runs a GPU cluster with another software version; a rerun of the three controls at 1M on the cluster stack showed no difference beyond seed noise.
-\item The 1B runs use two GPU classes; PPO-RNN scores above its published 1B value (a gap we did not trace).
-\item The 1B ablations are still running; the progress-bonus SimHash variant overflows its hash table at 1B.
-\end{itemize}
+\begin{description}
+\item[Result.] The three baselines are reproduced at 1M, and PPO and PPO-RNN end almost level. Adding the progress bonus to PPO-RNN scores highest (\scoreOneMCountBonusPpoRnn\,\%), but not significantly higher (probability of improvement \poiOneMCountBonusPpoRnnPpoRnn, Holm $p=\pHolmOneMCountBonusPpoRnnPpoRnn$). The skill methods score lowest. First runs at 1B, with three seeds, point the same way: PQN-RNN catches up with PPO-RNN.
+\item[Limitations.] The 1B results rest on three seeds, so we report intervals and no tests. The 1B settings were not tuned separately. The two budgets ran on different hardware and software, and a check on the cluster showed no difference beyond seed noise.
+\end{description}
 
-\section*{4. Plan for further experiments and division of work}
+\section*{4. Plan and division of work}
 
-\begin{enumerate}
-\item Finish the 1B ablations (Dyna-Q without its exploration bonus, three SMDP variants) on the cluster and add them to the ablation figure and the report.
-\item Update the 3-page report (draft done) and publish the results dataset and the interactive demo on Hugging Face.
-\item Upload the two videos (a 3-minute one and a long one); the narration is synthetic speech.
-\item Candidate extensions after the study: tune the methods at 1B, run more 1B seeds, replace the hand-chosen progress summary by a learned one, add the RND and E3B baselines on the same protocol.
-\end{enumerate}
-\textbf{Division of work.} The repository lists one author, Pawe{\l} Pozorski: experiments, analysis, report and videos.
+\begin{description}
+\item[Next experiments.] Finish the ablations at 1B (Dyna-Q without its exploration bonus and three variants of the skill method), then compare the ranking at both budgets.
+\item[Deliverables.] A 3-page report, a short and a long video, and a public release of the results and an interactive demo on Hugging Face.
+\item[Possible extensions.] Tune the methods at 1B, run more seeds, learn the progress summary instead of choosing it by hand, and add the intrinsic-reward baselines RND and E3B.
+\item[Division of work.] One author, Pawe{\l} Pozorski, covers experiments, analysis, report and videos.
+\end{description}
 
 \end{document}
