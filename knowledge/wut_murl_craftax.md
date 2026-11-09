@@ -9,7 +9,7 @@ created: 2026-01-01
 
 Reinforcement learning on Craftax
 
-Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
+New here: read [[Start here]]. Live tables: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 
 ## Plan
 
@@ -44,7 +44,14 @@ Start here: [[Dashboard]]. Fixed bugs: [[Fixed issues]].
 | [[analysis]] | Phase 4 training analysis, cases and method comparison |
 | [[interpretation]] | decision-tree distillation and rules of trained policies |
 
-## Concepts
+## Results
+
+- [[Final results]]: the 1M tables and headline findings, then 1M vs 1B.
+- [[Tables 1M]], [[Figures 1M]], [[Tables 1B]], [[Figures 1B]], [[Tables SCALE]], [[Figures SCALE]]: every table and figure with its description.
+- [[Decision-tree interpretation]]: what the trained policies do.
+- [[Video cases 1M]]: the gameplay cases shown in the videos.
+- Per-method training analyses: [[PPO training analysis]], [[PPO-RNN training analysis]], [[PQN-RNN training analysis]], [[Count-bonus PPO-RNN training analysis]], [[Count-bonus PQN-RNN training analysis]], [[SIL training analysis]], [[Combo training analysis]], [[SMDP skills training analysis]], [[Dyna-Q training analysis]].
+- [[I1 - PPO-RNN 1B above the reproduction band]]: the open caveat of the 1B reproduction.
 
 ## Decisions
 

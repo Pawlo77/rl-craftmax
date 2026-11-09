@@ -5,12 +5,12 @@ domain: training
 parent: "[[2026-10-20-craftax-project]]"
 status: ready
 created: 2026-10-20
-updated: 2026-10-24
+updated: 2026-11-09
 tags: [plan, overview, summary]
 ---
 # Craftax project plan overview
 
-Status: Phases 2-3 at 1M complete 2026-10-24 08:35 (`final-1m` 140 and `combo-1m` 10 runs finished; pair count-bonus-ppo-rnn + sil from `final-1m`); `final-1b` and `combo-1b` open, planned on the cluster
+Status (2026-11-09): all 1M phases (`final-1m`, `combo-1m`) and all 1B phases (`final-1b`, `combo-1b`, 24 + 3 runs, 3 seeds) are finished and analysed ([[Final results]]); the 1B ablations (`ablate-1b`) are still running on the cluster; the 3-page report is a draft in a pull request, the Hugging Face release is public, the videos are in review ([[Start here]])
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

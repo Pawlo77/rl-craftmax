@@ -5,7 +5,7 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [decision-log, experiments, training]
 created: 2026-10-20
-updated: 2026-11-08
+updated: 2026-11-09
 ---
 # Experiment decisions
 
@@ -377,6 +377,14 @@ Why: (1) the rank rule of 2026-10-21 asked for the re-check. (2) and (3) a 1M vs
 Consequences: the bridge and ablation runs are not merged into `mlruns.db` under the same names (the bridge hashes equal the laptop runs'); their stores are read for the final scores only. The PPO-RNN reproduction gate fails at 1B because the score is above the published one (issue I1). The T8 learning-speed table and the scale tables (`tables/scale/`) are descriptions with intervals: 1B stays indicative.
 
 Result of (2): the bridge runs finished 2026-11-06 and no control shifted (cluster minus laptop: PPO -0.06, PPO-RNN -0.08, PQN-RNN -0.02, every CI holds 0); the budget comparison stands.
+
+## 2026-11-09 - Report citations, disclosure and acknowledgement
+
+Decision: the report cites every tool, benchmark and method at its first use (JAX, Flax, Optax, MLflow, scikit-learn; Craftax, Crafter; PPO, PQN, GRU, count-based exploration, SimHash, RND, ICM, E3B, options, Dyna, CART, VIPER, DAgger; Holm, Mann-Whitney) and cites published works by venue, not by preprint (PPO stays arXiv). The disclosure says authors (plural), cites Claude Code, and says the video narration was directed by the authors and rendered with Claude Code. The acknowledgement uses the English formula that the EDEN rules require.
+
+Why: the examiner found PPO and the other methods uncited; the EDEN rules ask for the acknowledgement and make the cluster applicant a co-author of a publication that uses its results. The checkpoint PDF presents only what the checkpoint asks for (minimal experiment, initial result, plan), with every statement true.
+
+Consequences: check the co-author rule before adding the other authors; the from-memory references (Sutton, Precup, Singh 1999; Sutton 1990; Breiman 1984; Holm 1979; Mann-Whitney 1947; the software entries) and four venues are unverified; [[Start here]] is the reading path of the vault.
 
 ## 2026-11-08 - The 1B ablations: SimHash overflows, the rest move to A100
 

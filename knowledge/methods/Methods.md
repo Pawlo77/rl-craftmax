@@ -5,11 +5,11 @@ domain: training
 parent: "[[wut_murl_craftax]]"
 tags: [concept, method, index]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-11-09
 ---
 # Methods
 
-The algorithms this project trains on Craftax: three controls and four methods, each with a design note (what exactly we implement and why), its research note and its plan file. Selection: [[Experiment decisions]]; candidates and rejected ideas: [[Candidate Algorithms]].
+The algorithms this project trains on Craftax: three controls and four methods, each with a design note (what exactly we implement and why), its research note and its plan file. Reading order for newcomers: [[Start here]]. Selection: [[Experiment decisions]]; candidates and rejected ideas: [[Candidate Algorithms]].
 
 | Method | Role | Family | Design | Research | Plan |
 |---|---|---|---|---|---|
