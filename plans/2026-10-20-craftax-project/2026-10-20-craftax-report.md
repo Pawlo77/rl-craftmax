@@ -3,14 +3,14 @@ title: "Craftax report implementation plan"
 type: plan
 domain: report
 parent: "[[2026-10-20-craftax-project]]"
-status: ready
+status: in progress
 created: 2026-10-20
-updated: 2026-11-01
+updated: 2026-11-08
 tags: [plan, report, latex, interspeech]
 ---
 # Craftax report implementation plan
 
-Status: ready
+Status: in progress
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -103,19 +103,19 @@ Entries without a research note (verify each against the publisher page before a
 - Modify: `Makefile` (target `report`), `report/report.tex`
 - Delete: `report/template.tex`
 
-- [ ] **Step 1: Add** the target `report: ## Build the report PDF` running `cd report && latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex`, then printing the page count from `report/report.log` (`grep -o "Output written on report.pdf ([0-9]* pages" report/report.log`).
-- [ ] **Step 2: Write** the skeleton: `\input{numbers}`, the section headings of the page budget, `\bibliographystyle{IEEEtran}` and `\bibliography{mybib}`, the "Generative AI Use Disclosure" section required by the template.
-- [ ] **Step 3: Copy** the formatting rules of `report/template.tex` that Task 6 checks (the 3-page limit with references after it, the disclosure and acknowledgement paragraphs inside it, abstract length, no page numbers, caption placement, the disclosure and acknowledgement sections) into a `%` comment block at the top of `report/report.tex`, then delete `report/template.tex` with `git rm report/template.tex`.
-- [ ] **Step 4: Run** `make report`; expected: a PDF with the headings and no LaTeX error.
+- [x] **Step 1: Add** the target `report: ## Build the report PDF` running `cd report && latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex`, then printing the page count from `report/report.log` (`grep -o "Output written on report.pdf ([0-9]* pages" report/report.log`).
+- [x] **Step 2: Write** the skeleton: `\input{numbers}`, the section headings of the page budget, `\bibliographystyle{IEEEtran}` and `\bibliography{mybib}`, the "Generative AI Use Disclosure" section required by the template.
+- [x] **Step 3: Copy** the formatting rules of `report/template.tex` that Task 6 checks (the 3-page limit with references after it, the disclosure and acknowledgement paragraphs inside it, abstract length, no page numbers, caption placement, the disclosure and acknowledgement sections) into a `%` comment block at the top of `report/report.tex`, then delete `report/template.tex` with `git rm report/template.tex`.
+- [x] **Step 4: Run** `make report`; expected: a PDF with the headings and no LaTeX error.
 
 ### Task 2: Bibliography
 
 **Files:**
 - Modify: `report/mybib.bib`
 
-- [ ] **Step 1: Write** one BibTeX entry per row of the bibliography tables, from the note frontmatter, with `url` set to the `paper` link.
-- [ ] **Step 2: Check** each entry against its arXiv or publisher page (authors, title, venue, year); the paper page wins over the note; report any mismatch to the user and fix the note through its owner.
-- [ ] **Step 3: Run** `make report`; expected: no undefined citation warnings in `report/report.log`.
+- [x] **Step 1: Write** one BibTeX entry per row of the bibliography tables, from the note frontmatter, with `url` set to the `paper` link.
+- [x] **Step 2: Check** each entry against its arXiv or publisher page (authors, title, venue, year); the paper page wins over the note; report any mismatch to the user and fix the note through its owner.
+- [x] **Step 3: Run** `make report`; expected: no undefined citation warnings in `report/report.log`.
 
 ### Task 3: Generated numbers, tables and figures
 
@@ -124,39 +124,46 @@ Entries without a research note (verify each against the publisher page before a
 
 Runs after [[2026-10-20-craftax-interpretation-and-ruleset]] Task 6 and [[2026-10-20-craftax-comparison-and-results]] Task 6 (Phase 4 order).
 
-- [ ] **Step 1: Run** `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`, which includes the LaTeX export of [[2026-10-20-craftax-comparison-and-results]] (Task 5).
-- [ ] **Step 2: Check** that `report/numbers.tex`, `report/tables/main.tex`, `report/tables/stability_hardware.tex` and the 5 report figures exist and that `make report` includes them.
+- [x] **Step 1: Run** `uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b combo-1m combo-1b --tuning tune-coarse tune-fine --out outputs/results`, which includes the LaTeX export of [[2026-10-20-craftax-comparison-and-results]] (Task 5).
+- [x] **Step 2: Check** that `report/numbers.tex`, `report/tables/main.tex`, `report/tables/stability_hardware.tex` and the 5 report figures exist and that `make report` includes them.
 
 ### Task 4: Write Sections 1 to 4
 
 **Files:**
 - Modify: `report/report.tex`
 
-- [ ] **Step 1: Write** the introduction: Craftax as an open-ended benchmark ([[Craftax scoring and evaluation]]), the gap the methods address, 4 contribution bullets.
-- [ ] **Step 2: Write** related work: the scoreboard, comparable blocks only, statistics practice (Agarwal et al. 2021).
-- [ ] **Step 3: Write** methods: the three controls, then one paragraph per method taken from its plan `2026-10-20-craftax-method-<slug>.md` and its design note in `knowledge/methods/`, compared against its base control; the skill methods (`smdp-skills`, `dyna-q`) flagged as using hand-written skills; then the combination of the two best methods ([[Experiment decisions]]), in the skill block if its pair contains a skill method.
-- [ ] **Step 4: Write** the setup from the protocols of [[2026-10-20-craftax-evaluation-and-metrics]] and [[2026-10-20-craftax-infrastructure]]: budgets, seeds, tuning, the final score (mean training-episode return as % of 226 over the last 2% of the budget, at least 100 episodes; decided) with the fixed-seed evaluation reported alongside, eval seeds and modes, statistics, hardware profiles, software versions.
-- [ ] **Step 5: Run** `make report`; record the page count of Sections 1 to 4 (target 1.55 pages with the title block).
+- [x] **Step 1: Write** the introduction: Craftax as an open-ended benchmark ([[Craftax scoring and evaluation]]), the gap the methods address, 4 contribution bullets.
+- [x] **Step 2: Write** related work: the scoreboard, comparable blocks only, statistics practice (Agarwal et al. 2021).
+- [x] **Step 3: Write** methods: the three controls, then one paragraph per method taken from its plan `2026-10-20-craftax-method-<slug>.md` and its design note in `knowledge/methods/`, compared against its base control; the skill methods (`smdp-skills`, `dyna-q`) flagged as using hand-written skills; then the combination of the two best methods ([[Experiment decisions]]), in the skill block if its pair contains a skill method.
+- [x] **Step 4: Write** the setup from the protocols of [[2026-10-20-craftax-evaluation-and-metrics]] and [[2026-10-20-craftax-infrastructure]]: budgets, seeds, tuning, the final score (mean training-episode return as % of 226 over the last 2% of the budget, at least 100 episodes; decided) with the fixed-seed evaluation reported alongside, eval seeds and modes, statistics, hardware profiles, software versions.
+- [x] **Step 5: Run** `make report`; record the page count of Sections 1 to 4 (target 1.55 pages with the title block).
 
 ### Task 5: Write Sections 5 to 7 and the abstract
 
 **Files:**
 - Modify: `report/report.tex`
 
-- [ ] **Step 1: Write** results: T1 first (scoreboard metric, then eval), main block then the "uses hand-written skills" block, each method against its base control and never ranked across blocks; significance claims at 1M (10 seeds) only, 1B results (3 seeds) stated as indicative; the reproduction gate per control (pass, or the gap with band h from `evaluation.reproduction`, and that the comparison uses our control); F1, F2, then in-game behaviour (F3) with one finding per paragraph; stability and hardware stay in the Space; every number through a macro from `report/numbers.tex`.
-- [ ] **Step 2: Write** interpretation from the draft in `knowledge/results/Decision-tree interpretation.md` ([[2026-10-20-craftax-interpretation-and-ruleset]], Task 7).
-- [ ] **Step 3: Write** discussion: the per-method obstacles (5-bullet summaries of the training-analysis notes), limitations (3 seeds at 1B, so 1B results are indicative; single environment version, hardware differences, training-episode metric, 1B runs reuse the 1M-tuned method knobs), future work, links to the Space, the dataset and the videos (`configs/video/published.yaml`).
-- [ ] **Step 4: Write** the abstract last (at most 1,000 characters, no citations) and the index terms.
-- [ ] **Step 5: Run** `make report`; expected: the text, the disclosure and the acknowledgements end on page 3, the references follow.
+- [x] **Step 1: Write** results: T1 first (scoreboard metric, then eval), main block then the "uses hand-written skills" block, each method against its base control and never ranked across blocks; significance claims at 1M (10 seeds) only, 1B results (3 seeds) stated as indicative; the reproduction gate per control (pass, or the gap with band h from `evaluation.reproduction`, and that the comparison uses our control); F1, F2, then in-game behaviour (F3) with one finding per paragraph; stability and hardware stay in the Space; every number through a macro from `report/numbers.tex`.
+- [x] **Step 2: Write** interpretation from the draft in `knowledge/results/Decision-tree interpretation.md` ([[2026-10-20-craftax-interpretation-and-ruleset]], Task 7).
+- [x] **Step 3: Write** discussion: the per-method obstacles (5-bullet summaries of the training-analysis notes), limitations (3 seeds at 1B, so 1B results are indicative; single environment version, hardware differences, training-episode metric, 1B runs reuse the 1M-tuned method knobs), future work, links to the Space, the dataset and the videos (`configs/video/published.yaml`).
+- [x] **Step 4: Write** the abstract last (at most 1,000 characters, no citations) and the index terms.
+- [x] **Step 5: Run** `make report`; expected: the text, the disclosure and the acknowledgements end on page 3, the references follow.
 
 ### Task 6: Review
 
 **Files:**
 - Modify: `report/report.tex`, `report/report.pdf`
 
-- [ ] **Step 1: Check** the 3-page limit (text, figures, tables, disclosure and acknowledgements end on page 3; only references follow) and the template rules (the comment block at the top of `report/report.tex`): no layout change, no page numbers, abstract length, two columns, figures referenced in text, captions under figures and above tables.
-- [ ] **Step 2: Check** that no hand-typed number remains in the text (`grep -nE "[0-9]+\.[0-9]+" report/report.tex` shows only macros, equations and citations).
-- [ ] **Step 3: Check** comparisons: every literature number sits beside its block and protocol; no comparison across blocks of [[Existing Implementations]].
-- [ ] **Step 4: Check** terminology: "score" always means reward as % of the maximum 226; "eval" always names the mode.
-- [ ] **Step 5: Ask** the user to read the PDF and list fixes; apply them; repeat until approved.
-- [ ] **Step 6: Run** `make report` and `make check`; keep `report/report.pdf` and the sources tracked (`report/.gitignore` already ignores the build artefacts).
+- [x] **Step 1: Check** the 3-page limit (text, figures, tables, disclosure and acknowledgements end on page 3; only references follow) and the template rules (the comment block at the top of `report/report.tex`): no layout change, no page numbers, abstract length, two columns, figures referenced in text, captions under figures and above tables.
+- [x] **Step 2: Check** that no hand-typed number remains in the text (`grep -nE "[0-9]+\.[0-9]+" report/report.tex` shows only macros, equations and citations).
+- [x] **Step 3: Check** comparisons: every literature number sits beside its block and protocol; no comparison across blocks of [[Existing Implementations]].
+- [x] **Step 4: Check** terminology: "score" always means reward as % of the maximum 226; "eval" always names the mode.
+- [x] **Step 5: Ask** the user to read the PDF and list fixes; apply them; repeat until approved. (2026-11-08: the user delegated the draft and the review to the assistant; the PDF pages were checked as images; the user can still read `report/report.pdf` and ask for fixes)
+- [x] **Step 6: Run** `make report` and `make check`; keep `report/report.pdf` and the sources tracked (`report/.gitignore` already ignores the build artefacts).
+
+### Draft note (2026-11-08)
+
+- `report/report.tex` is a complete draft: 3 pages in all, references included (the text, three figures and the table end on page 3), no LaTeX warnings, every result number through `numbers.tex` macros (setup constants, versions, years and the three published scores are typed). The new macros `scale*` (rank agreement, advantage changes) come from `analysis.latex.scale_numbers`.
+- Bibliography: titles and authors of the five arXiv entries were checked against their arXiv pages on 2026-11-08; the venues (ICML 2024, ICLR 2025, ICML 2018, NeurIPS 2021) are not on those pages and come from the research notes and the page's award note.
+- Disclosure: the text states that it was written with Claude Code under the author's direction; the Interspeech template says generative AI should not produce a significant part of a manuscript, so the course allowance is the author's responsibility. The disclosure and acknowledgements sit inside the 3 pages (the conservative reading of "references excluded").
+- Open: update the results paragraph and Fig. 2 after the 1B ablations (`ablate-1b`) finish, and replace the placeholder sentence about them; replace the video and Hugging Face sentence with the final links when published.

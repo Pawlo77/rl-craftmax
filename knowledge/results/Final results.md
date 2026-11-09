@@ -5,7 +5,7 @@ domain: analysis
 parent: "[[2026-10-20-craftax-project]]"
 tags: [concept, results, analysis, comparison, craftax-1m]
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-09
 related-code:
   - "[[src/wut_murl_craftax/analysis/compare.py]]"
   - "[[src/wut_murl_craftax/analysis/figures.py]]"
@@ -18,7 +18,7 @@ related-code:
 
 ## Scope
 
-- Craftax-1M only.
+- The tables below are Craftax-1M; 1B results are in [[Tables 1B]] and [[Figures 1B]], the comparison of the budgets in the last section.
 - Units: scores are the final training score, mean training-episode return in % of the 226-point maximum (last 2% of the budget, at least 100 episodes); eval scores are the fixed-seed final checkpoint, stochastic and greedy, same unit. 10 seeds per method, tuned config.
 - Phases: `final-1m` (tuned runs and the six ablations) and `combo-1m` (the combination of [[Count-Based Progress Bonus design]] and [[Self-Imitation Learning design]] on PPO-RNN, [[Experiment decisions]], 2026-10-24).
 - Numbers come from `outputs/results/tables/1m/*.csv` and `report/numbers.tex`, written by the comparison run of 2026-10-28 (`wut_murl_craftax.analysis.results`, plan [[2026-10-20-craftax-comparison-and-results]]); each table section names its file. Figures are in `outputs/results/figures/1m/` (one panel per PNG, no text on the images); the report prints their captions from [[Figures 1M]] and [[Tables 1M]], which list every figure and table file with its description.

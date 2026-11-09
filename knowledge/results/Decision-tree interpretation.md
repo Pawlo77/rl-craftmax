@@ -317,7 +317,22 @@ Distillation of the 27 `final-1b` and `combo-1b` policies (3 seeds each, 9 metho
 - **Closed-loop score is lower:** the 256-leaf tree keeps only 0.05 (PQN-RNN) to 0.12 (count-bonus PPO-RNN) of the network's score, against 0.18 to 0.49 at 1M. A tree that agrees with the 1B network on more states still fails when it acts, so agreement on logged states is not enough to read these policies.
 - **Memory features:** removing them changes the 256-leaf fidelity by at most 0.04, most for SMDP skills (0.60 to 0.56) and Dyna-Q (0.58 to 0.56); the recurrent methods lose nothing (changes under 0.02).
 - **DAgger:** one extra round lowers the held-out fidelity of every method (by 0.01 to 0.04); it lifts the closed-loop ratio for Dyna-Q (0.08 to 0.15), count-bonus PQN-RNN (0.05 to 0.09) and PQN-RNN (0.05 to 0.07) and leaves it lower or unchanged for the other six.
-- **Not done:** the per-method plain-language rule bullets (Step 1 at 1M) and the top-level key-to-skill reading for the skill methods are not written for 1B; the rule files exist.
+- **What the trees read:** the three features of largest mean importance (seed mean of the base trees; importance is the share of the tree's impurity decrease):
+
+| Method | 1M | 1B |
+|---|---|---|
+| ppo | water_dist 0.15, tree_dist 0.06, food 0.04 | direction 0.29, sleeping 0.06, walkable_down 0.05 |
+| ppo-rnn | prev_action 0.15, food 0.05, water_dist 0.05 | direction 0.32, sleeping 0.09, walkable_down 0.06 |
+| pqn-rnn | prev_action 0.16, drink 0.03, direction 0.02 | direction 0.33, sleeping 0.10, walkable_right 0.06 |
+| count-bonus-ppo-rnn | prev_action 0.14, food 0.06, water_dist 0.05 | direction 0.32, sleeping 0.10, walkable_down 0.06 |
+| count-bonus-pqn-rnn | prev_action 0.19, food 0.03, drink 0.02 | direction 0.33, sleeping 0.11, prev_action 0.06 |
+| sil | prev_action 0.13, water_dist 0.06, food 0.04 | direction 0.32, sleeping 0.08, walkable_right 0.06 |
+| combo | prev_action 0.14, food 0.06, water_dist 0.05 | direction 0.32, sleeping 0.10, walkable_down 0.06 |
+| smdp-skills | prev_action 0.12, skill_unlock_any 0.02, drink 0.02 | prev_action 0.19, facing_block 0.16, direction 0.11 |
+| dyna-q | prev_action 0.11, skill_unlock_any 0.03, food 0.02 | prev_action 0.27, direction 0.15, facing_block 0.07 |
+
+- **Reading:** at 1M the trees key on the previous action and on needs and distances (water, food, tree). At 1B every method without skills keys first on the facing direction (importance 0.29 to 0.33), then on sleeping and on whether the next tile is walkable; the 16-leaf rules read as "keep walking the way you face, act when blocked" (`outputs/interpretation/1b/<method>/rules_16.txt`). The skill methods lean on the previous action and on the block they face. This describes what a small tree can reproduce, not what the network represents; the closed-loop ratio above says such trees do not play the game.
+- **Not done:** the hand-labelled "matches mechanic or surprising" marks per rule and the top-level key-to-skill reading for the skill methods are not written for 1B.
 
 ## Report draft (section 6, about 0.4 page)
 

@@ -1,0 +1,62 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\setlist[description]{labelindent=0pt,leftmargin=1.2em,itemsep=2pt}
+\input{numbers}
+
+\title{Checkpoint: reinforcement learning on Craftax}
+\author{Pawe{\l} Pozorski\\{\small\href{mailto:pawel.pozorski.stud@pw.edu.pl}{pawel.pozorski.stud@pw.edu.pl}}}
+\date{}
+
+\begin{document}
+\small
+\maketitle
+\vspace{-1.6em}
+
+\section*{1. Problem, objective and repository}
+
+\begin{description}
+\item[Problem.] Craftax is a survival game in which an agent gathers resources, crafts tools and descends through nine floors. It has 67 achievements worth at most 226 points, which makes it a hard test of exploration and long-term planning. Agents are compared at one million (1M) and one billion (1B) steps.
+\item[Objective.] Do ideas that help exploration and learning from experience also help on Craftax? We compare three standard agents (PPO, PPO with memory, PQN with memory) with four additions: a bonus for reaching new stages of the game, self-imitation, Q-learning over hand-written skills, and Dyna-Q over those skills. We also ask whether the ranking at 1M still holds at 1B.
+\item[Repository.] \url{https://github.com/Pawlo77/rl-craftmax} (public); the README explains how to install and run it.
+\end{description}
+
+\section*{2. Minimal experiment}
+
+\begin{description}
+\item[Environment and agent.] Craftax-Symbolic, which gives the agent a compact vector description of the world, and a PPO agent as the baseline.
+\item[What we ran.] PPO for one million steps on 10 seeds, with every metric logged to MLflow; one command in the README repeats it.
+\item[Performance.] The score is the mean return over the last 2\,\% of training, as a share of the 226 points. PPO reaches \scoreOneMPpo\,\% $\pm$ \scoreSeOneMPpo\ (mean $\pm$ standard error). The published value is 2.2\,\%, so the baseline is reproduced.
+\end{description}
+
+\section*{3. Initial result and its limitations}
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Score at 1M (\%, 10 seeds) & PPO & PPO-RNN & PQN-RNN \\
+\midrule
+Mean $\pm$ s.e. & \scoreOneMPpo\ $\pm$ \scoreSeOneMPpo & \scoreOneMPpoRnn\ $\pm$ \scoreSeOneMPpoRnn & \scoreOneMPqnRnn\ $\pm$ \scoreSeOneMPqnRnn \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{description}
+\item[Result.] The three baselines are reproduced at 1M, and PPO and PPO-RNN end almost level. Adding the progress bonus to PPO-RNN scores highest (\scoreOneMCountBonusPpoRnn\,\%), but not significantly higher (probability of improvement \poiOneMCountBonusPpoRnnPpoRnn, Holm $p=\pHolmOneMCountBonusPpoRnnPpoRnn$). The skill methods score lowest. First runs at 1B, with three seeds, point the same way: PQN-RNN catches up with PPO-RNN.
+\item[Limitations.] The 1B results rest on three seeds, so we report intervals and no tests. The 1B settings were not tuned separately. The two budgets ran on different hardware and software, and a check on the cluster showed no difference beyond seed noise.
+\end{description}
+
+\section*{4. Plan and division of work}
+
+\begin{description}
+\item[Next experiments.] Finish the ablations at 1B (Dyna-Q without its exploration bonus and three variants of the skill method), then compare the ranking at both budgets.
+\item[Deliverables.] A 3-page report, a short and a long video, and a public release of the results and an interactive demo on Hugging Face.
+\item[Possible extensions.] Tune the methods at 1B, run more seeds, learn the progress summary instead of choosing it by hand, and add the intrinsic-reward baselines RND and E3B.
+\item[Division of work.] One author, Pawe{\l} Pozorski, covers experiments, analysis, report and videos.
+\end{description}
+
+\end{document}

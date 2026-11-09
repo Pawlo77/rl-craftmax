@@ -211,6 +211,53 @@ def _versus_numbers(row: Mapping[str, Any], budget: str, method: str) -> list[Nu
     return out
 
 
+def scale_numbers(rank: pd.DataFrame, advantage: pd.DataFrame) -> list[Number]:
+    """Rank-agreement and advantage macros of the 1M vs 1B tables (`analysis.scale`)."""
+    out = []
+    for r in rank.to_dict("records"):
+        for q, col in (
+            ("scaleSpearman", "spearman"), ("scaleSpearmanLo", "spearman_lo"),
+            ("scaleSpearmanHi", "spearman_hi"), ("scaleKendall", "kendall"),
+            ("scaleKendallLo", "kendall_lo"), ("scaleKendallHi", "kendall_hi"),
+        ):  # fmt: skip
+            out.append(Number(q, _fmt(r[col])))
+    for r in advantage.to_dict("records"):
+        word = MACRO_NAMES[r["method"]]
+        for q, col in (
+            ("scaleGainOneM", "gain_1m"), ("scaleGainOneB", "gain_1b"),
+            ("scaleChange", "change"), ("scaleChangeLo", "change_lo"),
+            ("scaleChangeHi", "change_hi"),
+        ):  # fmt: skip
+            if _finite(r[col]):
+                out.append(Number(f"{q}{word}", _fmt(r[col])))
+    return out
+
+
+def gate_numbers(gate: pd.DataFrame) -> list[Number]:
+    """Reproduction-gate macros: our mean, the published value, gap, band, verdict."""
+    out = []
+    for r in gate.to_dict("records"):
+        if not _finite(r["published"]):
+            continue  # a control with no published value at this budget
+        for q, col in (
+            ("gateMean", "mean"), ("gatePub", "published"), ("gateGap", "gap"),
+            ("gateBand", "h"),
+        ):  # fmt: skip
+            out.append(Number(macro(q, r["benchmark"], r["control"]), _fmt(r[col])))
+        verdict = "inside" if r["status"] == "pass" else "outside"
+        out.append(Number(macro("gateStatus", r["benchmark"], r["control"]), verdict))
+    return out
+
+
+def speed_numbers(speed: pd.DataFrame) -> list[Number]:
+    """Runs per method and budget that flatten in the last fifth (T8), as macros."""
+    out = []
+    for r in speed.drop_duplicates(["benchmark", "method"]).to_dict("records"):
+        for q, col in (("speedPlateau", "plateau_runs"), ("speedRuns", "curve_runs")):
+            out.append(Number(macro(q, r["benchmark"], r["method"]), str(int(r[col]))))
+    return out
+
+
 def _leaves(v: float) -> str:
     if math.isinf(v):
         return NEVER
@@ -324,6 +371,12 @@ def collect_numbers(
         found += _versus_numbers(r, r["benchmark"], r["method"])
     for r in ab.to_dict("records"):
         found += _unit_numbers(r, r["benchmark"], r["method"], r["config_ref"])
+    if "speed" in tables:
+        found += speed_numbers(tables["speed"])
+    if "reproduction_gate" in tables:
+        found += gate_numbers(tables["reproduction_gate"])
+    if "scale_rank" in tables and "scale_advantage" in tables:
+        found += scale_numbers(tables["scale_rank"], tables["scale_advantage"])
     budgets = sorted(set(frames["runs"]["budget"]), key=lambda b: "mb".find(b[-1]))
     if complexity:
         found += complexity_numbers(_read_complexity(complexity_root, budgets))

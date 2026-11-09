@@ -3,7 +3,7 @@ title: "I1 - PPO-RNN 1B above the reproduction band"
 type: issue
 domain: evaluation
 parent: "[[wut_murl_craftax]]"
-status: open
+status: wontfix
 severity: minor
 found: 2026-11-05
 created: 2026-11-05
@@ -29,7 +29,7 @@ Package: [[evaluation]].
 
 ## Cause
 
-- Not investigated. The band uses the published spread `s_pub` (0.35) over 10 seeds and our 3-seed standard error; the 1B runs ran on A100 and, for PPO-RNN, with TF32 (`configs/profiles/cuda.yaml`, [[PPO-RNN design]]).
+- Not traced to one cause; closed as wontfix on 2026-11-08 because the score is above the published one, not below. What the data rules out: the software stack at 1M (the bridge runs put PPO-RNN on the cluster stack at -0.08 of the laptop score, inside the seed noise, [[Experiment decisions]] 2026-11-06); PPO and PQN-RNN reproduce their 1B scores in the same runs, so the pipeline is not off in general. What remains possible: our scoring window (the last 2% of the budget, at least 100 episodes) against the paper's, the PPO-RNN settings at 1B (the shared PPO part follows the paper, the method knobs follow our 1M tuning), TF32 on A100 for this entry, and three seeds against ten. The band uses the published spread `s_pub` (0.35) over 10 seeds and our 3-seed standard error ([[PPO-RNN design]]).
 
 ## Repro
 
@@ -39,4 +39,4 @@ uv run python -m wut_murl_craftax.analysis.results --phases final-1m final-1b co
 
 ## Fix
 
-- Report the gap beside the 1B results; the gate never blocks ([[2026-10-20-craftax-comparison-and-results]]).
+- Report the gap beside the 1B results; the gate never blocks ([[2026-10-20-craftax-comparison-and-results]]). Reported in the 1B results and in the report's results paragraph; no rerun planned.
